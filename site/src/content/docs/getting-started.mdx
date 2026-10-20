@@ -1,0 +1,157 @@
+---
+title: Getting started
+description: Build SourceOrrery from source, create an encrypted vault, store a secret without ever typing it on a command line, and run your application with secrets in its environment.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+SourceOrrery is at **milestone 1**: an encrypted local vault with an Azure Key
+Vault–style lifecycle and a CLI. It works today on Windows, macOS and Linux.
+It has not been audited; do not treat it as a production secret store yet.
+
+## Install
+
+Pre-built binaries and package-manager installs (Homebrew, WinGet, Scoop,
+`cargo install`) are on the [roadmap](/roadmap/). Today you build from source.
+You need Rust 1.88 or newer and a C compiler for the bundled SQLite.
+
+```bash
+git clone https://github.com/sourceorrery/sourceorrery
+cd sourceorrery
+cargo build --release
+./target/release/sourceorrery --help
+```
+
+Put `target/release/sourceorrery` (`sourceorrery.exe` on Windows) on your
+`PATH`. Shell completions are available with
+`sourceorrery completions bash|zsh|fish|powershell|elvish`.
+
+<Aside>
+Headless servers without a credential store can build without OS-keyring
+support and use passphrase protectors only:
+
+```bash
+cargo build --release -p sourceorrery-cli --no-default-features
+```
+
+See [Headless: WSL, Docker, CI](/guides/headless/).
+</Aside>
+
+## First vault to first run
+
+<Steps>
+
+1. **Create a vault.**
+
+   ```bash
+   sourceorrery vault create development
+   ```
+
+   The vault is one SQLite file, `vaults/development.sorvault`, under the
+   SourceOrrery home directory (`%LOCALAPPDATA%\sourceorrery` on Windows,
+   `~/Library/Application Support/sourceorrery` on macOS,
+   `~/.local/share/sourceorrery` on Linux). Every value in it is encrypted
+   with a vault key that never touches the disk in the clear.
+
+   By default the vault key is protected by the OS credential store (Windows
+   Credential Manager, macOS Keychain, Secret Service), so there is nothing
+   to type later. Where no store is available, or with
+   `--protector passphrase`, you are asked for a passphrase twice and the key
+   is derived from it with Argon2id.
+
+2. **Store a secret.**
+
+   ```bash
+   sourceorrery secret set database-password --vault development
+   ```
+
+   The value is read from a hidden prompt, from stdin when piped, or from a
+   file with `--from-file`. There is no `--value` option: arguments leak into
+   shell history and process listings. Every `set` creates a new, immutable
+   version.
+
+   ```bash
+   # From a pipe or a file (one trailing newline from stdin is stripped)
+   printf '%s' "$DB_PASSWORD" | sourceorrery secret set database-password --vault development
+   sourceorrery secret set tls-key --from-file ./server.key --vault development
+   ```
+
+   Names follow Azure Key Vault rules: letters, digits and hyphens, at most
+   127 characters.
+
+3. **Inspect without revealing.**
+
+   ```bash
+   sourceorrery secret list --vault development
+   sourceorrery secret get database-password --vault development
+   sourceorrery secret versions database-password --vault development
+   ```
+
+   All three print metadata only: version id, status, content type, tags,
+   timestamps. Disclosure is a deliberate, audited act:
+
+   ```bash
+   sourceorrery secret get database-password --vault development --reveal
+   ```
+
+   Add `-o json` to any command for machine-readable output; errors then carry
+   a stable [error code](/reference/error-codes/).
+
+4. **Declare what your project needs.**
+
+   ```bash
+   sourceorrery init
+   ```
+
+   This writes `sourceorrery.toml` next to your code. It is the committed,
+   value-free replacement for `.env`:
+
+   ```toml
+   [project]
+   name = "my-application"
+   vault = "development"
+
+   [secrets.database-password]
+   required = true
+   purpose = "Database authentication"   # documentation only
+   ```
+
+   A `value = ...` key, or any other unknown key, is a parse error. Commit
+   the manifest; it holds nothing to protect. Then confirm every entry
+   resolves without reading a single value:
+
+   ```bash
+   sourceorrery check
+   ```
+
+5. **Run your application with its secrets.**
+
+   ```bash
+   sourceorrery run -- npm start
+   ```
+
+   Each declared secret is resolved and placed in the child's environment,
+   `database-password` as `DATABASE_PASSWORD` (set `env = "..."` in the
+   manifest to choose another name). The parent never prints the values and
+   a missing required secret aborts before the child starts.
+
+</Steps>
+
+<Aside type="caution" title="What this does not protect against">
+Environment variables are visible to any process that can read the child
+process's environment, and anything already running as your OS user can
+unlock the same vault and call `get --reveal` exactly as you can. SourceOrrery
+removes plaintext from disk and from the repository and puts every access on
+the record; it does not isolate your secrets from code running with your
+privileges. The [threat model](/security/threat-model/) keeps those three
+guarantees separate.
+</Aside>
+
+## Where to next
+
+- [CLI reference](/reference/cli/) for every command and option, including
+  soft delete, recovery, time windows and the audit log.
+- [Headless: WSL, Docker, CI](/guides/headless/) when there is no OS
+  credential store or no terminal.
+- [Vault format](/reference/vault-format/) if you want to know exactly what is
+  on disk.

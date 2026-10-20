@@ -1,0 +1,23 @@
+/* Brand accent taken from the orrery emblem: deep navy to cyan. */
+:root {
+	--sl-color-accent-low: #0b2f45;
+	--sl-color-accent: #0ea5e9;
+	--sl-color-accent-high: #a6e4ff;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #d6f0fc;
+	--sl-color-accent: #0470a8;
+	--sl-color-accent-high: #0a2f45;
+}
+
+/* The header shows the emblem beside the site name. */
+.site-title img {
+	height: 2rem;
+	width: auto;
+}
+
+/* The three-guarantees table on the landing page. */
+.guarantees td:first-child {
+	white-space: nowrap;
+}

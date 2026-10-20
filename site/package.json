@@ -1,0 +1,27 @@
+{
+  "name": "sourceorrery-site",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "sync": "node scripts/sync-docs.mjs",
+    "predev": "npm run sync",
+    "dev": "astro dev",
+    "start": "astro dev",
+    "prebuild": "npm run sync",
+    "build": "astro build",
+    "postbuild": "node scripts/check-links.mjs",
+    "check-links": "node scripts/check-links.mjs",
+    "logo-mark": "node scripts/make-logo-mark.mjs",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.42.6",
+    "astro": "^7.2.10",
+    "sharp": "^0.35.3"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

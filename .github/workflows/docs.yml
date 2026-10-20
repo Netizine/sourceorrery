@@ -1,0 +1,72 @@
+# Builds the documentation site (site/, Astro Starlight) from docs/ and the
+# Rust sources and keeps the result as a workflow artifact. Nothing is
+# deployed yet; see the TODO at the bottom.
+name: Docs site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/**"
+      - "crates/sourceorrery-core/src/error.rs"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - "docs/**"
+      - "crates/sourceorrery-core/src/error.rs"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (Astro Starlight)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - run: npm ci
+
+      # prebuild syncs docs/ into the content collection and generates the
+      # error-code reference; postbuild fails on any broken internal link.
+      - run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site/dist
+          if-no-files-found: error
+          retention-days: 14
+
+  # TODO(deploy): publish site/dist to https://sourceorrery.ai. Two options,
+  # neither configured yet and no secrets added to the repository:
+  #
+  #   1. Cloudflare Pages — connect the GitHub repository in the Cloudflare
+  #      dashboard (build command `npm run build`, root directory `site`,
+  #      output directory `dist`) so Cloudflare builds and deploys on push,
+  #      or add a job here using `cloudflare/wrangler-action` with
+  #      `pages deploy site/dist --project-name sourceorrery` and the
+  #      CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID secrets. Point the
+  #      sourceorrery.ai DNS at the Pages project.
+  #
+  #   2. GitHub Pages — replace upload-artifact with
+  #      `actions/upload-pages-artifact@v3` (path: site/dist), add a
+  #      `deploy` job with `actions/deploy-pages@v4` that needs `build` and
+  #      has `permissions: { pages: write, id-token: write }`, enable Pages
+  #      (source: GitHub Actions) in the repository settings and set the
+  #      custom domain to sourceorrery.ai (add a `site/public/CNAME` file).
+  #
+  # Keep `site: "https://sourceorrery.ai"` in site/astro.config.mjs either way;
+  # canonical URLs and the sitemap are generated from it.

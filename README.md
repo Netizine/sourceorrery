@@ -6,6 +6,8 @@
 
 **Secrets belong to the runtime, not the repository.**
 
+Documentation: **[sourceorrery.ai](https://sourceorrery.ai)**
+
 SourceOrrery is an open-source, Rust-native secrets platform for software
 development in the age of AI coding agents. It replaces the plaintext `.env`
 file with an encrypted local vault, an Azure Key Vault–style lifecycle API
