@@ -74,6 +74,256 @@ jobs:
         run: |
           cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/smoke.c -L target/debug -lsourceorrery_ffi -o /tmp/so-smoke
           LD_LIBRARY_PATH=target/debug /tmp/so-smoke "$(mktemp -d)"
+      - name: The Go module vendors the same header
+        run: diff -u crates/sourceorrery-ffi/include/sourceorrery.h bindings/go/sourceorrery.h
+
+  # The native extension crates live outside the workspace (maturin and
+  # napi build them); lint them the same way.
+  bindings-lint:
+    name: clippy (native extensions)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            bindings/python
+            bindings/node
+      - run: cargo fmt --check
+        working-directory: bindings/python
+      - run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: bindings/python
+      - run: cargo fmt --check
+        working-directory: bindings/node
+      - run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: bindings/node
+
+  # ---------------------------------------------------------------------
+  # SDKs: every binding builds, its tests pass and its example runs against
+  # a vault the CLI created in the job (passphrase protector,
+  # SOURCEORRERY_PASSPHRASE in the environment). See docs/sdks/index.md.
+  # ---------------------------------------------------------------------
+
+  sdk-rust:
+    name: SDK Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/sdk-fixture
+      - name: Example
+        shell: bash
+        run: cargo run --release --locked -p sourceorrery --example get_secret -- "$SOURCEORRERY_TEST_VAULT" database-password
+      - name: Example reports a missing secret with a hint
+        shell: bash
+        run: |
+          if cargo run --release --locked -p sourceorrery --example get_secret -- "$SOURCEORRERY_TEST_VAULT" missing 2> err.txt; then exit 1; fi
+          grep -q 'not_found' err.txt && grep -q 'sourceorrery secret set missing' err.txt
+
+  sdk-python:
+    name: SDK Python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/sdk-fixture
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and install the wheel
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip maturin pytest
+          python -m pip install ./bindings/python
+      - name: Tests
+        shell: bash
+        run: python -m pytest bindings/python/tests -v
+      - name: Example
+        shell: bash
+        run: python bindings/python/examples/get_secret.py "$SOURCEORRERY_TEST_VAULT" database-password
+
+  sdk-node:
+    name: SDK Node.js (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: bindings/node
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/sdk-fixture
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run typecheck
+      - name: Examples (JavaScript and TypeScript)
+        run: |
+          node examples/get-secret.mjs "$SOURCEORRERY_TEST_VAULT" database-password
+          node --experimental-strip-types --no-warnings examples/get-secret.ts "$SOURCEORRERY_TEST_VAULT" database-password
+
+  sdk-c-cpp:
+    name: SDK C and C++ (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/sdk-fixture
+      - name: Compile and run (cc / c++)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          inc="-I crates/sourceorrery-ffi/include -I bindings/cpp/include"
+          cc -Wall -Wextra -Werror $inc crates/sourceorrery-ffi/examples/get_secret.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o get_secret_c
+          c++ -std=c++17 -Wall -Wextra -Werror $inc bindings/cpp/examples/get_secret.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o get_secret_cpp
+          c++ -std=c++17 -Wall -Wextra -Werror $inc bindings/cpp/tests/reader_test.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o reader_test
+          export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" DYLD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR"
+          ./reader_test
+          ./get_secret_c "$SOURCEORRERY_TEST_VAULT" database-password
+          ./get_secret_cpp "$SOURCEORRERY_TEST_VAULT" database-password
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Compile and run (MSVC)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          set INC=/I crates/sourceorrery-ffi/include /I bindings/cpp/include
+          cl /nologo /W4 /WX %INC% crates/sourceorrery-ffi/examples/get_secret.c /Fe:get_secret_c.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
+          cl /nologo /std:c++17 /EHsc /W4 /WX %INC% bindings/cpp/examples/get_secret.cpp /Fe:get_secret_cpp.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
+          cl /nologo /std:c++17 /EHsc /W4 /WX %INC% bindings/cpp/tests/reader_test.cpp /Fe:reader_test.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
+          set PATH=%SOURCEORRERY_NATIVE_DIR%;%PATH%
+          reader_test.exe || exit /b 1
+          get_secret_c.exe %SOURCEORRERY_TEST_VAULT% database-password || exit /b 1
+          get_secret_cpp.exe %SOURCEORRERY_TEST_VAULT% database-password || exit /b 1
+      - name: CMake build of the C++ SDK
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cmake -S bindings/cpp -B build/cpp -DSOURCEORRERY_NATIVE_DIR="$SOURCEORRERY_NATIVE_DIR"
+          cmake --build build/cpp
+
+  sdk-go:
+    name: SDK Go (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: bindings/go
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/sdk-fixture
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: bindings/go/go.sum
+      - name: Vendored header is current
+        run: diff -u ../../crates/sourceorrery-ffi/include/sourceorrery.h sourceorrery.h
+      - name: Tests and example
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          export CGO_LDFLAGS="-L$SOURCEORRERY_NATIVE_DIR"
+          export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" DYLD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" PATH="$SOURCEORRERY_NATIVE_DIR:$PATH"
+          gofmt -l . && test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -v ./...
+          go run ./examples/get-secret "$SOURCEORRERY_TEST_VAULT" database-password
+
+  sdk-java:
+    name: SDK Java (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: bindings/java
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/sdk-fixture
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Tests
+        run: mvn -B --no-transfer-progress test
+      - name: Example
+        run: java --enable-native-access=ALL-UNNAMED -cp target/classes examples/GetSecret.java "$SOURCEORRERY_TEST_VAULT" database-password
+
+  sdk-dotnet:
+    name: SDK .NET (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/sdk-fixture
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Tests
+        shell: bash
+        run: dotnet test bindings/dotnet/SourceOrrery.sln --nologo
+      - name: Example
+        shell: bash
+        run: dotnet run --project bindings/dotnet/examples/GetSecret -- "$SOURCEORRERY_TEST_VAULT" database-password
+      - name: Pack (no native libraries; the release workflow adds them)
+        shell: bash
+        run: dotnet pack bindings/dotnet/SourceOrrery/SourceOrrery.csproj --nologo -c Release -o dist/nuget
+
+  sdk-php:
+    name: SDK PHP (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/sdk-fixture
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: ffi, json
+          ini-values: ffi.enable=true
+      - name: Composer manifest is valid
+        shell: bash
+        run: composer validate --strict bindings/php/composer.json
+      - name: Tests
+        shell: bash
+        run: php bindings/php/tests/run.php
+      - name: Example
+        shell: bash
+        run: php bindings/php/examples/get_secret.php "$SOURCEORRERY_TEST_VAULT" database-password
 
   docs:
     name: rustdoc

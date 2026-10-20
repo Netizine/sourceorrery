@@ -1,79 +1,628 @@
-# Builds signed-checksum release binaries for the Tier 1 targets when a
-# version tag is pushed. Tier 2 (musl, ARMv7) and package-manager publishing
-# are tracked in docs/roadmap.md.
+# Manual release: builds the CLI, the C ABI and every SDK package for one
+# version, publishes a GitHub Release with checksums and, where the
+# registry secret exists, publishes to crates.io, PyPI, npm, NuGet, Maven
+# Central, pkg.go.dev and Packagist. Jobs whose secret is absent are
+# skipped, and `dry_run` builds and packages everything without creating
+# the tag, the release or any registry upload, so the whole pipeline can be
+# exercised before any token exists. Procedure: docs/release.md.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (semver without the v, e.g. 0.2.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Build and package everything, publish nothing"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: build (${{ matrix.target }})
+  # ---------------------------------------------------------------------
+  # Decide what this run may do.
+  # ---------------------------------------------------------------------
+  preflight:
+    name: preflight
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      publish: ${{ steps.plan.outputs.publish }}
+      has_crates_io: ${{ steps.secrets.outputs.has_crates_io }}
+      has_pypi: ${{ steps.secrets.outputs.has_pypi }}
+      has_npm: ${{ steps.secrets.outputs.has_npm }}
+      has_nuget: ${{ steps.secrets.outputs.has_nuget }}
+      has_maven: ${{ steps.secrets.outputs.has_maven }}
+      has_packagist: ${{ steps.secrets.outputs.has_packagist }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the version and the tag
+        id: plan
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a semantic version (expected e.g. 0.2.0)"; exit 1
+          fi
+          if [ "$DRY_RUN" != "true" ] && git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q .; then
+            echo "::error::tag v$VERSION already exists; releases are immutable"; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$DRY_RUN" = "true" ]; then echo "publish=false" >> "$GITHUB_OUTPUT"; else echo "publish=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Which registry secrets exist
+        id: secrets
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+        run: |
+          has() { if [ -n "$2" ]; then echo "$1=true"; else echo "$1=false"; fi; }
+          {
+            has has_crates_io "$CARGO_REGISTRY_TOKEN"
+            has has_pypi "$PYPI_API_TOKEN"
+            has has_npm "$NPM_TOKEN"
+            has has_nuget "$NUGET_API_KEY"
+            has has_maven "${MAVEN_CENTRAL_USERNAME}${MAVEN_CENTRAL_PASSWORD}${MAVEN_GPG_PRIVATE_KEY}"
+            has has_packagist "${PACKAGIST_USERNAME}${PACKAGIST_API_TOKEN}"
+          } | tee -a "$GITHUB_OUTPUT"
+      - name: Manifests accept the version
+        run: python3 scripts/release/set-version.py "${{ inputs.version }}"
+
+  # ---------------------------------------------------------------------
+  # Native artefacts: the CLI and the C ABI for the six Tier 1 targets.
+  # ---------------------------------------------------------------------
+  native:
+    name: native (${{ matrix.target }})
+    needs: preflight
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,     target: x86_64-unknown-linux-gnu,  archive: tar.gz }
-          - { os: ubuntu-24.04-arm,  target: aarch64-unknown-linux-gnu, archive: tar.gz }
-          - { os: macos-latest,      target: aarch64-apple-darwin,      archive: tar.gz }
-          - { os: macos-15-intel,    target: x86_64-apple-darwin,       archive: tar.gz }
-          - { os: windows-latest,    target: x86_64-pc-windows-msvc,    archive: zip }
-          - { os: windows-latest,    target: aarch64-pc-windows-msvc,   archive: zip }
+          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  rid: linux-x64,   jdir: linux-x86_64,    archive: tar.gz }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, rid: linux-arm64, jdir: linux-aarch64,   archive: tar.gz }
+          - { os: macos-latest,     target: aarch64-apple-darwin,      rid: osx-arm64,   jdir: macos-aarch64,   archive: tar.gz }
+          - { os: macos-15-intel,   target: x86_64-apple-darwin,       rid: osx-x64,     jdir: macos-x86_64,    archive: tar.gz }
+          - { os: windows-latest,   target: x86_64-pc-windows-msvc,    rid: win-x64,     jdir: windows-x86_64,  archive: zip }
+          - { os: windows-latest,   target: aarch64-pc-windows-msvc,   rid: win-arm64,   jdir: windows-aarch64, archive: zip }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Linux build dependencies (Secret Service)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+      - name: Stamp the version
+        shell: bash
+        run: python3 scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
       - name: Build
-        run: cargo build --release --locked -p sourceorrery-cli --target ${{ matrix.target }}
+        shell: bash
+        run: cargo build --release --locked -p sourceorrery-cli -p sourceorrery-ffi --target ${{ matrix.target }}
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
-          name="sourceorrery-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          cp "target/${{ matrix.target }}/release/sourceorrery" README.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
-          (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+          out="target/${{ matrix.target }}/release"
+          cli="sourceorrery-$VERSION-${{ matrix.target }}"
+          ffi="sourceorrery-ffi-$VERSION-${{ matrix.target }}"
+          mkdir -p "dist/$cli" "dist/$ffi/include" "dist/native/${{ matrix.rid }}" "dist/jni/${{ matrix.jdir }}"
+          cp "$out/sourceorrery" README.md LICENSE-MIT LICENSE-APACHE "dist/$cli/"
+          cp "$out"/libsourceorrery_ffi.* "dist/$ffi/"
+          cp crates/sourceorrery-ffi/include/sourceorrery.h bindings/cpp/include/sourceorrery.hpp "dist/$ffi/include/"
+          cp bindings/README.md "dist/$ffi/README.md"; cp LICENSE-MIT LICENSE-APACHE "dist/$ffi/"
+          tar -C dist -czf "dist/$cli.tar.gz" "$cli"
+          tar -C dist -czf "dist/$ffi.tar.gz" "$ffi"
+          # Loose shared library for the .NET (runtimes/<rid>/native) and Java (native/<os>-<arch>) packages.
+          cp "$out"/libsourceorrery_ffi.so "dist/native/${{ matrix.rid }}/" 2>/dev/null || cp "$out"/libsourceorrery_ffi.dylib "dist/native/${{ matrix.rid }}/"
+          cp dist/native/${{ matrix.rid }}/* "dist/jni/${{ matrix.jdir }}/"
+          rm -r "dist/$cli" "dist/$ffi"
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          $name = "sourceorrery-$env:GITHUB_REF_NAME-${{ matrix.target }}"
-          New-Item -ItemType Directory -Force "dist/$name" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/sourceorrery.exe", "README.md", "LICENSE-MIT", "LICENSE-APACHE" "dist/$name/"
-          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
-          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $name.zip" | Out-File -Encoding ascii "dist/$name.zip.sha256"
+          $out = "target/${{ matrix.target }}/release"
+          $cli = "sourceorrery-$env:VERSION-${{ matrix.target }}"
+          $ffi = "sourceorrery-ffi-$env:VERSION-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force "dist/$cli", "dist/$ffi/include", "dist/native/${{ matrix.rid }}", "dist/jni/${{ matrix.jdir }}" | Out-Null
+          Copy-Item "$out/sourceorrery.exe", "README.md", "LICENSE-MIT", "LICENSE-APACHE" "dist/$cli/"
+          Copy-Item "$out/sourceorrery_ffi.dll", "$out/sourceorrery_ffi.dll.lib", "$out/sourceorrery_ffi.lib" "dist/$ffi/"
+          Copy-Item "crates/sourceorrery-ffi/include/sourceorrery.h", "bindings/cpp/include/sourceorrery.hpp" "dist/$ffi/include/"
+          Copy-Item "bindings/README.md" "dist/$ffi/README.md"; Copy-Item "LICENSE-MIT", "LICENSE-APACHE" "dist/$ffi/"
+          Compress-Archive -Path "dist/$cli/*" -DestinationPath "dist/$cli.zip"
+          Compress-Archive -Path "dist/$ffi/*" -DestinationPath "dist/$ffi.zip"
+          Copy-Item "$out/sourceorrery_ffi.dll" "dist/native/${{ matrix.rid }}/"
+          Copy-Item "$out/sourceorrery_ffi.dll" "dist/jni/${{ matrix.jdir }}/"
+          Remove-Item -Recurse -Force "dist/$cli", "dist/$ffi"
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
+          name: archives-${{ matrix.target }}
           path: |
             dist/*.tar.gz
             dist/*.zip
-            dist/*.sha256
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: |
+            dist/native
+            dist/jni
+          if-no-files-found: error
 
+  # ---------------------------------------------------------------------
+  # Python wheels (maturin) and the sdist.
+  # ---------------------------------------------------------------------
+  python:
+    name: python (${{ matrix.target }})
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  manylinux: "2_28" }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, manylinux: "2_28" }
+          - { os: macos-latest,     target: aarch64-apple-darwin,      manylinux: "" }
+          - { os: macos-15-intel,   target: x86_64-apple-darwin,       manylinux: "" }
+          - { os: windows-latest,   target: x86_64-pc-windows-msvc,    manylinux: "" }
+          - { os: windows-latest,   target: aarch64-pc-windows-msvc,   manylinux: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Stamp the version
+        shell: bash
+        run: python3 scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      - name: Build the wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --locked --out ../../dist/wheels
+          sccache: "true"
+          # The Secret Service client needs libdbus in the manylinux container.
+          before-script-linux: |
+            if command -v dnf >/dev/null; then dnf install -y dbus-devel pkgconf-pkg-config; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libdbus-1-dev pkg-config; fi
+      - name: Build the sdist
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          command: sdist
+          args: --out ../../dist/wheels
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist/wheels
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # Node.js: one native addon per target, then the npm packages.
+  # ---------------------------------------------------------------------
+  node-build:
+    name: node (${{ matrix.target }})
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-latest,     target: aarch64-apple-darwin }
+          - { os: macos-15-intel,   target: x86_64-apple-darwin }
+          - { os: windows-latest,   target: x86_64-pc-windows-msvc }
+          - { os: windows-latest,   target: aarch64-pc-windows-msvc }
+    defaults:
+      run:
+        working-directory: bindings/node
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bindings/node
+          key: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+      - name: Linux build dependencies (Secret Service)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+      - name: Stamp the version
+        run: python3 ../../scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      - run: npm ci
+      - name: Build the addon
+        run: npx napi build --platform --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.target }}
+          path: bindings/node/*.node
+          if-no-files-found: error
+
+  node-package:
+    name: node packages
+    needs: [preflight, node-build]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/node
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+      - name: Stamp the version
+        run: python3 ../../scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: node-*
+          path: bindings/node/artifacts
+          merge-multiple: true
+      - name: Lay out the platform packages
+        run: |
+          npx napi create-npm-dirs
+          npx napi artifacts --output-dir artifacts
+          # Generate the loader and types once more without a build (the sources are what the CI job tested).
+          ls -R npm
+      - name: Pack every package
+        run: |
+          mkdir -p ../../dist/npm
+          for dir in npm/*/; do (cd "$dir" && npm pack --pack-destination ../../../../dist/npm); done
+          npm pack --pack-destination ../../dist/npm --ignore-scripts
+          ls -la ../../dist/npm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # Packages that embed the native library built above.
+  # ---------------------------------------------------------------------
+  java:
+    name: java
+    needs: [preflight, native]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/java
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Stamp the version
+        run: python3 ../../scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: bindings/java/native-artifacts
+          merge-multiple: true
+      - name: Embed the native libraries
+        run: |
+          mkdir -p src/main/resources/ai/sourceorrery/native
+          cp -r native-artifacts/jni/* src/main/resources/ai/sourceorrery/native/
+          find src/main/resources -type f
+      - name: Build the jar (tests ran in CI)
+        run: mvn -B --no-transfer-progress -DskipTests package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maven-packages
+          path: bindings/java/target/*.jar
+          if-no-files-found: error
+
+  dotnet:
+    name: dotnet
+    needs: [preflight, native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Stamp the version
+        run: python3 scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native-artifacts
+          merge-multiple: true
+      - name: Lay out runtimes/<rid>/native
+        run: |
+          for rid in native-artifacts/native/*/; do
+            rid=$(basename "$rid"); mkdir -p "runtimes/$rid/native"; cp native-artifacts/native/"$rid"/* "runtimes/$rid/native/"
+          done
+          find runtimes -type f
+      - name: Pack
+        run: dotnet pack bindings/dotnet/SourceOrrery/SourceOrrery.csproj --nologo -c Release -o dist/nuget -p:Version=${{ needs.preflight.outputs.version }} -p:SourceOrreryRuntimesDir=$PWD/runtimes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: dist/nuget
+          if-no-files-found: error
+
+  crates:
+    name: crates.io (dry run)
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+      - name: Stamp the version
+        run: python3 scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      - name: Every publishable crate packages and builds in dependency order
+        run: cargo publish --workspace --locked --allow-dirty --dry-run
+
+  php:
+    name: php
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: ffi, json
+      - run: composer validate --strict bindings/php/composer.json
+
+  # ---------------------------------------------------------------------
+  # The GitHub Release (or, in a dry run, one artifact holding everything).
+  # ---------------------------------------------------------------------
   release:
-    name: publish GitHub release
-    needs: build
+    name: github release
+    needs: [preflight, native, python, node-package, java, dotnet, crates, php]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archives-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: release/python
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: release/npm
+      - uses: actions/download-artifact@v4
+        with:
+          name: maven-packages
+          path: release/maven
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-packages
+          path: release/nuget
+      - name: Flatten and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          for d in python npm maven nuget; do mv "$d"/* . 2>/dev/null || true; rmdir "$d" 2>/dev/null || true; done
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Release notes
+        shell: bash
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          {
+            echo "## SourceOrrery $VERSION"
+            echo
+            echo "CLI binaries (\`sourceorrery-$VERSION-<target>\`), the C ABI with headers (\`sourceorrery-ffi-$VERSION-<target>\`), Python wheels, npm, Maven and NuGet packages. Verify with \`sha256sum -c SHA256SUMS\`."
+            echo
+            echo "Changes: see [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v$VERSION/CHANGELOG.md)."
+          } > notes.md
+      - name: "Dry run: keep everything as one artifact"
+        if: needs.preflight.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run-${{ needs.preflight.outputs.version }}
+          path: |
+            release
+            notes.md
+      - name: Create the GitHub Release and the tag
+        if: needs.preflight.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.preflight.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: SourceOrrery ${{ needs.preflight.outputs.version }}
+          body_path: notes.md
+          files: release/*
+          fail_on_unmatched_files: true
+
+  # ---------------------------------------------------------------------
+  # Registry publishing: each job is skipped when its secret is absent or
+  # when this is a dry run.
+  # ---------------------------------------------------------------------
+  publish-crates:
+    name: publish crates.io
+    needs: [preflight, release, crates]
+    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_crates_io == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+      - run: python3 scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      - name: cargo publish (workspace, dependency order)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --workspace --locked --allow-dirty
+
+  publish-pypi:
+    name: publish PyPI
+    needs: [preflight, release, python]
+    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_pypi == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          pattern: wheels-*
+          path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          draft: true
-          generate_release_notes: true
-          files: artifacts/*
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist
+
+  publish-npm:
+    name: publish npm
+    needs: [preflight, release, node-package]
+    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_npm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/npm
+      - name: Publish the platform packages, then the main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd dist/npm
+          main="sourceorrery-sdk-${{ needs.preflight.outputs.version }}.tgz"
+          for tgz in *.tgz; do [ "$tgz" = "$main" ] || npm publish "$tgz" --access public; done
+          npm publish "$main" --access public
+
+  publish-nuget:
+    name: publish NuGet
+    needs: [preflight, release, dotnet]
+    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_nuget == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/download-artifact@v4
+        with:
+          name: nuget-packages
+          path: dist/nuget
+      - run: dotnet nuget push "dist/nuget/*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  publish-maven:
+    name: publish Maven Central
+    needs: [preflight, release, java]
+    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_maven == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/java
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      - run: python3 ../../scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: bindings/java/native-artifacts
+          merge-multiple: true
+      - run: mkdir -p src/main/resources/ai/sourceorrery/native && cp -r native-artifacts/jni/* src/main/resources/ai/sourceorrery/native/
+      - name: mvn deploy (Central Publisher Portal)
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: mvn -B --no-transfer-progress -P release -DskipTests deploy
+
+  publish-go:
+    name: publish pkg.go.dev
+    needs: [preflight, release]
+    if: needs.preflight.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag the Go module and ask the proxy to index it
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "bindings/go/v$VERSION" "${{ github.sha }}"
+          git push origin "bindings/go/v$VERSION"
+          # Fetching the version through the public proxy makes pkg.go.dev index it.
+          curl -fsS "https://proxy.golang.org/github.com/netizine/sourceorrery/bindings/go/@v/v$VERSION.info" || echo "::warning::proxy fetch failed; it indexes on first use"
+
+  publish-packagist:
+    name: publish Packagist
+    needs: [preflight, release, php]
+    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_packagist == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask Packagist to update sourceorrery/sourceorrery from the new tag
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+        run: |
+          curl -fsS -X POST "https://packagist.org/api/update-package?username=$PACKAGIST_USERNAME&apiToken=$PACKAGIST_API_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"repository":{"url":"https://github.com/${{ github.repository }}"}}'
