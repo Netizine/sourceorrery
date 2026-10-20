@@ -6,6 +6,18 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — cross-language SDK conformance harness
+
+* `tests/conformance/sdk/scenarios.json` is the contract every SDK must
+  honour against the fixture vault: unlock sources, latest and explicit
+  versions, references, policy refusals, missing secrets and project
+  loading, each with the code, message and hint it must produce.
+  `harness.py` drives one SDK's runner through all of them and judges the
+  observations; each binding ships a small runner (`conformance/` under
+  the binding, `examples/conformance.rs` and `examples/conformance.c` for
+  Rust and C) that speaks a line-based protocol. Every SDK CI job runs it
+  after the language's own suite.
+
 ### Added — milestone 2: read-only SDKs for ten languages and a release pipeline
 
 * `sourceorrery` crate: the read-only client every SDK is built on.

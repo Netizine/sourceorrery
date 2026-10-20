@@ -93,13 +93,25 @@ Every SDK has a test suite and an example that CI runs on Ubuntu, Windows
 and macOS against a vault the job creates with the CLI
 (`scripts/ci/fixture-vault.sh`: a passphrase protector,
 `SOURCEORRERY_PASSPHRASE` in the environment, secrets covering every
-policy state). A binding whose tests do not pass does not ship. To run
-them locally:
+policy state). A binding whose tests do not pass does not ship.
+
+On top of the per-language suites, one **conformance harness** holds every
+SDK to the same contract: `tests/conformance/sdk/scenarios.json` lists the
+scenarios (unlock sources, latest and explicit versions, references,
+policy refusals, missing secrets, project loading, with the codes,
+messages and hints each must produce), each SDK ships a small *runner*
+that executes one scenario, and `tests/conformance/sdk/harness.py` drives
+a runner through all of them and judges the observations. CI runs it in
+every SDK job; the protocol and how to add a scenario are in
+[`tests/conformance/sdk/README.md`](../../tests/conformance/sdk/README.md).
+
+To run them locally:
 
 ```bash
 cargo build --release -p sourceorrery-cli -p sourceorrery-ffi
 eval "$(bash scripts/ci/fixture-vault.sh)"
-# then, per language, what its page says under "Building from source"
+# then, per language, what its page says under "Building from source", and
+python tests/conformance/sdk/harness.py --runner python   # or rust, node, java, dotnet, go, c, cpp, php
 ```
 
 Releases: [release.md](release.md).

@@ -251,9 +251,10 @@ Three rules keep the layer thin ([ADR 0006](adr/0006-binding-technologies.md)):
   explicit call.
 * **Every SDK is proven in CI** on Ubuntu, Windows and macOS against a
   vault the CLI creates in the job (`scripts/ci/fixture-vault.sh`), with
-  its tests and its example; a binding whose tests do not pass does not
-  ship. Releases are cut by the manual workflow described in
-  [release.md](release.md).
+  its tests, its example and the cross-language conformance harness
+  (`tests/conformance/sdk/`: one scenario list, one runner per SDK, one
+  judge); a binding whose tests do not pass does not ship. Releases are
+  cut by the manual workflow described in [release.md](release.md).
 
 ## 8. Platform matrix
 

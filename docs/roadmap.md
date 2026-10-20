@@ -26,7 +26,7 @@
 - [x] Read-only SDKs: Python (PyPI, maturin), JavaScript/TypeScript (npm, napi-rs), Rust (crates.io), Java (Maven Central, FFM), .NET (NuGet, LibraryImport), Go (cgo), C, C++ (header-only), PHP (Packagist, FFI); each tested and its example run in CI on Ubuntu/Windows/macOS against a vault the CLI creates
 - [x] Manual release workflow: GitHub Release with checksums, registry publish jobs skipped until their secrets exist, dry-run mode
 - [x] Scoped value accessors (`with` / `using` / `try-with-resources` / `defer` / RAII / `Use(span)`) in every SDK
-- [ ] Cross-language conformance harness driving `tests/conformance` scenarios (today: one shared fixture vault and equivalent read-only test suites per language)
+- [x] Cross-language conformance harness: `tests/conformance/sdk/scenarios.json` + `harness.py` drive a runner per SDK through the same scenarios in every SDK CI job
 - [ ] ABI compatibility tests and semantic versioning policy
 - [ ] Package signing and provenance (Sigstore for npm and PyPI, cosign for the archives)
 
