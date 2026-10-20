@@ -55,6 +55,26 @@ jobs:
       - name: Build without OS keyring support (headless servers)
         run: cargo build -p sourceorrery-cli --no-default-features --locked
 
+  ffi-header:
+    name: C ABI header
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the C ABI (build.rs regenerates include/sourceorrery.h)
+        run: cargo build -p sourceorrery-ffi --locked
+      - name: Committed header must match the generated one
+        run: git diff --exit-code -- crates/sourceorrery-ffi/include/sourceorrery.h
+      - name: Same check as a test (covers read-only source trees)
+        run: cargo test -p sourceorrery-ffi --test header --locked
+      - name: Build without OS keyring support (headless servers)
+        run: cargo build -p sourceorrery-ffi --no-default-features --locked
+      - name: Compile and run the C example against the header
+        run: |
+          cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/smoke.c -L target/debug -lsourceorrery_ffi -o /tmp/so-smoke
+          LD_LIBRARY_PATH=target/debug /tmp/so-smoke "$(mktemp -d)"
+
   docs:
     name: rustdoc
     runs-on: ubuntu-latest

@@ -19,7 +19,7 @@
 
 ## Milestone 2 — first-class language bindings
 
-- [ ] `sourceorrery-ffi`: stable C ABI (`cbindgen`), versioned `CONTRACT_VERSION`
+- [x] `sourceorrery-ffi`: stable C ABI (`cbindgen`), versioned `CONTRACT_VERSION`
 - [ ] .NET (`SourceOrrery` NuGet), Python (PyPI wheels via Maturin), Node.js (napi-rs)
 - [ ] Cross-language conformance harness driving `tests/conformance` scenarios
 - [ ] Scoped value accessors (callback / `using` / context manager) in every SDK

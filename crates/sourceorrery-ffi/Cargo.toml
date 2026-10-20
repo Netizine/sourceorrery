@@ -1,0 +1,62 @@
+[package]
+name = "sourceorrery-ffi"
+description = "Stable C ABI over the SourceOrrery core for language bindings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+build = "build.rs"
+
+[lib]
+name = "sourceorrery_ffi"
+# cdylib + staticlib for C callers and language runtimes; rlib so the
+# integration tests in `tests/` can call the exported functions directly.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = ["os-keyring"]
+# Protect vault keys with the OS credential store. Disable for headless
+# servers that only use passphrase protectors.
+os-keyring = ["sourceorrery-storage/os-keyring"]
+
+[dependencies]
+sourceorrery-core.workspace = true
+sourceorrery-crypto.workspace = true
+sourceorrery-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+zeroize.workspace = true
+
+[build-dependencies]
+# Regenerates include/sourceorrery.h from the extern "C" surface.
+cbindgen = { version = "0.29", default-features = false }
+
+[dev-dependencies]
+cbindgen = { version = "0.29", default-features = false }
+tempfile.workspace = true
+
+# This crate does not inherit the workspace lints because it is the one place
+# `unsafe` is permitted: it is the boundary between C callers and the Rust
+# core. Everything else mirrors the workspace table.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Every unsafe block must state the invariant it relies on.
+undocumented_unsafe_blocks = "deny"
+module_name_repetitions = "allow"
+doc_markdown = "allow"
+option_option = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+struct_excessive_bools = "allow"

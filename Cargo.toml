@@ -5,6 +5,7 @@ members = [
     "crates/sourceorrery-crypto",
     "crates/sourceorrery-storage",
     "crates/sourceorrery-cli",
+    "crates/sourceorrery-ffi",
     "tests/conformance",
 ]
 
