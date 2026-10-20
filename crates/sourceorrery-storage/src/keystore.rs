@@ -113,6 +113,9 @@ mod imp {
         let entry = Entry::new(SERVICE, account).map_err(map_err)?;
         match entry.get_secret() {
             Ok(bytes) => {
+                // Wipe the store's copy of the key as soon as we are done with it,
+                // whether or not it turns out to be well formed.
+                let bytes = zeroize::Zeroizing::new(bytes);
                 let key = SymmetricKey::from_slice(&bytes).map_err(|err| {
                     SecretError::Crypto(format!("stored key for {account} is malformed: {err}"))
                 })?;

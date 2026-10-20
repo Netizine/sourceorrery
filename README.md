@@ -27,15 +27,21 @@ working tree, get indexed, get pasted into prompts and get committed.
 
 SourceOrrery takes a different line:
 
-* **No plaintext at rest.** Every value is encrypted (XChaCha20-Poly1305) in
-  a single SQLite file. The vault key is protected by your OS credential store
-  (Windows Credential Manager, macOS Keychain, Secret Service) and/or an
-  Argon2id passphrase.
+* **No plaintext at rest, in anything SourceOrrery writes.** Every value is
+  encrypted (XChaCha20-Poly1305) in a single SQLite file whose policy metadata
+  and audit log are authenticated too. The vault key is protected by your OS
+  credential store (Windows Credential Manager, macOS Keychain, Secret
+  Service) and/or an Argon2id passphrase. Files you pass in, child processes,
+  logs and other software are outside that boundary.
 * **References, not values.** `sourceorrery://development/database-password`
-  is safe to commit, log and paste. It resolves only inside an authorised
-  runtime.
-* **A manifest that cannot leak.** `sourceorrery.toml` declares the secrets a
-  project needs. A `value = ...` key is a parse error.
+  is safe to commit, log and paste. Today it resolves inside any process that
+  can unlock the vault; per-runtime identity arrives with the broker
+  (milestone 3).
+* **A manifest for references, not values.** `sourceorrery.toml` declares
+  *which* secrets a project needs. It accepts references and rejects inline
+  `value` fields (without echoing them), but it cannot stop someone typing a
+  secret into a comment or a `purpose`; keep sensitive material out of names
+  and metadata.
 * **Metadata by default.** `list`, `versions`, `get` and `audit` never print a
   value. Disclosure is a deliberate `get --reveal`.
 * **Versioned and recoverable.** Every `set` creates an immutable version.
@@ -85,6 +91,12 @@ Removing `.env` closes the accidental-exposure routes. It does not stop code
 running with your privileges from calling the same API you can. SourceOrrery
 says so rather than promising otherwise.
 
+Every operation that reads or changes a secret, including metadata reads, is
+recorded in a keyed audit chain; reading the log and verifying it are not.
+Tampering with the file is detected, not prevented: restoring a complete older
+copy of a vault cannot be noticed without a checkpoint kept outside the file,
+so keep the last `audit --verify` output or back the file up.
+
 ## Architecture
 
 ```
@@ -93,6 +105,7 @@ crates/
   sourceorrery-crypto    XChaCha20-Poly1305, Argon2id, envelope key wrapping
   sourceorrery-storage   encrypted SQLite vault, OS-keyring + passphrase protectors
   sourceorrery-cli       the `sourceorrery` binary
+  sourceorrery-ffi       stable C ABI (cbindgen header) for language bindings
 tests/conformance        the semantics every backend and SDK must pass
 docs/                    architecture, threat model, vault format, roadmap
 ```
@@ -119,7 +132,7 @@ protectors only.
 ## Roadmap
 
 1. **Core and local CLI** — this release.
-2. First-class SDKs: Rust, .NET, Python, Node.js over a stable C ABI.
+2. First-class SDKs over the C ABI (shipped): .NET, Python, Node.js.
 3. Authenticated local broker, capability tokens, agent-aware profiles.
 4. Enterprise: remote providers, workload identity, rotation, RBAC.
 5. Community SDKs via the published C ABI and conformance harness.

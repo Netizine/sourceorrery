@@ -57,7 +57,8 @@ struct_excessive_bools = "allow"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
-panic = "abort"
+# No `panic = "abort"`: the C ABI (sourceorrery-ffi) catches panics at the
+# boundary and reports SO_STATUS_PANIC, which needs unwinding in release too.
 
 # Argon2id is unusably slow unoptimised; keep the KDF fast in dev/test builds.
 [profile.dev.package.argon2]

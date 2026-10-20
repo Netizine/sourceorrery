@@ -98,6 +98,16 @@ pub enum SecretError {
     /// The backend does not implement this operation.
     #[error("unsupported operation: {0}")]
     Unsupported(String),
+
+    /// The vault is in an older on-disk format. Opening it is refused until
+    /// the migration is requested explicitly, because the legacy format is
+    /// unauthenticated and a downgraded file could otherwise be laundered
+    /// through the migration.
+    #[error(
+        "vault '{name}' uses schema {schema}; run `sourceorrery vault migrate {name}` to upgrade it \
+         (only do this for a file you trust)"
+    )]
+    MigrationRequired { name: String, schema: u32 },
 }
 
 impl SecretError {
@@ -126,6 +136,7 @@ impl SecretError {
             Self::Storage(_) => "storage",
             Self::Io(_) => "io",
             Self::Unsupported(_) => "unsupported",
+            Self::MigrationRequired { .. } => "migration_required",
         }
     }
 
@@ -185,6 +196,10 @@ mod tests {
             SecretError::Storage("x".into()),
             SecretError::Io("x".into()),
             SecretError::Unsupported("x".into()),
+            SecretError::MigrationRequired {
+                name: "a".into(),
+                schema: 1,
+            },
         ];
         let mut codes: Vec<_> = errors.iter().map(SecretError::code).collect();
         let total = codes.len();

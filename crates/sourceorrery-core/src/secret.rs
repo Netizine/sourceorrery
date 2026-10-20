@@ -191,6 +191,7 @@ pub struct Secret {
 
 /// Options for creating a new secret version.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SetSecretOptions {
     /// Content type hint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -247,6 +248,7 @@ fn default_true() -> bool {
 /// distinguishes "set to X" (`Some(Some(x))`) from "clear" (`Some(None)`),
 /// which serialises as JSON `null`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateSecretProperties {
     /// Enable or disable the version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -619,6 +621,27 @@ mod tests {
 
         let round = serde_json::to_string(&update).unwrap();
         assert!(round.contains("\"content_type\":null"));
+    }
+
+    #[test]
+    fn policy_inputs_reject_unknown_fields() {
+        // A binding that misspells a policy field must fail loudly rather
+        // than silently create a secret with default policy.
+        for json in [
+            r#"{"expiresOn":"2030-01-01T00:00:00Z"}"#,
+            r#"{"notBefore":"2030-01-01T00:00:00Z"}"#,
+            r#"{"enable":false}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<SetSecretOptions>(json).is_err(),
+                "{json}"
+            );
+            assert!(
+                serde_json::from_str::<UpdateSecretProperties>(json).is_err(),
+                "{json}"
+            );
+        }
+        assert!(serde_json::from_str::<SetSecretOptions>(r#"{"enabled":false}"#).is_ok());
     }
 
     #[test]

@@ -39,8 +39,9 @@ attempts are audited.
 | `vault info` | Metadata and protectors of the selected vault. |
 | `vault protector list` | Installed protectors. |
 | `vault protector add --kind passphrase\|os-keyring [--label L]` | Add another way to unlock (e.g. a passphrase for WSL/Docker/CI). |
-| `vault protector remove ID_OR_LABEL` | Remove a protector. The last one cannot be removed. |
-| `vault destroy NAME [--yes]` | Delete the vault file and its OS-keyring entries. Irreversible. |
+| `vault protector remove ID_OR_LABEL` | Remove a protector. The last one cannot be removed. The OS-keyring entry is deleted after the change is committed, and only if it is provably this vault's. |
+| `vault destroy NAME [--yes] [--keep-os-key]` | Delete the vault file and the OS-keyring entries it provably owns (entries another vault file references are kept and reported). Irreversible. |
+| `vault migrate NAME` | Upgrade a vault written by an older release. Explicit on purpose: older vaults carry no integrity data, so only migrate a file you trust. A file that was already in the current format is refused. |
 
 ## `secret`
 
@@ -67,7 +68,7 @@ sourceorrery audit [--secret NAME] [--operation OP] [--since TIME] [--limit N]
 sourceorrery audit --verify
 ```
 
-Newest first. Operations: `vault_create`, `vault_open`, `vault_migrate`,
+Newest first. Operations: `vault_create`, `vault_open`, `vault_migrate`, `secret_inspect` (metadata reads: properties, versions, deleted-secret details),
 `protector_add`, `protector_remove`, `secret_set`, `secret_get`,
 `secret_list`, `secret_update`, `secret_delete`, `secret_recover`,
 `secret_purge`, `audit_verify`. Outcomes: `success`, `denied` (policy),
@@ -110,13 +111,16 @@ version = "0123456789abcdef0123456789abcdef" # pin a version (optional)
 vault = "payments-sandbox"                   # different vault (optional)
 ```
 
-Any other key — in particular `value` — is a parse error.
+Any other key — in particular `value` — is a parse error, reported by key
+name and position without repeating the offending text. `env` names must be
+unique ignoring case (Windows environments are case-insensitive) and may not
+start with `SOURCEORRERY_`.
 
 | Command | Description |
 |---------|-------------|
 | `init [--project-name N] [--vault-name V] [--path FILE] [--force]` | Write a starter manifest. |
 | `check [--manifest FILE]` | Verify every entry resolves to an accessible version. Reads **metadata only**; writes no `secret_get` audit rows. Fails if a required secret is missing. |
-| `run [--manifest FILE] -- COMMAND [ARGS...]` | Resolve every entry and start `COMMAND` with the values in its environment (plus `SOURCEORRERY_PROJECT`). Missing required secrets abort before the child starts. `--vault` overrides the manifest's default vault. |
+| `run [--manifest FILE] -- COMMAND [ARGS...]` | Resolve every entry and start `COMMAND` with the values in its environment (plus `SOURCEORRERY_PROJECT`). Missing required secrets abort before the child starts; an optional secret whose vault does not exist is skipped. The child never inherits `SOURCEORRERY_PASSPHRASE` or `SOURCEORRERY_PASSPHRASE_FILE`. `--vault` overrides the manifest's default vault. |
 
 The parent process never prints the values; they exist only in the child's
 environment (which other processes running as you can read — see the threat

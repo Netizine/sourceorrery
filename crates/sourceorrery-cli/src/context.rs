@@ -14,6 +14,9 @@ use crate::prompt;
 /// Environment variable that supplies a passphrase directly (CI only).
 pub const PASSPHRASE_ENV: &str = "SOURCEORRERY_PASSPHRASE";
 
+/// Variables that unlock a vault. `run` strips them from the child's environment.
+pub const UNLOCK_ENV_VARS: [&str; 2] = [PASSPHRASE_ENV, "SOURCEORRERY_PASSPHRASE_FILE"];
+
 #[derive(Debug)]
 pub struct Ctx {
     pub registry: VaultRegistry,

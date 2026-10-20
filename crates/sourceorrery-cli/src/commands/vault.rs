@@ -5,7 +5,9 @@ use sourceorrery_core::RecoveryLevel;
 use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, keystore};
 
 use crate::cli::{ProtectorAddArgs, ProtectorCommand, ProtectorRemoveArgs};
-use crate::cli::{ProtectorChoice, VaultCommand, VaultCreateArgs, VaultDestroyArgs};
+use crate::cli::{
+    ProtectorChoice, VaultCommand, VaultCreateArgs, VaultDestroyArgs, VaultMigrateArgs,
+};
 use crate::context::Ctx;
 use crate::output::{self, Table};
 use crate::prompt;
@@ -17,7 +19,23 @@ pub fn run(ctx: &Ctx, cmd: &VaultCommand) -> anyhow::Result<()> {
         VaultCommand::Info => info(ctx),
         VaultCommand::Protector(cmd) => protector(ctx, cmd),
         VaultCommand::Destroy(args) => destroy(ctx, args),
+        VaultCommand::Migrate(args) => migrate(ctx, args),
     }
+}
+
+fn migrate(ctx: &Ctx, args: &VaultMigrateArgs) -> anyhow::Result<()> {
+    let unlocker = ctx.unlocker();
+    let vault = ctx.registry.migrate(&args.name, &unlocker)?;
+    let descriptor = vault.descriptor()?;
+    if ctx.json() {
+        return output::json(&descriptor);
+    }
+    output::success(&format!(
+        "Vault '{}' is at the current on-disk format (schema {})",
+        descriptor.name,
+        sourceorrery_storage::SCHEMA_VERSION
+    ));
+    Ok(())
 }
 
 fn choose_protector(ctx: &Ctx, choice: Option<ProtectorChoice>) -> anyhow::Result<ProtectorSpec> {
@@ -184,11 +202,14 @@ fn protector(ctx: &Ctx, cmd: &ProtectorCommand) -> anyhow::Result<()> {
         }
         ProtectorCommand::Remove(ProtectorRemoveArgs { protector }) => {
             let vault = ctx.open_default()?;
-            vault.remove_protector(protector)?;
+            let note = vault.remove_protector(protector)?;
             if ctx.json() {
-                return output::json(&serde_json::json!({ "removed": protector }));
+                return output::json(&serde_json::json!({ "removed": protector, "note": note }));
             }
             output::success(&format!("Protector '{protector}' removed"));
+            if let Some(note) = note {
+                output::note(&note);
+            }
             Ok(())
         }
     }
@@ -209,10 +230,16 @@ fn destroy(ctx: &Ctx, args: &VaultDestroyArgs) -> anyhow::Result<()> {
     {
         return Err(anyhow!("aborted"));
     }
-    ctx.registry.destroy(&args.name)?;
+    let report = ctx.registry.destroy(&args.name, args.keep_os_key)?;
     if ctx.json() {
-        return output::json(&serde_json::json!({ "destroyed": args.name }));
+        return output::json(&serde_json::json!({ "destroyed": args.name, "keyring": report }));
     }
     output::success(&format!("Vault '{}' destroyed", args.name));
+    for account in &report.removed_keys {
+        eprintln!("  removed OS-keyring entry {account}");
+    }
+    for (account, reason) in &report.kept_keys {
+        output::note(&format!("kept OS-keyring entry {account}: {reason}"));
+    }
     Ok(())
 }

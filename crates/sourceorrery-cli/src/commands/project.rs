@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use anyhow::{Context as _, anyhow};
 use sourceorrery_core::manifest::ManifestEntry;
 use sourceorrery_core::{
-    MANIFEST_FILE_NAME, Manifest, SecretBytes, SecretClient, SecretError, policy, timestamp,
+    MANIFEST_FILE_NAME, Manifest, Secret, SecretBytes, SecretClient, SecretError, policy, timestamp,
 };
 use sourceorrery_storage::SqliteVault;
 
@@ -227,8 +227,19 @@ fn run_inner(ctx: &Ctx, args: &RunArgs) -> anyhow::Result<ExitCode> {
     let mut env: Vec<(String, SecretBytes)> = Vec::with_capacity(entries.len());
     let mut missing: Vec<String> = Vec::new();
     for entry in &entries {
-        let vault = cache.get(&entry.reference.vault)?;
-        match vault.resolve(&entry.reference) {
+        // A vault that does not exist is an ordinary "secret unavailable" for
+        // an optional entry. Any other vault failure (locked, corrupt) is
+        // reported regardless, because it is a problem the user must see.
+        let resolved: Result<Secret, SecretError> = match cache.get(&entry.reference.vault) {
+            Ok(vault) => vault.resolve(&entry.reference),
+            Err(err) => match err.downcast_ref::<SecretError>() {
+                Some(SecretError::VaultNotFound { name }) => {
+                    Err(SecretError::VaultNotFound { name: name.clone() })
+                }
+                _ => return Err(err),
+            },
+        };
+        match resolved {
             Ok(secret) => env.push((entry.env.clone(), secret.value)),
             Err(err) if entry.required => {
                 missing.push(format!("{} ({})", entry.reference, err.code()));
@@ -253,6 +264,11 @@ fn run_inner(ctx: &Ctx, args: &RunArgs) -> anyhow::Result<ExitCode> {
 
     let mut command = std::process::Command::new(program);
     command.args(program_args);
+    // The child gets the declared secrets and nothing that unlocks the vault:
+    // a passphrase in our environment must not become a passphrase in theirs.
+    for var in crate::context::UNLOCK_ENV_VARS {
+        command.env_remove(var);
+    }
     for (key, value) in &env {
         let text = value.expose_utf8().ok_or_else(|| {
             anyhow!("secret for {key} is not valid UTF-8 and cannot be an environment variable")

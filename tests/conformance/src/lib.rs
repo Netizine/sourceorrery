@@ -56,6 +56,13 @@ impl Fixture {
             .open(name, &StaticPassphrase::new(FIXTURE_PASSPHRASE))
             .expect("open vault")
     }
+
+    /// Unlock a legacy-schema fixture vault and migrate it forward.
+    pub fn migrate_vault(&self, name: &str) -> SqliteVault {
+        self.registry
+            .migrate(name, &StaticPassphrase::new(FIXTURE_PASSPHRASE))
+            .expect("migrate vault")
+    }
 }
 
 impl Default for Fixture {

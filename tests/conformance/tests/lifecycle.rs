@@ -513,10 +513,10 @@ fn registry_lists_and_destroys_vaults() {
         "invalid_name"
     );
 
-    fx.registry.destroy("a-vault").unwrap();
+    fx.registry.destroy("a-vault", false).unwrap();
     assert_eq!(fx.registry.list().unwrap(), vec!["b-vault"]);
     assert_eq!(
-        fx.registry.destroy("a-vault").unwrap_err().code(),
+        fx.registry.destroy("a-vault", false).unwrap_err().code(),
         "vault_not_found"
     );
 }
@@ -550,4 +550,159 @@ fn reopening_preserves_everything() {
     assert_eq!(descriptor.name, "dev");
     assert_eq!(descriptor.backend, "encrypted-sqlite");
     assert_eq!(descriptor.protectors, vec!["passphrase"]);
+}
+
+/// Every `SecretClient` operation adds exactly one audit event of its own
+/// operation, success or failure, metadata reads included.
+#[test]
+#[allow(clippy::too_many_lines)] // one block per API operation, deliberately exhaustive
+fn every_operation_leaves_exactly_one_audit_event() {
+    let fx = Fixture::new();
+    let vault = fx.create_vault("dev");
+    let count = |vault: &sourceorrery_storage::SqliteVault| {
+        vault
+            .audit_events(AuditQuery {
+                limit: Some(10_000),
+                ..Default::default()
+            })
+            .unwrap()
+            .len()
+    };
+    let newest = |vault: &sourceorrery_storage::SqliteVault| {
+        vault
+            .audit_events(AuditQuery {
+                limit: Some(1),
+                ..Default::default()
+            })
+            .unwrap()
+            .remove(0)
+    };
+    let expect = |label: &str, op: AuditOperation, outcome: AuditOutcome, before: usize| {
+        let after = count(&vault);
+        assert_eq!(
+            after,
+            before + 1,
+            "{label}: expected exactly one new audit event"
+        );
+        let event = newest(&vault);
+        assert_eq!(
+            (event.operation, event.outcome),
+            (op, outcome),
+            "{label}: {event:?}"
+        );
+    };
+
+    let mut n = count(&vault);
+    set(&vault, "k", "v");
+    expect("set", AuditOperation::SecretSet, AuditOutcome::Success, n);
+    n += 1;
+    vault.get_secret_properties("k", None).unwrap();
+    expect(
+        "get_properties",
+        AuditOperation::SecretInspect,
+        AuditOutcome::Success,
+        n,
+    );
+    n += 1;
+    vault.list_properties_of_secret_versions("k").unwrap();
+    expect(
+        "versions",
+        AuditOperation::SecretInspect,
+        AuditOutcome::Success,
+        n,
+    );
+    n += 1;
+    assert!(vault.get_secret_properties("missing", None).is_err());
+    expect(
+        "get_properties missing",
+        AuditOperation::SecretInspect,
+        AuditOutcome::Failure,
+        n,
+    );
+    n += 1;
+    assert!(
+        vault
+            .list_properties_of_secret_versions("bad_name")
+            .is_err()
+    );
+    let event = newest(&vault);
+    assert_eq!(
+        event.secret_name, None,
+        "invalid names are not recorded: {event:?}"
+    );
+    expect(
+        "versions invalid name",
+        AuditOperation::SecretInspect,
+        AuditOutcome::Failure,
+        n,
+    );
+    n += 1;
+    vault.get_secret("k", None).unwrap();
+    expect("get", AuditOperation::SecretGet, AuditOutcome::Success, n);
+    n += 1;
+    vault.list_properties_of_secrets().unwrap();
+    expect("list", AuditOperation::SecretList, AuditOutcome::Success, n);
+    n += 1;
+    vault.delete_secret("k").unwrap();
+    expect(
+        "delete",
+        AuditOperation::SecretDelete,
+        AuditOutcome::Success,
+        n,
+    );
+    n += 1;
+    vault.get_deleted_secret("k").unwrap();
+    expect(
+        "get_deleted",
+        AuditOperation::SecretInspect,
+        AuditOutcome::Success,
+        n,
+    );
+    n += 1;
+    vault.list_deleted_secrets().unwrap();
+    expect(
+        "list_deleted",
+        AuditOperation::SecretList,
+        AuditOutcome::Success,
+        n,
+    );
+    n += 1;
+    vault.recover_deleted_secret("k").unwrap();
+    expect(
+        "recover",
+        AuditOperation::SecretRecover,
+        AuditOutcome::Success,
+        n,
+    );
+    n += 1;
+    vault
+        .update_secret_properties(
+            "k",
+            None,
+            UpdateSecretProperties {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    expect(
+        "update",
+        AuditOperation::SecretUpdate,
+        AuditOutcome::Success,
+        n,
+    );
+    n += 1;
+    vault.delete_secret("k").unwrap();
+    n += 1;
+    vault.purge_deleted_secret("k").unwrap();
+    expect(
+        "purge",
+        AuditOperation::SecretPurge,
+        AuditOutcome::Success,
+        n,
+    );
+    n += 1;
+    // Reading the log and verifying the chain are read-only.
+    vault.verify_audit_chain().unwrap();
+    assert_eq!(count(&vault), n, "verification must not write events");
 }

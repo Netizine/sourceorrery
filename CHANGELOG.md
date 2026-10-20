@@ -6,6 +6,39 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security — fixes from the 20 October 2026 review
+
+* **Schema rollback no longer launders edits through migration.** The vault
+  key is wrapped under an AAD that names the on-disk schema, `open` refuses
+  older schemas with `migration_required`, and the explicit
+  `vault migrate` aborts when any key proves the file was already in the
+  current format. Migration re-wraps every key it holds.
+* **Vault settings are authenticated** (`settings_tag` over schema, name,
+  id, created time, recovery level and retention) and re-validated on every
+  unlock, so retention can no longer be shortened to force a purge.
+* **Removing the whole audit history and its head is detected** and recorded
+  as a truncation instead of being accepted as a fresh log.
+* **Manifest errors no longer echo rejected values**: diagnostics name keys
+  and positions only. `env` names are compared case-insensitively and may
+  not start with `SOURCEORRERY_`.
+* **`run` strips `SOURCEORRERY_PASSPHRASE` and `SOURCEORRERY_PASSPHRASE_FILE`**
+  from the child's environment, and an optional secret whose vault is
+  missing no longer blocks startup.
+* **Keyring cleanup checks ownership**: `vault destroy` and
+  `vault protector remove` delete an OS-keyring entry only when its account
+  is this vault's own and no sibling vault references it (`--keep-os-key`
+  opts out); protector removal deletes the entry after the database commit
+  and protector creation validates labels before storing a key.
+* **Metadata reads are audited** as `secret_inspect`; invalid-name failures
+  are audited without recording the name.
+* **Argon2 parameters read from a vault are capped** (1 GiB, 64 passes,
+  16 lanes) and at most eight passphrase protectors are tried per attempt.
+* `SetSecretOptions` and `UpdateSecretProperties` reject unknown fields;
+  keys returned by the OS credential store are zeroised after use.
+* Release profile no longer sets `panic = "abort"`, so the C ABI's
+  `SO_STATUS_PANIC` contract holds in release builds; the release matrix
+  uses `macos-15-intel` instead of the retired `macos-13` runner.
+
 ### Added — milestone 1: core, encrypted vault and CLI
 
 * `sourceorrery-core`: `SecretClient` contract modelled on Azure Key Vault

@@ -22,6 +22,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `recovery_level` | `"recoverable"` or `"purgeable"` (JSON string) |
 | `retention_days` | 7–90 |
 | `audit_head` | `<id>:<hex HMAC>` — the newest keyed audit row; see *Audit chain* |
+| `settings_tag` | hex HMAC-SHA256 over the settings record (`schema_version`, `name`, `id`, `created_on`, `recovery_level`, `retention_days`); verified on every unlock |
 
 ### `key_protectors`
 
@@ -31,7 +32,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `label` | unique human label (`os-keyring`, `passphrase`, `ci`, …) |
 | `kind_json` | `{"kind":"os-keyring","service":"sourceorrery","account":"vault/<vault id>/<id>"}` or `{"kind":"passphrase","salt":"<hex 16 bytes>","params":{"memory_kib":65536,"iterations":3,"parallelism":1}}` |
 | `wrapped_nonce` | 24-byte XChaCha20 nonce |
-| `wrapped_dek` | DEK encrypted under the protector's KEK; AAD `sourceorrery/v1/protector/<vault id>/<protector id>` |
+| `wrapped_dek` | DEK encrypted under the protector's KEK; AAD `sourceorrery/v<schema>/protector/<vault id>/<protector id>`, so the wrapped key is bound to the on-disk format it was written for (`v2` now; `v1` only on protectors not yet re-wrapped since a migration) |
 | `created_on` | Unix nanoseconds |
 
 ### `secrets`
@@ -169,18 +170,33 @@ check is read-only.
 ## Compatibility
 
 `schema_version` is checked on open. A **newer** schema is refused with a
-clear `storage` error. An **older** supported schema (currently 1) is
-migrated forward in one transaction the first time it is unlocked: the
-columns above are added, every `secrets` and `secret_versions` row is
-tagged, every existing audit row — including pre-migration failed unlocks —
-is chained under the metadata key, the head is written, `schema_version`
-becomes `2` and a `vault_migrate` / `success` row (`schema 1 -> 2`) is
-appended. A migrated vault can no longer be opened by a schema 1 build.
+clear error. An **older** schema is refused too (`migration_required`):
+migrating is an explicit, one-way command, `sourceorrery vault migrate`,
+because the legacy format carries no integrity data and its contents can
+only be taken on trust.
 
-Argon2 parameters are stored per protector, so defaults can be raised
-without breaking existing vaults. Migrations are forward-only.
+The migration is guarded by the key wrapping. Schema 2 wraps the vault key
+under an AAD that names the format, so a schema 2 file whose marker was
+edited back to `1` cannot be unwrapped as a legacy vault: the protector that
+unlocks it reports the format it was bound to, every OS-keyring protector is
+checked the same way, and a mismatch aborts the migration with `crypto`.
+Only a key genuinely wrapped under the schema 1 AAD enters the migration,
+which then adds the integrity columns, tags every row, chains the audit log,
+writes `settings_tag`, re-wraps every key it holds under the new AAD and
+bumps `schema_version`, all in one transaction. A passphrase protector that
+was not used for the migration is re-wrapped the next time it unlocks the
+vault.
+
+Argon2 parameters stored on a protector are capped before they are run
+(1 GiB, 64 passes, 16 lanes; a protector beyond the ceiling is skipped) and
+at most eight passphrase protectors are tried per attempt.
 
 ## Deleting a vault
 
 `sourceorrery vault destroy <name>` reads the protector table (no unlock
-needed), deletes any OS-keyring entries it references, then removes the file.
+needed) and removes the file. An OS-keyring entry listed there is deleted
+only when its account is exactly `vault/<this vault id>/<protector id>` and
+no other vault file in the same home references it; otherwise it is kept and
+reported, because protector metadata is unauthenticated until the vault is
+unlocked and must not be allowed to point deletion at another vault's key.
+`--keep-os-key` skips credential-store deletion altogether.

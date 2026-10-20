@@ -92,8 +92,8 @@ pub struct ManifestEntry {
 impl Manifest {
     /// Parse TOML text.
     pub fn parse(text: &str) -> Result<Self> {
-        let manifest: Self =
-            toml::from_str(text).map_err(|err| SecretError::Manifest(err.to_string()))?;
+        let manifest: Self = toml::from_str(text)
+            .map_err(|err| SecretError::Manifest(redact_toml_error(text, &err)))?;
         manifest.validate()?;
         Ok(manifest)
     }
@@ -173,9 +173,13 @@ impl Manifest {
             let env = env_name_for(name, requirement);
             validate_env_name(&env)
                 .map_err(|err| SecretError::Manifest(format!("[secrets.{name}].env: {err}")))?;
-            if let Some(previous) = seen_env.insert(env.clone(), name.clone()) {
+            // Windows resolves environment names case-insensitively, so two
+            // entries differing only in case would silently overwrite each
+            // other there. Portable manifests reject that everywhere.
+            if let Some(previous) = seen_env.insert(env.to_ascii_uppercase(), name.clone()) {
                 return Err(SecretError::Manifest(format!(
-                    "secrets '{previous}' and '{name}' both map to environment variable {env}"
+                    "secrets '{previous}' and '{name}' both map to environment variable {env} \
+                     (names are compared case-insensitively for portability)"
                 )));
             }
         }
@@ -225,7 +229,50 @@ fn env_name_for(name: &str, requirement: &SecretRequirement) -> String {
         .unwrap_or_else(|| default_env_name(name))
 }
 
+/// Prefix reserved for SourceOrrery's own variables; a manifest may not
+/// deliver a secret under such a name, so project metadata can never shadow
+/// or expose the tool's unlock configuration.
+pub const RESERVED_ENV_PREFIX: &str = "SOURCEORRERY_";
+
+/// TOML error messages that mention only key names, which are safe to repeat.
+const KEYS_ONLY_MESSAGES: [&str; 3] = ["unknown field", "missing field", "duplicate key"];
+
+/// Describe a TOML error without quoting the document.
+///
+/// `toml`'s `Display` output includes the offending source line, which would
+/// echo a value someone wrongly pasted into the manifest into terminals, JSON
+/// errors and CI logs. Only messages that name keys are repeated; everything
+/// else becomes a category plus a line and column.
+fn redact_toml_error(text: &str, err: &toml::de::Error) -> String {
+    let location = err
+        .span()
+        .map(|span| {
+            let start = span.start.min(text.len());
+            let line = text[..start].matches('\n').count() + 1;
+            let column = text[..start].rsplit('\n').next().map_or(0, str::len) + 1;
+            format!(" at line {line}, column {column}")
+        })
+        .unwrap_or_default();
+    let message = err.message();
+    if KEYS_ONLY_MESSAGES
+        .iter()
+        .any(|prefix| message.starts_with(prefix))
+    {
+        format!("{message}{location}")
+    } else {
+        format!(
+            "invalid TOML syntax or value type{location} \
+             (the offending text is not repeated, in case it is a secret)"
+        )
+    }
+}
+
 fn validate_env_name(env: &str) -> Result<()> {
+    if env.to_ascii_uppercase().starts_with(RESERVED_ENV_PREFIX) {
+        return Err(SecretError::InvalidArgument(format!(
+            "'{env}' is reserved: names starting with {RESERVED_ENV_PREFIX} belong to SourceOrrery"
+        )));
+    }
     let mut chars = env.chars();
     let valid_start = chars
         .next()
@@ -315,6 +362,49 @@ vault = "dev"
 env = "1BAD"
 "#;
         assert!(Manifest::parse(text).is_err());
+    }
+
+    #[test]
+    fn errors_never_echo_the_document() {
+        const CANARY: &str = "REJECTED_VALUE_CANARY_9f1c";
+        let head = "[project]\nname = \"x\"\nvault = \"dev\"\n\n";
+        let cases = [
+            // Unknown field carrying the value.
+            format!("{head}[secrets.db]\nvalue = \"{CANARY}\"\n"),
+            // Wrong type: a secret pasted where a boolean belongs.
+            format!("{head}[secrets.db]\nrequired = \"{CANARY}\"\n"),
+            // Syntax error on a line that contains the value.
+            format!("{head}[secrets.db]\npurpose = {CANARY}\n"),
+            // Unknown top-level table.
+            format!("{head}[values]\ndb = \"{CANARY}\"\n"),
+        ];
+        for text in cases {
+            let err = Manifest::parse(&text).unwrap_err();
+            assert_eq!(err.code(), "manifest");
+            let shown = err.to_string();
+            assert!(
+                !shown.contains(CANARY),
+                "diagnostic echoed the value: {shown}"
+            );
+            assert!(
+                shown.contains("line "),
+                "diagnostic lacks a location: {shown}"
+            );
+        }
+    }
+
+    #[test]
+    fn env_collisions_are_case_insensitive_and_reserved_names_rejected() {
+        let head = "[project]\nname = \"x\"\nvault = \"dev\"\n\n";
+        let text = format!(
+            "{head}[secrets.a-one]\nenv = \"SAME_KEY\"\n\n[secrets.a-two]\nenv = \"same_key\"\n"
+        );
+        let err = Manifest::parse(&text).unwrap_err();
+        assert!(err.to_string().contains("case-insensitively"), "{err}");
+
+        let text = format!("{head}[secrets.a-one]\nenv = \"sourceorrery_passphrase\"\n");
+        let err = Manifest::parse(&text).unwrap_err();
+        assert!(err.to_string().contains("reserved"), "{err}");
     }
 
     #[test]

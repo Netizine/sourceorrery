@@ -301,8 +301,18 @@ fn re_enabled_version_is_rejected() {
     );
 
     // Every refusal is on the record, and the record itself is intact.
-    let failures = events_of(&vault, AuditOperation::SecretGet, AuditOutcome::Failure);
-    assert!(failures.len() >= 3, "{failures:?}");
+    let mut failures = events_of(&vault, AuditOperation::SecretGet, AuditOutcome::Failure);
+    failures.extend(events_of(
+        &vault,
+        AuditOperation::SecretInspect,
+        AuditOutcome::Failure,
+    ));
+    failures.extend(events_of(
+        &vault,
+        AuditOperation::SecretList,
+        AuditOutcome::Failure,
+    ));
+    assert!(failures.len() >= 4, "{failures:?}");
     assert!(
         failures
             .iter()
@@ -851,8 +861,15 @@ fn schema_1_vault_is_migrated_forward_and_protected() {
     let path = fx.registry.vault_path("legacy").unwrap();
     let legacy = craft_schema_1_vault(&path);
 
-    // First unlock migrates; data and policy are unchanged.
-    let vault = fx.open_vault("legacy");
+    // A legacy file is never opened silently: migration is an explicit step.
+    let err = fx
+        .registry
+        .open("legacy", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
+        .unwrap_err();
+    assert_eq!(err.code(), "migration_required", "{err}");
+
+    // The explicit migration unlocks, converts, and leaves data and policy unchanged.
+    let vault = fx.migrate_vault("legacy");
     let alpha = vault.get_secret("alpha", None).unwrap();
     assert_eq!(alpha.properties.version, legacy.alpha_new);
     assert_eq!(alpha.value.expose(), b"alpha-new");
@@ -939,4 +956,258 @@ fn newer_schema_is_refused_cleanly() {
         .unwrap_err();
     assert_eq!(err.code(), "storage");
     assert!(err.to_string().contains("not supported"), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// Format boundary: a rolled-back schema marker is not a legacy vault
+// ---------------------------------------------------------------------------
+
+/// The attack from the review: take a schema 2 vault, edit policy and
+/// history, strip the integrity data and set the marker back to 1, then let
+/// the owner unlock it so the migration re-authenticates the edits.
+fn roll_back_to_schema_1(path: &Path) {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.execute_batch(
+        "UPDATE vault_meta SET value = '1' WHERE key = 'schema_version';
+         DELETE FROM vault_meta WHERE key IN ('audit_head', 'settings_tag');
+         UPDATE secret_versions SET enabled = 1, tag = NULL;
+         UPDATE secrets SET tag = NULL;
+         UPDATE audit_events SET outcome = 'success', prev_hash = NULL, hash = NULL, keyed = 0;",
+    )
+    .unwrap();
+}
+
+#[test]
+fn rolled_back_schema_marker_is_refused_by_open_and_by_migrate() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    {
+        let vault = fx.create_vault("dev");
+        set_with(
+            &vault,
+            "k",
+            CANARY,
+            SetSecretOptions {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        assert_eq!(vault.get_secret("k", None).unwrap_err().code(), "disabled");
+    }
+    roll_back_to_schema_1(&path);
+
+    // Plain open never migrates.
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "migration_required", "{err}");
+
+    // The explicit migration sees a key bound to schema 2 and refuses.
+    let err = fx.registry.migrate("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string().contains("rolled back") || err.to_string().contains("altered"),
+        "{err}"
+    );
+
+    // Nothing was laundered: the disabled secret is still unreadable.
+    let still_locked = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(still_locked.code(), "migration_required");
+}
+
+#[test]
+fn migrated_legacy_vault_cannot_be_rolled_back_again() {
+    let fx = Fixture::new();
+    std::fs::create_dir_all(fx.registry.vaults_dir()).unwrap();
+    let path = fx.registry.vault_path("legacy").unwrap();
+    let legacy = craft_schema_1_vault(&path);
+
+    // Genuine legacy file: the explicit migration is allowed once.
+    let vault = fx.migrate_vault("legacy");
+    assert_eq!(
+        vault
+            .get_secret("alpha", Some(&legacy.alpha_old))
+            .unwrap_err()
+            .code(),
+        "disabled"
+    );
+    drop(vault);
+
+    // The migration re-wrapped the unlocking key under schema 2, so the same
+    // trick no longer works on this file.
+    roll_back_to_schema_1(&path);
+    let err = fx
+        .registry
+        .migrate("legacy", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
+        .unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// Audit log: removing everything is not a fresh start
+// ---------------------------------------------------------------------------
+
+#[test]
+fn removing_all_audit_rows_and_the_head_is_detected() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", "v", SetSecretOptions::default());
+        vault.get_secret("k", None).unwrap();
+    }
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "DELETE FROM audit_events; DELETE FROM vault_meta WHERE key = 'audit_head';",
+        )
+        .unwrap();
+    }
+    let vault = fx.open_vault("dev");
+    let check = vault.verify_audit_chain().unwrap();
+    assert!(!check.is_intact(), "{check:?}");
+    assert_eq!(check.truncations, 1, "{check:?}");
+    let detections = events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Failure);
+    assert!(
+        detections[0]
+            .detail
+            .as_deref()
+            .is_some_and(|d| d.contains("history missing")),
+        "{detections:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Vault settings are authenticated
+// ---------------------------------------------------------------------------
+
+fn settings_tamper(sql: &str) -> sourceorrery_core::SecretError {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", "v", SetSecretOptions::default());
+        vault.delete_secret("k").unwrap();
+    }
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(sql).unwrap();
+    }
+    fx.registry
+        .open("dev", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
+        .unwrap_err()
+}
+
+#[test]
+fn shortened_retention_or_changed_recovery_level_is_refused() {
+    for sql in [
+        "UPDATE vault_meta SET value = '0' WHERE key = 'retention_days'",
+        "UPDATE vault_meta SET value = '7' WHERE key = 'retention_days'",
+        "UPDATE vault_meta SET value = '\"purgeable\"' WHERE key = 'recovery_level'",
+        "UPDATE vault_meta SET value = 'other' WHERE key = 'name'",
+        "DELETE FROM vault_meta WHERE key = 'settings_tag'",
+    ] {
+        let err = settings_tamper(sql);
+        assert_eq!(err.code(), "crypto", "{sql}: {err}");
+        assert!(err.to_string().contains("settings"), "{sql}: {err}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resource ceilings before authentication
+// ---------------------------------------------------------------------------
+
+#[test]
+fn oversized_kdf_parameters_are_skipped_not_run() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    fx.create_vault("dev");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE key_protectors SET kind_json = replace(kind_json, '\"iterations\":1', '\"iterations\":100000')",
+            [],
+        )
+        .unwrap();
+    }
+    let started = std::time::Instant::now();
+    let err = fx
+        .registry
+        .open("dev", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
+        .unwrap_err();
+    assert_eq!(err.code(), "locked", "{err}");
+    assert!(err.to_string().contains("limits"), "{err}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "unlock ran the oversized KDF"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Destroying a vault must not reach into another vault's keyring entry
+// ---------------------------------------------------------------------------
+
+fn vault_id(path: &Path) -> String {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.query_row("SELECT value FROM vault_meta WHERE key = 'id'", [], |r| {
+        r.get(0)
+    })
+    .unwrap()
+}
+
+fn insert_keyring_protector_row(path: &Path, protector_id: &str, account: &str) {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.execute(
+        "INSERT INTO key_protectors (id, label, kind_json, wrapped_nonce, wrapped_dek, created_on)
+         VALUES (?1, ?2, ?3, zeroblob(24), zeroblob(48), 0)",
+        rusqlite::params![
+            protector_id,
+            format!("fake-{protector_id}"),
+            format!(
+                "{{\"kind\":\"os-keyring\",\"service\":\"sourceorrery\",\"account\":\"{account}\"}}"
+            ),
+        ],
+    )
+    .unwrap();
+}
+
+#[test]
+fn destroy_keeps_keyring_entries_it_cannot_prove_it_owns() {
+    let fx = Fixture::new();
+    fx.create_vault("dev");
+    fx.create_vault("other");
+    let dev = fx.registry.vault_path("dev").unwrap();
+    let other = fx.registry.vault_path("other").unwrap();
+    let other_id = vault_id(&other);
+    let dev_id = vault_id(&dev);
+
+    // 1. An account that names another vault's identity (plain substitution).
+    insert_keyring_protector_row(&dev, "aaaaaaaa", &format!("vault/{other_id}/aaaaaaaa"));
+    // 2. An account that matches this vault's identity but is also listed by
+    //    a sibling vault file (a cloned vault).
+    let shared = format!("vault/{dev_id}/bbbbbbbb");
+    insert_keyring_protector_row(&dev, "bbbbbbbb", &shared);
+    insert_keyring_protector_row(&other, "bbbbbbbb", &shared);
+
+    let report = fx.registry.destroy("dev", false).unwrap();
+    assert!(report.removed_keys.is_empty(), "{report:?}");
+    let kept: Vec<&str> = report.kept_keys.iter().map(|(a, _)| a.as_str()).collect();
+    assert!(
+        kept.contains(&format!("vault/{other_id}/aaaaaaaa").as_str()),
+        "{report:?}"
+    );
+    assert!(kept.contains(&shared.as_str()), "{report:?}");
+    assert!(!fx.registry.exists("dev"));
+    assert!(fx.registry.exists("other"));
+
+    // --keep-os-key never touches the store at all.
+    insert_keyring_protector_row(&other, "cccccccc", &format!("vault/{other_id}/cccccccc"));
+    let report = fx.registry.destroy("other", true).unwrap();
+    assert!(report.removed_keys.is_empty(), "{report:?}");
+    assert!(
+        report
+            .kept_keys
+            .iter()
+            .all(|(_, why)| why.contains("request")),
+        "{report:?}"
+    );
 }

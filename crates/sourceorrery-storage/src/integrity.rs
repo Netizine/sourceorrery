@@ -49,6 +49,12 @@ pub(crate) const AUDIT_HEAD_DOMAIN: &str = "sourceorrery/v2/audit-head";
 /// `vault_meta` key holding the audit chain head.
 pub(crate) const AUDIT_HEAD_KEY: &str = "audit_head";
 
+/// Domain of the vault settings tag.
+pub(crate) const SETTINGS_DOMAIN: &str = "sourceorrery/v2/settings";
+
+/// `vault_meta` key holding the hex HMAC over the vault-wide settings.
+pub(crate) const SETTINGS_KEY: &str = "settings_tag";
+
 /// `prev_hash` of the first audit row.
 pub(crate) const ZERO_HASH: [u8; MAC_LEN] = [0u8; MAC_LEN];
 
@@ -306,6 +312,54 @@ pub(crate) fn head_matches(
         return false;
     };
     crypto::verify_mac(key, &head_canonical(vault_id, id, hash), &mac).is_ok()
+}
+
+// ---------------------------------------------------------------------------
+// Vault settings
+// ---------------------------------------------------------------------------
+
+/// The vault-wide settings that drive policy: authenticated as one record so
+/// that an edit to the file cannot shorten retention, flip the recovery
+/// level, rename the vault or claim a different schema version.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SettingsFields<'a> {
+    pub vault_id: &'a str,
+    pub schema: u32,
+    pub name: &'a str,
+    pub created_on: i64,
+    /// `recovery_level` exactly as stored (its JSON string).
+    pub recovery_level: &'a str,
+    pub retention_days: u32,
+}
+
+fn settings_canonical(fields: &SettingsFields<'_>) -> Vec<u8> {
+    Canonical::new(SETTINGS_DOMAIN, fields.vault_id)
+        .int(i64::from(fields.schema))
+        .str(fields.name)
+        .int(fields.created_on)
+        .str(fields.recovery_level)
+        .int(i64::from(fields.retention_days))
+        .finish()
+}
+
+/// Hex HMAC over the settings record, stored under [`SETTINGS_KEY`].
+pub(crate) fn settings_tag(key: &SymmetricKey, fields: &SettingsFields<'_>) -> String {
+    hex::encode(crypto::mac(key, &settings_canonical(fields)))
+}
+
+/// True when `tag` was produced by [`settings_tag`] for exactly these settings.
+pub(crate) fn verify_settings_tag(
+    key: &SymmetricKey,
+    fields: &SettingsFields<'_>,
+    tag: Option<&str>,
+) -> bool {
+    let Some(tag) = tag else {
+        return false;
+    };
+    let Ok(mac) = hex::decode(tag) else {
+        return false;
+    };
+    crypto::verify_mac(key, &settings_canonical(fields), &mac).is_ok()
 }
 
 // ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 |-----------|------------|---------------------|
 | **Repository reader** — anyone with the git history, a leaked archive, a code-indexing service, an LLM fed the repo | Reads every committed file | Nothing to find: no `.env`, manifest cannot hold values, references contain no material. |
 | **Offline disk reader** — stolen laptop, backup, cloud sync of the data directory | Reads the vault file and (if synced) OS-store artefacts | Values are XChaCha20-Poly1305 ciphertext. Passphrase KEK needs Argon2id (64 MiB, 3 passes). OS-keyring KEK is protected by the platform store's own at-rest protection (DPAPI / Keychain / login keyring). |
-| **Tamperer** — can modify the vault file but cannot unlock it | Swaps or edits ciphertext, flips `enabled`, edits timestamps or tags, undeletes a secret, edits or deletes audit rows | Ciphertext swap/edit is detected (AAD binding + AEAD tag). Mutable metadata carries an HMAC under a key derived from the DEK, checked on every read: a re-enabled version, extended expiry, cleared `not_before`, edited tags or forged deletion state is refused with `crypto` and audited. The audit log is a keyed hash chain with a keyed head record: edits, gaps and reordering break the chain; rows removed from the end are detected and recorded at the next unlock. Rows written before unlock (failed attempts) are chained with a public key: forgeable, but not silently removable. |
+| **Tamperer** — can modify the vault file but cannot unlock it | Swaps or edits ciphertext, flips `enabled`, edits timestamps or tags, undeletes a secret, edits or deletes audit rows | Ciphertext swap/edit is detected (AAD binding + AEAD tag). Mutable metadata carries an HMAC under a key derived from the DEK, checked on every read: a re-enabled version, extended expiry, cleared `not_before`, edited tags or forged deletion state is refused with `crypto` and audited. The audit log is a keyed hash chain with a keyed head record: edits, gaps and reordering break the chain; rows removed from the end are detected and recorded at the next unlock. Rows written before unlock (failed attempts) are chained with a public key: forgeable, but not silently removable. Vault-wide settings (schema, name, recovery level, retention) carry their own HMAC, so retention cannot be shortened to force a purge. A schema marker rolled back to the legacy format is refused: the vault key is wrapped under an AAD that names the format, and migration is only ever an explicit command. Removing the whole audit history together with its head is recorded, not accepted as a fresh log. |
 | **Careless operator / agent reading output** | Sees stdout/stderr of CLI commands, logs, JSON | Metadata commands never show values; `--reveal` is explicit; prompts never echo; `-v` never prints values. |
 | **Same-user malicious process or agent** | Runs code as you, reads your memory, calls the CLI, reads the OS credential store under your login | **Not defended.** Can call `secret get --reveal` exactly as you can. This is the honest boundary of a local-first tool and the reason the broker exists. |
 | **Root / kernel / debugger** | Everything | Out of scope. Memory hygiene (zeroisation, short-lived plaintext) reduces residue; it does not resist a privileged attacker. |
@@ -54,6 +54,14 @@ treated as secrets. Users are told not to put sensitive information in them.
 | Secure deletion on purge | SQLite `secure_delete = ON` |
 | File permissions | `0700` dir / `0600` file on Unix; profile ACLs on Windows |
 | Memory hygiene | `zeroize` on `SecretBytes`, `SymmetricKey`, decrypted buffers |
+| Authenticated vault settings | HMAC over schema, name, recovery level and retention, verified on every unlock |
+| Format bound into key wrapping | The wrapped vault key's AAD names the schema; a rolled-back marker cannot unwrap as legacy |
+| Explicit, one-way legacy migration | `vault migrate` only; plain `open` refuses older schemas |
+| Audit history must exist | An existing vault with no rows and no head is a detected truncation, never a fresh start |
+| Resource ceilings before authentication | Argon2 parameters from the file are capped (1 GiB, 64 passes, 16 lanes); at most 8 passphrase protectors are tried |
+| Keyring entries deleted only when provably this vault's | Account must match the vault's own identity and no sibling vault may reference it; `--keep-os-key` opts out |
+| No secret echoes in diagnostics | Manifest parse errors report a category and position, never the offending text |
+| Child environment hygiene | `run` removes `SOURCEORRERY_PASSPHRASE` and `SOURCEORRERY_PASSPHRASE_FILE` from the child; manifests cannot deliver under `SOURCEORRERY_*` names |
 
 ## Known gaps (milestone 1)
 
@@ -73,6 +81,21 @@ treated as secrets. Users are told not to put sensitive information in them.
    recorded, not prevented or repaired; keep backups. The chain is only as
    trustworthy as the key: anyone who can unlock the vault can rewrite its
    history, which is the same-user boundary above.
+6. **Complete-snapshot rollback.** Restoring an older copy of the entire
+   vault file is a consistent, correctly authenticated state; nothing inside
+   the file can show that newer history existed. Detecting it needs a
+   checkpoint kept outside the file: the id and hash reported by
+   `audit --verify`, or a backup to compare with.
+7. **Legacy import is trusted once.** A genuine schema 1 vault has no
+   integrity data, so `vault migrate` takes its contents at face value, by
+   explicit command, exactly once. A passphrase protector that was not used
+   for the migration stays bound to the old format until it next unlocks the
+   vault, and until then a rollback attack through that passphrase remains
+   possible on that file.
+8. **Keyring cleanup sees only this home.** `vault destroy` refuses to delete
+   a credential-store entry that another vault file in the same home
+   references, but a copy of the vault kept elsewhere is invisible to that
+   check; use `--keep-os-key` when a vault file has been copied.
 
 ## Planned (milestone 3): the hard problem
 

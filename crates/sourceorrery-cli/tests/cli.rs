@@ -337,3 +337,94 @@ fn no_arguments_prints_the_banner_without_touching_a_vault() {
     assert!(text.contains('\u{2588}'), "half-block art expected");
     assert!(text.contains("sourceorrery.ai"));
 }
+
+#[test]
+fn run_does_not_pass_the_unlock_passphrase_to_the_child() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.set("development", "database-password", "pw");
+    let init = env.run(&["init", "--project-name", "demo"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    // The child reports whether the unlock variable reached it.
+    let probe: &[&str] = if cfg!(windows) {
+        &[
+            "run",
+            "--",
+            "cmd",
+            "/C",
+            "if defined SOURCEORRERY_PASSPHRASE (echo LEAK) else (echo CLEAN)",
+        ]
+    } else {
+        &[
+            "run",
+            "--",
+            "sh",
+            "-c",
+            "if [ -n \"$SOURCEORRERY_PASSPHRASE\" ]; then echo LEAK; else echo CLEAN; fi",
+        ]
+    };
+    let out = env.run(probe);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out).trim(), "CLEAN");
+}
+
+#[test]
+fn optional_secret_in_a_missing_vault_does_not_block_run() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.set("development", "database-password", "pw");
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
+         [secrets.database-password]\n\n\
+         [secrets.extra-key]\nrequired = false\nvault = \"nowhere\"\n",
+    )
+    .unwrap();
+    let out = env.run(&["check"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    let echo: &[&str] = if cfg!(windows) {
+        &["run", "--", "cmd", "/C", "echo %DATABASE_PASSWORD%"]
+    } else {
+        &["run", "--", "sh", "-c", "echo \"$DATABASE_PASSWORD\""]
+    };
+    let out = env.run(echo);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out).trim(), "pw");
+
+    // A required secret in a missing vault still refuses to start.
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
+         [secrets.extra-key]\nrequired = true\nvault = \"nowhere\"\n",
+    )
+    .unwrap();
+    let out = env.run(echo);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("vault_not_found"), "{}", stderr(&out));
+}
+
+#[test]
+fn manifest_errors_do_not_echo_rejected_values() {
+    const CANARY: &str = "REJECTED_VALUE_CANARY_cli";
+    let env = Env::new();
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        format!("[project]\nname = \"demo\"\nvault = \"development\"\n\n[secrets.db]\nvalue = \"{CANARY}\"\n"),
+    )
+    .unwrap();
+    for format in [&["check"][..], &["check", "-o", "json"][..]] {
+        let out = env.run(format);
+        assert!(!out.status.success());
+        let text = stderr(&out) + &stdout(&out);
+        assert!(
+            !text.contains(CANARY),
+            "diagnostic echoed the value: {text}"
+        );
+        assert!(
+            text.contains("value"),
+            "diagnostic should still name the key: {text}"
+        );
+    }
+}

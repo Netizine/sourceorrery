@@ -15,7 +15,9 @@ use sourceorrery_core::{
 use sourceorrery_crypto::{Ciphertext, MAC_LEN, SymmetricKey, aead, envelope, kdf, random};
 use time::OffsetDateTime;
 
-use crate::integrity::{self, AuditFields, AuditVerification, SecretFields, VersionFields};
+use crate::integrity::{
+    self, AuditFields, AuditVerification, SecretFields, SettingsFields, VersionFields,
+};
 use crate::keystore;
 use crate::protector::{ProtectorInfo, ProtectorKind, ProtectorRecord, ProtectorSpec};
 use crate::registry::restrict_permissions;
@@ -25,8 +27,35 @@ use crate::{BACKEND_NAME, SCHEMA_VERSION};
 /// Maximum passphrase attempts per `open`.
 pub const MAX_UNLOCK_ATTEMPTS: u32 = 3;
 
+/// Most passphrase protectors tried per attempt. Each one costs an Argon2id
+/// derivation whose parameters come from the file, so the total work an
+/// unlock can be made to do is bounded here and in `Argon2Params::MAX`.
+const MAX_PASSPHRASE_PROTECTORS: usize = 8;
+
 /// Oldest on-disk schema this build can open (and migrate forward).
 const OLDEST_SUPPORTED_SCHEMA: u32 = 1;
+
+/// Options for [`SqliteVault::open_with`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OpenOptions {
+    /// Unlock a vault written by an older schema and migrate it forward.
+    ///
+    /// Off by default. The legacy format is unauthenticated, so migrating is
+    /// a trust decision the user makes explicitly (`vault migrate`); plain
+    /// `open` refuses with [`SecretError::MigrationRequired`]. Even when set,
+    /// a file whose key material shows it was already in the current format
+    /// is refused, because that means the schema marker was rolled back.
+    pub allow_legacy_migration: bool,
+}
+
+/// What unlocked the vault: needed afterwards to re-wrap the key under the
+/// current format and to judge a legacy schema marker.
+struct Unlocked {
+    protector_id: String,
+    kek: SymmetricKey,
+    /// Schema whose AAD the stored wrapped key was bound to.
+    wrapped_schema: u32,
+}
 
 /// Settings fixed at vault creation.
 #[derive(Clone, Copy, Debug)]
@@ -53,7 +82,11 @@ struct Meta {
     id: String,
     created_on: OffsetDateTime,
     recovery_level: RecoveryLevel,
+    /// `recovery_level` exactly as stored; part of the settings tag.
+    recovery_level_raw: String,
     retention_days: u32,
+    /// Hex HMAC over the settings, or `None` on a legacy (schema 1) file.
+    settings_tag: Option<String>,
 }
 
 impl Meta {
@@ -61,6 +94,17 @@ impl Meta {
         SoftDeletePolicy {
             retention_days: self.retention_days,
         }
+    }
+
+    fn settings_fields(&self) -> Result<SettingsFields<'_>> {
+        Ok(SettingsFields {
+            vault_id: &self.id,
+            schema: self.schema,
+            name: &self.name,
+            created_on: nanos(self.created_on)?,
+            recovery_level: &self.recovery_level_raw,
+            retention_days: self.retention_days,
+        })
     }
 }
 
@@ -202,8 +246,12 @@ fn value_aad(vault_id: &str, name: &str, version: &str) -> String {
     format!("sourceorrery/v1/value/{vault_id}/{name}/{version}")
 }
 
-fn protector_aad(vault_id: &str, protector_id: &str) -> String {
-    format!("sourceorrery/v1/protector/{vault_id}/{protector_id}")
+/// AAD binding a wrapped vault key to its protector *and* to the on-disk
+/// schema it was wrapped under. A key wrapped under schema 2 cannot be
+/// unwrapped as if the file were schema 1, which is what lets a rolled-back
+/// schema marker be told apart from a genuine legacy vault.
+fn protector_aad(vault_id: &str, protector_id: &str, schema: u32) -> String {
+    format!("sourceorrery/v{schema}/protector/{vault_id}/{protector_id}")
 }
 
 fn recovery_id(vault: &str, name: &str) -> String {
@@ -398,6 +446,10 @@ struct AuditWriter<'a> {
     meta: &'a Meta,
     key: Option<&'a SymmetricKey>,
     actor: &'a Principal,
+    /// Accept a log with no rows and no head record. True only while a vault
+    /// is being created or migrated; for an existing vault that state means
+    /// the whole history and its head were removed.
+    allow_empty_chain: bool,
 }
 
 impl AuditWriter<'_> {
@@ -457,7 +509,7 @@ impl AuditWriter<'_> {
         detail: Option<&str>,
     ) -> Result<()> {
         if let Some(key) = self.key
-            && let Some(problem) = head_problem(conn, key, &self.meta.id)?
+            && let Some(problem) = head_problem(conn, key, &self.meta.id, self.allow_empty_chain)?
         {
             self.append_row(
                 conn,
@@ -618,9 +670,15 @@ fn last_keyed_row(conn: &Connection) -> Result<Option<(i64, Vec<u8>)>> {
 /// Compare the recorded chain head with the newest keyed row. `None` when
 /// they agree; otherwise a short, value-free description of the problem,
 /// suitable as audit detail.
-fn head_problem(conn: &Connection, key: &SymmetricKey, vault_id: &str) -> Result<Option<String>> {
+fn head_problem(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+    allow_empty: bool,
+) -> Result<Option<String>> {
     Ok(match (read_head(conn)?, last_keyed_row(conn)?) {
-        (None, None) => None,
+        (None, None) if allow_empty => None,
+        (None, None) => Some("audit history missing: no keyed rows and no head record".to_owned()),
         (None, Some(_)) => Some("audit chain head missing".to_owned()),
         (Some(_), None) => Some("audit chain head stale: no keyed rows remain".to_owned()),
         (Some(head), Some((id, hash))) => {
@@ -684,22 +742,24 @@ impl SqliteVault {
         conn.execute_batch(SCHEMA).map_err(db)?;
 
         let now = timestamp::now();
+        let recovery_level_raw = serde_json::to_string(&options.recovery_level)
+            .map_err(|err| SecretError::Storage(err.to_string()))?;
         let meta = Meta {
             schema: SCHEMA_VERSION,
             name: name.to_owned(),
             id: random::random_hex(16).map_err(crypto)?,
             created_on: now,
             recovery_level: options.recovery_level,
+            recovery_level_raw: recovery_level_raw.clone(),
             retention_days: options.retention_days,
+            settings_tag: None,
         };
-        let recovery_level = serde_json::to_string(&meta.recovery_level)
-            .map_err(|err| SecretError::Storage(err.to_string()))?;
         let rows: [(&str, String); 6] = [
             ("schema_version", SCHEMA_VERSION.to_string()),
             ("name", meta.name.clone()),
             ("id", meta.id.clone()),
             ("created_on", nanos(now)?.to_string()),
-            ("recovery_level", recovery_level),
+            ("recovery_level", recovery_level_raw),
             ("retention_days", meta.retention_days.to_string()),
         ];
         for (key, value) in rows {
@@ -714,10 +774,12 @@ impl SqliteVault {
         let metadata_key = integrity::derive_metadata_key(&dek);
         let actor = Principal::local_user();
         add_protector(&conn, &meta, &dek, protector, None)?;
+        write_settings_tag(&conn, &metadata_key, &meta)?;
         AuditWriter {
             meta: &meta,
             key: Some(&metadata_key),
             actor: &actor,
+            allow_empty_chain: true,
         }
         .record(
             &conn,
@@ -744,9 +806,19 @@ impl SqliteVault {
     /// unlocks the vault, `unlock` is asked for a passphrase up to
     /// [`MAX_UNLOCK_ATTEMPTS`] times. Every failed attempt is audited.
     ///
-    /// A vault written by an older schema version is migrated forward, in
-    /// one transaction, the first time it is unlocked by this build.
+    /// A vault written by an older schema version is **not** opened: the
+    /// call fails with [`SecretError::MigrationRequired`]. Use
+    /// [`SqliteVault::open_with`] (or `vault migrate`) to migrate it.
     pub fn open(path: &Path, unlock: &dyn UnlockProvider) -> Result<Self> {
+        Self::open_with(path, unlock, OpenOptions::default())
+    }
+
+    /// [`SqliteVault::open`] with options.
+    pub fn open_with(
+        path: &Path,
+        unlock: &dyn UnlockProvider,
+        options: OpenOptions,
+    ) -> Result<Self> {
         if !path.is_file() {
             return Err(SecretError::VaultNotFound {
                 name: path
@@ -758,6 +830,12 @@ impl SqliteVault {
         }
         let conn = open_connection(path)?;
         let meta = read_meta(&conn)?;
+        if meta.schema < SCHEMA_VERSION && !options.allow_legacy_migration {
+            return Err(SecretError::MigrationRequired {
+                name: meta.name,
+                schema: meta.schema,
+            });
+        }
         let protectors = read_protectors(&conn)?;
         let actor = Principal::local_user();
         if protectors.is_empty() {
@@ -770,6 +848,7 @@ impl SqliteVault {
             meta: &meta,
             key: None,
             actor: &actor,
+            allow_empty_chain: false,
         };
 
         let mut reasons: Vec<String> = Vec::new();
@@ -783,7 +862,14 @@ impl SqliteVault {
             };
             match keystore::load_key(account) {
                 Ok(Some(kek)) => match try_unwrap(&meta, protector, &kek) {
-                    Ok(dek) => return Self::finish_open(conn, dek, meta, path, actor),
+                    Ok((dek, wrapped_schema)) => {
+                        let unlocked = Unlocked {
+                            protector_id: protector.id.clone(),
+                            kek,
+                            wrapped_schema,
+                        };
+                        return Self::finish_open(conn, dek, meta, path, actor, &unlocked);
+                    }
                     Err(err) => reasons.push(format!("{}: {err}", protector.label)),
                 },
                 Ok(None) => reasons.push(format!(
@@ -795,53 +881,10 @@ impl SqliteVault {
             }
         }
 
-        let passphrase_protectors: Vec<&ProtectorRecord> = protectors
-            .iter()
-            .filter(|p| matches!(p.kind, ProtectorKind::Passphrase { .. }))
-            .collect();
-
-        if passphrase_protectors.is_empty() {
-            reasons.push("no passphrase protector is installed".to_owned());
-        } else {
-            let labels = passphrase_protectors
-                .iter()
-                .map(|p| p.label.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            for attempt in 1..=MAX_UNLOCK_ATTEMPTS {
-                let prompt = PassphrasePrompt {
-                    vault: &meta.name,
-                    protector_label: &labels,
-                    attempt,
-                    max_attempts: MAX_UNLOCK_ATTEMPTS,
-                };
-                let Some(passphrase) = unlock.passphrase(&prompt)? else {
-                    reasons.push("no passphrase supplied".to_owned());
-                    break;
-                };
-                for protector in &passphrase_protectors {
-                    let ProtectorKind::Passphrase { salt, params } = &protector.kind else {
-                        continue;
-                    };
-                    let salt = hex::decode(salt).map_err(|_| {
-                        SecretError::Storage(format!("corrupt salt on protector {}", protector.id))
-                    })?;
-                    let kek =
-                        kdf::derive_key(passphrase.expose(), &salt, *params).map_err(crypto)?;
-                    if let Ok(dek) = try_unwrap(&meta, protector, &kek) {
-                        return Self::finish_open(conn, dek, meta, path, actor);
-                    }
-                }
-                unkeyed.record(
-                    &conn,
-                    AuditOperation::VaultOpen,
-                    None,
-                    None,
-                    AuditOutcome::Denied,
-                    Some("incorrect passphrase"),
-                )?;
-                reasons.push(format!("passphrase attempt {attempt} rejected"));
-            }
+        if let Some((dek, unlocked)) =
+            try_passphrases(&conn, &meta, &protectors, unlock, &unkeyed, &mut reasons)?
+        {
+            return Self::finish_open(conn, dek, meta, path, actor, &unlocked);
         }
 
         unkeyed.record(
@@ -861,15 +904,76 @@ impl SqliteVault {
         mut meta: Meta,
         path: &Path,
         actor: Principal,
+        unlocked: &Unlocked,
     ) -> Result<Self> {
         let metadata_key = integrity::derive_metadata_key(&dek);
         if meta.schema < SCHEMA_VERSION {
-            migrate_v1_to_v2(&mut conn, &mut meta, &metadata_key, &actor)?;
+            // The file says "legacy" but only key material is trustworthy:
+            // a key wrapped under the current schema proves the marker was
+            // rolled back, and the migration must not launder that file.
+            let rolled_back = unlocked.wrapped_schema >= SCHEMA_VERSION
+                || any_keyring_protector_wrapped_current(&conn, &meta)?;
+            if rolled_back {
+                AuditWriter {
+                    meta: &meta,
+                    key: None,
+                    actor: &actor,
+                    allow_empty_chain: false,
+                }
+                .record(
+                    &conn,
+                    AuditOperation::VaultMigrate,
+                    None,
+                    None,
+                    AuditOutcome::Failure,
+                    Some("schema marker rolled back"),
+                )?;
+                return Err(SecretError::Crypto(
+                    "vault reports an older schema but its key is bound to the current one: \
+                     the schema marker was altered; refusing to migrate"
+                        .to_owned(),
+                ));
+            }
+            migrate_v1_to_v2(&mut conn, &mut meta, &dek, &metadata_key, &actor, unlocked)?;
+        } else {
+            let fields = meta.settings_fields()?;
+            let settings_ok = integrity::verify_settings_tag(
+                &metadata_key,
+                &fields,
+                meta.settings_tag.as_deref(),
+            ) && SoftDeletePolicy::new(meta.retention_days).is_ok();
+            if !settings_ok {
+                AuditWriter {
+                    meta: &meta,
+                    key: Some(&metadata_key),
+                    actor: &actor,
+                    allow_empty_chain: false,
+                }
+                .record(
+                    &conn,
+                    AuditOperation::VaultOpen,
+                    None,
+                    None,
+                    AuditOutcome::Failure,
+                    Some("settings integrity check failed"),
+                )?;
+                return Err(SecretError::Crypto(
+                    "vault settings integrity check failed (schema, name, recovery level or \
+                     retention were altered)"
+                        .to_owned(),
+                ));
+            }
+            if unlocked.wrapped_schema < SCHEMA_VERSION {
+                // A protector left over from a migration that could not
+                // re-wrap it (another passphrase): bind it now that we can.
+                rewrap_protector(&conn, &meta, &dek, &unlocked.protector_id, &unlocked.kek)?;
+            }
         }
         AuditWriter {
             meta: &meta,
             key: Some(&metadata_key),
             actor: &actor,
+            allow_empty_chain: false,
         }
         .record(
             &conn,
@@ -891,17 +995,25 @@ impl SqliteVault {
         Ok(vault)
     }
 
-    /// Remove OS-keyring entries referenced by the vault at `path`, without
-    /// unlocking it. Used before deleting a vault file.
-    pub(crate) fn forget_protectors(path: &Path) -> Result<()> {
+    /// OS-keyring accounts referenced by the vault at `path`, without
+    /// unlocking it, each with whether the account is the one this vault
+    /// would have created for that protector (`vault/<vault id>/<protector
+    /// id>`). Protector metadata is unauthenticated until the vault is
+    /// unlocked, so callers must not delete an account that fails that
+    /// check, and should also make sure no other vault references it.
+    pub(crate) fn keyring_accounts(path: &Path) -> Result<Vec<(String, bool)>> {
         let conn = open_connection(path)?;
-        for protector in read_protectors(&conn)? {
-            if let ProtectorKind::OsKeyring { account, .. } = &protector.kind {
-                // Best effort: a missing store must not block deletion.
-                let _ = keystore::delete_key(account);
-            }
-        }
-        Ok(())
+        let meta = read_meta(&conn)?;
+        Ok(read_protectors(&conn)?
+            .into_iter()
+            .filter_map(|protector| match protector.kind {
+                ProtectorKind::OsKeyring { account, .. } => {
+                    let owned = account == keyring_account(&meta.id, &protector.id);
+                    Some((account, owned))
+                }
+                ProtectorKind::Passphrase { .. } => None,
+            })
+            .collect())
     }
 
     /// Replace the principal recorded in audit events (default: OS user).
@@ -959,7 +1071,13 @@ impl SqliteVault {
 
     /// Remove a protector by id or label. The last protector cannot be
     /// removed: that would make the vault permanently unreadable.
-    pub fn remove_protector(&self, id_or_label: &str) -> Result<()> {
+    ///
+    /// For an OS-keyring protector the credential-store entry is deleted
+    /// only after the database change is committed, and only when the
+    /// stored account is the one this vault created and no other vault file
+    /// beside this one references it. Returns a note when the entry was kept
+    /// (so the caller can tell the user), `None` otherwise.
+    pub fn remove_protector(&self, id_or_label: &str) -> Result<Option<String>> {
         let mut conn = self.lock()?;
         let tx = begin_write(&mut conn)?;
         let protectors = read_protectors(&tx)?;
@@ -974,12 +1092,15 @@ impl SqliteVault {
                 "cannot remove the last key protector; add another one first".to_owned(),
             ));
         }
-        if let ProtectorKind::OsKeyring { account, .. } = &target.kind {
-            keystore::delete_key(account)?;
-        }
+        let keyring_account = match &target.kind {
+            ProtectorKind::OsKeyring { account, .. } => Some(account.clone()),
+            ProtectorKind::Passphrase { .. } => None,
+        };
+        let target_id = target.id.clone();
+        let target_label = target.label.clone();
         tx.execute(
             "DELETE FROM key_protectors WHERE id = ?1",
-            params![target.id],
+            params![target_id],
         )
         .map_err(db)?;
         self.audit(
@@ -988,10 +1109,36 @@ impl SqliteVault {
             None,
             None,
             AuditOutcome::Success,
-            Some(&target.label),
+            Some(&target_label),
         )?;
         tx.commit().map_err(db)?;
-        Ok(())
+        drop(conn);
+
+        let Some(account) = keyring_account else {
+            return Ok(None);
+        };
+        if account != keyring_account_name(&self.meta.id, &target_id) {
+            return Ok(Some(format!(
+                "kept OS-keyring entry {account}: its name does not match this vault's identity"
+            )));
+        }
+        let registry = crate::VaultRegistry::with_root(
+            self.path
+                .parent()
+                .and_then(Path::parent)
+                .unwrap_or_else(|| Path::new(".")),
+        );
+        if registry.keyring_account_referenced_elsewhere(&self.path, &account)? {
+            return Ok(Some(format!(
+                "kept OS-keyring entry {account}: another vault in this home references it"
+            )));
+        }
+        match keystore::delete_key(&account) {
+            Ok(()) => Ok(None),
+            Err(err) => Ok(Some(format!(
+                "protector removed, but its OS-keyring entry {account} could not be deleted: {err}"
+            ))),
+        }
     }
 
     /// Check every audit row's chain hash and the recorded chain head.
@@ -1009,7 +1156,7 @@ impl SqliteVault {
             unkeyed: 0,
             first_broken: None,
             truncations: 0,
-            head_valid: head_problem(&conn, &self.metadata_key, &self.meta.id)?.is_none(),
+            head_valid: head_problem(&conn, &self.metadata_key, &self.meta.id, false)?.is_none(),
         };
         for row in &rows {
             out.rows += 1;
@@ -1067,6 +1214,7 @@ impl SqliteVault {
             meta: &self.meta,
             key: Some(&self.metadata_key),
             actor: &system,
+            allow_empty_chain: false,
         };
         let mut purged = 0;
         for name in &expired {
@@ -1105,6 +1253,22 @@ impl SqliteVault {
             meta: &self.meta,
             key: Some(&self.metadata_key),
             actor: &self.actor,
+            allow_empty_chain: false,
+        }
+    }
+
+    /// Validate a secret name inside an operation so that a rejected name is
+    /// still an audited failure. The name itself is not recorded: an invalid
+    /// name is arbitrary input and could be a value pasted by mistake.
+    fn validated<'c>(
+        &self,
+        tx: Transaction<'c>,
+        operation: AuditOperation,
+        name: &str,
+    ) -> Result<Transaction<'c>> {
+        match validate_secret_name(name) {
+            Ok(()) => Ok(tx),
+            Err(err) => self.fail(tx, operation, None, None, err),
         }
     }
 
@@ -1148,18 +1312,30 @@ impl SqliteVault {
         Err(err)
     }
 
-    /// Finish a metadata-only read: integrity failures are audited, other
-    /// errors (not found, deleted, ...) pass through unrecorded as before.
+    /// Finish a metadata-only read: success and failure are both audited,
+    /// with `detail` naming what was inspected.
     fn finish_read<T>(
         &self,
         tx: Transaction<'_>,
         operation: AuditOperation,
         name: Option<&str>,
+        detail: &str,
         result: Result<T>,
     ) -> Result<T> {
         match result {
-            Err(err @ SecretError::Crypto(_)) => self.fail(tx, operation, name, None, err),
-            other => other,
+            Ok(value) => {
+                self.audit(
+                    &tx,
+                    operation,
+                    name,
+                    None,
+                    AuditOutcome::Success,
+                    Some(detail),
+                )?;
+                tx.commit().map_err(db)?;
+                Ok(value)
+            }
+            Err(err) => self.fail(tx, operation, name, None, err),
         }
     }
 
@@ -1332,6 +1508,83 @@ impl SqliteVault {
 // Free helpers over a connection
 // ---------------------------------------------------------------------------
 
+/// Ask `unlock` for a passphrase up to [`MAX_UNLOCK_ATTEMPTS`] times and try
+/// it against every passphrase protector (at most
+/// [`MAX_PASSPHRASE_PROTECTORS`], each within `Argon2Params::MAX`). Returns
+/// the vault key and what unlocked it; otherwise `None`, with the reasons
+/// appended and every rejected attempt audited.
+fn try_passphrases(
+    conn: &Connection,
+    meta: &Meta,
+    protectors: &[ProtectorRecord],
+    unlock: &dyn UnlockProvider,
+    unkeyed: &AuditWriter<'_>,
+    reasons: &mut Vec<String>,
+) -> Result<Option<(SymmetricKey, Unlocked)>> {
+    let passphrase_protectors: Vec<&ProtectorRecord> = protectors
+        .iter()
+        .filter(|p| matches!(p.kind, ProtectorKind::Passphrase { .. }))
+        .take(MAX_PASSPHRASE_PROTECTORS)
+        .collect();
+    if passphrase_protectors.is_empty() {
+        reasons.push("no passphrase protector is installed".to_owned());
+        return Ok(None);
+    }
+    let labels = passphrase_protectors
+        .iter()
+        .map(|p| p.label.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    for attempt in 1..=MAX_UNLOCK_ATTEMPTS {
+        let prompt = PassphrasePrompt {
+            vault: &meta.name,
+            protector_label: &labels,
+            attempt,
+            max_attempts: MAX_UNLOCK_ATTEMPTS,
+        };
+        let Some(passphrase) = unlock.passphrase(&prompt)? else {
+            reasons.push("no passphrase supplied".to_owned());
+            return Ok(None);
+        };
+        for protector in &passphrase_protectors {
+            let ProtectorKind::Passphrase { salt, params } = &protector.kind else {
+                continue;
+            };
+            // Parameters come from the file: a protector asking for more
+            // work than the ceiling is skipped, never run.
+            if !params.within_limits() {
+                reasons.push(format!(
+                    "{}: Argon2 parameters exceed the supported limits",
+                    protector.label
+                ));
+                continue;
+            }
+            let salt = hex::decode(salt).map_err(|_| {
+                SecretError::Storage(format!("corrupt salt on protector {}", protector.id))
+            })?;
+            let kek = kdf::derive_key(passphrase.expose(), &salt, *params).map_err(crypto)?;
+            if let Ok((dek, wrapped_schema)) = try_unwrap(meta, protector, &kek) {
+                let unlocked = Unlocked {
+                    protector_id: protector.id.clone(),
+                    kek,
+                    wrapped_schema,
+                };
+                return Ok(Some((dek, unlocked)));
+            }
+        }
+        unkeyed.record(
+            conn,
+            AuditOperation::VaultOpen,
+            None,
+            None,
+            AuditOutcome::Denied,
+            Some("incorrect passphrase"),
+        )?;
+        reasons.push(format!("passphrase attempt {attempt} rejected"));
+    }
+    Ok(None)
+}
+
 fn read_meta(conn: &Connection) -> Result<Meta> {
     let mut stmt = conn
         .prepare("SELECT key, value FROM vault_meta")
@@ -1360,7 +1613,8 @@ fn read_meta(conn: &Connection) -> Result<Meta> {
             .parse()
             .map_err(|_| SecretError::Storage("corrupt created_on".to_owned()))?,
     )?;
-    let recovery_level: RecoveryLevel = serde_json::from_str(get("recovery_level")?)
+    let recovery_level_raw = get("recovery_level")?.clone();
+    let recovery_level: RecoveryLevel = serde_json::from_str(&recovery_level_raw)
         .map_err(|_| SecretError::Storage("corrupt recovery_level".to_owned()))?;
     let retention_days: u32 = get("retention_days")?
         .parse()
@@ -1371,8 +1625,77 @@ fn read_meta(conn: &Connection) -> Result<Meta> {
         id: get("id")?.clone(),
         created_on,
         recovery_level,
+        recovery_level_raw,
         retention_days,
+        settings_tag: map.get(integrity::SETTINGS_KEY).cloned(),
     })
+}
+
+/// Write (or refresh) the authenticated settings record.
+fn write_settings_tag(conn: &Connection, key: &SymmetricKey, meta: &Meta) -> Result<()> {
+    let tag = integrity::settings_tag(key, &meta.settings_fields()?);
+    conn.execute(
+        "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![integrity::SETTINGS_KEY, tag],
+    )
+    .map_err(db)?;
+    Ok(())
+}
+
+/// The OS-keyring account this vault creates for a protector.
+fn keyring_account_name(vault_id: &str, protector_id: &str) -> String {
+    format!("vault/{vault_id}/{protector_id}")
+}
+
+/// Alias used by [`SqliteVault::keyring_accounts`].
+fn keyring_account(vault_id: &str, protector_id: &str) -> String {
+    keyring_account_name(vault_id, protector_id)
+}
+
+/// Re-wrap the vault key for one protector under the current schema's AAD.
+fn rewrap_protector(
+    conn: &Connection,
+    meta: &Meta,
+    dek: &SymmetricKey,
+    protector_id: &str,
+    kek: &SymmetricKey,
+) -> Result<()> {
+    let wrapped = envelope::wrap_key(
+        kek,
+        dek,
+        protector_aad(&meta.id, protector_id, SCHEMA_VERSION).as_bytes(),
+    )
+    .map_err(crypto)?;
+    conn.execute(
+        "UPDATE key_protectors SET wrapped_nonce = ?2, wrapped_dek = ?3 WHERE id = ?1",
+        params![protector_id, wrapped.nonce.as_slice(), wrapped.bytes],
+    )
+    .map_err(db)?;
+    Ok(())
+}
+
+/// True when any OS-keyring protector's stored key unwraps under the
+/// current schema's AAD: evidence that the file was already in the current
+/// format whatever its schema marker says.
+fn any_keyring_protector_wrapped_current(conn: &Connection, meta: &Meta) -> Result<bool> {
+    for protector in read_protectors(conn)? {
+        let ProtectorKind::OsKeyring { account, .. } = &protector.kind else {
+            continue;
+        };
+        let Ok(Some(kek)) = keystore::load_key(account) else {
+            continue;
+        };
+        let current = envelope::unwrap_key(
+            &kek,
+            &protector.wrapped,
+            protector_aad(&meta.id, &protector.id, SCHEMA_VERSION).as_bytes(),
+        );
+        if current.is_ok() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn read_protectors(conn: &Connection) -> Result<Vec<ProtectorRecord>> {
@@ -1411,70 +1734,44 @@ fn read_protectors(conn: &Connection) -> Result<Vec<ProtectorRecord>> {
         .collect()
 }
 
+/// Unwrap the vault key with `kek`, trying the current schema's AAD first
+/// and then the oldest supported one. Returns the key and the schema whose
+/// AAD matched.
 fn try_unwrap(
     meta: &Meta,
     protector: &ProtectorRecord,
     kek: &SymmetricKey,
-) -> Result<SymmetricKey> {
-    envelope::unwrap_key(
-        kek,
-        &protector.wrapped,
-        protector_aad(&meta.id, &protector.id).as_bytes(),
-    )
-    .map_err(crypto)
+) -> Result<(SymmetricKey, u32)> {
+    let mut last = None;
+    for schema in [SCHEMA_VERSION, OLDEST_SUPPORTED_SCHEMA] {
+        match envelope::unwrap_key(
+            kek,
+            &protector.wrapped,
+            protector_aad(&meta.id, &protector.id, schema).as_bytes(),
+        ) {
+            Ok(dek) => return Ok((dek, schema)),
+            Err(err) => last = Some(err),
+        }
+    }
+    Err(last.map_or_else(
+        || SecretError::Crypto("no schema to unwrap under".to_owned()),
+        crypto,
+    ))
 }
 
-fn add_protector(
+/// The label for a new protector: the caller's, if unique and non-empty,
+/// else the kind's label, suffixed with part of the id when already taken.
+fn choose_label(
     conn: &Connection,
-    meta: &Meta,
-    dek: &SymmetricKey,
-    spec: ProtectorSpec,
-    label: Option<&str>,
-) -> Result<ProtectorInfo> {
-    let id = random::random_hex(8).map_err(crypto)?;
-    let (kind, kek) = match spec {
-        ProtectorSpec::OsKeyring => {
-            if !keystore::available() {
-                return Err(SecretError::Unsupported(format!(
-                    "{} is not available ({}); use a passphrase protector instead",
-                    keystore::STORE_NAME,
-                    keystore::unavailable_reason().unwrap_or_default()
-                )));
-            }
-            let account = format!("vault/{}/{id}", meta.id);
-            let kek = SymmetricKey::generate().map_err(crypto)?;
-            keystore::store_key(&account, &kek)?;
-            (
-                ProtectorKind::OsKeyring {
-                    service: keystore::SERVICE.to_owned(),
-                    account,
-                },
-                kek,
-            )
-        }
-        ProtectorSpec::Passphrase { passphrase, params } => {
-            if passphrase.is_empty() {
-                return Err(SecretError::InvalidArgument(
-                    "passphrase must not be empty".to_owned(),
-                ));
-            }
-            let salt = random::random_bytes::<{ kdf::SALT_LEN }>().map_err(crypto)?;
-            let kek = kdf::derive_key(passphrase.expose(), &salt, params).map_err(crypto)?;
-            (
-                ProtectorKind::Passphrase {
-                    salt: hex::encode(salt),
-                    params,
-                },
-                kek,
-            )
-        }
-    };
-
+    requested: Option<&str>,
+    kind_label: &str,
+    id: &str,
+) -> Result<String> {
     let existing: Vec<String> = read_protectors(conn)?
         .into_iter()
         .map(|p| p.label)
         .collect();
-    let label = if let Some(custom) = label {
+    if let Some(custom) = requested {
         if custom.trim().is_empty() {
             return Err(SecretError::InvalidArgument(
                 "protector label must not be empty".to_owned(),
@@ -1485,34 +1782,106 @@ fn add_protector(
                 "a protector labelled '{custom}' already exists"
             )));
         }
-        custom.to_owned()
+        return Ok(custom.to_owned());
+    }
+    let base = kind_label.to_owned();
+    Ok(if existing.contains(&base) {
+        format!("{base}-{}", &id[..4])
     } else {
-        let base = kind.label().to_owned();
-        if existing.contains(&base) {
-            format!("{base}-{}", &id[..4])
-        } else {
-            base
+        base
+    })
+}
+
+fn add_protector(
+    conn: &Connection,
+    meta: &Meta,
+    dek: &SymmetricKey,
+    spec: ProtectorSpec,
+    label: Option<&str>,
+) -> Result<ProtectorInfo> {
+    let id = random::random_hex(8).map_err(crypto)?;
+
+    // Validate everything that can fail cheaply before touching the OS
+    // credential store, so a rejected label never leaves an orphan key.
+    let label = choose_label(conn, label, spec.kind_label(), &id)?;
+
+    let (kind, kek, stored_account) = match spec {
+        ProtectorSpec::OsKeyring => {
+            if !keystore::available() {
+                return Err(SecretError::Unsupported(format!(
+                    "{} is not available ({}); use a passphrase protector instead",
+                    keystore::STORE_NAME,
+                    keystore::unavailable_reason().unwrap_or_default()
+                )));
+            }
+            let account = keyring_account_name(&meta.id, &id);
+            let kek = SymmetricKey::generate().map_err(crypto)?;
+            keystore::store_key(&account, &kek)?;
+            (
+                ProtectorKind::OsKeyring {
+                    service: keystore::SERVICE.to_owned(),
+                    account: account.clone(),
+                },
+                kek,
+                Some(account),
+            )
+        }
+        ProtectorSpec::Passphrase { passphrase, params } => {
+            if passphrase.is_empty() {
+                return Err(SecretError::InvalidArgument(
+                    "passphrase must not be empty".to_owned(),
+                ));
+            }
+            if !params.within_limits() {
+                return Err(SecretError::InvalidArgument(
+                    "Argon2 parameters exceed the supported limits".to_owned(),
+                ));
+            }
+            let salt = random::random_bytes::<{ kdf::SALT_LEN }>().map_err(crypto)?;
+            let kek = kdf::derive_key(passphrase.expose(), &salt, params).map_err(crypto)?;
+            (
+                ProtectorKind::Passphrase {
+                    salt: hex::encode(salt),
+                    params,
+                },
+                kek,
+                None,
+            )
         }
     };
 
-    let wrapped =
-        envelope::wrap_key(&kek, dek, protector_aad(&meta.id, &id).as_bytes()).map_err(crypto)?;
+    let insert = || -> Result<()> {
+        let wrapped = envelope::wrap_key(
+            &kek,
+            dek,
+            protector_aad(&meta.id, &id, SCHEMA_VERSION).as_bytes(),
+        )
+        .map_err(crypto)?;
+        let kind_json =
+            serde_json::to_string(&kind).map_err(|err| SecretError::Storage(err.to_string()))?;
+        conn.execute(
+            "INSERT INTO key_protectors (id, label, kind_json, wrapped_nonce, wrapped_dek, created_on)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id,
+                label,
+                kind_json,
+                wrapped.nonce.as_slice(),
+                wrapped.bytes,
+                nanos(timestamp::now())?
+            ],
+        )
+        .map_err(db)?;
+        Ok(())
+    };
     let created_on = timestamp::now();
-    let kind_json =
-        serde_json::to_string(&kind).map_err(|err| SecretError::Storage(err.to_string()))?;
-    conn.execute(
-        "INSERT INTO key_protectors (id, label, kind_json, wrapped_nonce, wrapped_dek, created_on)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            id,
-            label,
-            kind_json,
-            wrapped.nonce.as_slice(),
-            wrapped.bytes,
-            nanos(created_on)?
-        ],
-    )
-    .map_err(db)?;
+    if let Err(err) = insert() {
+        // The database row did not land: do not leave the key behind.
+        if let Some(account) = &stored_account {
+            let _ = keystore::delete_key(account);
+        }
+        return Err(err);
+    }
 
     Ok(ProtectorInfo {
         id,
@@ -1565,8 +1934,10 @@ fn read_chain(conn: &Connection) -> Result<Vec<ChainRow>> {
 fn migrate_v1_to_v2(
     conn: &mut Connection,
     meta: &mut Meta,
+    dek: &SymmetricKey,
     key: &SymmetricKey,
     actor: &Principal,
+    unlocked: &Unlocked,
 ) -> Result<()> {
     let tx = begin_write(conn)?;
     tx.execute_batch(MIGRATE_V1_TO_V2).map_err(db)?;
@@ -1579,10 +1950,29 @@ fn migrate_v1_to_v2(
     )
     .map_err(db)?;
     meta.schema = SCHEMA_VERSION;
+    // Bind every key we hold to the new format: the protector that unlocked
+    // us, and any OS-keyring protector whose key the store gives back. Other
+    // passphrase protectors are re-wrapped the next time they unlock.
+    rewrap_protector(&tx, meta, dek, &unlocked.protector_id, &unlocked.kek)?;
+    for protector in read_protectors(&tx)? {
+        if protector.id == unlocked.protector_id {
+            continue;
+        }
+        let ProtectorKind::OsKeyring { account, .. } = &protector.kind else {
+            continue;
+        };
+        if let Ok(Some(kek)) = keystore::load_key(account)
+            && try_unwrap(meta, &protector, &kek).is_ok()
+        {
+            rewrap_protector(&tx, meta, dek, &protector.id, &kek)?;
+        }
+    }
+    write_settings_tag(&tx, key, meta)?;
     AuditWriter {
         meta,
         key: Some(key),
         actor,
+        allow_empty_chain: true,
     }
     .record(
         &tx,
@@ -1862,15 +2252,16 @@ impl SecretClient for SqliteVault {
     }
 
     fn get_secret_properties(&self, name: &str, version: Option<&str>) -> Result<SecretProperties> {
-        validate_secret_name(name)?;
         let mut conn = self.lock()?;
         let tx = begin_write(&mut conn)?;
+        let op = AuditOperation::SecretInspect;
+        let tx = self.validated(tx, op, name)?;
         let result = self.require_live(&tx, name).and_then(|_| {
             let versions = self.load_versions(&tx, name)?;
             select_version(name, &versions, version, timestamp::now(), false)
                 .map(|v| v.props.clone())
         });
-        self.finish_read(tx, AuditOperation::SecretGet, Some(name), result)
+        self.finish_read(tx, op, Some(name), "properties", result)
     }
 
     fn list_properties_of_secrets(&self) -> Result<Vec<SecretProperties>> {
@@ -1904,9 +2295,10 @@ impl SecretClient for SqliteVault {
     }
 
     fn list_properties_of_secret_versions(&self, name: &str) -> Result<Vec<SecretProperties>> {
-        validate_secret_name(name)?;
         let mut conn = self.lock()?;
         let tx = begin_write(&mut conn)?;
+        let op = AuditOperation::SecretInspect;
+        let tx = self.validated(tx, op, name)?;
         let result = self.require_live(&tx, name).and_then(|_| {
             Ok(self
                 .load_versions(&tx, name)?
@@ -1914,7 +2306,7 @@ impl SecretClient for SqliteVault {
                 .map(|v| v.props)
                 .collect())
         });
-        self.finish_read(tx, AuditOperation::SecretGet, Some(name), result)
+        self.finish_read(tx, op, Some(name), "versions", result)
     }
 
     fn update_secret_properties(
@@ -2052,18 +2444,20 @@ impl SecretClient for SqliteVault {
     }
 
     fn get_deleted_secret(&self, name: &str) -> Result<DeletedSecret> {
-        validate_secret_name(name)?;
         let mut conn = self.lock()?;
         let tx = begin_write(&mut conn)?;
+        let op = AuditOperation::SecretInspect;
+        let tx = self.validated(tx, op, name)?;
         let result = self
             .require_deleted(&tx, name)
             .and_then(|row| self.deleted_from_row(&tx, name, &row));
-        self.finish_read(tx, AuditOperation::SecretGet, Some(name), result)
+        self.finish_read(tx, op, Some(name), "deleted", result)
     }
 
     fn list_deleted_secrets(&self) -> Result<Vec<DeletedSecret>> {
         let mut conn = self.lock()?;
         let tx = begin_write(&mut conn)?;
+        let op = AuditOperation::SecretList;
         let names: Vec<String> = {
             let mut stmt = tx
                 .prepare("SELECT name FROM secrets WHERE deleted_on IS NOT NULL ORDER BY name")
@@ -2080,12 +2474,10 @@ impl SecretClient for SqliteVault {
                 .and_then(|row| self.deleted_from_row(&tx, name, &row));
             match listed {
                 Ok(deleted) => out.push(deleted),
-                Err(err) => {
-                    return self.finish_read(tx, AuditOperation::SecretList, Some(name), Err(err));
-                }
+                Err(err) => return self.fail(tx, op, Some(name), None, err),
             }
         }
-        Ok(out)
+        self.finish_read(tx, op, None, "deleted", Ok(out))
     }
 
     fn recover_deleted_secret(&self, name: &str) -> Result<SecretProperties> {

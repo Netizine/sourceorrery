@@ -22,8 +22,11 @@ use crate::secret::{
 /// * `delete_secret` soft-deletes **all versions** when the vault is
 ///   recoverable; `recover_deleted_secret` restores them; `purge_deleted_secret`
 ///   is the only permanent removal.
-/// * Audit events are recorded for every operation and **never** contain a
-///   value.
+/// * Every operation that reads or changes a secret is recorded in the audit
+///   log, successes and failures alike, and no event **ever** contains a
+///   value. Metadata reads (`get_secret_properties`, version lists, deleted
+///   secret details) are recorded as `secret_inspect`. Reading the audit log
+///   itself and verifying the chain are read-only and not recorded.
 ///
 /// The trait is synchronous because the first backend is a local encrypted
 /// store. Remote backends will get an `AsyncSecretClient` sibling; the

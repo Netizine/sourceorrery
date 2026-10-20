@@ -2,11 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use sourceorrery_core::{Result, SecretError, validate_vault_name};
 
 use crate::VAULT_FILE_EXTENSION;
 use crate::protector::ProtectorSpec;
-use crate::sqlite::{CreateVaultOptions, SqliteVault};
+use crate::sqlite::{CreateVaultOptions, OpenOptions, SqliteVault};
 use crate::unlock::UnlockProvider;
 
 /// Environment variable overriding the SourceOrrery home directory.
@@ -22,6 +23,17 @@ pub const HOME_ENV: &str = "SOURCEORRERY_HOME";
 #[derive(Clone, Debug)]
 pub struct VaultRegistry {
     root: PathBuf,
+}
+
+/// What [`VaultRegistry::destroy`] did about the vault's OS-keyring keys.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct DestroyReport {
+    /// Keyring accounts whose entries were deleted.
+    pub removed_keys: Vec<String>,
+    /// Keyring accounts left in place, with the reason: the account did not
+    /// belong to this vault's identity, another vault file in the same home
+    /// still references it, or the caller asked to keep keys.
+    pub kept_keys: Vec<(String, String)>,
 }
 
 impl VaultRegistry {
@@ -108,6 +120,9 @@ impl VaultRegistry {
     }
 
     /// Open and unlock an existing vault.
+    ///
+    /// A vault in an older on-disk format is refused with
+    /// [`SecretError::MigrationRequired`]; see [`VaultRegistry::migrate`].
     pub fn open(&self, name: &str, unlock: &dyn UnlockProvider) -> Result<SqliteVault> {
         let path = self.vault_path(name)?;
         if !path.is_file() {
@@ -118,19 +133,99 @@ impl VaultRegistry {
         SqliteVault::open(&path, unlock)
     }
 
-    /// Permanently delete a vault file and any OS-keyring entries it owns.
+    /// Unlock a vault written by an older schema and migrate it forward.
     ///
-    /// Does not require unlocking: protector metadata is not encrypted.
-    pub fn destroy(&self, name: &str) -> Result<()> {
+    /// This is an explicit trust decision: the legacy format carries no
+    /// integrity tags, so whatever the file says is taken at face value once.
+    /// A vault whose key material shows it was already in the current format
+    /// (a downgraded file) is refused.
+    pub fn migrate(&self, name: &str, unlock: &dyn UnlockProvider) -> Result<SqliteVault> {
         let path = self.vault_path(name)?;
         if !path.is_file() {
             return Err(SecretError::VaultNotFound {
                 name: name.to_owned(),
             });
         }
-        SqliteVault::forget_protectors(&path)?;
+        SqliteVault::open_with(
+            &path,
+            unlock,
+            OpenOptions {
+                allow_legacy_migration: true,
+            },
+        )
+    }
+
+    /// Permanently delete a vault file and the OS-keyring keys it owns.
+    ///
+    /// Does not require unlocking. Because protector metadata is not
+    /// authenticated without the vault key, a keyring entry is only deleted
+    /// when its account name is the one this vault would have created for
+    /// that protector and no other vault file in this home references it;
+    /// anything else is kept and reported. `keep_keys` skips keyring
+    /// deletion entirely.
+    pub fn destroy(&self, name: &str, keep_keys: bool) -> Result<DestroyReport> {
+        let path = self.vault_path(name)?;
+        if !path.is_file() {
+            return Err(SecretError::VaultNotFound {
+                name: name.to_owned(),
+            });
+        }
+        let mut report = DestroyReport::default();
+        for (account, owned) in SqliteVault::keyring_accounts(&path)? {
+            if keep_keys {
+                report
+                    .kept_keys
+                    .push((account, "kept on request".to_owned()));
+            } else if !owned {
+                report.kept_keys.push((
+                    account,
+                    "account name does not match this vault's identity".to_owned(),
+                ));
+            } else if self.keyring_account_referenced_elsewhere(&path, &account)? {
+                report.kept_keys.push((
+                    account,
+                    "another vault in this home references the same key".to_owned(),
+                ));
+            } else {
+                // Best effort: a missing store must not block deletion of the file.
+                match crate::keystore::delete_key(&account) {
+                    Ok(()) => report.removed_keys.push(account),
+                    Err(err) => report.kept_keys.push((account, err.to_string())),
+                }
+            }
+        }
         std::fs::remove_file(&path)?;
-        Ok(())
+        Ok(report)
+    }
+
+    /// True when any vault file in this home other than `except` lists
+    /// `account` among its OS-keyring protectors.
+    pub(crate) fn keyring_account_referenced_elsewhere(
+        &self,
+        except: &Path,
+        account: &str,
+    ) -> Result<bool> {
+        for name in self.list()? {
+            let path = self.vault_path(&name)?;
+            if same_file(&path, except) {
+                continue;
+            }
+            // A sibling that cannot be read is not evidence either way; skip it.
+            let Ok(accounts) = SqliteVault::keyring_accounts(&path) else {
+                continue;
+            };
+            if accounts.iter().any(|(a, _)| a == account) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
     }
 }
 

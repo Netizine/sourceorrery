@@ -93,6 +93,18 @@ pub enum VaultCommand {
     Protector(ProtectorCommand),
     /// Permanently delete a vault file and its OS-keyring entries.
     Destroy(VaultDestroyArgs),
+    /// Upgrade a vault written by an older release to the current on-disk format.
+    ///
+    /// Older vaults carry no integrity tags, so this is an explicit trust decision:
+    /// only migrate a file you know is genuine. A file that was already in the
+    /// current format (a downgraded copy) is refused.
+    Migrate(VaultMigrateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct VaultMigrateArgs {
+    /// Vault name.
+    pub name: String,
 }
 
 #[derive(Debug, Args)]
@@ -151,6 +163,10 @@ pub struct VaultDestroyArgs {
     /// Confirm permanent deletion without prompting.
     #[arg(long, short = 'y')]
     pub yes: bool,
+    /// Leave the vault's OS-keyring entries in place (for example when the
+    /// same vault file also lives elsewhere).
+    #[arg(long)]
+    pub keep_os_key: bool,
 }
 
 // ---------------------------------------------------------------------------

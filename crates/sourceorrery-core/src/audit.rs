@@ -44,6 +44,9 @@ pub enum AuditOperation {
     /// Recorded only when the check fails: rows were removed from the end
     /// of the log, or the head record is missing or invalid.
     AuditVerify,
+    /// Secret metadata was read without disclosing a value: properties, the
+    /// version list, or a deleted secret's details.
+    SecretInspect,
 }
 
 impl AuditOperation {
@@ -63,11 +66,12 @@ impl AuditOperation {
             Self::SecretPurge => "secret_purge",
             Self::VaultMigrate => "vault_migrate",
             Self::AuditVerify => "audit_verify",
+            Self::SecretInspect => "secret_inspect",
         }
     }
 
     /// Every operation, for documentation and exhaustive tests.
-    pub const ALL: [AuditOperation; 13] = [
+    pub const ALL: [AuditOperation; 14] = [
         Self::VaultCreate,
         Self::VaultOpen,
         Self::ProtectorAdd,
@@ -81,6 +85,7 @@ impl AuditOperation {
         Self::SecretPurge,
         Self::VaultMigrate,
         Self::AuditVerify,
+        Self::SecretInspect,
     ];
 }
 

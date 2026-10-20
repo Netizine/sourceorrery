@@ -38,6 +38,23 @@ impl Argon2Params {
         iterations: 1,
         parallelism: 1,
     };
+
+    /// The largest parameters [`derive_key`] will run: 1 GiB of memory,
+    /// 64 passes and 16 lanes. Parameters are stored in the vault file, so
+    /// without a ceiling a corrupted or hostile file could make an unlock
+    /// consume arbitrary memory and CPU before anything is authenticated.
+    pub const MAX: Self = Self {
+        memory_kib: 1024 * 1024,
+        iterations: 64,
+        parallelism: 16,
+    };
+
+    /// True when every parameter is at or below [`Argon2Params::MAX`].
+    pub fn within_limits(self) -> bool {
+        self.memory_kib <= Self::MAX.memory_kib
+            && self.iterations <= Self::MAX.iterations
+            && self.parallelism <= Self::MAX.parallelism
+    }
 }
 
 impl Default for Argon2Params {
@@ -50,6 +67,14 @@ impl Default for Argon2Params {
 pub fn derive_key(passphrase: &[u8], salt: &[u8], params: Argon2Params) -> Result<SymmetricKey> {
     if salt.len() < 8 {
         return Err(CryptoError::Kdf("salt must be at least 8 bytes".to_owned()));
+    }
+    if !params.within_limits() {
+        return Err(CryptoError::Kdf(format!(
+            "Argon2 parameters exceed the supported limits ({} KiB, {} passes, {} lanes)",
+            Argon2Params::MAX.memory_kib,
+            Argon2Params::MAX.iterations,
+            Argon2Params::MAX.parallelism
+        )));
     }
     let params = Params::new(
         params.memory_kib,
@@ -87,6 +112,22 @@ mod tests {
             derive_key(b"correct horse", &[8u8; SALT_LEN], Argon2Params::TESTING).unwrap();
         assert_ne!(base, other_pass);
         assert_ne!(base, other_salt);
+    }
+
+    #[test]
+    fn rejects_parameters_beyond_the_ceiling() {
+        let salt = [7u8; SALT_LEN];
+        let huge_time = Argon2Params {
+            iterations: 10_000,
+            ..Argon2Params::TESTING
+        };
+        assert!(derive_key(b"x", &salt, huge_time).is_err());
+        let huge_memory = Argon2Params {
+            memory_kib: 8 * 1024 * 1024,
+            ..Argon2Params::TESTING
+        };
+        assert!(derive_key(b"x", &salt, huge_memory).is_err());
+        assert!(Argon2Params::INTERACTIVE.within_limits());
     }
 
     #[test]
