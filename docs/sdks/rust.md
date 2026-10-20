@@ -1,9 +1,26 @@
 # Rust
 
+## Install
+
+### From the v0.1.0 tag
+
+The crate is not on crates.io yet, so depend on the tag the
+[v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+was cut from:
+
+```toml
+[dependencies]
+sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.1.0" }
+```
+
+### From crates.io
+
 ```toml
 [dependencies]
 sourceorrery = "0.1"
 ```
+
+This works once the crate is published on crates.io; 0.1.0 is not there yet.
 
 The `sourceorrery` crate is the read-only client every other SDK is built
 on. It depends on `sourceorrery-storage` directly (no C ABI in between)
