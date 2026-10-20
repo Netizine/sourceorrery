@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-20
+
 ### Added — cross-language SDK conformance harness
 
 * `tests/conformance/sdk/scenarios.json` is the contract every SDK must
@@ -238,3 +240,6 @@ uses [Semantic Versioning](https://semver.org/).
   per-thread `so_last_error_code()`. It is the only crate allowed to use
   `unsafe`; every block states its invariant. Covered by Rust smoke tests
   that call the exported functions and by a C example compiled in CI.
+
+[Unreleased]: https://github.com/Netizine/sourceorrery/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0
