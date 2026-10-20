@@ -1,0 +1,7 @@
+bin/
+obj/
+*.user
+/runtimes/
+/SourceOrrery/runtimes/
+*.nupkg
+*.snupkg

@@ -23,7 +23,8 @@
 #   deleted-secret     "x", then deleted               -> deleted
 set -euo pipefail
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# `pwd -W` gives a C:/... path on Git Bash, which every toolchain understands.
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && (pwd -W 2>/dev/null || pwd))"
 exe=""
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*|Windows_NT) exe=".exe" ;; esac
 

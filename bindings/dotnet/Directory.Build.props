@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <Deterministic>true</Deterministic>
+    <Authors>James Melvin</Authors>
+    <Company>SourceOrrery</Company>
+    <Copyright>Copyright (c) 2026 James Melvin</Copyright>
+    <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://sourceorrery.ai</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Netizine/sourceorrery</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <!-- Overridden by the release workflow: dotnet pack -p:Version=... -->
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>SourceOrrery</PackageId>
+    <Description>Read secrets from a SourceOrrery vault. Secrets belong to the runtime, not the repository.</Description>
+    <PackageTags>secrets;vault;keyring;security;dotenv</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Members of records documented at the type level. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <RootNamespace>SourceOrrery</RootNamespace>
+    <!-- Directory with runtimes/<rid>/native/<lib>, filled by the release workflow. -->
+    <SourceOrreryRuntimesDir Condition="'$(SourceOrreryRuntimesDir)' == ''">$(MSBuildThisFileDirectory)runtimes</SourceOrreryRuntimesDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <!-- Native libraries, when present: runtimes/win-x64/native/sourceorrery_ffi.dll, ... -->
+    <None Include="$(SourceOrreryRuntimesDir)\**\*" Condition="Exists('$(SourceOrreryRuntimesDir)')" Pack="true" PackagePath="runtimes\" />
+  </ItemGroup>
+
+</Project>
