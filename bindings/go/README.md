@@ -29,6 +29,10 @@ export LD_LIBRARY_PATH=/path/to/sourceorrery-ffi      # Linux (DYLD_LIBRARY_PATH
 go build ./...
 ```
 
+On Windows the binding links `sourceorrery_ffi.dll` directly (MinGW-w64
+gcc cannot use the MSVC static archive shipped next to it), so point
+`CGO_LDFLAGS` at the directory holding the DLL and keep it on `PATH`.
+
 Documentation: <https://sourceorrery.ai/sdks/go/>.
 
 ## Tests

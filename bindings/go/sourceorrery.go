@@ -17,6 +17,9 @@
 //
 //	CGO_LDFLAGS="-L/path/to/lib" go build ./...
 //
+// On Windows (MinGW-w64 gcc) the directory must hold sourceorrery_ffi.dll,
+// which is linked directly, and the DLL must be on PATH at run time.
+//
 // Every failure is a *Error carrying the core's stable Code, a Message and a
 // Hint that says what to do; errors.Is matches the sentinel errors in
 // errors.go. None of them ever contains a secret value.
@@ -24,7 +27,11 @@ package sourceorrery
 
 /*
 #cgo CFLAGS: -I${SRCDIR}
-#cgo LDFLAGS: -lsourceorrery_ffi
+#cgo !windows LDFLAGS: -lsourceorrery_ffi
+// On Windows the library is built with MSVC. MinGW's ld would pick the MSVC
+// static archive (sourceorrery_ffi.lib) for -lsourceorrery_ffi and fail on
+// its MSVC-only symbols, so the DLL is linked directly by file name.
+#cgo windows LDFLAGS: -l:sourceorrery_ffi.dll
 #include <stdlib.h>
 #include "sourceorrery.h"
 */

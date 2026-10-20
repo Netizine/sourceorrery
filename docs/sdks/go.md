@@ -16,8 +16,11 @@ go build ./...
 ```
 
 Static linking against `libsourceorrery_ffi.a` from the same archive works
-too (`-lsourceorrery_ffi -lpthread -ldl -lm` on Linux). A C toolchain is
-required (gcc or clang; MinGW-w64 on Windows).
+too on Linux and macOS (`-lsourceorrery_ffi -lpthread -ldl -lm` on Linux).
+A C toolchain is required (gcc or clang; MinGW-w64 on Windows). On Windows
+the binding links `sourceorrery_ffi.dll` directly, because the static
+archive next to it is built by MSVC and MinGW cannot consume it; keep the
+DLL on `PATH` at run time.
 
 ## Get a secret
 
