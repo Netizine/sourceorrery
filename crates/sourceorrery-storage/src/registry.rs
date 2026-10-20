@@ -123,6 +123,9 @@ impl VaultRegistry {
     ///
     /// A vault in an older on-disk format is refused with
     /// [`SecretError::MigrationRequired`]; see [`VaultRegistry::migrate`].
+    /// A vault whose audit log has a detected truncation that nobody has
+    /// acknowledged is refused with [`SecretError::Crypto`]; see
+    /// [`VaultRegistry::open_for_inspection`].
     pub fn open(&self, name: &str, unlock: &dyn UnlockProvider) -> Result<SqliteVault> {
         let path = self.vault_path(name)?;
         if !path.is_file() {
@@ -131,6 +134,32 @@ impl VaultRegistry {
             });
         }
         SqliteVault::open(&path, unlock)
+    }
+
+    /// Open a vault for inspection of its audit log: as [`VaultRegistry::open`],
+    /// except that a vault blocked by an unacknowledged truncation is
+    /// unlocked too, with every secret and protector operation refused until
+    /// [`SqliteVault::acknowledge_truncations`] has run. See
+    /// [`OpenOptions::allow_quarantined`].
+    pub fn open_for_inspection(
+        &self,
+        name: &str,
+        unlock: &dyn UnlockProvider,
+    ) -> Result<SqliteVault> {
+        let path = self.vault_path(name)?;
+        if !path.is_file() {
+            return Err(SecretError::VaultNotFound {
+                name: name.to_owned(),
+            });
+        }
+        SqliteVault::open_with(
+            &path,
+            unlock,
+            OpenOptions {
+                allow_quarantined: true,
+                ..OpenOptions::default()
+            },
+        )
     }
 
     /// Unlock a vault written by an older schema and migrate it forward.
@@ -151,6 +180,7 @@ impl VaultRegistry {
             unlock,
             OpenOptions {
                 allow_legacy_migration: true,
+                ..OpenOptions::default()
             },
         )
     }

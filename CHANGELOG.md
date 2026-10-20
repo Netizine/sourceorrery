@@ -44,6 +44,31 @@ uses [Semantic Versioning](https://semver.org/).
   until their secrets exist. `scripts/release/set-version.py` stamps the
   version into every manifest. Procedure and secrets: `docs/release.md`.
 
+### Security — a detected audit-log truncation blocks the vault until acknowledged
+
+* **A truncation is no longer refused once and then absorbed.** A recorded
+  `audit_verify` / `failure` event with no later keyed acknowledgement now
+  refuses every unlock and every operation with `crypto`, naming the
+  event, and each refusal is itself recorded. Only `sourceorrery audit`
+  unlocks such a vault, for inspection: listing the log (with a warning),
+  `audit --verify` (which now also reports `unacknowledged`) and the new
+  `audit --acknowledge [--yes]`, which prints the truncation events, asks
+  for confirmation and appends one keyed `audit_verify` / `success` event
+  (`truncation acknowledged (events …)`). After that the vault accepts
+  operations again on the surviving history; the truncation stays on
+  record. The acknowledgement covers exactly the events the caller was
+  shown, so a truncation detected by another process in between is refused
+  rather than swept in, and removing the acknowledgement row un-acknowledges
+  what it covered. `vault migrate` of a schema 2 file that recorded a
+  truncation leaves the migrated vault blocked the same way.
+* `sourceorrery-storage`: `OpenOptions::allow_quarantined`,
+  `VaultRegistry::open_for_inspection`,
+  `SqliteVault::unacknowledged_truncations`,
+  `SqliteVault::acknowledge_truncations` and `Acknowledgement`;
+  `AuditVerification::unacknowledged`; partial index `audit_verifications`
+  over the `audit_verify` rows (created by `vault migrate` for schema 2
+  files). `sourceorrery audit` listings now show each event's id.
+
 ### Security — fixes from the second 20 October 2026 review (vault schema 3)
 
 * **Row state is bound to the audit chain.** A row's HMAC tag proved it was
@@ -56,9 +81,10 @@ uses [Semantic Versioning](https://semver.org/).
   its tag equals the newest checkpoint for it. Rows with no checkpoint,
   resurrected rows, and rows or versions removed out of band are refused
   with `crypto`. Because the newest checkpoint is what counts, a stale chain
-  head now **refuses** the unlock or operation that finds it (once; the
-  refusal is recorded and re-anchors the head) instead of being noted and
-  absorbed. This is on-disk **schema 3**; `vault migrate` brings schema 1
+  head now **refuses** the unlock or operation that finds it (the refusal
+  is recorded and re-anchors the head; see the entry above for what
+  happens next) instead of being noted and absorbed. This is on-disk
+  **schema 3**; `vault migrate` brings schema 1
   and 2 files forward and checkpoints every row it finds. The audit-row
   canonical domain is now `sourceorrery/v3/audit`.
 * **Concurrent `vault create` can no longer delete the winner's file.** The

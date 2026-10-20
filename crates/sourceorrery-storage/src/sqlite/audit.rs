@@ -5,13 +5,17 @@
 use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use sourceorrery_core::audit::{AuditOperation, AuditOutcome};
+use sourceorrery_core::audit::{AuditEvent, AuditOperation, AuditOutcome};
 use sourceorrery_core::{Principal, Result, SecretError, timestamp, validate_secret_name};
 use sourceorrery_crypto::{MAC_LEN, SymmetricKey};
 
-use super::SqliteVault;
-use super::schema::{Meta, begin_write, db, nanos};
+use super::schema::{Meta, begin_write, db, from_nanos, nanos};
+use super::{Acknowledgement, SqliteVault};
 use crate::integrity::{self, AuditFields, AuditVerification, Checkpoint};
+
+/// Detail prefix of the keyed `audit_verify` / `success` row that records
+/// the owner's acknowledgement of every truncation detected before it.
+pub(super) const ACKNOWLEDGED_DETAIL: &str = "truncation acknowledged";
 
 /// `(id, occurred_on, actor, operation, secret_name, version, outcome, detail)`
 pub(super) type AuditRow = (
@@ -59,6 +63,44 @@ impl ChainRow {
         let prev = integrity::hash_or_zero(self.prev_hash.as_deref());
         integrity::verify_audit_hash(key, &prev, &self.fields(vault_id), self.hash.as_deref())
     }
+
+    fn id(&self) -> i64 {
+        self.row.0
+    }
+
+    /// True for the row that acknowledges every truncation detected before
+    /// it (see [`ACKNOWLEDGED_DETAIL`]).
+    fn is_acknowledgement(&self) -> bool {
+        self.row.3 == AuditOperation::AuditVerify.as_str()
+            && self.row.6 == AuditOutcome::Success.as_str()
+            && self
+                .row
+                .7
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with(ACKNOWLEDGED_DETAIL))
+    }
+
+    /// True for the row that records a detected truncation.
+    fn is_truncation(&self) -> bool {
+        self.row.3 == AuditOperation::AuditVerify.as_str()
+            && self.row.6 == AuditOutcome::Failure.as_str()
+    }
+}
+
+/// The public form of an audit row.
+pub(super) fn event_from_row(row: AuditRow) -> Result<AuditEvent> {
+    let (id, occurred_on, actor, operation, secret_name, version, outcome, detail) = row;
+    Ok(AuditEvent {
+        id: u64::try_from(id).unwrap_or_default(),
+        occurred_on: from_nanos(occurred_on)?,
+        actor: Principal::parse(&actor)
+            .unwrap_or_else(|| Principal::new(sourceorrery_core::PrincipalKind::User, actor)),
+        operation: operation.parse().map_err(SecretError::Storage)?,
+        secret_name,
+        version,
+        outcome: outcome.parse().map_err(SecretError::Storage)?,
+        detail,
+    })
 }
 
 /// The row checkpoints a success event carries (see `integrity`).
@@ -332,9 +374,85 @@ pub(super) fn last_keyed_row(conn: &Connection) -> Result<Option<(i64, Vec<u8>)>
 pub(super) fn truncated_message(problem: &str) -> String {
     format!(
         "audit log integrity: {problem}. The state recorded by the missing events cannot be \
-         verified, so this operation was refused; the detection is now on record \
-         (`sourceorrery audit --verify`) and later operations proceed on the surviving history"
+         verified, so this operation was refused. The detection is now on record and the vault \
+         stays blocked until the surviving history has been reviewed (`sourceorrery audit \
+         --verify`) and the truncation acknowledged (`sourceorrery audit --acknowledge`)"
     )
+}
+
+/// The error for an operation refused because a detected truncation has not
+/// been acknowledged. `pending` is what [`unacknowledged_truncations`]
+/// returned; it names events only, never values.
+pub(super) fn quarantined_message(pending: &[ChainRow]) -> String {
+    let found = match pending {
+        [one] => format!(
+            "the truncation detected at event {} ({}) is unacknowledged",
+            one.id(),
+            one.row.7.as_deref().unwrap_or("no detail")
+        ),
+        many => format!(
+            "{} truncations are unacknowledged (events {})",
+            many.len(),
+            event_id_list(many.iter().map(ChainRow::id))
+        ),
+    };
+    format!(
+        "audit log integrity: {found}; the vault is blocked until the surviving history has \
+         been reviewed and the truncation acknowledged (`sourceorrery audit --acknowledge`)"
+    )
+}
+
+fn event_id_list(ids: impl Iterator<Item = i64>) -> String {
+    ids.map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
+}
+
+/// Detail of the acknowledgement row covering `ids`.
+fn acknowledgement_detail(ids: &[i64]) -> String {
+    let noun = if ids.len() == 1 { "event" } else { "events" };
+    format!(
+        "{ACKNOWLEDGED_DETAIL} ({noun} {})",
+        event_id_list(ids.iter().copied())
+    )
+}
+
+/// Detected truncations nobody has acknowledged: the keyed `audit_verify` /
+/// `failure` rows written after the newest keyed `audit_verify` / `success`
+/// acknowledgement, oldest first. Only rows whose chain hash verifies under
+/// `key` count either way, since a row flagged keyed that does not verify
+/// was not written by this vault; `audit --verify` reports such rows as
+/// broken.
+pub(super) fn unacknowledged_truncations(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+) -> Result<Vec<ChainRow>> {
+    // The operation is a literal so the partial index `audit_verifications`
+    // applies; it is a fixed label, not input.
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events
+             WHERE operation = '{}' AND keyed = 1
+             ORDER BY id",
+            AuditOperation::AuditVerify.as_str()
+        ))
+        .map_err(db)?;
+    let rows: Vec<ChainRow> = stmt
+        .query_map([], chain_row)
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)?;
+    let mut pending = Vec::new();
+    for row in rows {
+        if !row.authentic(key, vault_id) {
+            continue;
+        }
+        if row.is_acknowledgement() {
+            pending.clear();
+        } else if row.is_truncation() {
+            pending.push(row);
+        }
+    }
+    Ok(pending)
 }
 
 /// Compare the recorded chain head with the newest keyed row. `None` when
@@ -546,6 +664,7 @@ impl SqliteVault {
             unkeyed: 0,
             first_broken: None,
             truncations: 0,
+            unacknowledged: 0,
             head_valid: head_problem(&conn, &self.metadata_key, &self.meta.id, false)?.is_none(),
         };
         for row in &rows {
@@ -563,16 +682,109 @@ impl SqliteVault {
             if !(linked && authentic) && out.first_broken.is_none() {
                 out.first_broken = Some(u64::try_from(fields.id).unwrap_or_default());
             }
-            if row.keyed
-                && authentic
-                && fields.operation == AuditOperation::AuditVerify.as_str()
-                && fields.outcome == AuditOutcome::Failure.as_str()
-            {
-                out.truncations += 1;
+            if row.keyed && authentic {
+                if row.is_truncation() {
+                    out.truncations += 1;
+                    out.unacknowledged += 1;
+                } else if row.is_acknowledgement() {
+                    out.unacknowledged = 0;
+                }
             }
             prev = integrity::hash_or_zero(row.hash.as_deref());
         }
         Ok(out)
+    }
+
+    /// Detected truncations of the audit log that nobody has acknowledged,
+    /// oldest first: the keyed `audit_verify` / `failure` events written
+    /// after the newest acknowledgement. While any exist the vault is
+    /// blocked (every unlock and operation is refused with `crypto`) until
+    /// [`SqliteVault::acknowledge_truncations`] has run. Read-only.
+    pub fn unacknowledged_truncations(&self) -> Result<Vec<AuditEvent>> {
+        let conn = self.lock()?;
+        unacknowledged_truncations(&conn, &self.metadata_key, &self.meta.id)?
+            .into_iter()
+            .map(|row| event_from_row(row.row))
+            .collect()
+    }
+
+    /// Acknowledge every detected truncation and lift the block on the
+    /// vault.
+    ///
+    /// `event_ids` must be exactly the ids
+    /// [`SqliteVault::unacknowledged_truncations`] returned to the caller.
+    /// The acknowledgement covers every truncation detected before it, so a
+    /// truncation another process detected in the meantime must not be
+    /// acknowledged unseen: a mismatch is refused with `invalid_argument` and
+    /// nothing is written. So is an acknowledgement with nothing to
+    /// acknowledge. If the chain head is stale at this moment (rows went
+    /// missing since the vault was unlocked) the new truncation is recorded
+    /// and the call is refused with `crypto`, exactly as any other write
+    /// would be.
+    ///
+    /// On success one keyed `audit_verify` / `success` row is appended whose
+    /// detail is `truncation acknowledged (events …)`: the record that the
+    /// owner reviewed the surviving history and accepted it as
+    /// authoritative. The truncation events themselves stay on the chain
+    /// and in [`AuditVerification::truncations`].
+    pub fn acknowledge_truncations(&self, event_ids: &[u64]) -> Result<Acknowledgement> {
+        let mut conn = self.lock()?;
+        let tx = begin_write(&mut conn)?;
+        if let Some(problem) = head_problem(&tx, &self.metadata_key, &self.meta.id, false)? {
+            // Put the detection on the chain, as any keyed write would, and
+            // refuse: what is acknowledged must be what was shown.
+            self.writer().append_row(
+                &tx,
+                &Entry {
+                    operation: AuditOperation::AuditVerify,
+                    secret_name: None,
+                    version: None,
+                    outcome: AuditOutcome::Failure,
+                    detail: Some(&problem),
+                    checkpoints: Checkpoints::default(),
+                },
+            )?;
+            tx.commit().map_err(db)?;
+            return Err(SecretError::Crypto(truncated_message(&problem)));
+        }
+        let pending = unacknowledged_truncations(&tx, &self.metadata_key, &self.meta.id)?;
+        if pending.is_empty() {
+            return Err(SecretError::InvalidArgument(
+                "no detected truncation is waiting to be acknowledged".to_owned(),
+            ));
+        }
+        let ids: Vec<i64> = pending.iter().map(ChainRow::id).collect();
+        let mut expected: Vec<i64> = event_ids
+            .iter()
+            .map(|id| i64::try_from(*id).unwrap_or(-1))
+            .collect();
+        expected.sort_unstable();
+        expected.dedup();
+        if expected != ids {
+            return Err(SecretError::InvalidArgument(format!(
+                "the unacknowledged truncations are events {}; list them again before \
+                 acknowledging",
+                event_id_list(ids.iter().copied())
+            )));
+        }
+        let detail = acknowledgement_detail(&ids);
+        self.writer().record(
+            &tx,
+            AuditOperation::AuditVerify,
+            None,
+            None,
+            AuditOutcome::Success,
+            Some(&detail),
+        )?;
+        let event_id = u64::try_from(tx.last_insert_rowid()).unwrap_or_default();
+        tx.commit().map_err(db)?;
+        Ok(Acknowledgement {
+            event_id,
+            truncations: pending
+                .into_iter()
+                .map(|row| event_from_row(row.row))
+                .collect::<Result<_>>()?,
+        })
     }
 
     /// Purge soft-deleted secrets whose retention has elapsed.
@@ -649,30 +861,45 @@ impl SqliteVault {
         }
     }
 
-    /// Start an operation: take the write lock and make sure the audit
-    /// chain's head still names its newest keyed row.
+    /// Start an operation: take the write lock, make sure the audit chain's
+    /// head still names its newest keyed row, and that no detected
+    /// truncation is waiting to be acknowledged.
     ///
     /// Row state is judged against the newest checkpoint in the chain, so a
     /// log whose tail was removed must not be consulted: it would present an
     /// older checkpoint as current. The operation is refused and audited as
     /// a failure; recording it puts the detection itself on the chain (an
-    /// `audit_verify` / `failure` row) and re-anchors the head, so later
-    /// operations proceed on the surviving history.
+    /// `audit_verify` / `failure` row) and re-anchors the head. From then on
+    /// every operation is refused the same way, until the owner has
+    /// reviewed the surviving history and acknowledged the truncation
+    /// ([`SqliteVault::acknowledge_truncations`]); a handle opened for
+    /// inspection is bound by this too.
     pub(super) fn begin<'c>(
         &self,
         conn: &'c mut Connection,
         operation: AuditOperation,
     ) -> Result<Transaction<'c>> {
         let tx = begin_write(conn)?;
-        match head_problem(&tx, &self.metadata_key, &self.meta.id, false)? {
-            None => Ok(tx),
-            Some(problem) => self.fail(
+        if let Some(problem) = head_problem(&tx, &self.metadata_key, &self.meta.id, false)? {
+            return self.fail(
                 tx,
                 operation,
                 None,
                 None,
                 SecretError::Crypto(truncated_message(&problem)),
-            ),
+            );
+        }
+        let pending = unacknowledged_truncations(&tx, &self.metadata_key, &self.meta.id)?;
+        if pending.is_empty() {
+            Ok(tx)
+        } else {
+            self.fail(
+                tx,
+                operation,
+                None,
+                None,
+                SecretError::Crypto(quarantined_message(&pending)),
+            )
         }
     }
 

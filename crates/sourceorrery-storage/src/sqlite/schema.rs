@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS audit_events_by_secret ON audit_events(secret_name, id DESC);
 CREATE INDEX IF NOT EXISTS audit_checkpoints ON audit_events(secret_name, id)
     WHERE state_tag IS NOT NULL OR version_tag IS NOT NULL;
+CREATE INDEX IF NOT EXISTS audit_verifications ON audit_events(id)
+    WHERE operation = 'audit_verify';
 ";
 
 /// Columns added by the schema 1 → 2 migration.
@@ -113,13 +115,16 @@ ALTER TABLE audit_events ADD COLUMN hash BLOB;
 ALTER TABLE audit_events ADD COLUMN keyed INTEGER NOT NULL DEFAULT 0;
 ";
 
-/// Columns and index added by the schema 2 → 3 migration: the checkpoint
-/// tags that bind row state to the audit chain.
+/// Columns and indexes added by the schema 2 → 3 migration: the checkpoint
+/// tags that bind row state to the audit chain, and the index over the
+/// truncation and acknowledgement rows every operation consults.
 pub(super) const MIGRATE_V2_TO_V3: &str = "
 ALTER TABLE audit_events ADD COLUMN state_tag BLOB;
 ALTER TABLE audit_events ADD COLUMN version_tag BLOB;
 CREATE INDEX IF NOT EXISTS audit_checkpoints ON audit_events(secret_name, id)
     WHERE state_tag IS NOT NULL OR version_tag IS NOT NULL;
+CREATE INDEX IF NOT EXISTS audit_verifications ON audit_events(id)
+    WHERE operation = 'audit_verify';
 ";
 
 pub(super) fn open_connection(path: &Path) -> Result<Connection> {

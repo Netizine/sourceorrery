@@ -41,7 +41,7 @@ pub mod unlock;
 pub use integrity::AuditVerification;
 pub use protector::{ProtectorInfo, ProtectorKind, ProtectorSpec};
 pub use registry::{DestroyReport, VaultRegistry};
-pub use sqlite::{CreateVaultOptions, OpenOptions, SqliteVault};
+pub use sqlite::{Acknowledgement, CreateVaultOptions, OpenOptions, SqliteVault};
 pub use unlock::{NoInteraction, PassphrasePrompt, StaticPassphrase, UnlockProvider};
 
 /// Backend identifier reported in [`sourceorrery_core::VaultDescriptor`].

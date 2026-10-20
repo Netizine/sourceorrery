@@ -459,8 +459,14 @@ pub struct AuditVerification {
     pub first_broken: Option<u64>,
     /// Keyed `audit_verify` / `failure` rows: each records a moment when a
     /// write found rows missing from the end of the log (or the head record
-    /// missing or invalid). The evidence is itself part of the chain.
+    /// missing or invalid). The evidence is itself part of the chain, and
+    /// stays counted after the truncation is acknowledged.
     pub truncations: u64,
+    /// Truncations recorded after the newest keyed `audit_verify` /
+    /// `success` acknowledgement. While this is not zero the vault is
+    /// blocked: every unlock and operation is refused until
+    /// [`crate::SqliteVault::acknowledge_truncations`] has run.
+    pub unacknowledged: u64,
     /// The head record matches the newest keyed row right now. False only
     /// when the file was altered after this handle last wrote to it; every
     /// keyed write re-checks the head and records a failure when it is
@@ -717,6 +723,7 @@ mod tests {
             unkeyed: 1,
             first_broken: None,
             truncations: 0,
+            unacknowledged: 0,
             head_valid: true,
         };
         assert!(ok.is_intact());

@@ -327,6 +327,14 @@ pub struct AuditArgs {
     /// Verify the audit log's hash chain instead of listing events. Exits 1 if it is not intact.
     #[arg(long, conflicts_with_all = ["secret", "operation", "since", "limit"])]
     pub verify: bool,
+    /// Acknowledge every detected audit-log truncation and unblock the vault. Prints the
+    /// truncation events first and asks for confirmation; only do this after comparing the
+    /// surviving history with a backup.
+    #[arg(long, conflicts_with_all = ["secret", "operation", "since", "limit", "verify"])]
+    pub acknowledge: bool,
+    /// With --acknowledge: confirm without prompting (automation).
+    #[arg(long, short = 'y', requires = "acknowledge")]
+    pub yes: bool,
 }
 
 #[derive(Debug, Args)]

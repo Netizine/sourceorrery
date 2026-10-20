@@ -1466,6 +1466,7 @@ dependencies = [
  "clap_complete",
  "owo-colors",
  "rpassword",
+ "rusqlite",
  "serde",
  "serde_json",
  "sourceorrery-core",

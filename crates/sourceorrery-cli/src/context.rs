@@ -73,6 +73,17 @@ impl Ctx {
         self.open(&name)
     }
 
+    /// Open the selected vault to inspect its audit log: like
+    /// [`Ctx::open_default`], but a vault blocked by an unacknowledged
+    /// audit-log truncation is unlocked too, with every secret and
+    /// protector operation refused until the truncation is acknowledged.
+    /// Only the `audit` command uses this.
+    pub fn inspect_default(&self) -> anyhow::Result<SqliteVault> {
+        let name = self.vault_name()?;
+        let unlocker = self.unlocker();
+        Ok(self.registry.open_for_inspection(&name, &unlocker)?)
+    }
+
     pub fn unlocker(&self) -> Unlocker {
         Unlocker {
             file: self.passphrase_file.clone(),

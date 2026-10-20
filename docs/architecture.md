@@ -126,7 +126,7 @@ Semantics every implementation must honour:
 | `delete_secret` | Soft-deletes **all versions** in a recoverable vault; immediate in a purgeable vault. |
 | `recover_deleted_secret` | Restores all versions. |
 | `purge_deleted_secret` | Permanent. Only valid on a deleted secret. |
-| `audit_events` | Every operation above is recorded, successes and failures, never with a value; metadata reads appear as `secret_inspect`. Reading the log and verifying the chain are not recorded. |
+| `audit_events` | Every operation above is recorded, successes and failures, never with a value; metadata reads appear as `secret_inspect`. Reading the log and verifying the chain are not recorded; acknowledging a detected truncation of it is (`audit_verify` / `success`). |
 
 A deliberate difference from Azure Key Vault: `not_before` and `expires_on`
 are **enforced** on retrieval, not advisory.

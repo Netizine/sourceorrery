@@ -8,7 +8,8 @@
 use sourceorrery_core::SecretBytes;
 use sourceorrery_crypto::Argon2Params;
 use sourceorrery_storage::{
-    CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase, VaultRegistry,
+    Acknowledgement, CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase,
+    VaultRegistry,
 };
 
 /// Passphrase used by every fixture vault.
@@ -62,6 +63,29 @@ impl Fixture {
         self.registry
             .migrate(name, &StaticPassphrase::new(FIXTURE_PASSPHRASE))
             .expect("migrate vault")
+    }
+
+    /// Unlock a fixture vault for audit-log inspection: works on a vault
+    /// blocked by an unacknowledged truncation.
+    pub fn inspect_vault(&self, name: &str) -> SqliteVault {
+        self.registry
+            .open_for_inspection(name, &StaticPassphrase::new(FIXTURE_PASSPHRASE))
+            .expect("open vault for inspection")
+    }
+
+    /// Acknowledge every detected truncation of a fixture vault's audit
+    /// log, as its owner would with `sourceorrery audit --acknowledge`.
+    pub fn acknowledge_truncations(&self, name: &str) -> Acknowledgement {
+        let vault = self.inspect_vault(name);
+        let ids: Vec<u64> = vault
+            .unacknowledged_truncations()
+            .expect("list truncations")
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        vault
+            .acknowledge_truncations(&ids)
+            .expect("acknowledge truncations")
     }
 }
 

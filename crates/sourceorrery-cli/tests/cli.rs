@@ -315,6 +315,114 @@ fn audit_verify_reports_an_intact_chain() {
     assert!(!out.status.success());
 }
 
+/// Remove the newest `rows` audit rows from a vault file, as an attacker
+/// with write access would.
+fn truncate_audit_log(home: &Path, vault: &str, rows: i64) {
+    let path = home.join("vaults").join(format!("{vault}.sorvault"));
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.execute(
+        "DELETE FROM audit_events WHERE id > (SELECT MAX(id) FROM audit_events) - ?1",
+        [rows],
+    )
+    .unwrap();
+}
+
+#[test]
+fn truncated_audit_log_blocks_the_vault_until_acknowledged() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "k", CANARY);
+    env.ok(&["secret", "get", "k", "--vault", "dev"]);
+    env.ok(&["secret", "get", "k", "--vault", "dev"]);
+    truncate_audit_log(env.home.path(), "dev", 2);
+
+    // The first unlock detects the truncation; every later command is
+    // refused until it is acknowledged, and none of them shows the value.
+    let out = env.run(&["secret", "get", "k", "--vault", "dev", "--reveal"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("rows removed after event"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!stdout(&out).contains(CANARY));
+    let out = env.run(&[
+        "secret", "get", "k", "--vault", "dev", "--reveal", "-o", "json",
+    ]);
+    assert!(!out.status.success());
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert_eq!(err["error"]["code"], "crypto");
+    let message = err["error"]["message"].as_str().unwrap();
+    assert!(message.contains("unacknowledged"), "{message}");
+    assert!(message.contains("audit --acknowledge"), "{message}");
+    assert!(!stdout(&out).contains(CANARY));
+    let out = env.run(&["secret", "list", "--vault", "dev"]);
+    assert!(!out.status.success());
+    let out = env.run(&["vault", "info", "--vault", "dev"]);
+    assert!(!out.status.success());
+
+    // Inspection still works: the chain report and the log, with a warning.
+    let out = env.run(&["audit", "--verify", "--vault", "dev", "-o", "json"]);
+    assert!(!out.status.success(), "a truncated chain is not intact");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(parsed["truncations"], 1);
+    assert_eq!(parsed["unacknowledged"], 1);
+    assert_eq!(parsed["head_valid"], true);
+    assert!(stderr(&out).contains("unacknowledged"), "{}", stderr(&out));
+    let out = env.run(&["audit", "--vault", "dev"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("audit_verify"), "{}", stdout(&out));
+    assert!(stderr(&out).contains("--acknowledge"), "{}", stderr(&out));
+
+    // Acknowledging needs a confirmation: with no terminal and no --yes it
+    // aborts, having shown what would have been acknowledged.
+    let out = env.run(&["audit", "--acknowledge", "--vault", "dev"]);
+    assert!(!out.status.success());
+    assert!(
+        stdout(&out).contains("rows removed after event"),
+        "{}",
+        stdout(&out)
+    );
+    assert!(stderr(&out).contains("aborted"), "{}", stderr(&out));
+    let out = env.run(&["secret", "get", "k", "--vault", "dev"]);
+    assert!(!out.status.success(), "still blocked");
+
+    // --yes acknowledges; the vault works again and the truncation stays
+    // on record, acknowledged.
+    let out = env.run(&[
+        "audit",
+        "--acknowledge",
+        "--yes",
+        "--vault",
+        "dev",
+        "-o",
+        "json",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let ack: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(ack["truncations"].as_array().unwrap().len(), 1);
+    assert!(ack["event_id"].as_u64().unwrap() > 0);
+    let revealed = env.ok(&["secret", "get", "k", "--vault", "dev", "--reveal"]);
+    assert_eq!(revealed.trim(), CANARY);
+    let out = env.run(&["audit", "--verify", "--vault", "dev", "-o", "json"]);
+    assert!(!out.status.success());
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(parsed["truncations"], 1);
+    assert_eq!(parsed["unacknowledged"], 0);
+    let listed = env.ok(&["audit", "--operation", "audit_verify", "--vault", "dev"]);
+    assert!(listed.contains("truncation acknowledged"), "{listed}");
+
+    // Nothing left to acknowledge is not an error; --yes on its own is a
+    // usage error.
+    let out = env.run(&["audit", "--acknowledge", "--yes", "--vault", "dev"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stderr(&out).contains("nothing to do"), "{}", stderr(&out));
+    assert_eq!(
+        env.run(&["audit", "--yes", "--vault", "dev"]).status.code(),
+        Some(2)
+    );
+}
+
 #[test]
 fn no_arguments_prints_the_banner_without_touching_a_vault() {
     let env = Env::new();
