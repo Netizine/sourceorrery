@@ -20,12 +20,17 @@ npm ci              # Node 22.12+
 npm run dev         # sync docs, then serve at http://localhost:4321
 npm run build       # sync docs, build to dist/, then check every internal link
 npm run sync        # regenerate the synced pages only
-npm run logo-mark   # regenerate src/assets/logo-mark.png and public/favicon.png from logo.png
+npm run favicon     # regenerate public/favicon.png from public/favicon.svg
 ```
 
-The site header uses `logo-mark.png`, the orrery emblem cropped from
-`logo.png`, because the full logo's dark wordmark is invisible on the dark
-theme; the name is rendered as text beside it.
+The emblem is the animated SVG orrery from the repository root, in three
+tunings: `src/assets/sourceorrery-light.svg` and `sourceorrery-dark.svg` are
+the header logo and the landing-page illustration on the matching theme
+(`logo: { light, dark }` in `astro.config.mjs`; the hero swaps them the same
+way), and `public/favicon.svg` is the untuned original, which sits on either
+tab-strip colour. `public/favicon.png` is rendered from it for browsers that
+do not load SVG favicons. The site name is rendered as text beside the emblem
+rather than as part of the logo.
 
 ## Dependency overrides
 

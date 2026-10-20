@@ -6,6 +6,12 @@
  * letter-spaced kicker, a large serif title whose second line is italic,
  * an italic deck, the actions, and a row of small-caps metadata, with the
  * emblem set to the right like a cover illustration.
+ *
+ * The copy column is a size container. The title scales with the column so
+ * that its first line fits on one line wherever the column is wide enough,
+ * up to a 4.5rem ceiling, and the deck runs the full width of the column
+ * rather than a fixed measure. The hero itself spans a wider container than
+ * the prose beneath it (see "Landing page helpers" in styles/paper.css).
  */
 import { Image } from 'astro:assets';
 import { LinkButton } from '@astrojs/starlight/components';
@@ -13,7 +19,17 @@ import { LinkButton } from '@astrojs/starlight/components';
 const { data } = Astro.locals.starlightRoute.entry;
 const { title = data.title, tagline, image, actions = [] } = data.hero || {};
 
-const file = image && 'file' in image ? image.file : undefined;
+// `hero.image` is `{ file }` or `{ light, dark }`; the dark image is hidden on
+// the light theme and vice versa with Starlight's `<theme>:sl-hidden` classes.
+const art =
+	image && 'file' in image
+		? [{ src: image.file, hiddenOn: undefined }]
+		: image && 'dark' in image
+			? [
+					{ src: image.dark, hiddenOn: 'light' },
+					{ src: image.light, hiddenOn: 'dark' },
+				]
+			: [];
 const alt = (image && 'alt' in image && image.alt) || '';
 
 const meta = [
@@ -58,9 +74,19 @@ const meta = [
 		</dl>
 	</div>
 	{
-		file && (
+		art.length > 0 && (
 			<div class="so-cover__art">
-				<Image src={file} alt={alt} width={520} height={520} loading="eager" decoding="async" />
+				{art.map(({ src, hiddenOn }) => (
+					<Image
+						{src}
+						{alt}
+						width={520}
+						height={520}
+						loading="eager"
+						decoding="async"
+						class:list={[hiddenOn && `${hiddenOn}:sl-hidden`]}
+					/>
+				))}
 			</div>
 		)
 	}
@@ -72,7 +98,13 @@ const meta = [
 		grid-template-columns: 100%;
 		gap: 2.5rem;
 		align-items: center;
-		padding-block: clamp(1.5rem, 5vw, 4.5rem) clamp(1rem, 3vw, 2.5rem);
+		/* The content panel already pads the top; the kicker sits close under the header. */
+		padding-block: clamp(0.5rem, 1.25vw, 1rem) clamp(1rem, 3vw, 2.5rem);
+	}
+
+	.so-cover__copy {
+		container-type: inline-size;
+		min-width: 0;
 	}
 
 	.so-kicker {
@@ -88,12 +120,12 @@ const meta = [
 	h1 {
 		font-family: var(--sl-font);
 		font-weight: 700;
-		font-size: clamp(2.5rem, 1.5rem + 3.6vw, 4.5rem);
+		/* 7.9cqi keeps the first line, "Secrets belong to the runtime," (about 12.1em), on one line. */
+		font-size: clamp(2.5rem, 7.9cqi, 4.5rem);
 		line-height: 1.04;
 		letter-spacing: -0.022em;
 		color: var(--so-heading);
 		margin: 0;
-		max-width: 16ch;
 	}
 
 	h1 :global(em) {
@@ -105,10 +137,9 @@ const meta = [
 	.so-cover__deck {
 		font-family: var(--sl-font);
 		font-style: italic;
-		font-size: clamp(1.05rem, 0.95rem + 0.5vw, 1.3rem);
+		font-size: clamp(1.05rem, 0.95rem + 0.6cqi, 1.3rem);
 		line-height: 1.5;
 		color: var(--sl-color-gray-2);
-		max-width: 46ch;
 		margin: 1.6rem 0 0;
 	}
 
@@ -167,25 +198,26 @@ const meta = [
 		text-decoration: underline;
 	}
 
+	/* A flex box, not `display: block` on the images, so the theme-hidden image stays hidden. */
 	.so-cover__art {
-		justify-self: center;
+		display: flex;
+		justify-content: center;
 	}
 
 	.so-cover__art img {
 		width: min(60%, 16rem);
 		height: auto;
-		margin-inline: auto;
-		display: block;
 	}
 
 	@media (min-width: 60rem) {
 		.so-cover {
-			grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
-			gap: 4rem;
+			/* The copy takes the row; the emblem keeps a fixed share with a floor and a ceiling. */
+			grid-template-columns: minmax(0, 1fr) clamp(14rem, 27%, 26rem);
+			gap: 3rem;
 		}
 
 		.so-cover__art img {
-			width: min(100%, 22rem);
+			width: 100%;
 		}
 	}
 </style>

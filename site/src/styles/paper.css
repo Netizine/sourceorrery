@@ -22,6 +22,7 @@
 	--sl-line-height: 1.65;
 	--sl-line-height-headings: 1.15;
 	--sl-content-width: 47rem;
+	--so-cover-width: 88rem;
 	--sl-shadow-sm: none;
 	--sl-shadow-md: none;
 	--sl-shadow-lg: 0 1px 2px rgb(0 0 0 / 0.06);
@@ -224,7 +225,8 @@ header.header {
 	color: var(--sl-color-text);
 }
 
-h1[data-page-title],
+/* Article titles only: the landing page's hero sets its own title. */
+html:not([data-has-hero]) h1[data-page-title],
 .sl-markdown-content h1 {
 	font-family: var(--sl-font);
 	font-weight: 700;
@@ -524,6 +526,21 @@ footer .kudos {
 
 .guarantees td:first-child {
 	white-space: nowrap;
+}
+
+/*
+ * The cover (components/Hero.astro) runs wider than the prose: on the splash
+ * page the content container opens up to --so-cover-width, and the Markdown
+ * body and footer re-centre themselves at the usual measure beneath it.
+ */
+[data-has-hero] .content-panel .sl-container {
+	max-width: var(--so-cover-width);
+}
+
+[data-has-hero] .sl-markdown-content,
+[data-has-hero] footer {
+	max-width: var(--sl-content-width);
+	margin-inline: auto;
 }
 
 /* Section headings on the splash page read as chapter titles. */
