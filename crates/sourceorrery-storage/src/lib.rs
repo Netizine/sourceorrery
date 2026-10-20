@@ -1,0 +1,46 @@
+//! # SourceOrrery storage
+//!
+//! The local **encrypted vault** backend: a single SQLite file holding
+//! versioned, individually encrypted secret values, their metadata, the
+//! wrapped vault key and a metadata-only audit log.
+//!
+//! ## Key hierarchy
+//!
+//! ```text
+//! key protector (OS keyring entry | Argon2id(passphrase))
+//!        │  wraps (XChaCha20-Poly1305, AAD = vault id + protector id)
+//!        ▼
+//! vault DEK ── encrypts each value (AAD = vault id + secret name + version)
+//! ```
+//!
+//! A vault may have several protectors wrapping the same DEK, so a vault
+//! created with the Windows Credential Manager can also be unlocked with a
+//! passphrase inside WSL, Docker or CI.
+//!
+//! ## What is and is not encrypted
+//!
+//! Encrypted: every secret value. Plaintext: vault metadata, secret names,
+//! version identifiers, tags, timestamps and audit events. Do not put
+//! sensitive information in names or tags.
+
+#![forbid(unsafe_code)]
+
+pub mod keystore;
+pub mod protector;
+pub mod registry;
+pub mod sqlite;
+pub mod unlock;
+
+pub use protector::{ProtectorInfo, ProtectorKind, ProtectorSpec};
+pub use registry::VaultRegistry;
+pub use sqlite::{CreateVaultOptions, SqliteVault};
+pub use unlock::{NoInteraction, PassphrasePrompt, StaticPassphrase, UnlockProvider};
+
+/// Backend identifier reported in [`sourceorrery_core::VaultDescriptor`].
+pub const BACKEND_NAME: &str = "encrypted-sqlite";
+
+/// On-disk schema version written to new vaults.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// File extension of vault files.
+pub const VAULT_FILE_EXTENSION: &str = "sorvault";

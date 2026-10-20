@@ -1,0 +1,50 @@
+# Roadmap
+
+## Milestone 1 — core and local CLI *(this release)*
+
+- [x] Secret contracts (`SecretClient`), stable error codes, naming rules
+- [x] Enforced policy: enabled, `not_before`, `expires_on`; latest-accessible selection
+- [x] Encrypted SQLite vault; per-value AEAD bound to vault/name/version
+- [x] Key protectors: OS credential store (Windows/macOS/Linux) and Argon2id passphrase; several per vault
+- [x] Versions, soft delete, recovery, purge, retention with automatic purge
+- [x] Metadata-only audit log, including failed unlocks
+- [x] CLI: `vault`, `secret`, `audit`, `init`, `check`, `run`, `completions`
+- [x] Value-free manifest `sourceorrery.toml`; `sourceorrery://` references
+- [x] Conformance + security suites; CI on Ubuntu/Windows/macOS; release workflow
+- [ ] Manual validation of the OS-keyring path on macOS and a Linux desktop
+- [ ] Metadata and audit-log integrity (MAC over mutable metadata)
+- [ ] `backup` / `restore` (encrypted export of a vault or a secret)
+- [ ] Package managers: Homebrew, WinGet, Scoop, `cargo install`; signed releases
+- [ ] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`
+
+## Milestone 2 — first-class language bindings
+
+- [ ] `sourceorrery-ffi`: stable C ABI (`cbindgen`), versioned `CONTRACT_VERSION`
+- [ ] .NET (`SourceOrrery` NuGet), Python (PyPI wheels via Maturin), Node.js (napi-rs)
+- [ ] Cross-language conformance harness driving `tests/conformance` scenarios
+- [ ] Scoped value accessors (callback / `using` / context manager) in every SDK
+- [ ] ABI compatibility tests and semantic versioning policy
+
+## Milestone 3 — local broker and agent isolation
+
+- [ ] Authenticated local protocol over Unix sockets / named pipes (length-prefixed, versioned)
+- [ ] Capability-based authorisation; short-lived, secret-scoped grants
+- [ ] Verified workload identity where the OS can provide it; honest labelling where it cannot
+- [ ] Agent-aware access profiles: no production secrets by default, scoped test credentials, lifetime limits
+- [ ] Hostile same-user process and compromised-workspace test suite
+- [ ] Security review before the broker is described as a boundary
+
+## Milestone 4 — enterprise integrations
+
+- [ ] Remote providers behind the same contract: Azure Key Vault, AWS Secrets Manager, HashiCorp Vault, SourceOrrery server
+- [ ] `AsyncSecretClient`
+- [ ] Workload identity federation, RBAC, centrally administered policy and revocation
+- [ ] Rotation workflows with issuer cooperation (issue → validate → activate → retire)
+- [ ] Central audit collection
+- [ ] Security review before "enterprise-ready"
+
+## Milestone 5 — community expansion
+
+- [ ] Published C ABI specification and SDK templates
+- [ ] Java/Kotlin, Swift, Go, PHP, Ruby, Dart, Elixir bindings via the harness
+- [ ] Tier 2 platforms: musl, ARMv7; community: FreeBSD, OpenBSD

@@ -1,0 +1,66 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/sourceorrery-core",
+    "crates/sourceorrery-crypto",
+    "crates/sourceorrery-storage",
+    "crates/sourceorrery-cli",
+    "tests/conformance",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sourceorrery/sourceorrery"
+homepage = "https://sourceorrery.ai"
+authors = ["James Melvin <james@melvin.tech>"]
+categories = ["command-line-utilities", "cryptography"]
+keywords = ["secrets", "vault", "keyring", "security", "cli"]
+
+[workspace.dependencies]
+# internal
+sourceorrery-core = { path = "crates/sourceorrery-core", version = "0.1.0" }
+sourceorrery-crypto = { path = "crates/sourceorrery-crypto", version = "0.1.0" }
+sourceorrery-storage = { path = "crates/sourceorrery-storage", version = "0.1.0", default-features = false }
+
+# shared
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+zeroize = { version = "1.9", features = ["derive"] }
+time = { version = "0.3", features = ["serde-well-known", "formatting", "parsing", "macros"] }
+hex = "0.4"
+toml = "1"
+tracing = "0.1"
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+doc_markdown = "allow"
+# Option<Option<T>> is the documented serde idiom for "unchanged / clear / set".
+option_option = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+struct_excessive_bools = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+# Argon2id is unusably slow unoptimised; keep the KDF fast in dev/test builds.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

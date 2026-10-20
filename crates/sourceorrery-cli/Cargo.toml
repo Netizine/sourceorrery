@@ -1,0 +1,45 @@
+[package]
+name = "sourceorrery-cli"
+description = "SourceOrrery command-line interface: secrets belong to the runtime, not the repository"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+default-run = "sourceorrery"
+
+[[bin]]
+name = "sourceorrery"
+path = "src/main.rs"
+
+[features]
+default = ["os-keyring"]
+# Protect vault keys with the OS credential store. Disable for headless
+# servers that only use passphrase protectors.
+os-keyring = ["sourceorrery-storage/os-keyring"]
+
+[dependencies]
+sourceorrery-core.workspace = true
+sourceorrery-storage.workspace = true
+clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4.6"
+anyhow = "1"
+rpassword = "7"
+owo-colors = { version = "4", features = ["supports-colors"] }
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+toml.workspace = true
+zeroize.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

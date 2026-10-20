@@ -1,0 +1,52 @@
+[package]
+name = "sourceorrery-storage"
+description = "Encrypted, versioned local vault storage for SourceOrrery with OS-keyring and passphrase key protectors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+
+[features]
+default = ["os-keyring"]
+# Protect vault keys with the operating-system credential store
+# (Windows Credential Manager, macOS Keychain, Secret Service on Linux).
+os-keyring = [
+    "dep:keyring-core",
+    "dep:windows-native-keyring-store",
+    "dep:apple-native-keyring-store",
+    "dep:zbus-secret-service-keyring-store",
+]
+
+[dependencies]
+sourceorrery-core.workspace = true
+sourceorrery-crypto.workspace = true
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+hex.workspace = true
+zeroize.workspace = true
+tracing.workspace = true
+directories = "6"
+keyring-core = { version = "1", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = { version = "1", optional = true }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+apple-native-keyring-store = { version = "1", optional = true, features = ["keychain"] }
+
+[target.'cfg(all(unix, not(target_vendor = "apple")))'.dependencies]
+zbus-secret-service-keyring-store = { version = "1", optional = true, features = ["rt-async-io-crypto-rust"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

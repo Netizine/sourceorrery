@@ -1,0 +1,27 @@
+# Example SourceOrrery project manifest — safe to commit.
+#
+# Declares which secrets a project needs and how they reach the runtime.
+# It can never hold a secret: any unknown key (for example `value`) is a
+# parse error. Store values with `sourceorrery secret set <name>`.
+
+[project]
+name = "my-application"
+vault = "development"
+
+# Delivered as DATABASE_PASSWORD (name upper-cased, hyphens → underscores).
+[secrets.database-password]
+required = true
+purpose = "Database authentication"
+
+# Optional secret with a custom environment variable name.
+[secrets.payment-api-key]
+required = false
+purpose = "Payments sandbox"
+env = "STRIPE_KEY"
+
+# Pinned to one version and resolved from a different vault.
+[secrets.signing-key]
+required = true
+purpose = "Signs outbound webhooks"
+vault = "shared-tooling"
+version = "0123456789abcdef0123456789abcdef"
