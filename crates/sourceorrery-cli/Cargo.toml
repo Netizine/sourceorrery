@@ -15,6 +15,10 @@ default-run = "sourceorrery"
 [[bin]]
 name = "sourceorrery"
 path = "src/main.rs"
+# The binary shares its name with the `sourceorrery` library crate; documenting
+# both collides on target/doc/sourceorrery (cargo issue 6313). The reference
+# for the CLI is docs/cli.md.
+doc = false
 
 [features]
 default = ["os-keyring"]
