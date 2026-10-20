@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — storage module layout
+
+* `sourceorrery-storage`'s single `sqlite.rs` is now the `sqlite/` module:
+  `schema` (SQL, connections, settings record), `rows` (authenticated reads
+  and writes), `audit` (chain writer, head record, verification and the
+  completion helpers every operation ends with), `protectors` (unlocking and
+  key protectors), `migrate` (schema 1 → 2) and the vault type with its
+  `SecretClient` implementation in `mod.rs`. Pure move; no behaviour change.
+
 ### Security — fixes from the 20 October 2026 review
 
 * **Schema rollback no longer launders edits through migration.** The vault
