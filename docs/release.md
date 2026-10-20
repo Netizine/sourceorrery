@@ -39,7 +39,7 @@ the next patch version.
 |-----|--------|
 | `native` (six targets) | `sourceorrery-X.Y.Z-<target>.{tar.gz,zip}`: the CLI. `sourceorrery-ffi-X.Y.Z-<target>.{tar.gz,zip}`: the shared and static C ABI libraries, `sourceorrery.h`, `sourceorrery.hpp`, licences. |
 | `python` (six targets + sdist) | abi3 wheels for Python 3.11+ (`manylinux_2_28` on Linux) and the sdist. |
-| `node-build`, `node-package` | `@sourceorrery/sdk` and the six `@sourceorrery/sdk-<platform>` tarballs. |
+| `node-build`, `node-package` | `@sourceorrery/sdk` and the six `@sourceorrery/sdk-<platform>` tarballs. `node-build` compiles the addon per target and, on `x86_64-unknown-linux-gnu`, keeps the `index.js` loader and `index.d.ts` that `napi build` generates (artifact `npm-loader`); `node-package` lays out the platform packages around the addons, adds the loader, packs, then installs the main and `linux-x64-gnu` tarballs into a scratch project and requires `@sourceorrery/sdk`, so a main package that cannot be loaded fails the run. |
 | `java` | `sourceorrery-X.Y.Z.jar` with the native libraries embedded per platform. |
 | `dotnet` | `SourceOrrery.X.Y.Z.nupkg` with `runtimes/<rid>/native`. |
 | `crates` | a `cargo publish --workspace --dry-run` proving every crate packages in dependency order. |
@@ -52,8 +52,13 @@ Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
 
 Every manifest is stamped with the version first by
 `scripts/release/set-version.py` (Cargo manifests and lock files, the
-Python package, `package.json`, `pom.xml`, `Directory.Build.props`); Go and
-PHP take their version from the tag.
+Python package, `package.json` and the `npm/<platform>` manifests,
+`pom.xml`, `Directory.Build.props`); Go and PHP take their version from
+the tag. In the repository `bindings/node/package.json` depends on the
+platform packages as `file:npm/<platform>` links so that `npm ci` resolves
+without them being on the registry; stamping replaces the links with the
+version, which is what the published package depends on, so the node jobs
+run `npm ci` before they stamp.
 
 ## Registry secrets
 

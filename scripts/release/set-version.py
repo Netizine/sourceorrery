@@ -14,7 +14,15 @@ the workflow_dispatch form is the single source of truth. Touches:
   bindings/python/Cargo.toml,     the extension crate and its dependency on
   bindings/python/Cargo.lock      the client crate
   bindings/python/python/sourceorrery/__init__.py   __version__
-  bindings/node/Cargo.toml, Cargo.lock, package.json, package-lock.json
+  bindings/node/Cargo.toml, Cargo.lock, package.json, package-lock.json,
+  bindings/node/npm/<platform>/package.json
+                                  In the repository package.json depends on
+                                  the platform packages as `file:npm/<platform>`
+                                  links so that `npm ci` resolves without the
+                                  registry; stamping turns those into the
+                                  version, which is what the published
+                                  package must depend on. `--check` accepts
+                                  either form.
   bindings/java/pom.xml           the project version
   bindings/dotnet/Directory.Build.props             <Version>
 
@@ -120,23 +128,33 @@ def main(argv: list[str]) -> int:
         lambda text: sub_once(r'^(__version__ = )"[^"]+"', rf'\1"{version}"', text, ROOT / "bindings/python/python/sourceorrery/__init__.py"),
     )
 
-    # Node package manifests.
+    # Node package manifests. The main package's optionalDependencies are
+    # `file:npm/<platform>` links in the repository and the version in a
+    # release; a check accepts the links as carrying the version.
     def package_json(text: str) -> str:
         data = json.loads(text)
         data["version"] = version
-        for name in data.get("optionalDependencies", {}):
-            if name.startswith("@sourceorrery/sdk-"):
+        for name, spec in data.get("optionalDependencies", {}).items():
+            if name.startswith("@sourceorrery/sdk-") and not (check and spec.startswith("file:")):
                 data["optionalDependencies"][name] = version
         return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
     edit(ROOT / "bindings/node/package.json", package_json)
 
+    def platform_package_json(text: str) -> str:
+        data = json.loads(text)
+        data["version"] = version
+        return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+    for manifest in sorted((ROOT / "bindings/node/npm").glob("*/package.json")):
+        edit(manifest, platform_package_json)
+
     def package_lock(text: str) -> str:
         data = json.loads(text)
         data["version"] = version
-        root = data.get("packages", {}).get("")
-        if root is not None:
-            root["version"] = version
+        for location, entry in data.get("packages", {}).items():
+            if location == "" or location.startswith("npm/"):
+                entry["version"] = version
         return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
     edit(ROOT / "bindings/node/package-lock.json", package_lock)
