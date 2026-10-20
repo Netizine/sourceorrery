@@ -1,9 +1,11 @@
-// Read one secret and report its size, never its value.
-//
-// Build against the C header and the shared library (see bindings/cpp/README.md):
-//   c++ -std=c++17 -I bindings/cpp/include -I crates/sourceorrery-ffi/include \
-//       bindings/cpp/examples/get_secret.cpp -L target/release -lsourceorrery_ffi -o get_secret
-//   get_secret [VAULT] [SECRET]
+/*
+ * Read one secret and report its size, never its value.
+ *
+ * Build against the C header and the shared library (see bindings/cpp/README.md):
+ *   c++ -std=c++17 -I bindings/cpp/include -I crates/sourceorrery-ffi/include
+ *       bindings/cpp/examples/get_secret.cpp -L target/release -lsourceorrery_ffi -o get_secret
+ *   get_secret [VAULT] [SECRET]
+ */
 #include <cstdio>
 #include <iostream>
 

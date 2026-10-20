@@ -59,6 +59,24 @@ func mustGet(t *testing.T, secret *Secret, err error) *Secret {
 	return secret
 }
 
+func get(t *testing.T, reader *Reader, name string) *Secret {
+	t.Helper()
+	secret, err := reader.Get(name)
+	return mustGet(t, secret, err)
+}
+
+func getVersion(t *testing.T, reader *Reader, name, version string) *Secret {
+	t.Helper()
+	secret, err := reader.GetVersion(name, version)
+	return mustGet(t, secret, err)
+}
+
+func resolve(t *testing.T, reader *Reader, reference string) *Secret {
+	t.Helper()
+	secret, err := reader.Resolve(reference)
+	return mustGet(t, secret, err)
+}
+
 func expectErr(t *testing.T, err error, sentinel error, code string, hintContains string) *Error {
 	t.Helper()
 	if err == nil {
@@ -89,7 +107,7 @@ func TestContractVersion(t *testing.T) {
 func TestGetReturnsTheNewestAccessibleVersion(t *testing.T) {
 	fx := loadFixture(t)
 	reader := openReader(t, fx)
-	secret := mustGet(t, reader.Get("database-password"))
+	secret := get(t, reader, "database-password")
 	if secret.Value.Text() != latestValue || string(secret.Value.Bytes()) != latestValue || secret.Value.Len() != len(latestValue) {
 		t.Fatalf("unexpected value")
 	}
@@ -113,7 +131,7 @@ func TestGetReturnsTheNewestAccessibleVersion(t *testing.T) {
 func TestExplicitVersionsAndProperties(t *testing.T) {
 	fx := loadFixture(t)
 	reader := openReader(t, fx)
-	old := mustGet(t, reader.GetVersion("database-password", fx.oldVersion))
+	old := getVersion(t, reader, "database-password", fx.oldVersion)
 	if old.Value.Text() != firstValue || old.Properties.Version != fx.oldVersion {
 		t.Fatalf("unexpected old version")
 	}
@@ -130,10 +148,10 @@ func TestExplicitVersionsAndProperties(t *testing.T) {
 func TestReferencesResolveWithinTheVault(t *testing.T) {
 	fx := loadFixture(t)
 	reader := openReader(t, fx)
-	if mustGet(t, reader.Resolve("sourceorrery://"+fx.vault+"/database-password")).Value.Text() != latestValue {
+	if resolve(t, reader, "sourceorrery://"+fx.vault+"/database-password").Value.Text() != latestValue {
 		t.Fatalf("latest by reference")
 	}
-	if mustGet(t, reader.Resolve("sourceorrery://"+fx.vault+"/database-password/"+fx.oldVersion)).Value.Text() != firstValue {
+	if resolve(t, reader, "sourceorrery://"+fx.vault+"/database-password/"+fx.oldVersion).Value.Text() != firstValue {
 		t.Fatalf("pinned by reference")
 	}
 	_, err := reader.Resolve("sourceorrery://other-vault/database-password")
@@ -145,7 +163,7 @@ func TestReferencesResolveWithinTheVault(t *testing.T) {
 func TestDisabledNewestVersionFallsBack(t *testing.T) {
 	fx := loadFixture(t)
 	reader := openReader(t, fx)
-	if mustGet(t, reader.Get("rotated-key")).Value.Text() != "old" {
+	if get(t, reader, "rotated-key").Value.Text() != "old" {
 		t.Fatalf("fallback")
 	}
 	newest, err := reader.Properties("rotated-key", "")
@@ -225,7 +243,7 @@ func TestVaultErrorsSayHowToFixThem(t *testing.T) {
 func TestSecretValuesDoNotLeak(t *testing.T) {
 	fx := loadFixture(t)
 	reader := openReader(t, fx)
-	secret := mustGet(t, reader.Get("database-password"))
+	secret := get(t, reader, "database-password")
 	if secret.Value.String() != "[REDACTED]" || fmt.Sprint(secret.Value) != "[REDACTED]" || fmt.Sprintf("%v", secret.Value) != "[REDACTED]" {
 		t.Fatalf("String must redact")
 	}

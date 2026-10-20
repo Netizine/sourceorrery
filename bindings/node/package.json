@@ -9,7 +9,14 @@
     "url": "git+https://github.com/Netizine/sourceorrery.git",
     "directory": "bindings/node"
   },
-  "keywords": ["secrets", "vault", "keyring", "security", "dotenv", "napi-rs"],
+  "keywords": [
+    "secrets",
+    "vault",
+    "keyring",
+    "security",
+    "dotenv",
+    "napi-rs"
+  ],
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": {
@@ -18,7 +25,12 @@
       "default": "./lib/index.js"
     }
   },
-  "files": ["index.js", "index.d.ts", "lib/", "README.md"],
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "lib/",
+    "README.md"
+  ],
   "napi": {
     "binaryName": "sourceorrery",
     "targets": [
@@ -51,5 +63,13 @@
     "@napi-rs/cli": "^3.10.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0"
+  },
+  "optionalDependencies": {
+    "@sourceorrery/sdk-win32-x64-msvc": "0.1.0",
+    "@sourceorrery/sdk-win32-arm64-msvc": "0.1.0",
+    "@sourceorrery/sdk-darwin-x64": "0.1.0",
+    "@sourceorrery/sdk-darwin-arm64": "0.1.0",
+    "@sourceorrery/sdk-linux-x64-gnu": "0.1.0",
+    "@sourceorrery/sdk-linux-arm64-gnu": "0.1.0"
   }
 }

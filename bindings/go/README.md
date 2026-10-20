@@ -4,7 +4,7 @@ Read secrets from a [SourceOrrery](https://sourceorrery.ai) vault.
 Secrets belong to the runtime, not the repository.
 
 ```go
-import sourceorrery "github.com/Netizine/sourceorrery/bindings/go"
+import sourceorrery "github.com/netizine/sourceorrery/bindings/go"
 
 reader, err := sourceorrery.Open("development", nil)
 defer reader.Close()

@@ -142,9 +142,17 @@ final class Native
         throw SourceOrreryException::forCode($code, $message, $hint);
     }
 
-    private static function cString(?CData $pointer): ?string
+    /**
+     * A `const char *` return value: PHP's FFI hands a NUL-terminated string
+     * back as a PHP string already, NULL as null, and (on some builds) a
+     * CData pointer.
+     */
+    public static function cString(mixed $pointer): ?string
     {
-        return $pointer === null ? null : FFI::string($pointer);
+        if ($pointer === null || is_string($pointer)) {
+            return $pointer;
+        }
+        return FFI::string($pointer);
     }
 
     /** A string argument as `(ptr, len)`; null becomes `(NULL, 0)`. */

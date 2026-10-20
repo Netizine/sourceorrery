@@ -1,6 +1,6 @@
 // Read one secret and report its size, never its value.
 //
-//	go get github.com/Netizine/sourceorrery/bindings/go
+//	go get github.com/netizine/sourceorrery/bindings/go
 //	export SOURCEORRERY_PASSPHRASE=...   # or rely on the OS credential store
 //	CGO_LDFLAGS="-L/path/to/sourceorrery_ffi" go run . development database-password
 package main
@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"os"
 
-	sourceorrery "github.com/Netizine/sourceorrery/bindings/go"
+	sourceorrery "github.com/netizine/sourceorrery/bindings/go"
 )
 
 func main() {

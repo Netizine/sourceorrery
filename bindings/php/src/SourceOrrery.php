@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace SourceOrrery;
 
-use FFI;
-
 /** Information about the loaded native library. */
 final class SourceOrrery
 {
@@ -16,7 +14,7 @@ final class SourceOrrery
     /** Contract version of the core (`"1"` for this package). */
     public static function contractVersion(): string
     {
-        return FFI::string(Native::ffi()->so_contract_version());
+        return Native::cString(Native::ffi()->so_contract_version()) ?? '';
     }
 
     /** Version of the C ABI the library was built with. */
