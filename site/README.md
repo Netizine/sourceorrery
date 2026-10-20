@@ -13,6 +13,19 @@ regenerates those pages before every `dev` and `build` from
 Hand-written pages: `src/content/docs/index.mdx` (landing),
 `getting-started.mdx` and `guides/headless.md`.
 
+Platform tabs: in a `docs/` page, headings between `<!-- tabs: os -->` and
+`<!-- /tabs -->` become Starlight `<Tabs>` (one `<TabItem>` per heading, the
+key after the colon is the `syncKey`, so the platform chosen on one page is
+selected on every page); on GitHub they read as plain headings. Such a page
+is emitted as `.mdx`. Hand-written MDX pages use `<Tabs syncKey="os">`
+directly.
+
+Every link that leaves the site opens in a new tab: the Sätteri plugin in
+`plugins/external-links.mjs` (passed to `markdown.processor` in
+`astro.config.mjs`) handles Markdown and MDX content, and
+`src/components/SocialIcons.astro`, `EditLink.astro` and `Hero.astro`
+handle the page chrome.
+
 ## Commands
 
 ```bash

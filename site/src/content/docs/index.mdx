@@ -23,11 +23,14 @@ hero:
 
 import { Aside, Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-<Aside type="caution" title="Status: milestone 1">
-Core, encrypted vault and CLI. Local-first and usable today on Windows, macOS
-and Linux. Language SDKs, the authenticated local broker and remote providers
-are on the [roadmap](/roadmap/). **Not yet audited; do not treat it as a
-production secret store.**
+<Aside type="caution" title="Status: milestone 2">
+Core, encrypted vault, CLI and read-only [SDKs](/sdks/) for Python,
+JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP. Local-first and
+usable today on Windows, macOS and Linux; 0.1.0 installs from the
+[GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0).
+The authenticated local broker and remote providers are on the
+[roadmap](/roadmap/). **Not yet audited; do not treat it as a production
+secret store.**
 </Aside>
 
 ## Why
@@ -72,8 +75,8 @@ Three different guarantees, kept separate on purpose. The
 
 <div class="guarantees">
 
-| Guarantee | Milestone 1 |
-|-----------|-------------|
+| Guarantee | Today |
+|-----------|-------|
 | **At-rest protection** — no plaintext secrets on disk, in the repo or in agent context | **Yes** |
 | **Access control** — which identities may retrieve which secret | **Local only:** whoever can unlock the vault |
 | **Agent isolation** — an untrusted agent running as *your* user cannot impersonate your application | **No.** Requires the authenticated broker and OS isolation (milestone 3) |
@@ -104,12 +107,13 @@ sourceorrery run -- npm start      # DATABASE_PASSWORD is set in the child only
 ```
 
 The [getting started](/getting-started/) page walks through each step,
-including building from source.
+starting with installing the release.
 
 ## Read on
 
 <CardGrid>
-	<LinkCard title="Getting started" description="Build from source, create a vault, store a secret, run your application." href="/getting-started/" />
+	<LinkCard title="Getting started" description="Install the release, create a vault, store a secret, run your application." href="/getting-started/" />
+	<LinkCard title="SDKs" description="Read secrets from Python, JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP." href="/sdks/" />
 	<LinkCard title="Headless: WSL, Docker, CI" description="Unlock a vault where there is no OS credential store or no terminal." href="/guides/headless/" />
 	<LinkCard title="CLI reference" description="Every command, option and environment variable." href="/reference/cli/" />
 	<LinkCard title="Threat model" description="The three guarantees, the adversaries, the controls and the known gaps." href="/security/threat-model/" />

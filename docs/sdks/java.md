@@ -1,5 +1,40 @@
 # Java
 
+## Install
+
+### From the release
+
+`sourceorrery-0.1.0.jar` on the
+[v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+embeds the native library for Windows, macOS and Linux (x64 and arm64), so
+one jar serves every platform. Install it into your local Maven repository,
+then depend on it as usual:
+
+<!-- tabs: os -->
+
+#### Windows
+
+```powershell
+Invoke-WebRequest https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-0.1.0.jar -OutFile sourceorrery-0.1.0.jar
+mvn install:install-file "-Dfile=sourceorrery-0.1.0.jar" "-DgroupId=ai.sourceorrery" "-DartifactId=sourceorrery" "-Dversion=0.1.0" "-Dpackaging=jar"
+```
+
+#### macOS
+
+```bash
+curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-0.1.0.jar
+mvn install:install-file -Dfile=sourceorrery-0.1.0.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.0 -Dpackaging=jar
+```
+
+#### Linux
+
+```bash
+curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-0.1.0.jar
+mvn install:install-file -Dfile=sourceorrery-0.1.0.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.0 -Dpackaging=jar
+```
+
+<!-- /tabs -->
+
 ```xml
 <dependency>
   <groupId>ai.sourceorrery</groupId>
@@ -9,14 +44,22 @@
 ```
 
 ```kotlin
-implementation("ai.sourceorrery:sourceorrery:0.1.0")   // Gradle
+implementation("ai.sourceorrery:sourceorrery:0.1.0")   // Gradle, with mavenLocal() among the repositories
 ```
+
+Without a local repository, put the jar on the classpath directly:
+`implementation(files("libs/sourceorrery-0.1.0.jar"))` in Gradle, or
+`--class-path sourceorrery-0.1.0.jar` on the `java` command line.
+
+### From Maven Central
+
+The same coordinates resolve from Maven Central once the artifact is
+published there; 0.1.0 is not there yet.
 
 Requires Java 22 or newer: the binding uses the Foreign Function and
 Memory API (`java.lang.foreign`) over the C ABI, with no JNI code and no
-third-party dependency. The jar embeds the native library for Windows,
-macOS and Linux (x86-64 and arm64) and extracts it on first use; set
-`SOURCEORRERY_NATIVE_DIR` to use a library from elsewhere. Run with
+third-party dependency. The jar extracts the native library on first use;
+set `SOURCEORRERY_NATIVE_DIR` to use a library from elsewhere. Run with
 `--enable-native-access=ALL-UNNAMED` (or grant it to your module) to
 silence the restricted-method warning.
 

@@ -1,12 +1,21 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { satteri } from '@astrojs/markdown-satteri';
+import { externalLinks } from './plugins/external-links.mjs';
 
+const SITE_URL = 'https://sourceorrery.ai';
 const GITHUB_URL = 'https://github.com/Netizine/sourceorrery';
 
 // https://astro.build/config
 export default defineConfig({
-	site: 'https://sourceorrery.ai',
+	site: SITE_URL,
+	markdown: {
+		// Every link that leaves the site opens in a new tab. Links in page
+		// chrome (the GitHub icon, "Edit page", the hero) get the same
+		// attributes in the component overrides below.
+		processor: satteri({ hastPlugins: [externalLinks({ site: SITE_URL })] }),
+	},
 	integrations: [
 		starlight({
 			title: 'SourceOrrery',
@@ -40,6 +49,9 @@ export default defineConfig({
 			],
 			components: {
 				Hero: './src/components/Hero.astro',
+				// Starlight's own versions, with external links opening in a new tab.
+				SocialIcons: './src/components/SocialIcons.astro',
+				EditLink: './src/components/EditLink.astro',
 			},
 			expressiveCode: {
 				themes: ['github-light', 'github-dark-dimmed'],

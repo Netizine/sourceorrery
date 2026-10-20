@@ -1,26 +1,70 @@
 # Go
 
+## Install
+
 ```bash
-go get github.com/netizine/sourceorrery/bindings/go
+go get github.com/netizine/sourceorrery/bindings/go@v0.1.0
 ```
 
-A cgo binding over the C ABI. The header is vendored in the module; the
-shared library comes from the `sourceorrery-ffi-<version>-<target>`
-release archive (or `cargo build --release -p sourceorrery-ffi`). Tell
-the linker and the loader where it is:
+The module is published on pkg.go.dev from the `bindings/go/v0.1.0` tag. It
+is a cgo binding over the C ABI: the header is vendored in the module, and
+the shared library comes from the `sourceorrery-ffi-0.1.0-<target>` archive
+on the
+[v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0).
+A C toolchain is required (gcc or clang; MinGW-w64 on Windows). Download the
+archive for your platform, unpack it, and tell the linker and the loader
+where it is:
 
-```bash
-export CGO_LDFLAGS="-L/opt/sourceorrery/lib"
-export LD_LIBRARY_PATH=/opt/sourceorrery/lib        # DYLD_LIBRARY_PATH on macOS, PATH on Windows
+<!-- tabs: os -->
+
+#### Windows
+
+```powershell
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.0"
+$dir = "$env:LOCALAPPDATA\sourceorrery-ffi"
+Invoke-WebRequest "$release/sourceorrery-ffi-0.1.0-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
+Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
+
+$env:CGO_LDFLAGS = "-L$dir"
+$env:Path = "$dir;$env:Path"          # sourceorrery_ffi.dll must be on PATH at run time
 go build ./...
 ```
 
+On Windows the binding links `sourceorrery_ffi.dll` directly, because the
+static archive next to it is built by MSVC and MinGW cannot consume it.
+
+#### macOS
+
+```bash
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.0
+archive=sourceorrery-ffi-0.1.0-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
+curl -LO "$release/$archive.tar.gz"
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+
+export CGO_LDFLAGS="-L/opt/sourceorrery"
+export DYLD_LIBRARY_PATH=/opt/sourceorrery
+go build ./...
+```
+
+#### Linux
+
+```bash
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.0
+archive=sourceorrery-ffi-0.1.0-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
+curl -LO "$release/$archive.tar.gz"
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+
+export CGO_LDFLAGS="-L/opt/sourceorrery"
+export LD_LIBRARY_PATH=/opt/sourceorrery
+go build ./...
+```
+
+<!-- /tabs -->
+
+Verify a download against the release's `SHA256SUMS` before unpacking it.
 Static linking against `libsourceorrery_ffi.a` from the same archive works
-too on Linux and macOS (`-lsourceorrery_ffi -lpthread -ldl -lm` on Linux).
-A C toolchain is required (gcc or clang; MinGW-w64 on Windows). On Windows
-the binding links `sourceorrery_ffi.dll` directly, because the static
-archive next to it is built by MSVC and MinGW cannot consume it; keep the
-DLL on `PATH` at run time.
+too on Linux and macOS (`-lsourceorrery_ffi -lpthread -ldl -lm` on Linux),
+and then nothing has to be on the loader's path at run time.
 
 ## Get a secret
 

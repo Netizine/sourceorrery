@@ -1,30 +1,111 @@
 ---
 title: Getting started
-description: Build SourceOrrery from source, create an encrypted vault, store a secret without ever typing it on a command line, and run your application with secrets in its environment.
+description: Install the SourceOrrery CLI from the 0.1.0 release, create an encrypted vault, store a secret without ever typing it on a command line, and run your application with secrets in its environment.
 ---
 
-import { Aside, Steps } from '@astrojs/starlight/components';
+import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-SourceOrrery is at **milestone 1**: an encrypted local vault with an Azure Key
-Vault–style lifecycle and a CLI. It works today on Windows, macOS and Linux.
-It has not been audited; do not treat it as a production secret store yet.
+SourceOrrery is at **milestone 2**: an encrypted local vault with an Azure Key
+Vault–style lifecycle, a CLI, and read-only [SDKs](/sdks/) for Python,
+JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP. It works today on
+Windows, macOS and Linux. It has not been audited; do not treat it as a
+production secret store yet.
 
 ## Install
 
-Pre-built binaries and package-manager installs (Homebrew, WinGet, Scoop,
-`cargo install`) are on the [roadmap](/roadmap/). Today you build from source.
+### From the release
+
+The [v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+ships the CLI for Windows, macOS and Linux on x64 and arm64, with a
+`SHA256SUMS` file to check each download against. Package managers (Homebrew,
+WinGet, Scoop, `cargo install`) are on the [roadmap](/roadmap/).
+
+<Tabs syncKey="os">
+<TabItem label="Windows">
+
+In PowerShell. On Windows on Arm, use `aarch64-pc-windows-msvc` in the
+archive name instead of `x86_64-pc-windows-msvc`.
+
+```powershell
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.0"
+$archive = "sourceorrery-0.1.0-x86_64-pc-windows-msvc.zip"
+$dir = "$env:LOCALAPPDATA\Programs\sourceorrery"
+
+Invoke-WebRequest "$release/$archive" -OutFile $archive
+Invoke-WebRequest "$release/SHA256SUMS" -OutFile SHA256SUMS
+Select-String (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower() SHA256SUMS   # prints the matching line, or nothing
+
+Expand-Archive $archive -DestinationPath $dir -Force
+[Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", "User")
+```
+
+Open a new terminal and run `sourceorrery --help`.
+
+</TabItem>
+<TabItem label="macOS">
+
+Apple silicon shown. On an Intel Mac, use `x86_64-apple-darwin` in the
+archive name instead of `aarch64-apple-darwin`.
+
+```bash
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.0
+archive=sourceorrery-0.1.0-aarch64-apple-darwin
+
+curl -LO "$release/$archive.tar.gz"
+curl -LO "$release/SHA256SUMS" && shasum -a 256 -c --ignore-missing SHA256SUMS
+
+tar xzf "$archive.tar.gz"
+sudo install "$archive/sourceorrery" /usr/local/bin/
+sourceorrery --help
+```
+
+The binaries are not signed or notarised yet (that is on the roadmap). A
+file downloaded with a browser rather than `curl` carries the quarantine
+attribute; clear it with `xattr -d com.apple.quarantine <file>` before
+unpacking.
+
+</TabItem>
+<TabItem label="Linux">
+
+x64 shown. On arm64, use `aarch64-unknown-linux-gnu` in the archive name
+instead of `x86_64-unknown-linux-gnu`. The builds are for glibc-based
+distributions.
+
+```bash
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.0
+archive=sourceorrery-0.1.0-x86_64-unknown-linux-gnu
+
+curl -LO "$release/$archive.tar.gz"
+curl -LO "$release/SHA256SUMS" && sha256sum -c --ignore-missing SHA256SUMS
+
+tar xzf "$archive.tar.gz"
+sudo install "$archive/sourceorrery" /usr/local/bin/
+sourceorrery --help
+```
+
+The OS credential store on Linux is Secret Service over D-Bus. On a server
+or in a container there is none: use a passphrase protector, as described in
+[Headless: WSL, Docker, CI](/guides/headless/).
+
+</TabItem>
+</Tabs>
+
+Shell completions are available with
+`sourceorrery completions bash|zsh|fish|powershell|elvish`.
+
+### From source
+
 You need Rust 1.88 or newer and a C compiler for the bundled SQLite.
 
 ```bash
-git clone https://github.com/Netizine/sourceorrery
+git clone --branch v0.1.0 https://github.com/Netizine/sourceorrery
 cd sourceorrery
 cargo build --release
 ./target/release/sourceorrery --help
 ```
 
 Put `target/release/sourceorrery` (`sourceorrery.exe` on Windows) on your
-`PATH`. Shell completions are available with
-`sourceorrery completions bash|zsh|fish|powershell|elvish`.
+`PATH`.
 
 <Aside>
 Headless servers without a credential store can build without OS-keyring
@@ -149,6 +230,8 @@ guarantees separate.
 
 ## Where to next
 
+- [SDKs](/sdks/) to read the same secrets from Python, JavaScript/TypeScript,
+  Rust, Java, .NET, Go, C, C++ or PHP.
 - [CLI reference](/reference/cli/) for every command and option, including
   soft delete, recovery, time windows and the audit log.
 - [Headless: WSL, Docker, CI](/guides/headless/) when there is no OS

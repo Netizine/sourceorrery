@@ -33,7 +33,7 @@ const art =
 const alt = (image && 'alt' in image && image.alt) || '';
 
 const meta = [
-	{ label: 'Status', value: 'Milestone 1 · local-first' },
+	{ label: 'Status', value: 'Milestone 2 · local-first' },
 	{ label: 'Licence', value: 'MIT or Apache-2.0' },
 	{
 		label: 'Source',
@@ -67,7 +67,15 @@ const meta = [
 				meta.map((item) => (
 					<div>
 						<dt>{item.label}</dt>
-						<dd>{item.href ? <a href={item.href}>{item.value}</a> : item.value}</dd>
+						<dd>
+							{item.href ? (
+								<a href={item.href} target="_blank" rel="noopener noreferrer">
+									{item.value}
+								</a>
+							) : (
+								item.value
+							)}
+						</dd>
 					</div>
 				))
 			}

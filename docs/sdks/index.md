@@ -14,7 +14,7 @@ same five things and nothing more:
 There is no `set`, `update`, `delete`, `recover` or `purge`, no protector
 and no audit management in any SDK. Writing is the CLI's job; a library
 that cannot write cannot be tricked into writing
-([ADR 0005](adr/0005-read-only-sdks.md)).
+([ADR 0005](../adr/0005-read-only-sdks.md)).
 
 | Language | Package | Technology | Guide |
 |----------|---------|------------|-------|
@@ -28,7 +28,17 @@ that cannot write cannot be tricked into writing
 | C++ | `sourceorrery.hpp` in the release archive | header-only RAII wrapper | [C++](cpp.md) |
 | PHP | `sourceorrery/sourceorrery` on Packagist | the FFI extension | [PHP](php.md) |
 
-Why each technology: [ADR 0006](adr/0006-binding-technologies.md).
+Why each technology: [ADR 0006](../adr/0006-binding-technologies.md).
+
+## Installing 0.1.0
+
+None of the registry packages above is published yet: the publish jobs wait
+for their registry tokens. Every package is on the
+[v0.1.0 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+(wheels, the jar, the NuGet package, the npm tarballs, and the C ABI
+archive the Go, C, C++ and PHP bindings load), and each language page opens
+with how to install from it. The Go module is on pkg.go.dev, and Rust takes
+the crate from the `v0.1.0` tag.
 
 ## Setting up
 
@@ -54,7 +64,7 @@ production: process arguments and source code are visible to more people.
 
 ## Errors
 
-Every failure carries the core's stable [error code](../crates/sourceorrery-core/src/error.rs),
+Every failure carries the core's stable [error code](../../crates/sourceorrery-core/src/error.rs),
 a message and a **hint**: one actionable sentence produced by the Rust
 core, so every language says the same thing.
 
@@ -114,4 +124,4 @@ eval "$(bash scripts/ci/fixture-vault.sh)"
 python tests/conformance/sdk/harness.py --runner python   # or rust, node, java, dotnet, go, c, cpp, php
 ```
 
-Releases: [release.md](release.md).
+Releases: [release.md](../release.md).

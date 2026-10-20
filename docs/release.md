@@ -25,6 +25,9 @@ exists.
    next cycle if you keep a development version there (the workflow stamps
    the manifests itself from the version you typed; the committed version
    does not have to match).
+5. Point the install instructions at the new release: the download links
+   in `site/src/content/docs/getting-started.mdx` and `docs/sdks/*.md` name
+   the version in every file name and tag.
 
 The workflow refuses a version that is not semver and, outside a dry run,
 a tag that already exists. Releases are immutable: a mistake is fixed by
