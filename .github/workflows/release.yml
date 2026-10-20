@@ -419,7 +419,10 @@ jobs:
         with:
           php-version: "8.3"
           extensions: ffi, json
-      - run: composer validate --strict bindings/php/composer.json
+      - name: The manifest Packagist reads is valid
+        run: composer validate --strict composer.json
+      - name: The package installs from the release tag through Composer
+        run: bash scripts/ci/php-package-install.sh "${{ needs.preflight.outputs.version }}"
 
   # ---------------------------------------------------------------------
   # The GitHub Release (or, in a dry run, one artifact holding everything).
@@ -624,11 +627,37 @@ jobs:
     if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_packagist == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Ask Packagist to update sourceorrery/sourceorrery from the new tag
+      # Nothing is uploaded: Packagist reads composer.json at the repository
+      # root and turns every tag that has one into a version. The repository
+      # must have been submitted once by hand (docs/release.md); this only
+      # asks Packagist to re-read it so the new tag appears at once.
+      - name: Ask Packagist to re-read the repository
         env:
           PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
           PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+          REPOSITORY_URL: https://github.com/${{ github.repository }}
         run: |
-          curl -fsS -X POST "https://packagist.org/api/update-package?username=$PACKAGIST_USERNAME&apiToken=$PACKAGIST_API_TOKEN" \
+          set -euo pipefail
+          status=$(curl -sS -o response.json -w '%{http_code}' -X POST \
+            "https://packagist.org/api/update-package?username=$PACKAGIST_USERNAME&apiToken=$PACKAGIST_API_TOKEN" \
             -H 'Content-Type: application/json' \
-            -d '{"repository":{"url":"https://github.com/${{ github.repository }}"}}'
+            -d "{\"repository\":{\"url\":\"$REPOSITORY_URL\"}}")
+          cat response.json; echo
+          case "$status" in
+            2??) ;;
+            404) echo "::error::Packagist does not know $REPOSITORY_URL yet: submit it once at https://packagist.org/packages/submit (docs/release.md, 'The PHP package and Packagist')"; exit 1 ;;
+            403) echo "::error::Packagist rejected PACKAGIST_USERNAME/PACKAGIST_API_TOKEN"; exit 1 ;;
+            *)   echo "::error::Packagist update-package returned HTTP $status"; exit 1 ;;
+          esac
+      - name: Wait for the version to appear
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          for _ in $(seq 1 20); do
+            if curl -fsS https://repo.packagist.org/p2/sourceorrery/sourceorrery.json \
+                | jq -e --arg v "$VERSION" '.packages["sourceorrery/sourceorrery"] | map(.version) | index($v) != null' >/dev/null 2>&1; then
+              echo "sourceorrery/sourceorrery $VERSION is on Packagist"; exit 0
+            fi
+            sleep 15
+          done
+          echo "::warning::sourceorrery/sourceorrery $VERSION is not on Packagist after five minutes; check https://packagist.org/packages/sourceorrery/sourceorrery"

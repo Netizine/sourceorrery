@@ -1,6 +1,8 @@
 <?php
 // Minimal PSR-4 autoloader for use without Composer (tests, examples). With
-// Composer, `vendor/autoload.php` does the same for the SourceOrrery\ namespace.
+// Composer, `vendor/autoload.php` does the same for the SourceOrrery\ namespace:
+// the manifest is composer.json at the repository root, where Packagist reads
+// it, and it maps the two files below that hold more than one class.
 
 declare(strict_types=1);
 

@@ -6,6 +6,22 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+* PHP: the Composer manifest is now `composer.json` at the repository
+  root, the only place Packagist and Composer `vcs` repositories read it,
+  so `composer require sourceorrery/sourceorrery` resolves every release
+  tag from the next one on; `bindings/php/composer.json` is gone and 0.1.0
+  is still installed from its tag as a `path` repository. The manifest
+  also maps the files that hold more than one class
+  (`SourceOrreryException.php`, `Project.php`), so Composer's autoloader
+  finds every exception class the way the bundled `autoload.php` already
+  did. `scripts/ci/php-package-install.sh` proves the install from a tag
+  in CI and in the release workflow's `php` job, and `publish-packagist`
+  fails with a pointer to the one-time submission when Packagist does not
+  know the repository, then waits for the version to appear
+  (`docs/release.md`, *The PHP package and Packagist*).
+
 ## [0.1.0] - 2026-10-20
 
 ### Added — cross-language SDK conformance harness

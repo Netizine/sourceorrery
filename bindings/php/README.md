@@ -27,6 +27,13 @@ directory named by `SOURCEORRERY_NATIVE_DIR`, or under
 Documentation: <https://sourceorrery.ai/sdks/php/>. Source: `bindings/php`
 in the repository.
 
+The Composer manifest is `composer.json` at the repository root, because
+Packagist reads only that file: the package it serves is the repository at
+the release tag, with this directory's `src/` autoloaded (PSR-4, plus a
+classmap for `SourceOrreryException.php` and `Project.php`, which hold more
+than one class). `scripts/ci/php-package-install.sh` proves the install
+from a tag; see *The PHP package and Packagist* in `docs/release.md`.
+
 ## Tests
 
 ```bash
