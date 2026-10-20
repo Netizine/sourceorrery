@@ -55,11 +55,31 @@ const PAGES = {
 		description:
 			'Milestones from the local CLI shipped today to language bindings, the authenticated local broker, enterprise providers and community SDKs.',
 	},
+	'docs/release.md': {
+		dest: 'reference/release.md',
+		description:
+			'How a release is cut: the manual workflow, what one run builds for six targets and ten languages, the registry secrets each publish job needs, and dry runs.',
+	},
+	'docs/sdks/index.md': {
+		dest: 'sdks/index.md',
+		description:
+			'The read-only client for ten languages: what every SDK does, how it unlocks a vault, the typed errors with hints, and how values are guarded.',
+	},
+	'docs/sdks/python.md': { dest: 'sdks/python.md' },
+	'docs/sdks/javascript.md': { dest: 'sdks/javascript.md' },
+	'docs/sdks/rust.md': { dest: 'sdks/rust.md' },
+	'docs/sdks/java.md': { dest: 'sdks/java.md' },
+	'docs/sdks/dotnet.md': { dest: 'sdks/dotnet.md' },
+	'docs/sdks/go.md': { dest: 'sdks/go.md' },
+	'docs/sdks/c.md': { dest: 'sdks/c.md' },
+	'docs/sdks/cpp.md': { dest: 'sdks/cpp.md' },
+	'docs/sdks/php.md': { dest: 'sdks/php.md' },
 };
 
 /** Directories whose links map to a section of the site. */
 const DIRECTORIES = {
 	'docs/adr': '/decisions/',
+	'docs/sdks': '/sdks/',
 };
 
 const ADR_SOURCE_DIR = 'docs/adr';
