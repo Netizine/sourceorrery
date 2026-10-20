@@ -706,3 +706,55 @@ fn every_operation_leaves_exactly_one_audit_event() {
     vault.verify_audit_chain().unwrap();
     assert_eq!(count(&vault), n, "verification must not write events");
 }
+
+#[test]
+fn many_versions_are_listed_and_read_correctly() {
+    // A sanity check, not a benchmark: a secret with a long history must
+    // list newest first, summarise to its newest version and return any one
+    // version by id, before and after a reopen.
+    const VERSIONS: usize = 200;
+    let fx = Fixture::new();
+    let created: Vec<String> = {
+        let vault = fx.create_vault("dev");
+        let created: Vec<String> = (0..VERSIONS)
+            .map(|i| set(&vault, "rotated", &format!("value-{i}")).version)
+            .collect();
+
+        let listed = vault.list_properties_of_secret_versions("rotated").unwrap();
+        assert_eq!(listed.len(), VERSIONS);
+        let listed_ids: Vec<&str> = listed.iter().map(|p| p.version.as_str()).collect();
+        let newest_first: Vec<&str> = created.iter().rev().map(String::as_str).collect();
+        assert_eq!(listed_ids, newest_first);
+
+        let summary = vault.list_properties_of_secrets().unwrap();
+        assert_eq!(summary.len(), 1);
+        assert_eq!(summary[0].version, created[VERSIONS - 1]);
+
+        let latest = vault.get_secret("rotated", None).unwrap();
+        assert_eq!(latest.properties.version, created[VERSIONS - 1]);
+        assert_eq!(
+            latest.value.expose(),
+            format!("value-{}", VERSIONS - 1).as_bytes()
+        );
+        created
+    };
+
+    let vault = fx.open_vault("dev");
+    assert_eq!(
+        vault
+            .list_properties_of_secret_versions("rotated")
+            .unwrap()
+            .len(),
+        VERSIONS
+    );
+    for i in [0, 1, VERSIONS / 2, VERSIONS - 2, VERSIONS - 1] {
+        let version = created[i].as_str();
+        let got = vault.get_secret("rotated", Some(version)).unwrap();
+        assert_eq!(got.properties.version, version);
+        assert_eq!(got.value.expose(), format!("value-{i}").as_bytes());
+        let props = vault
+            .get_secret_properties("rotated", Some(version))
+            .unwrap();
+        assert_eq!(props.version, version);
+    }
+}

@@ -2297,3 +2297,110 @@ fn schema_3_marker_rolled_back_to_2_is_refused() {
     assert!(err.to_string().contains("altered"), "{err}");
     assert_eq!(schema_marker(&path), "2", "nothing was laundered");
 }
+
+// ---------------------------------------------------------------------------
+// Values are read one version at a time
+// ---------------------------------------------------------------------------
+
+#[test]
+fn damaged_value_on_one_version_does_not_affect_the_others() {
+    // Metadata tags do not cover the ciphertext, so a damaged value is only
+    // discovered on decryption. That must happen for the one version being
+    // returned, after it has been selected on metadata, and never for the
+    // other versions of the secret: listing, inspecting and reading the
+    // intact versions must not touch the damaged ones.
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let (old, mid, new) = {
+        let vault = fx.create_vault("dev");
+        let version = |value: &str| {
+            vault
+                .set_secret("k", SecretBytes::from(value), SetSecretOptions::default())
+                .unwrap()
+                .version
+        };
+        (
+            version("old-value"),
+            version("mid-value"),
+            version("new-value"),
+        )
+    };
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        // A flipped ciphertext byte fails authentication on decryption...
+        let mut blob: Vec<u8> = conn
+            .query_row(
+                "SELECT ciphertext FROM secret_versions WHERE version = ?1",
+                [&old],
+                |row| row.get(0),
+            )
+            .unwrap();
+        blob[0] ^= 0x01;
+        conn.execute(
+            "UPDATE secret_versions SET ciphertext = ?2 WHERE version = ?1",
+            rusqlite::params![&old, blob],
+        )
+        .unwrap();
+        // ...and a nonce of the wrong length cannot even be parsed.
+        conn.execute(
+            "UPDATE secret_versions SET nonce = X'' WHERE version = ?1",
+            [&mid],
+        )
+        .unwrap();
+    }
+    let vault = fx.open_vault("dev");
+
+    // The intact version is unaffected, selected by policy or by id.
+    assert_eq!(
+        vault.get_secret("k", None).unwrap().value.expose(),
+        b"new-value"
+    );
+    assert_eq!(
+        vault.get_secret("k", Some(&new)).unwrap().value.expose(),
+        b"new-value"
+    );
+
+    // The damaged versions fail with `crypto`, and only when asked for;
+    // their metadata is intact and still inspectable.
+    for version in [&old, &mid] {
+        let err = vault.get_secret("k", Some(version)).unwrap_err();
+        assert_eq!(err.code(), "crypto", "{err}");
+        assert_eq!(
+            vault
+                .get_secret_properties("k", Some(version))
+                .unwrap()
+                .version,
+            *version
+        );
+    }
+    assert_eq!(
+        vault.list_properties_of_secret_versions("k").unwrap().len(),
+        3
+    );
+    assert_eq!(vault.list_properties_of_secrets().unwrap().len(), 1);
+
+    // Selection happens on metadata first: with the newest version disabled,
+    // policy picks `mid`, and that version's damaged value is what fails.
+    vault
+        .update_secret_properties(
+            "k",
+            Some(&new),
+            UpdateSecretProperties {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let err = vault.get_secret("k", None).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    let failures = events_of(&vault, AuditOperation::SecretGet, AuditOutcome::Failure);
+    assert!(
+        failures
+            .iter()
+            .any(|e| e.version.as_deref() == Some(mid.as_str())
+                && e.detail.as_deref() == Some("crypto")),
+        "the refusal names the version whose value failed: {failures:?}"
+    );
+    // Nothing above touched the metadata or the audit log.
+    assert!(vault.verify_audit_chain().unwrap().is_intact());
+}

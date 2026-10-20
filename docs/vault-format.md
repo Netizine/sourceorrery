@@ -123,6 +123,12 @@ for `<name>`") and a `failure` audit row. Nothing is ever repaired or
 purged on the strength of unverified metadata: a forged `deleted_on` is not
 honoured, and a forged purge date does not purge.
 
+The version tag does not cover `nonce` or `ciphertext`; the AEAD protects
+those (see *What is encrypted*). Reads verify a secret's version rows from
+the metadata columns alone and fetch the nonce and ciphertext of the one
+version they return, so a damaged value is detected when that version is
+read, not when the secret is listed or another version is read.
+
 ## Checkpoints
 
 A tag proves that the vault wrote a row at some point, not that the row is

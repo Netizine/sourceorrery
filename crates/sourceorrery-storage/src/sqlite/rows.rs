@@ -38,9 +38,12 @@ impl SecretRow {
     }
 }
 
+/// The verified metadata of one version. It carries no ciphertext: the
+/// value of the one version an operation returns is fetched separately with
+/// [`load_ciphertext`], so inspecting or listing a secret never reads the
+/// values of its versions.
 pub(super) struct VersionRow {
     pub(super) props: SecretProperties,
-    pub(super) ciphertext: Ciphertext,
     /// Stored fields the tag covers that `props` does not carry verbatim.
     pub(super) seq: i64,
     pub(super) created_on: i64,
@@ -56,12 +59,13 @@ pub(super) struct NewVersion<'a> {
     pub(super) now: i64,
 }
 
+/// One `secret_versions` row as stored, before verification: exactly the
+/// columns the version tag covers (see [`VersionFields`]) plus the tag
+/// itself. `nonce` and `ciphertext` are not part of this projection.
 #[allow(clippy::struct_field_names)]
 pub(super) struct RawVersion {
     pub(super) version: String,
     pub(super) seq: i64,
-    pub(super) nonce: Vec<u8>,
-    pub(super) ciphertext: Vec<u8>,
     pub(super) content_type: Option<String>,
     pub(super) tags_json: String,
     pub(super) enabled: bool,
@@ -113,20 +117,24 @@ impl RawVersion {
             updated_on: from_nanos(self.updated_on)?,
             recovery_level: meta.recovery_level,
         };
-        let ciphertext = Ciphertext::from_parts(&self.nonce, self.ciphertext).map_err(crypto)?;
         Ok(VersionRow {
             props,
-            ciphertext,
             seq: self.seq,
             created_on: self.created_on,
         })
     }
 }
 
+/// The unverified metadata of every version of `name`, newest first.
+///
+/// This is the metadata projection only; see [`RawVersion`]. Callers other
+/// than the schema migration (which tags rows before any checkpoint exists)
+/// must go through [`SqliteVault::load_versions`], which applies the tag and
+/// checkpoint rules.
 pub(super) fn query_raw_versions(conn: &Connection, name: &str) -> Result<Vec<RawVersion>> {
     let mut stmt = conn
         .prepare(
-            "SELECT version, seq, nonce, ciphertext, content_type, tags_json, enabled,
+            "SELECT version, seq, content_type, tags_json, enabled,
                     not_before, expires_on, created_on, updated_on, tag
              FROM secret_versions WHERE name = ?1 ORDER BY seq DESC",
         )
@@ -136,22 +144,46 @@ pub(super) fn query_raw_versions(conn: &Connection, name: &str) -> Result<Vec<Ra
             Ok(RawVersion {
                 version: row.get(0)?,
                 seq: row.get(1)?,
-                nonce: row.get(2)?,
-                ciphertext: row.get(3)?,
-                content_type: row.get(4)?,
-                tags_json: row.get(5)?,
-                enabled: row.get::<_, i64>(6)? != 0,
-                not_before: row.get(7)?,
-                expires_on: row.get(8)?,
-                created_on: row.get(9)?,
-                updated_on: row.get(10)?,
-                tag: row.get(11)?,
+                content_type: row.get(2)?,
+                tags_json: row.get(3)?,
+                enabled: row.get::<_, i64>(4)? != 0,
+                not_before: row.get(5)?,
+                expires_on: row.get(6)?,
+                created_on: row.get(7)?,
+                updated_on: row.get(8)?,
+                tag: row.get(9)?,
             })
         })
         .map_err(db)?
         .collect::<rusqlite::Result<_>>()
         .map_err(db)?;
     Ok(raw)
+}
+
+/// The stored nonce and ciphertext of exactly one version.
+///
+/// Only the version an operation is about to return is read, and only after
+/// its metadata row has passed [`SqliteVault::load_versions`] and the
+/// version has been selected, in the same transaction. The ciphertext needs
+/// no tag of its own: its AEAD binds it to the vault, name and version
+/// through the AAD, so a moved or edited value fails to decrypt.
+pub(super) fn load_ciphertext(conn: &Connection, name: &str, version: &str) -> Result<Ciphertext> {
+    let found: Option<(Vec<u8>, Vec<u8>)> = conn
+        .query_row(
+            "SELECT nonce, ciphertext FROM secret_versions WHERE name = ?1 AND version = ?2",
+            params![name, version],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(db)?;
+    // The metadata row was read under this transaction's write lock, so the
+    // value row cannot have gone away in between; a miss is a damaged file.
+    let (nonce, bytes) = found.ok_or_else(|| {
+        SecretError::Storage(format!(
+            "secret '{name}' version {version} has no value row"
+        ))
+    })?;
+    Ciphertext::from_parts(&nonce, bytes).map_err(crypto)
 }
 
 pub(super) fn select_version<'a>(
@@ -278,10 +310,14 @@ impl SqliteVault {
         }
     }
 
-    /// All versions of `name`, newest first, each with its tag verified and
-    /// equal to the newest checkpoint the audit chain holds for it. Every
-    /// version the chain records must be present: removing the newest
-    /// version's row would otherwise quietly make an older value current.
+    /// The metadata of all versions of `name`, newest first, each with its
+    /// tag verified and equal to the newest checkpoint the audit chain holds
+    /// for it. Every version the chain records must be present: removing the
+    /// newest version's row would otherwise quietly make an older value
+    /// current.
+    ///
+    /// No ciphertext is read here. A version's value is fetched on its own
+    /// with [`load_ciphertext`] once it has been selected.
     pub(super) fn load_versions(&self, conn: &Connection, name: &str) -> Result<Vec<VersionRow>> {
         let raw = query_raw_versions(conn, name)?;
         let checkpoints = self.checkpoints(conn, name)?.versions;
@@ -313,6 +349,13 @@ impl SqliteVault {
             .collect()
     }
 
+    /// The newest version's properties.
+    ///
+    /// Which version is newest can only be judged against the complete set
+    /// of versions: a row removed out of band or an inserted one with a
+    /// higher `seq` is caught by the checkpoint rule, not by the row that
+    /// happens to sort first. So this goes through [`Self::load_versions`]
+    /// (metadata only) rather than selecting one row.
     pub(super) fn newest_props(&self, conn: &Connection, name: &str) -> Result<SecretProperties> {
         self.load_versions(conn, name)?
             .into_iter()
