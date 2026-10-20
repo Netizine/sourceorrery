@@ -41,8 +41,11 @@ pub enum AuditOperation {
     /// The vault file was migrated to a newer schema version.
     VaultMigrate,
     /// The audit chain head was checked before appending to the log.
-    /// Recorded only when the check fails: rows were removed from the end
-    /// of the log, or the head record is missing or invalid.
+    /// Recorded with outcome `failure` when the check fails: rows were
+    /// removed from the end of the log, or the head record is missing or
+    /// invalid. Recorded with outcome `success` when the vault's owner
+    /// acknowledges such a detection and lifts the block it placed on the
+    /// vault.
     AuditVerify,
     /// Secret metadata was read without disclosing a value: properties, the
     /// version list, or a deleted secret's details.

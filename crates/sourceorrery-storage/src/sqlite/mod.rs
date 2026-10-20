@@ -33,6 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rusqlite::{Connection, params};
+use serde::Serialize;
 use sourceorrery_core::audit::{AuditEvent, AuditOperation, AuditOutcome, AuditQuery};
 use sourceorrery_core::policy::SoftDeletePolicy;
 use sourceorrery_core::{
@@ -49,7 +50,10 @@ use crate::registry::restrict_permissions;
 use crate::unlock::UnlockProvider;
 use crate::{BACKEND_NAME, SCHEMA_VERSION};
 
-use self::audit::{AuditRow, AuditWriter, Checkpoints, head_problem, truncated_message};
+use self::audit::{
+    AuditRow, AuditWriter, Checkpoints, event_from_row, head_problem, quarantined_message,
+    truncated_message, unacknowledged_truncations,
+};
 use self::migrate::migrate;
 use self::protectors::{
     Unlocked, add_protector, any_keyring_protector_wrapped_newer, read_protectors,
@@ -57,8 +61,8 @@ use self::protectors::{
 };
 use self::rows::{NewVersion, SecretRow, load_ciphertext, select_version};
 use self::schema::{
-    Meta, SCHEMA, crypto, db, from_nanos, nanos, open_connection, opt_nanos, read_meta,
-    recovery_id, value_aad, write_settings_tag,
+    Meta, SCHEMA, crypto, db, nanos, open_connection, opt_nanos, read_meta, recovery_id, value_aad,
+    write_settings_tag,
 };
 
 /// Maximum passphrase attempts per `open`.
@@ -83,6 +87,33 @@ pub struct OpenOptions {
     /// a file whose key material shows it was already in the current format
     /// is refused, because that means the schema marker was rolled back.
     pub allow_legacy_migration: bool,
+
+    /// Unlock a vault whose audit log has a detected truncation that nobody
+    /// has acknowledged (a *quarantined* vault), for inspection and
+    /// acknowledgement only.
+    ///
+    /// Off by default: plain `open` refuses such a vault with
+    /// [`SecretError::Crypto`]. A handle opened this way can read the log,
+    /// verify the chain and call [`SqliteVault::acknowledge_truncations`];
+    /// every secret and protector operation on it is still refused until
+    /// the truncation is acknowledged. A chain head found stale at this
+    /// unlock is recorded rather than refused, so the truncation can be
+    /// reviewed and acknowledged in the same session, and the retention
+    /// purge an unlock normally performs is skipped while the vault is
+    /// quarantined. On a vault with nothing to acknowledge this is an
+    /// ordinary unlock.
+    pub allow_quarantined: bool,
+}
+
+/// What [`SqliteVault::acknowledge_truncations`] recorded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Acknowledgement {
+    /// Id of the keyed `audit_verify` / `success` event that records the
+    /// acknowledgement.
+    pub event_id: u64,
+    /// The truncations it covers: the `audit_verify` / `failure` events
+    /// that detected them, oldest first.
+    pub truncations: Vec<AuditEvent>,
 }
 
 /// Settings fixed at vault creation.
@@ -305,7 +336,7 @@ impl SqliteVault {
                             kek,
                             wrapped_schema,
                         };
-                        return Self::finish_open(conn, dek, meta, path, actor, &unlocked);
+                        return Self::finish_open(conn, dek, meta, path, actor, &unlocked, options);
                     }
                     Err(err) => reasons.push(format!("{}: {err}", protector.label)),
                 },
@@ -321,7 +352,7 @@ impl SqliteVault {
         if let Some((dek, unlocked)) =
             try_passphrases(&conn, &meta, &protectors, unlock, &unkeyed, &mut reasons)?
         {
-            return Self::finish_open(conn, dek, meta, path, actor, &unlocked);
+            return Self::finish_open(conn, dek, meta, path, actor, &unlocked, options);
         }
 
         unkeyed.record(
@@ -342,9 +373,12 @@ impl SqliteVault {
         path: &Path,
         actor: Principal,
         unlocked: &Unlocked,
+        options: OpenOptions,
     ) -> Result<Self> {
         let metadata_key = integrity::derive_metadata_key(&dek);
-        if meta.schema < SCHEMA_VERSION {
+        let migrated = meta.schema < SCHEMA_VERSION;
+        let mut head_stale = false;
+        if migrated {
             // The file says "older" but only key material is trustworthy: a
             // key wrapped under a newer schema proves the marker was rolled
             // back, and the migration must not launder that file.
@@ -374,40 +408,47 @@ impl SqliteVault {
             // Refuses a schema 2 file whose audit log was truncated.
             migrate(&mut conn, &mut meta, &dek, &metadata_key, &actor, unlocked)?;
         } else {
-            Self::refuse_if_truncated(&conn, &metadata_key, &meta, &actor)?;
-            let fields = meta.settings_fields()?;
-            let settings_ok = integrity::verify_settings_tag(
+            head_stale = Self::refuse_if_truncated(
+                &conn,
                 &metadata_key,
-                &fields,
-                meta.settings_tag.as_deref(),
-            ) && SoftDeletePolicy::new(meta.retention_days).is_ok();
-            if !settings_ok {
-                AuditWriter {
-                    meta: &meta,
-                    key: Some(&metadata_key),
-                    actor: &actor,
-                    allow_empty_chain: false,
-                }
-                .record(
-                    &conn,
-                    AuditOperation::VaultOpen,
-                    None,
-                    None,
-                    AuditOutcome::Failure,
-                    Some("settings integrity check failed"),
-                )?;
-                return Err(SecretError::Crypto(
-                    "vault settings integrity check failed (schema, name, recovery level or \
-                     retention were altered)"
-                        .to_owned(),
-                ));
-            }
-            if unlocked.wrapped_schema < SCHEMA_VERSION {
-                // A protector left over from a migration that could not
-                // re-wrap it (another passphrase): bind it now that we can.
-                rewrap_protector(&conn, &meta, &dek, &unlocked.protector_id, &unlocked.kek)?;
-            }
+                &meta,
+                &actor,
+                options.allow_quarantined,
+            )?;
+            Self::verify_settings(&conn, &metadata_key, &meta, &actor)?;
         }
+
+        // The chain is in the current format. A detected truncation that
+        // nobody has acknowledged blocks the vault: only an unlock asked for
+        // inspection gets a handle, and that handle refuses every operation
+        // until the acknowledgement is on the chain.
+        let pending = unacknowledged_truncations(&conn, &metadata_key, &meta.id)?;
+        let quarantined = head_stale || !pending.is_empty();
+        if quarantined && !options.allow_quarantined {
+            AuditWriter {
+                meta: &meta,
+                key: Some(&metadata_key),
+                actor: &actor,
+                allow_empty_chain: false,
+            }
+            .record(
+                &conn,
+                AuditOperation::VaultOpen,
+                None,
+                None,
+                AuditOutcome::Failure,
+                Some("truncation unacknowledged"),
+            )?;
+            return Err(SecretError::Crypto(quarantined_message(&pending)));
+        }
+        if !quarantined && !migrated && unlocked.wrapped_schema < SCHEMA_VERSION {
+            // A protector left over from a migration that could not re-wrap
+            // it (another passphrase): bind it now that we can.
+            rewrap_protector(&conn, &meta, &dek, &unlocked.protector_id, &unlocked.kek)?;
+        }
+        // On a stale head this append records the detection first (every
+        // keyed append does), so what the inspecting caller sees is on the
+        // chain before the handle is handed out.
         AuditWriter {
             meta: &meta,
             key: Some(&metadata_key),
@@ -420,7 +461,7 @@ impl SqliteVault {
             None,
             None,
             AuditOutcome::Success,
-            None,
+            quarantined.then_some("inspection (truncation unacknowledged)"),
         )?;
         let vault = Self {
             conn: Mutex::new(conn),
@@ -430,7 +471,9 @@ impl SqliteVault {
             path: path.to_path_buf(),
             actor,
         };
-        vault.purge_expired_deletions()?;
+        if !quarantined {
+            vault.purge_expired_deletions()?;
+        }
         Ok(vault)
     }
 
@@ -438,17 +481,23 @@ impl SqliteVault {
     /// newest keyed row: rows were removed from the end of the log, so the
     /// checkpoints that remain may not be the newest and no row state can be
     /// judged against them. Recording the refusal puts the detection on the
-    /// chain and re-anchors the head, so the next unlock proceeds on the
-    /// surviving history, with the truncation permanently on record.
+    /// chain and re-anchors the head; from then on the vault is blocked
+    /// until the truncation is acknowledged. With `allow_quarantined` the
+    /// stale head is reported (`true`) instead of refused, so the caller
+    /// can record it and hand out a handle for inspection.
     fn refuse_if_truncated(
         conn: &Connection,
         key: &SymmetricKey,
         meta: &Meta,
         actor: &Principal,
-    ) -> Result<()> {
+        allow_quarantined: bool,
+    ) -> Result<bool> {
         let Some(problem) = head_problem(conn, key, &meta.id, false)? else {
-            return Ok(());
+            return Ok(false);
         };
+        if allow_quarantined {
+            return Ok(true);
+        }
         AuditWriter {
             meta,
             key: Some(key),
@@ -464,6 +513,41 @@ impl SqliteVault {
             Some("audit log truncated"),
         )?;
         Err(SecretError::Crypto(truncated_message(&problem)))
+    }
+
+    /// Refuse to unlock a vault whose authenticated settings do not verify.
+    fn verify_settings(
+        conn: &Connection,
+        key: &SymmetricKey,
+        meta: &Meta,
+        actor: &Principal,
+    ) -> Result<()> {
+        let fields = meta.settings_fields()?;
+        let settings_ok =
+            integrity::verify_settings_tag(key, &fields, meta.settings_tag.as_deref())
+                && SoftDeletePolicy::new(meta.retention_days).is_ok();
+        if settings_ok {
+            return Ok(());
+        }
+        AuditWriter {
+            meta,
+            key: Some(key),
+            actor,
+            allow_empty_chain: false,
+        }
+        .record(
+            conn,
+            AuditOperation::VaultOpen,
+            None,
+            None,
+            AuditOutcome::Failure,
+            Some("settings integrity check failed"),
+        )?;
+        Err(SecretError::Crypto(
+            "vault settings integrity check failed (schema, name, recovery level or \
+             retention were altered)"
+                .to_owned(),
+        ))
     }
 
     /// Replace the principal recorded in audit events (default: OS user).
@@ -984,23 +1068,6 @@ impl SecretClient for SqliteVault {
             .map_err(db)?
             .collect::<rusqlite::Result<_>>()
             .map_err(db)?;
-        raw.into_iter()
-            .map(
-                |(id, occurred_on, actor, operation, secret_name, version, outcome, detail)| {
-                    Ok(AuditEvent {
-                        id: u64::try_from(id).unwrap_or_default(),
-                        occurred_on: from_nanos(occurred_on)?,
-                        actor: Principal::parse(&actor).unwrap_or_else(|| {
-                            Principal::new(sourceorrery_core::PrincipalKind::User, actor)
-                        }),
-                        operation: operation.parse().map_err(SecretError::Storage)?,
-                        secret_name,
-                        version,
-                        outcome: outcome.parse().map_err(SecretError::Storage)?,
-                        detail,
-                    })
-                },
-            )
-            .collect()
+        raw.into_iter().map(event_from_row).collect()
     }
 }

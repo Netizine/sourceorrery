@@ -43,7 +43,7 @@ attempts are audited.
 | `vault protector add --kind passphrase\|os-keyring [--label L]` | Add another way to unlock (e.g. a passphrase for WSL/Docker/CI). At most 8 passphrase protectors: unlock tries no more than that, so a ninth is refused rather than installed and never tried. |
 | `vault protector remove ID_OR_LABEL` | Remove a protector. The last one cannot be removed. The OS-keyring entry is deleted after the change is committed, and only if it is provably this vault's. |
 | `vault destroy NAME [--yes] [--keep-os-key]` | Delete the vault file and the OS-keyring entries it provably owns (entries another vault file references are kept and reported). Irreversible. |
-| `vault migrate NAME` | Upgrade a vault written by an older release (schema 1 or 2) to the current format. Explicit on purpose: the rows it finds are taken on trust once, so only migrate a file you trust. A file that was already in the current format, or whose audit log was truncated, is refused. |
+| `vault migrate NAME` | Upgrade a vault written by an older release (schema 1 or 2) to the current format. Explicit on purpose: the rows it finds are taken on trust once, so only migrate a file you trust. A file that was already in the current format, or whose audit log was truncated, is refused; a migrated vault with a recorded, unacknowledged truncation stays blocked until `audit --acknowledge`. |
 
 ## `secret`
 
@@ -68,13 +68,17 @@ Timestamps are RFC 3339, e.g. `2026-12-31T00:00:00Z`.
 ```
 sourceorrery audit [--secret NAME] [--operation OP] [--since TIME] [--limit N]
 sourceorrery audit --verify
+sourceorrery audit --acknowledge [--yes]
 ```
 
-Newest first. Operations: `vault_create`, `vault_open`, `vault_migrate`, `secret_inspect` (metadata reads: properties, versions, deleted-secret details),
-`protector_add`, `protector_remove`, `secret_set`, `secret_get`,
-`secret_list`, `secret_update`, `secret_delete`, `secret_recover`,
-`secret_purge`, `audit_verify`. Outcomes: `success`, `denied` (policy),
-`failure`. Detail holds the error code or a short note — never a value.
+Newest first, with each event's id. Operations: `vault_create`,
+`vault_open`, `vault_migrate`, `secret_inspect` (metadata reads: properties,
+versions, deleted-secret details), `protector_add`, `protector_remove`,
+`secret_set`, `secret_get`, `secret_list`, `secret_update`,
+`secret_delete`, `secret_recover`, `secret_purge`, `audit_verify`
+(a detected truncation with outcome `failure`, its acknowledgement with
+outcome `success`). Outcomes: `success`, `denied` (policy), `failure`.
+Detail holds the error code or a short note — never a value.
 
 `--verify` checks the log's keyed hash chain instead of listing it (see
 [vault-format.md](vault-format.md#audit-chain)) and prints:
@@ -85,7 +89,8 @@ Newest first. Operations: `vault_create`, `vault_open`, `vault_migrate`, `secret
 | `keyed` | rows authenticated with the vault key |
 | `unkeyed` | rows written before the vault was unlocked (failed unlock attempts); chained with a public key, so forgeable but not silently removable |
 | `first_broken` | id of the first row whose link or hash does not verify, else `-` / `null` |
-| `truncations` | times a write found rows removed from the end of the log (each is an `audit_verify` / `failure` event) |
+| `truncations` | times a write found rows removed from the end of the log (each is an `audit_verify` / `failure` event); acknowledged ones still count |
+| `unacknowledged` | truncations not yet acknowledged with `--acknowledge`; while this is not 0 the vault refuses every other command |
 | `head_valid` | the recorded chain head names the newest keyed row |
 | `result` | `intact` or `BROKEN` |
 
@@ -93,14 +98,48 @@ The result is always printed (as JSON with `-o json`); when the chain is not
 intact the command also fails with exit status 1. Verification is read-only,
 but opening the vault to run it writes the usual `vault_open` row.
 
+### A truncated log blocks the vault
+
 If rows were removed from the end of the log since the last write, the
 first command that unlocks the vault fails with `crypto` ("audit log
 integrity: rows removed after event N …"): the vault judges every row
 against the newest checkpoint in the log, so a shortened log is not
 consulted. That refusal records the truncation (`audit_verify` /
-`failure`, visible to `audit --verify` from then on) and the next command
-proceeds on the surviving history. Treat it as evidence that the file was
-edited, and compare with a backup.
+`failure`), and from then on **every** command that unlocks the vault, and
+every operation, fails with `crypto` naming that event ("… the truncation
+detected at event 42 (…) is unacknowledged; the vault is blocked until
+…"). Each refusal is recorded too.
+
+The one exception is `audit` itself, which unlocks a blocked vault for
+inspection: `audit` lists the log (and warns on stderr that the vault is
+blocked), `audit --verify` reports the chain, and `audit --acknowledge`
+lifts the block. Such an unlock writes `vault_open` / `success` with detail
+`inspection (truncation unacknowledged)`, skips the retention purge, and
+still refuses every secret and protector operation; nothing else opens
+the vault. `vault migrate` is no way round it either.
+
+Treat a truncation as evidence that the file was edited. Whatever the
+missing events recorded — a change of policy, a deletion, a new version
+— is gone, and an attacker who removed them may also have put back older
+copies of the rows they covered, which the surviving history can no longer
+tell from the truth. Compare the log and the secrets with a backup, then:
+
+```
+sourceorrery audit --acknowledge --vault development
+```
+
+prints the truncation events, asks for confirmation (`--yes` answers it,
+for automation; in a non-interactive session without `--yes` the command
+aborts and the vault stays blocked) and appends one keyed `audit_verify` /
+`success` event, `truncation acknowledged (event 42)`. After that the
+vault accepts commands again, with the surviving history as its record;
+`audit --verify` keeps reporting the truncation (`truncations` stays 1,
+`unacknowledged` becomes 0, the result stays `BROKEN`). The acknowledgement
+covers every truncation detected before it and nothing after: a truncation
+detected by another process between listing and acknowledging is refused
+with `invalid_argument`, and a log found shortened again at that moment is
+recorded and refused. With nothing to acknowledge the command says so and
+exits 0.
 
 ## Project manifest: `init`, `check`, `run`
 

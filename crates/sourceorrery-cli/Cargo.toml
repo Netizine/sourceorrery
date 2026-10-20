@@ -40,6 +40,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+# Tests tamper with a vault file the way an attacker with write access would.
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 [lints]
 workspace = true

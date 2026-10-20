@@ -80,7 +80,9 @@ override with `SOURCEORRERY_HOME` or `--home`.
 
 Index `audit_checkpoints` on `(secret_name, id)` covers the rows where
 either checkpoint column is set, so finding a secret's checkpoints does not
-scan its reads.
+scan its reads. Index `audit_verifications` on `id` covers the
+`audit_verify` rows (truncations and acknowledgements), which every unlock
+and operation consults.
 
 ## Key hierarchy
 
@@ -215,16 +217,58 @@ shortened chain must not be consulted. Every unlock and every operation
 therefore checks the head *first*: when it is stale, the unlock or
 operation is **refused** with `crypto` ("audit log integrity: rows removed
 after event 41 …"), and that refusal is what writes the `audit_verify` /
-`failure` row and re-anchors the head. The next unlock proceeds on the
-surviving history, with the truncation permanently on record; see the
-threat model for what that does and does not prove.
+`failure` row and re-anchors the head.
+
+### Acknowledging a truncation
+
+A recorded truncation then **blocks the vault**. A keyed `audit_verify` /
+`failure` row whose hash verifies, with no later keyed, verifying
+`audit_verify` / `success` row whose detail begins `truncation
+acknowledged`, is an *unacknowledged* truncation; while one exists every
+unlock and every operation is refused with `crypto`, naming the event
+("the truncation detected at event 42 (rows removed after event 41 (head
+was event 44)) is unacknowledged …"), and each refusal is itself recorded
+(`vault_open` / `failure` with detail `truncation unacknowledged`, or the
+operation's own `failure` row). Rows flagged keyed that do not verify count
+for neither side; `audit --verify` reports them as broken.
+
+Only an unlock *for inspection* (`SqliteVault::open_with` with
+`allow_quarantined`, `VaultRegistry::open_for_inspection`; the CLI's
+`sourceorrery audit` command) gets a handle to such a vault. It writes
+`vault_open` / `success` with detail `inspection (truncation
+unacknowledged)`, skips the retention purge and the protector re-wrap an
+unlock normally performs, and the handle still refuses every secret and
+protector operation; it can read the log, verify the chain and
+acknowledge. A chain head found stale at an inspection unlock is recorded
+rather than refused, so a truncation can be reviewed and acknowledged in
+one session. On a vault with nothing to acknowledge an inspection unlock
+is an ordinary unlock.
+
+`SqliteVault::acknowledge_truncations(event_ids)` (`sourceorrery audit
+--acknowledge`) appends one keyed `audit_verify` / `success` row with
+detail `truncation acknowledged (events 42, 57)`: the owner's record that
+the surviving history was reviewed and is accepted as authoritative. It
+runs in one write transaction, re-checks the head (a stale head is
+recorded and refused, so nothing is acknowledged unseen) and requires
+`event_ids` to be exactly the unacknowledged events at that moment, so a
+truncation another process detected in between is refused with
+`invalid_argument` rather than swept in. The acknowledgement covers every
+truncation before it; the truncation rows stay on the chain and keep
+counting in `truncations`. Removing the acknowledgement is another
+truncation and un-acknowledges what it covered.
+
+A `vault migrate` of a schema 2 file that recorded a truncation in its own
+time (schema 2 noted truncations without blocking) completes, re-chains
+that row under the key, and leaves the migrated vault blocked until the
+truncation is acknowledged.
 
 `SqliteVault::verify_audit_chain()` (`sourceorrery audit --verify`) walks
 the whole log and reports: rows, keyed and unkeyed counts, `first_broken`
 (the first row whose link or hash fails), `truncations` (keyed
-`audit_verify` / `failure` rows) and `head_valid`. The log is intact when
-`first_broken` is null, `truncations` is 0 and `head_valid` is true. The
-check is read-only.
+`audit_verify` / `failure` rows), `unacknowledged` (those after the newest
+acknowledgement) and `head_valid`. The log is intact when `first_broken`
+is null, `truncations` is 0 and `head_valid` is true; an acknowledged
+truncation is still a truncation. The check is read-only.
 
 ## Compatibility
 
@@ -251,9 +295,11 @@ row with the tag the row has (a row with no tag gets no checkpoint and
 stays refused), `settings_tag` is written, every key the migration holds is
 re-wrapped under the new AAD and `schema_version` is bumped; a final
 `vault_migrate` row records `schema <n> -> 3`. A schema 2 file whose audit
-head is stale is refused, as an unlock would be, rather than re-chained. A
-passphrase protector that was not used for the migration is re-wrapped the
-next time it unlocks the vault.
+head is stale is refused, as an unlock would be, rather than re-chained;
+the refusal records the truncation, and the migration that follows leaves
+the vault blocked until it is acknowledged (see *Acknowledging a
+truncation*). A passphrase protector that was not used for the migration
+is re-wrapped the next time it unlocks the vault.
 
 Argon2 parameters stored on a protector are capped before they are run
 (1 GiB, 64 passes, 16 lanes; a protector beyond the ceiling is skipped) and

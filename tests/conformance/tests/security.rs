@@ -565,6 +565,32 @@ fn edited_audit_row_breaks_the_chain() {
     assert_eq!(check.first_broken, Some(denied_id), "{check:?}");
 }
 
+/// Remove every audit row newer than `keep_up_to`, as an attacker with
+/// write access to the file would.
+fn truncate_after(path: &Path, keep_up_to: u64) {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.execute(
+        "DELETE FROM audit_events WHERE id > ?1",
+        [i64::try_from(keep_up_to).unwrap()],
+    )
+    .unwrap();
+}
+
+/// The refusal a vault gives while a detected truncation is unacknowledged.
+fn assert_blocked(err: &sourceorrery_core::SecretError) {
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(err.to_string().contains("unacknowledged"), "{err}");
+    assert!(err.to_string().contains("audit --acknowledge"), "{err}");
+}
+
+/// Refused unlocks on the record with exactly this detail.
+fn open_refusals(vault: &SqliteVault, detail: &str) -> usize {
+    events_of(vault, AuditOperation::VaultOpen, AuditOutcome::Failure)
+        .iter()
+        .filter(|e| e.detail.as_deref() == Some(detail))
+        .count()
+}
+
 #[test]
 fn removed_tail_rows_are_detected_on_the_next_write() {
     let fx = Fixture::new();
@@ -576,12 +602,7 @@ fn removed_tail_rows_are_detected_on_the_next_write() {
         vault.get_secret("k", None).unwrap();
         event_ids(&vault)
     };
-    let keep_up_to = i64::try_from(ids[ids.len() - 3]).unwrap();
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute("DELETE FROM audit_events WHERE id > ?1", [keep_up_to])
-            .unwrap();
-    }
+    truncate_after(&path, ids[ids.len() - 3]);
     // The next unlock finds the head stale. Row state is judged against the
     // chain, so a shortened chain cannot be consulted: the unlock is refused,
     // and recording the refusal puts the detection itself on the chain and
@@ -594,34 +615,38 @@ fn removed_tail_rows_are_detected_on_the_next_write() {
         "{err}"
     );
 
-    // The vault is usable again, with the truncation permanently on record.
-    let vault = fx.open_vault("dev");
+    // From then on only an inspection unlock gets a handle, and that handle
+    // serves the log and nothing else, with the truncation on record.
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    let vault = fx.inspect_vault("dev");
     let check = vault.verify_audit_chain().unwrap();
     assert!(!check.is_intact(), "{check:?}");
     assert_eq!(check.first_broken, None, "remaining rows still link");
     assert_eq!(check.truncations, 1);
+    assert_eq!(check.unacknowledged, 1);
     assert!(check.head_valid, "the detection re-anchored the head");
     let detections = events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Failure);
     assert_eq!(detections.len(), 1);
     let detail = detections[0].detail.clone().unwrap_or_default();
     assert!(detail.contains("rows removed after event"), "{detail}");
-    let refusals = events_of(&vault, AuditOperation::VaultOpen, AuditOutcome::Failure);
-    assert!(
-        refusals
-            .iter()
-            .any(|e| e.detail.as_deref() == Some("audit log truncated")),
-        "{refusals:?}"
-    );
+    assert_eq!(open_refusals(&vault, "audit log truncated"), 1);
+    assert_eq!(open_refusals(&vault, "truncation unacknowledged"), 1);
+    assert_blocked(&vault.get_secret("k", None).unwrap_err());
+    drop(vault);
 
-    // The evidence is itself chained: it survives further use ...
+    // Acknowledged, the vault is usable again, with the truncation
+    // permanently on record ...
+    fx.acknowledge_truncations("dev");
+    let vault = fx.open_vault("dev");
     vault.get_secret("k", None).unwrap();
     let check = vault.verify_audit_chain().unwrap();
     assert_eq!(check.truncations, 1);
+    assert_eq!(check.unacknowledged, 0);
     assert!(!check.is_intact());
     drop(vault);
 
-    // ... and removing it is just another truncation: refused once more,
-    // then back on record.
+    // ... and removing the evidence is just another truncation: refused,
+    // blocked, and back on record once acknowledged again.
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute(
@@ -635,9 +660,12 @@ fn removed_tail_rows_are_detected_on_the_next_write() {
         fx.registry.open("dev", &unlock).unwrap_err().code(),
         "crypto"
     );
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    fx.acknowledge_truncations("dev");
     let vault = fx.open_vault("dev");
     let check = vault.verify_audit_chain().unwrap();
     assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.unacknowledged, 0);
     assert!(!check.is_intact());
 }
 
@@ -645,26 +673,37 @@ fn removed_tail_rows_are_detected_on_the_next_write() {
 fn deleted_chain_head_is_detected() {
     let fx = Fixture::new();
     let path = fx.registry.vault_path("dev").unwrap();
-    fx.create_vault("dev");
+    {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", "v", SetSecretOptions::default());
+    }
     {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute("DELETE FROM vault_meta WHERE key = 'audit_head'", [])
             .unwrap();
     }
-    let err = fx
-        .registry
-        .open("dev", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
-        .unwrap_err();
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert!(err.to_string().contains("head missing"), "{err}");
-    let vault = fx.open_vault("dev");
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+
+    let vault = fx.inspect_vault("dev");
     let check = vault.verify_audit_chain().unwrap();
     assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.unacknowledged, 1);
     let detections = events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Failure);
     assert_eq!(
         detections[0].detail.as_deref(),
         Some("audit chain head missing")
     );
+    assert_blocked(&vault.list_properties_of_secrets().unwrap_err());
+    drop(vault);
+
+    fx.acknowledge_truncations("dev");
+    let vault = fx.open_vault("dev");
+    assert_eq!(vault.get_secret("k", None).unwrap().value.expose(), b"v");
+    assert_eq!(vault.verify_audit_chain().unwrap().unacknowledged, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1100,16 +1139,17 @@ fn removing_all_audit_rows_and_the_head_is_detected() {
         )
         .unwrap();
     }
-    let err = fx
-        .registry
-        .open("dev", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
-        .unwrap_err();
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert!(err.to_string().contains("history missing"), "{err}");
-    let vault = fx.open_vault("dev");
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+
+    let vault = fx.inspect_vault("dev");
     let check = vault.verify_audit_chain().unwrap();
     assert!(!check.is_intact(), "{check:?}");
     assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.unacknowledged, 1);
     let detections = events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Failure);
     assert!(
         detections[0]
@@ -1118,6 +1158,14 @@ fn removing_all_audit_rows_and_the_head_is_detected() {
             .is_some_and(|d| d.contains("history missing")),
         "{detections:?}"
     );
+    drop(vault);
+
+    // Acknowledged, the vault opens again; but the surviving history records
+    // no secret at all, so the orphaned rows stay refused.
+    fx.acknowledge_truncations("dev");
+    let vault = fx.open_vault("dev");
+    assert_eq!(vault.get_secret("k", None).unwrap_err().code(), "crypto");
+    assert_eq!(vault.verify_audit_chain().unwrap().unacknowledged, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1551,13 +1599,16 @@ fn forged_checkpoint_rows_do_not_count() {
 
     // A row flagged keyed without the key has no valid hash. Appending it
     // also leaves the head stale, so the next unlock is refused and the
-    // forgery is recorded; after that the row is still not a checkpoint.
+    // forgery is recorded as a truncation that blocks the vault; once the
+    // owner has acknowledged it the row is still not a checkpoint.
     forge(1);
     let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
     assert_eq!(
         fx.registry.open("dev", &unlock).unwrap_err().code(),
         "crypto"
     );
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    fx.acknowledge_truncations("dev");
     let vault = fx.open_vault("dev");
     let err = vault.get_secret("k", None).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
@@ -1570,10 +1621,12 @@ fn forged_checkpoint_rows_do_not_count() {
 /// Removing the audit rows that checkpointed a change *and* replaying the
 /// rows from before it is a partial snapshot rollback. It cannot be told
 /// from the surviving history alone, but it cannot be done quietly: the
-/// head is stale, so the next unlock is refused and the truncation is
-/// recorded in the chain for good. See the threat model's known gaps.
+/// head is stale, so the next unlock is refused, the truncation is recorded
+/// in the chain for good, and the vault is blocked until its owner has
+/// reviewed the surviving history and acknowledged the truncation. See the
+/// threat model's known gaps.
 #[test]
-fn truncating_the_log_to_replay_a_row_is_refused_once_and_recorded() {
+fn truncating_the_log_to_replay_a_row_is_blocked_until_acknowledged() {
     let fx = Fixture::new();
     let path = fx.registry.vault_path("dev").unwrap();
     {
@@ -1588,14 +1641,7 @@ fn truncating_the_log_to_replay_a_row_is_refused_once_and_recorded() {
         last
     };
     replay(&path, "secret_versions", "k");
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute(
-            "DELETE FROM audit_events WHERE id > ?1",
-            [i64::try_from(before_disable).unwrap()],
-        )
-        .unwrap();
-    }
+    truncate_after(&path, before_disable);
     let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
     let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
@@ -1604,13 +1650,353 @@ fn truncating_the_log_to_replay_a_row_is_refused_once_and_recorded() {
         "{err}"
     );
 
-    let vault = fx.open_vault("dev");
+    // The replayed row is served through no door while the truncation is
+    // unacknowledged: not a plain unlock, not an inspection handle.
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    let vault = fx.inspect_vault("dev");
+    assert_blocked(&vault.get_secret("k", None).unwrap_err());
+    assert_blocked(&vault.get_secret_properties("k", None).unwrap_err());
     let check = vault.verify_audit_chain().unwrap();
     assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.unacknowledged, 1);
     assert!(!check.is_intact());
-    // The surviving history says the version is enabled, and it is what the
-    // vault now goes by: the limit of what the file alone can prove.
+    drop(vault);
+
+    // Once the owner has acknowledged it, the surviving history says the
+    // version is enabled, and that is what the vault goes by: the limit of
+    // what the file alone can prove.
+    fx.acknowledge_truncations("dev");
+    let vault = fx.open_vault("dev");
     assert!(vault.get_secret("k", None).is_ok());
+    let check = vault.verify_audit_chain().unwrap();
+    assert_eq!(check.truncations, 1);
+    assert_eq!(check.unacknowledged, 0);
+    assert!(!check.is_intact());
+}
+
+// ---------------------------------------------------------------------------
+// A detected truncation blocks the vault until it is acknowledged
+// ---------------------------------------------------------------------------
+
+#[test]
+#[allow(clippy::too_many_lines)] // every door into the vault is tried, deliberately exhaustive
+fn truncation_blocks_every_unlock_and_operation_until_acknowledged() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let ids = {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", CANARY, SetSecretOptions::default());
+        vault.get_secret("k", None).unwrap();
+        vault.get_secret("k", None).unwrap();
+        event_ids(&vault)
+    };
+    truncate_after(&path, ids[ids.len() - 3]);
+
+    // The unlock that finds the stale head is refused and records the
+    // detection; the second and third are refused because nobody has
+    // acknowledged it, and say so.
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string().contains("rows removed after event"),
+        "{err}"
+    );
+    assert!(err.to_string().contains("audit --acknowledge"), "{err}");
+    for _ in 0..2 {
+        assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    }
+    // The explicit migration is not a way round it either.
+    assert_blocked(&fx.registry.migrate("dev", &unlock).unwrap_err());
+
+    // An inspection unlock gets a handle that shows what was detected ...
+    let vault = fx.inspect_vault("dev");
+    let pending = vault.unacknowledged_truncations().unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    let detection = &pending[0];
+    assert_eq!(detection.operation, AuditOperation::AuditVerify);
+    assert_eq!(detection.outcome, AuditOutcome::Failure);
+    assert!(
+        detection
+            .detail
+            .as_deref()
+            .is_some_and(|d| d.contains("rows removed after event")),
+        "{detection:?}"
+    );
+    assert!(!format!("{pending:?}").contains(CANARY));
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert!(
+        err.to_string().contains(&format!("event {}", detection.id)),
+        "the refusal names the detection: {err}"
+    );
+
+    // ... and refuses every secret and protector operation ...
+    let refused: Vec<(&str, sourceorrery_core::SecretError)> = vec![
+        ("get", vault.get_secret("k", None).unwrap_err()),
+        (
+            "properties",
+            vault.get_secret_properties("k", None).unwrap_err(),
+        ),
+        ("list", vault.list_properties_of_secrets().unwrap_err()),
+        (
+            "versions",
+            vault.list_properties_of_secret_versions("k").unwrap_err(),
+        ),
+        (
+            "set",
+            vault
+                .set_secret("k2", SecretBytes::from("v"), SetSecretOptions::default())
+                .unwrap_err(),
+        ),
+        (
+            "update",
+            vault
+                .update_secret_properties(
+                    "k",
+                    None,
+                    UpdateSecretProperties {
+                        enabled: Some(false),
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err(),
+        ),
+        ("delete", vault.delete_secret("k").unwrap_err()),
+        ("deleted", vault.get_deleted_secret("k").unwrap_err()),
+        ("list-deleted", vault.list_deleted_secrets().unwrap_err()),
+        ("recover", vault.recover_deleted_secret("k").unwrap_err()),
+        ("purge", vault.purge_deleted_secret("k").unwrap_err()),
+        (
+            "protector-add",
+            vault
+                .add_protector(
+                    ProtectorSpec::Passphrase {
+                        passphrase: SecretBytes::from("another"),
+                        params: Argon2Params::TESTING,
+                    },
+                    Some("another"),
+                )
+                .unwrap_err(),
+        ),
+        (
+            "protector-remove",
+            vault.remove_protector("passphrase").unwrap_err(),
+        ),
+    ];
+    for (what, err) in &refused {
+        assert_eq!(err.code(), "crypto", "{what}: {err}");
+        assert!(err.to_string().contains("unacknowledged"), "{what}: {err}");
+        assert!(!err.to_string().contains(CANARY), "{what}");
+    }
+    assert_eq!(vault.protectors().unwrap().len(), 1, "nothing changed");
+
+    // ... while inspection itself works and every refusal is on the record.
+    let check = vault.verify_audit_chain().unwrap();
+    assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.unacknowledged, 1);
+    assert!(check.head_valid);
+    assert_eq!(check.first_broken, None);
+    assert!(!check.is_intact());
+    assert_eq!(open_refusals(&vault, "audit log truncated"), 1);
+    assert_eq!(
+        open_refusals(&vault, "truncation unacknowledged"),
+        4,
+        "two plain unlocks, the migration and the unlock after inspection"
+    );
+    let inspections = events_of(&vault, AuditOperation::VaultOpen, AuditOutcome::Success)
+        .iter()
+        .filter(|e| e.detail.as_deref() == Some("inspection (truncation unacknowledged)"))
+        .count();
+    assert_eq!(inspections, 1);
+    let get_refusals = events_of(&vault, AuditOperation::SecretGet, AuditOutcome::Failure);
+    assert!(
+        get_refusals
+            .iter()
+            .any(|e| e.detail.as_deref() == Some("crypto")),
+        "{get_refusals:?}"
+    );
+    assert_eq!(
+        vault.verify_audit_chain().unwrap().truncations,
+        1,
+        "refusals are not new truncations"
+    );
+}
+
+#[test]
+fn acknowledgement_records_one_keyed_success_row_and_unblocks_the_vault() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let ids = {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", CANARY, SetSecretOptions::default());
+        vault.get_secret("k", None).unwrap();
+        vault.get_secret("k", None).unwrap();
+        event_ids(&vault)
+    };
+    truncate_after(&path, ids[ids.len() - 2]);
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+
+    let vault = fx.inspect_vault("dev");
+    let pending = vault.unacknowledged_truncations().unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    let detection_id = pending[0].id;
+
+    // An acknowledgement must name exactly what was shown, and a refused one
+    // writes nothing.
+    let err = vault.acknowledge_truncations(&[]).unwrap_err();
+    assert_eq!(err.code(), "invalid_argument", "{err}");
+    let err = vault
+        .acknowledge_truncations(&[detection_id + 1])
+        .unwrap_err();
+    assert_eq!(err.code(), "invalid_argument", "{err}");
+    assert!(err.to_string().contains(&detection_id.to_string()), "{err}");
+    assert!(
+        events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Success).is_empty(),
+        "a refused acknowledgement writes nothing"
+    );
+    assert_blocked(&vault.get_secret("k", None).unwrap_err());
+
+    // The real one: exactly one keyed success row, naming the detection,
+    // after which the same handle and a plain unlock both work.
+    let ack = vault.acknowledge_truncations(&[detection_id]).unwrap();
+    assert_eq!(ack.truncations.len(), 1);
+    assert_eq!(ack.truncations[0].id, detection_id);
+    let acks = events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Success);
+    assert_eq!(acks.len(), 1, "{acks:?}");
+    assert_eq!(acks[0].id, ack.event_id);
+    assert!(ack.event_id > detection_id);
+    let detail = acks[0].detail.clone().unwrap_or_default();
+    assert!(detail.starts_with("truncation acknowledged"), "{detail}");
+    assert!(detail.contains(&detection_id.to_string()), "{detail}");
+    assert!(!format!("{ack:?}").contains(CANARY));
+    let pending = vault.unacknowledged_truncations().unwrap();
+    assert!(pending.is_empty(), "{pending:?}");
+    assert_eq!(
+        vault.get_secret("k", None).unwrap().value.expose(),
+        CANARY.as_bytes()
+    );
+    drop(vault);
+
+    let vault = fx.open_vault("dev");
+    set_with(&vault, "k2", "v", SetSecretOptions::default());
+    assert_eq!(vault.list_properties_of_secrets().unwrap().len(), 2);
+    let check = vault.verify_audit_chain().unwrap();
+    assert_eq!(check.truncations, 1, "the detection stays on record");
+    assert_eq!(check.unacknowledged, 0);
+    assert!(check.head_valid);
+    assert_eq!(check.first_broken, None);
+    assert!(
+        !check.is_intact(),
+        "an acknowledged truncation is still a truncation"
+    );
+
+    // Nothing left to acknowledge: refused, and nothing written.
+    let err = vault.acknowledge_truncations(&[detection_id]).unwrap_err();
+    assert_eq!(err.code(), "invalid_argument", "{err}");
+    assert_eq!(
+        events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Success).len(),
+        1
+    );
+    assert_eq!(
+        vault.acknowledge_truncations(&[]).unwrap_err().code(),
+        "invalid_argument"
+    );
+    drop(vault);
+
+    // The acknowledgement is chained like everything else: removing it is a
+    // second truncation, and it takes the first one's acknowledgement with
+    // it, so both are back in front of the owner.
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "DELETE FROM audit_events WHERE id >= ?1",
+            [i64::try_from(ack.event_id).unwrap()],
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    let again = fx.acknowledge_truncations("dev");
+    assert_eq!(again.truncations.len(), 2, "{again:?}");
+    assert_eq!(again.truncations[0].id, detection_id);
+    let vault = fx.open_vault("dev");
+    let check = vault.verify_audit_chain().unwrap();
+    assert_eq!(check.truncations, 2, "{check:?}");
+    assert_eq!(check.unacknowledged, 0);
+    assert_eq!(
+        events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Success).len(),
+        1
+    );
+}
+
+/// A truncation detected by another process between listing and
+/// acknowledging is never acknowledged unseen.
+#[test]
+fn acknowledgement_refuses_a_truncation_it_was_not_shown() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let ids = {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", "v", SetSecretOptions::default());
+        vault.get_secret("k", None).unwrap();
+        vault.get_secret("k", None).unwrap();
+        event_ids(&vault)
+    };
+    truncate_after(&path, ids[ids.len() - 2]);
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+    let owner = fx.inspect_vault("dev");
+    let shown: Vec<u64> = owner
+        .unacknowledged_truncations()
+        .unwrap()
+        .iter()
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(shown.len(), 1);
+
+    // Meanwhile the log loses its tail again and another unlock records it.
+    let newest = *event_ids(&owner).last().unwrap();
+    truncate_after(&path, newest - 1);
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+
+    // The owner's acknowledgement names only what it saw: refused, nothing
+    // written, and the vault stays blocked.
+    let err = owner.acknowledge_truncations(&shown).unwrap_err();
+    assert_eq!(err.code(), "invalid_argument", "{err}");
+    let acks = events_of(&owner, AuditOperation::AuditVerify, AuditOutcome::Success);
+    assert!(acks.is_empty(), "nothing may be written: {acks:?}");
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    let pending = owner.unacknowledged_truncations().unwrap();
+    assert_eq!(pending.len(), 2, "{pending:?}");
+
+    // Listed afresh, both can be acknowledged. A stale head at that moment
+    // is recorded and refused rather than swept in.
+    let newest = *event_ids(&owner).last().unwrap();
+    truncate_after(&path, newest - 1);
+    let ids: Vec<u64> = pending.iter().map(|e| e.id).collect();
+    let err = owner.acknowledge_truncations(&ids).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string().contains("rows removed after event"),
+        "{err}"
+    );
+    assert_eq!(owner.unacknowledged_truncations().unwrap().len(), 3);
+    let ack = fx.acknowledge_truncations("dev");
+    assert_eq!(ack.truncations.len(), 3);
+    assert!(fx.registry.open("dev", &unlock).is_ok());
 }
 
 // ---------------------------------------------------------------------------
@@ -2068,13 +2454,32 @@ impl V2Writer<'_> {
 
     /// Append a keyed, chained audit row and move the head to it.
     fn audit(&mut self, op: &str, name: Option<&str>, ver: Option<&str>, outcome: &str) {
+        self.audit_with_detail(op, name, ver, outcome, None);
+    }
+
+    fn audit_with_detail(
+        &mut self,
+        op: &str,
+        name: Option<&str>,
+        ver: Option<&str>,
+        outcome: &str,
+        detail: Option<&str>,
+    ) {
         self.conn
             .execute(
                 "INSERT INTO audit_events
                     (occurred_on, actor, operation, secret_name, version, outcome, detail,
                      prev_hash, keyed)
-                 VALUES (?1, 'user:legacy', ?2, ?3, ?4, ?5, NULL, ?6, 1)",
-                rusqlite::params![self.now, op, name, ver, outcome, self.prev.as_slice()],
+                 VALUES (?1, 'user:legacy', ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+                rusqlite::params![
+                    self.now,
+                    op,
+                    name,
+                    ver,
+                    outcome,
+                    detail,
+                    self.prev.as_slice()
+                ],
             )
             .unwrap();
         let id = self.conn.last_insert_rowid();
@@ -2089,7 +2494,7 @@ impl V2Writer<'_> {
                 .opt_str(name)
                 .opt_str(ver)
                 .str(outcome)
-                .opt_str(None)
+                .opt_str(detail)
                 .flag(true)
                 .0,
         );
@@ -2139,6 +2544,13 @@ impl V2Writer<'_> {
 /// Write a schema 2 vault named `legacy2` by hand, from the documented
 /// format (`*.sorvault` fixtures are git-ignored by policy).
 fn craft_schema_2_vault(path: &Path) -> LegacyVault {
+    craft_schema_2_vault_with(path, false)
+}
+
+/// As [`craft_schema_2_vault`]; with `truncation_recorded`, the log also
+/// carries the `audit_verify` / `failure` row a schema 2 build wrote when
+/// it found rows missing (it noted truncations without blocking).
+fn craft_schema_2_vault_with(path: &Path, truncation_recorded: bool) -> LegacyVault {
     let conn = rusqlite::Connection::open(path).unwrap();
     conn.execute_batch(SCHEMA_V2).unwrap();
     let vault_id = random::random_hex(16).unwrap();
@@ -2181,12 +2593,63 @@ fn craft_schema_2_vault(path: &Path) -> LegacyVault {
     w.audit("vault_create", None, None, "success");
     w.audit("secret_set", Some("alpha"), Some(&alpha_old), "success");
     w.audit("secret_set", Some("alpha"), Some(&alpha_new), "success");
+    if truncation_recorded {
+        w.audit_with_detail(
+            "audit_verify",
+            None,
+            None,
+            "failure",
+            Some("rows removed after event 3 (head was event 5)"),
+        );
+    }
     w.audit("secret_set", Some("beta"), Some(&beta), "success");
     w.finish();
     LegacyVault {
         alpha_old,
         alpha_new,
     }
+}
+
+/// Schema 2 noted a truncation and carried on. Once migrated, that record
+/// is a keyed truncation like any other, and the owner has to acknowledge
+/// it before the vault serves anything.
+#[test]
+fn schema_2_truncation_record_blocks_the_migrated_vault_until_acknowledged() {
+    let fx = Fixture::new();
+    std::fs::create_dir_all(fx.registry.vaults_dir()).unwrap();
+    let path = fx.registry.vault_path("legacy2").unwrap();
+    let legacy = craft_schema_2_vault_with(&path, true);
+
+    // The migration itself completes (the file is now schema 3) but hands
+    // out no handle.
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    assert_blocked(&fx.registry.migrate("legacy2", &unlock).unwrap_err());
+    assert_eq!(schema_marker(&path), "3");
+    assert_blocked(&fx.registry.open("legacy2", &unlock).unwrap_err());
+
+    let vault = fx.inspect_vault("legacy2");
+    assert_eq!(migrations(&vault), 1, "migrated exactly once");
+    let pending = vault.unacknowledged_truncations().unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(
+        pending[0].detail.as_deref(),
+        Some("rows removed after event 3 (head was event 5)")
+    );
+    assert_blocked(&vault.get_secret("alpha", None).unwrap_err());
+    let check = vault.verify_audit_chain().unwrap();
+    assert_eq!(check.truncations, 1);
+    assert_eq!(check.unacknowledged, 1);
+    assert_eq!(check.first_broken, None, "{check:?}");
+    drop(vault);
+
+    fx.acknowledge_truncations("legacy2");
+    let vault = fx.open_vault("legacy2");
+    assert_eq!(
+        vault.get_secret("alpha", None).unwrap().properties.version,
+        legacy.alpha_new
+    );
+    assert_eq!(vault.list_properties_of_secrets().unwrap().len(), 2);
+    assert_eq!(vault.verify_audit_chain().unwrap().unacknowledged, 0);
 }
 
 #[test]
