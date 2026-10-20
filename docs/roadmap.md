@@ -20,10 +20,13 @@
 ## Milestone 2 — first-class language bindings
 
 - [x] `sourceorrery-ffi`: stable C ABI (`cbindgen`), versioned `CONTRACT_VERSION`
-- [ ] .NET (`SourceOrrery` NuGet), Python (PyPI wheels via Maturin), Node.js (napi-rs)
-- [ ] Cross-language conformance harness driving `tests/conformance` scenarios
-- [ ] Scoped value accessors (callback / `using` / context manager) in every SDK
+- [x] Read-only `so_reader_*` / `so_project_*` ABI and the `sourceorrery` client crate (unlock order, manifest loading, error hints)
+- [x] Read-only SDKs: Python (PyPI, maturin), JavaScript/TypeScript (npm, napi-rs), Rust (crates.io), Java (Maven Central, FFM), .NET (NuGet, LibraryImport), Go (cgo), C, C++ (header-only), PHP (Packagist, FFI); each tested and its example run in CI on Ubuntu/Windows/macOS against a vault the CLI creates
+- [x] Manual release workflow: GitHub Release with checksums, registry publish jobs skipped until their secrets exist, dry-run mode
+- [x] Scoped value accessors (`with` / `using` / `try-with-resources` / `defer` / RAII / `Use(span)`) in every SDK
+- [ ] Cross-language conformance harness driving `tests/conformance` scenarios (today: one shared fixture vault and equivalent read-only test suites per language)
 - [ ] ABI compatibility tests and semantic versioning policy
+- [ ] Package signing and provenance (Sigstore for npm and PyPI, cosign for the archives)
 
 ## Milestone 3 — local broker and agent isolation
 
@@ -46,5 +49,5 @@
 ## Milestone 5 — community expansion
 
 - [ ] Published C ABI specification and SDK templates
-- [ ] Java/Kotlin, Swift, Go, PHP, Ruby, Dart, Elixir bindings via the harness
+- [ ] Kotlin, Swift, Ruby, Dart, Elixir bindings via the harness (Java, Go and PHP shipped in milestone 2)
 - [ ] Tier 2 platforms: musl, ARMv7; community: FreeBSD, OpenBSD

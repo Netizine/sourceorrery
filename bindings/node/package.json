@@ -1,0 +1,75 @@
+{
+  "name": "@sourceorrery/sdk",
+  "version": "0.1.0",
+  "description": "Read secrets from a SourceOrrery vault: secrets belong to the runtime, not the repository",
+  "license": "(MIT OR Apache-2.0)",
+  "homepage": "https://sourceorrery.ai/sdks/javascript/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netizine/sourceorrery.git",
+    "directory": "bindings/node"
+  },
+  "keywords": [
+    "secrets",
+    "vault",
+    "keyring",
+    "security",
+    "dotenv",
+    "napi-rs"
+  ],
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "lib/",
+    "README.md"
+  ],
+  "napi": {
+    "binaryName": "sourceorrery",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu"
+    ]
+  },
+  "engines": {
+    "node": ">= 20"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "artifacts": "napi artifacts",
+    "create-npm-dirs": "napi create-npm-dirs",
+    "prepublishOnly": "napi prepublish -t npm --skip-gh-release",
+    "test": "node --test",
+    "typecheck": "tsc -p tsconfig.json",
+    "example": "node examples/get-secret.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.10.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "optionalDependencies": {
+    "@sourceorrery/sdk-win32-x64-msvc": "0.1.0",
+    "@sourceorrery/sdk-win32-arm64-msvc": "0.1.0",
+    "@sourceorrery/sdk-darwin-x64": "0.1.0",
+    "@sourceorrery/sdk-darwin-arm64": "0.1.0",
+    "@sourceorrery/sdk-linux-x64-gnu": "0.1.0",
+    "@sourceorrery/sdk-linux-arm64-gnu": "0.1.0"
+  }
+}

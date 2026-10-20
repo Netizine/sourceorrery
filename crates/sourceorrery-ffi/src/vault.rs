@@ -37,7 +37,7 @@ const _: () = assert_send_sync::<so_vault>();
 // (inputs) / writable (outputs) for the duration of the call.
 // ---------------------------------------------------------------------------
 
-fn invalid(message: impl Into<String>) -> SecretError {
+pub(crate) fn invalid_argument(message: impl Into<String>) -> SecretError {
     SecretError::InvalidArgument(message.into())
 }
 
@@ -46,12 +46,16 @@ fn invalid(message: impl Into<String>) -> SecretError {
 /// # Safety
 ///
 /// `ptr` is NULL or readable for `len` bytes for the lifetime `'a`.
-unsafe fn opt_bytes<'a>(ptr: *const u8, len: usize, what: &str) -> Result<Option<&'a [u8]>> {
+pub(crate) unsafe fn opt_bytes<'a>(
+    ptr: *const u8,
+    len: usize,
+    what: &str,
+) -> Result<Option<&'a [u8]>> {
     if ptr.is_null() {
         if len == 0 {
             return Ok(None);
         }
-        return Err(invalid(format!(
+        return Err(invalid_argument(format!(
             "{what}: NULL pointer with non-zero length"
         )));
     }
@@ -65,13 +69,13 @@ unsafe fn opt_bytes<'a>(ptr: *const u8, len: usize, what: &str) -> Result<Option
 /// # Safety
 ///
 /// As [`opt_bytes`].
-unsafe fn bytes<'a>(ptr: *const u8, len: usize, what: &str) -> Result<&'a [u8]> {
+pub(crate) unsafe fn bytes<'a>(ptr: *const u8, len: usize, what: &str) -> Result<&'a [u8]> {
     // SAFETY: forwarded caller contract.
     Ok(unsafe { opt_bytes(ptr, len, what) }?.unwrap_or_default())
 }
 
 fn utf8<'a>(bytes: &'a [u8], what: &str) -> Result<&'a str> {
-    std::str::from_utf8(bytes).map_err(|_| invalid(format!("{what}: not valid UTF-8")))
+    std::str::from_utf8(bytes).map_err(|_| invalid_argument(format!("{what}: not valid UTF-8")))
 }
 
 /// A required UTF-8 string.
@@ -79,7 +83,7 @@ fn utf8<'a>(bytes: &'a [u8], what: &str) -> Result<&'a str> {
 /// # Safety
 ///
 /// As [`opt_bytes`].
-unsafe fn string<'a>(ptr: *const u8, len: usize, what: &str) -> Result<&'a str> {
+pub(crate) unsafe fn string<'a>(ptr: *const u8, len: usize, what: &str) -> Result<&'a str> {
     // SAFETY: forwarded caller contract.
     utf8(unsafe { bytes(ptr, len, what) }?, what)
 }
@@ -89,7 +93,11 @@ unsafe fn string<'a>(ptr: *const u8, len: usize, what: &str) -> Result<&'a str> 
 /// # Safety
 ///
 /// As [`opt_bytes`].
-unsafe fn opt_string<'a>(ptr: *const u8, len: usize, what: &str) -> Result<Option<&'a str>> {
+pub(crate) unsafe fn opt_string<'a>(
+    ptr: *const u8,
+    len: usize,
+    what: &str,
+) -> Result<Option<&'a str>> {
     // SAFETY: forwarded caller contract.
     unsafe { opt_bytes(ptr, len, what) }?
         .map(|bytes| utf8(bytes, what))
@@ -101,7 +109,7 @@ unsafe fn opt_string<'a>(ptr: *const u8, len: usize, what: &str) -> Result<Optio
 /// # Safety
 ///
 /// As [`opt_bytes`].
-unsafe fn opt_json<T: DeserializeOwned + Default>(
+pub(crate) unsafe fn opt_json<T: DeserializeOwned + Default>(
     ptr: *const u8,
     len: usize,
     what: &str,
@@ -118,11 +126,15 @@ unsafe fn opt_json<T: DeserializeOwned + Default>(
 /// # Safety
 ///
 /// As [`opt_bytes`].
-unsafe fn required_json<T: DeserializeOwned>(ptr: *const u8, len: usize, what: &str) -> Result<T> {
+pub(crate) unsafe fn required_json<T: DeserializeOwned>(
+    ptr: *const u8,
+    len: usize,
+    what: &str,
+) -> Result<T> {
     // SAFETY: forwarded caller contract.
     let bytes = unsafe { bytes(ptr, len, what) }?;
     if bytes.is_empty() {
-        return Err(invalid(format!("{what}: must not be empty")));
+        return Err(invalid_argument(format!("{what}: must not be empty")));
     }
     json::parse(bytes, what)
 }
@@ -135,7 +147,7 @@ unsafe fn required_json<T: DeserializeOwned>(ptr: *const u8, len: usize, what: &
 /// that has not been closed and stays open for the lifetime `'a`.
 unsafe fn vault<'a>(handle: *const so_vault) -> Result<&'a SqliteVault> {
     if handle.is_null() {
-        return Err(invalid("handle: NULL"));
+        return Err(invalid_argument("handle: NULL"));
     }
     // SAFETY: the caller guarantees a non-null handle is a live `so_vault`
     // leaked by `Box::into_raw` in `so_vault_create` / `so_vault_open`.
@@ -153,9 +165,9 @@ unsafe fn vault<'a>(handle: *const so_vault) -> Result<&'a SqliteVault> {
 /// # Safety
 ///
 /// `ptr` is NULL or valid for writes of `T` for the lifetime `'a`.
-unsafe fn output<'a, T>(ptr: *mut T, initial: T, what: &str) -> Result<&'a mut T> {
+pub(crate) unsafe fn output<'a, T>(ptr: *mut T, initial: T, what: &str) -> Result<&'a mut T> {
     if ptr.is_null() {
-        return Err(invalid(format!("{what}: NULL")));
+        return Err(invalid_argument(format!("{what}: NULL")));
     }
     // SAFETY: the caller guarantees `ptr` is valid for writes of `T` and
     // not aliased for the duration of the call; `write` neither reads nor
@@ -212,7 +224,7 @@ pub unsafe extern "C" fn so_vault_create(
     passphrase_len: usize,
     out_handle: *mut *mut so_vault,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_handle, ptr::null_mut(), "out_handle") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -226,7 +238,7 @@ pub unsafe extern "C" fn so_vault_create(
         };
         let protector = match passphrase {
             None => ProtectorSpec::OsKeyring,
-            Some([]) => return Err(invalid("passphrase: must not be empty")),
+            Some([]) => return Err(invalid_argument("passphrase: must not be empty")),
             Some(passphrase) => ProtectorSpec::Passphrase {
                 passphrase: SecretBytes::new(passphrase.to_vec()),
                 params: options.argon2_params(),
@@ -259,7 +271,7 @@ pub unsafe extern "C" fn so_vault_open(
     passphrase_len: usize,
     out_handle: *mut *mut so_vault,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_handle, ptr::null_mut(), "out_handle") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -316,7 +328,7 @@ pub unsafe extern "C" fn so_vault_descriptor(
     handle: *const so_vault,
     out_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_json, so_bytes::EMPTY, "out_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -358,7 +370,7 @@ pub unsafe extern "C" fn so_secret_set(
     options_json_len: usize,
     out_properties_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_properties_json, so_bytes::EMPTY, "out_properties_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -400,7 +412,7 @@ pub unsafe extern "C" fn so_secret_get(
     out_properties_json: *mut so_bytes,
     out_value: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let (out_props, out_value) = unsafe {
             (
@@ -438,7 +450,7 @@ pub unsafe extern "C" fn so_secret_get_properties(
     version_len: usize,
     out_properties_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_properties_json, so_bytes::EMPTY, "out_properties_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -465,7 +477,7 @@ pub unsafe extern "C" fn so_secret_list(
     handle: *const so_vault,
     out_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_json, so_bytes::EMPTY, "out_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -489,7 +501,7 @@ pub unsafe extern "C" fn so_secret_versions(
     name_len: usize,
     out_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_json, so_bytes::EMPTY, "out_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -523,7 +535,7 @@ pub unsafe extern "C" fn so_secret_update(
     update_json_len: usize,
     out_properties_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_properties_json, so_bytes::EMPTY, "out_properties_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -559,7 +571,7 @@ pub unsafe extern "C" fn so_secret_delete(
     name_len: usize,
     out_deleted_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_deleted_json, so_bytes::EMPTY, "out_deleted_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -581,7 +593,7 @@ pub unsafe extern "C" fn so_secret_get_deleted(
     name_len: usize,
     out_deleted_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_deleted_json, so_bytes::EMPTY, "out_deleted_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -602,7 +614,7 @@ pub unsafe extern "C" fn so_secret_list_deleted(
     handle: *const so_vault,
     out_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_json, so_bytes::EMPTY, "out_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -626,7 +638,7 @@ pub unsafe extern "C" fn so_secret_recover(
     name_len: usize,
     out_properties_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_properties_json, so_bytes::EMPTY, "out_properties_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
@@ -650,7 +662,7 @@ pub unsafe extern "C" fn so_secret_purge(
     name: *const u8,
     name_len: usize,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let (vault, name) = unsafe { (vault(handle)?, string(name, name_len, "name")?) };
         vault.purge_deleted_secret(name)
@@ -679,7 +691,7 @@ pub unsafe extern "C" fn so_audit_events(
     query_json_len: usize,
     out_json: *mut so_bytes,
 ) -> so_status {
-    guard(|| {
+    guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_json, so_bytes::EMPTY, "out_json") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.

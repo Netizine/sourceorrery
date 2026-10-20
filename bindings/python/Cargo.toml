@@ -1,0 +1,54 @@
+[package]
+name = "sourceorrery-python"
+description = "Python extension module for the SourceOrrery read-only client (built by maturin)"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Netizine/sourceorrery"
+homepage = "https://sourceorrery.ai"
+authors = ["James Melvin <james@melvin.tech>"]
+publish = false
+
+# Its own workspace root: it is excluded from the repository workspace
+# because maturin builds it with the extension-module feature.
+[workspace]
+
+[lib]
+name = "sourceorrery_python"
+crate-type = ["cdylib"]
+
+[features]
+default = ["os-keyring"]
+os-keyring = ["sourceorrery/os-keyring"]
+
+[dependencies]
+sourceorrery = { path = "../../crates/sourceorrery", version = "0.1.0", default-features = false }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py311"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+# Mirrors the workspace lint table (this crate is excluded from the workspace
+# so that it builds with maturin and keeps its own lock file).
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+doc_markdown = "allow"
+option_option = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+struct_excessive_bools = "allow"
+# pyo3 signatures take many optional keyword arguments.
+too_many_arguments = "allow"
+needless_pass_by_value = "allow"

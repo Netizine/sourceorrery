@@ -1,0 +1,43 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "sourceorrery"
+description = "Read secrets from a SourceOrrery vault: secrets belong to the runtime, not the repository"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT OR Apache-2.0"
+authors = [{ name = "James Melvin", email = "james@melvin.tech" }]
+keywords = ["secrets", "vault", "keyring", "security", "dotenv"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Rust",
+  "Topic :: Security",
+  "Typing :: Typed",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://sourceorrery.ai"
+Documentation = "https://sourceorrery.ai/sdks/python/"
+Repository = "https://github.com/Netizine/sourceorrery"
+Changelog = "https://github.com/Netizine/sourceorrery/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.maturin]
+# The compiled extension is sourceorrery._native; the public API lives in
+# python/sourceorrery/.
+module-name = "sourceorrery._native"
+python-source = "python"
+features = ["pyo3/extension-module"]
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

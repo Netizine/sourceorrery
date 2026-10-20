@@ -1,0 +1,30 @@
+{
+    "name": "sourceorrery/sourceorrery",
+    "description": "Read secrets from a SourceOrrery vault. Secrets belong to the runtime, not the repository.",
+    "type": "library",
+    "license": "MIT OR Apache-2.0",
+    "keywords": ["secrets", "vault", "keyring", "security", "dotenv", "ffi"],
+    "homepage": "https://sourceorrery.ai",
+    "support": {
+        "docs": "https://sourceorrery.ai/sdks/php/",
+        "source": "https://github.com/Netizine/sourceorrery",
+        "issues": "https://github.com/Netizine/sourceorrery/issues"
+    },
+    "authors": [
+        { "name": "James Melvin", "email": "james@melvin.tech" }
+    ],
+    "require": {
+        "php": ">=8.2",
+        "ext-ffi": "*",
+        "ext-json": "*"
+    },
+    "autoload": {
+        "psr-4": { "SourceOrrery\\": "src/" }
+    },
+    "scripts": {
+        "test": "php tests/run.php"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

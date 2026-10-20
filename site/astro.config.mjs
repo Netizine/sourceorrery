@@ -62,11 +62,27 @@ export default defineConfig({
 					items: [{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' }],
 				},
 				{
+					label: 'SDKs',
+					items: [
+						{ label: 'Overview', slug: 'sdks' },
+						{ label: 'Python', slug: 'sdks/python' },
+						{ label: 'JavaScript / TypeScript', slug: 'sdks/javascript' },
+						{ label: 'Rust', slug: 'sdks/rust' },
+						{ label: 'Java', slug: 'sdks/java' },
+						{ label: '.NET', slug: 'sdks/dotnet' },
+						{ label: 'Go', slug: 'sdks/go' },
+						{ label: 'C', slug: 'sdks/c' },
+						{ label: 'C++', slug: 'sdks/cpp' },
+						{ label: 'PHP', slug: 'sdks/php' },
+					],
+				},
+				{
 					label: 'Reference',
 					items: [
 						{ label: 'CLI', slug: 'reference/cli' },
 						{ label: 'Vault format', slug: 'reference/vault-format' },
 						{ label: 'Error codes', slug: 'reference/error-codes' },
+						{ label: 'Releasing', slug: 'reference/release' },
 					],
 				},
 				{

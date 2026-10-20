@@ -4,6 +4,10 @@
 //! from the call, details from thread-local accessors. The details never
 //! include a secret value: [`sourceorrery_core::SecretError`] messages carry
 //! names, versions and timestamps only, and this crate never formats a value.
+//!
+//! Besides the code and message, every error carries a *hint*: the
+//! actionable part, produced by the [`sourceorrery`] client crate so that all
+//! SDKs explain a failure the same way.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -33,6 +37,45 @@ pub(crate) const INTERNAL_ERROR_CODE: &str = "internal";
 struct LastError {
     code: CString,
     message: CString,
+    hint: CString,
+}
+
+/// An error that can be stored as the thread's last error.
+pub(crate) trait Reportable {
+    /// Stable code.
+    fn code(&self) -> &str;
+    /// Message without the hint.
+    fn message(&self) -> String;
+    /// What to do about it; empty when nothing specific applies.
+    fn hint(&self) -> String;
+}
+
+impl Reportable for SecretError {
+    fn code(&self) -> &str {
+        Self::code(self)
+    }
+
+    fn message(&self) -> String {
+        self.to_string()
+    }
+
+    fn hint(&self) -> String {
+        sourceorrery::Error::from_core(self, None).hint().to_owned()
+    }
+}
+
+impl Reportable for sourceorrery::Error {
+    fn code(&self) -> &str {
+        Self::code(self)
+    }
+
+    fn message(&self) -> String {
+        Self::message(self).to_owned()
+    }
+
+    fn hint(&self) -> String {
+        Self::hint(self).to_owned()
+    }
 }
 
 thread_local! {
@@ -45,11 +88,12 @@ fn c_string(text: &str) -> CString {
     CString::new(text.replace('\0', "")).unwrap_or_default()
 }
 
-pub(crate) fn set_last_error(code: &str, message: &str) {
+pub(crate) fn set_last_error(code: &str, message: &str, hint: &str) {
     LAST_ERROR.with(|slot| {
         *slot.borrow_mut() = Some(LastError {
             code: c_string(code),
             message: c_string(message),
+            hint: c_string(hint),
         });
     });
 }
@@ -69,21 +113,26 @@ fn panic_text(payload: &(dyn Any + Send)) -> String {
 }
 
 /// Run the body of an exported function: clear the thread's error state,
-/// translate a `SecretError` into [`so_status::SO_STATUS_ERROR`] plus error
-/// state, and keep a panic from unwinding into the caller.
-pub(crate) fn guard<F>(body: F) -> so_status
+/// translate an error into [`so_status::SO_STATUS_ERROR`] plus error state,
+/// and keep a panic from unwinding into the caller.
+pub(crate) fn guard<E, F>(body: F) -> so_status
 where
-    F: FnOnce() -> Result<(), SecretError>,
+    E: Reportable,
+    F: FnOnce() -> Result<(), E>,
 {
     clear_last_error();
     match catch_unwind(AssertUnwindSafe(body)) {
         Ok(Ok(())) => so_status::SO_STATUS_OK,
         Ok(Err(err)) => {
-            set_last_error(err.code(), &err.to_string());
+            set_last_error(err.code(), &err.message(), &err.hint());
             so_status::SO_STATUS_ERROR
         }
         Err(payload) => {
-            set_last_error(INTERNAL_ERROR_CODE, &panic_text(payload.as_ref()));
+            set_last_error(
+                INTERNAL_ERROR_CODE,
+                &panic_text(payload.as_ref()),
+                "This is a bug in SourceOrrery; please report it with the message above",
+            );
             so_status::SO_STATUS_PANIC
         }
     }
@@ -112,6 +161,25 @@ pub extern "C" fn so_last_error_message() -> *const c_char {
         slot.borrow()
             .as_ref()
             .map_or(std::ptr::null(), |err| err.message.as_ptr())
+    })
+}
+
+/// What to do about the error reported by the last call on this thread
+/// (which command creates the vault, which passphrase sources were tried,
+/// why a version was refused, ...), or `NULL` if that call succeeded or has
+/// nothing specific to suggest. Wording may change between releases. The
+/// string is NUL-terminated and valid until the next SourceOrrery call on
+/// this thread. It never contains a secret value.
+#[unsafe(no_mangle)]
+pub extern "C" fn so_last_error_hint() -> *const c_char {
+    LAST_ERROR.with(|slot| {
+        slot.borrow().as_ref().map_or(std::ptr::null(), |err| {
+            if err.hint.as_bytes().is_empty() {
+                std::ptr::null()
+            } else {
+                err.hint.as_ptr()
+            }
+        })
     })
 }
 
@@ -148,14 +216,28 @@ mod tests {
         assert_eq!(code().as_deref(), Some("not_found"));
         assert!(!so_last_error_message().is_null());
 
-        assert_eq!(guard(|| Ok(())), so_status::SO_STATUS_OK);
+        // SAFETY: the hint pointer is non-null right after a not_found error.
+        let hint = unsafe { CStr::from_ptr(so_last_error_hint()) }
+            .to_str()
+            .unwrap();
+        assert!(hint.contains("sourceorrery secret set k"), "{hint}");
+
+        assert_eq!(guard(|| Ok::<(), SecretError>(())), so_status::SO_STATUS_OK);
         assert!(code().is_none());
         assert!(so_last_error_message().is_null());
+        assert!(so_last_error_hint().is_null());
+    }
+
+    #[test]
+    fn errors_without_a_hint_report_null() {
+        set_last_error("storage", "m", "");
+        assert!(!so_last_error_code().is_null());
+        assert!(so_last_error_hint().is_null());
     }
 
     #[test]
     fn guard_catches_panics() {
-        let status = guard(|| panic!("boom"));
+        let status = guard(|| -> Result<(), SecretError> { panic!("boom") });
         assert_eq!(status, so_status::SO_STATUS_PANIC);
         assert_eq!(code().as_deref(), Some("internal"));
         so_last_error_clear();
@@ -164,7 +246,7 @@ mod tests {
 
     #[test]
     fn interior_nuls_do_not_truncate_the_message() {
-        set_last_error("invalid_argument", "a\0b");
+        set_last_error("invalid_argument", "a\0b", "");
         // SAFETY: the message pointer is non-null right after set_last_error.
         let message = unsafe { CStr::from_ptr(so_last_error_message()) };
         assert_eq!(message.to_str().unwrap(), "ab");

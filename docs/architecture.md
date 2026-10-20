@@ -47,11 +47,16 @@ sourceorrery/
 │   ├── sourceorrery-crypto     XChaCha20-Poly1305, Argon2id, envelope wrapping
 │   ├── sourceorrery-storage    encrypted SQLite vault, key protectors,
 │   │                           OS keyring, vault registry
-│   └── sourceorrery-cli        the `sourceorrery` binary
+│   ├── sourceorrery-cli        the `sourceorrery` binary
+│   ├── sourceorrery            the read-only client: CLI unlock order,
+│   │                           manifest loading, error hints (the Rust SDK)
+│   └── sourceorrery-ffi        stable C ABI (cbindgen header): read-only
+│                               so_reader_* for SDKs, so_vault_* for tooling
+├── bindings/                   the other nine SDKs (see §7)
 ├── tests/conformance           lifecycle + security suite for every backend/SDK
-├── bindings/                   milestone 2 (C ABI, .NET, Python, Node, ...)
+├── scripts/ci, scripts/release fixture vault for SDK tests; version stamping
 ├── docs/                       this folder
-└── .github/workflows           CI on Ubuntu/Windows/macOS, release builds
+└── .github/workflows           CI on Ubuntu/Windows/macOS, manual release
 ```
 
 The critical principle: **applications consume secrets through a defined
@@ -65,6 +70,11 @@ conformance suite; none carries business logic of its own.
 cli ──► storage ──► crypto
  │         │
  └────► core ◄──────┘ (crypto has no core dependency; storage maps its errors)
+
+sourceorrery (client) ──► storage, core
+sourceorrery-ffi ──────► sourceorrery (client), storage, core
+bindings/python, bindings/node ──► sourceorrery (client)      native extensions
+bindings/{java,dotnet,go,cpp,php} ──► sourceorrery-ffi (C ABI) foreign-function calls
 ```
 
 ## 3. Domain model (`sourceorrery-core`)
@@ -202,6 +212,48 @@ Three ways to reach the Rust core, in order of preference for a given host:
 
 The compatibility contract is the SourceOrrery API and `CONTRACT_VERSION`,
 not any binding generator. See [`bindings/README.md`](../bindings/README.md).
+
+### The bindings layer (milestone 2, shipped)
+
+Ten SDKs, all **read-only** ([ADR 0005](adr/0005-read-only-sdks.md)): open
+a vault with the CLI's unlock order, get the newest accessible or an
+explicit version, read properties, resolve a `sourceorrery://` reference,
+load a `sourceorrery.toml`, close. No write, protector or audit surface
+exists in any of them; a library that cannot write cannot be tricked into
+writing. User guides: [sdks/](sdks/index.md).
+
+```
+                     ┌────────────────────────────────────────────┐
+  Rust (crate)  ───► │ sourceorrery                               │
+  Python (PyO3) ───► │   SecretReader · Project · Error{code,hint}│ ──► storage ──► crypto
+  Node (napi-rs) ──► │   unlock order, manifest semantics, hints  │
+                     └──────────────────────┬─────────────────────┘
+                                            │
+                     ┌──────────────────────▼─────────────────────┐
+  Java (FFM)     ──► │ sourceorrery-ffi                           │
+  .NET (P/Invoke)──► │   so_reader_* / so_project_* (read-only)   │
+  Go (cgo)       ──► │   so_vault_* / so_secret_* (tooling only)  │
+  C, C++, PHP    ──► │   so_last_error_{code,message,hint}        │
+                     └────────────────────────────────────────────┘
+```
+
+Three rules keep the layer thin ([ADR 0006](adr/0006-binding-technologies.md)):
+
+* **All logic in Rust.** The `sourceorrery` crate owns the unlock order
+  (OS credential store, explicit passphrase, `SOURCEORRERY_PASSPHRASE`,
+  `SOURCEORRERY_PASSPHRASE_FILE`, never a prompt), the manifest semantics
+  (mirroring `sourceorrery run`) and the *hint* attached to every error:
+  the sentence that tells the person what to do. A binding maps the stable
+  code to a typed error and passes code, message and hint through.
+* **Values are guarded in every language.** Held in native memory until
+  closed (zeroised by `so_bytes_free` or `SecretBytes`), printed as
+  `[REDACTED]`, not serialisable by accident, copied out only through an
+  explicit call.
+* **Every SDK is proven in CI** on Ubuntu, Windows and macOS against a
+  vault the CLI creates in the job (`scripts/ci/fixture-vault.sh`), with
+  its tests and its example; a binding whose tests do not pass does not
+  ship. Releases are cut by the manual workflow described in
+  [release.md](release.md).
 
 ## 8. Platform matrix
 

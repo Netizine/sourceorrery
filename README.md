@@ -14,10 +14,12 @@ file with an encrypted local vault, an Azure Key Vault–style lifecycle API
 (versions, soft delete, recovery, time windows, audit) and a manifest that
 declares *which* secrets a project needs without ever holding their values.
 
-> **Status: milestone 1 — core, encrypted vault and CLI.** Local-first and
-> usable today on Windows, macOS and Linux. Language SDKs, the authenticated
-> local broker and remote providers are on the [roadmap](docs/roadmap.md).
-> Not yet audited; do not treat it as a production secret store.
+> **Status: milestone 2 — core, encrypted vault, CLI and read-only SDKs.**
+> Local-first and usable today on Windows, macOS and Linux, from Python,
+> JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP
+> ([docs/sdks](docs/sdks/index.md)). The authenticated local broker and
+> remote providers are on the [roadmap](docs/roadmap.md). Not yet audited;
+> do not treat it as a production secret store.
 
 ## Why
 
@@ -76,6 +78,20 @@ sourceorrery vault protector add --kind passphrase --vault development
 
 See [docs/cli.md](docs/cli.md) for every command.
 
+From code, an application only ever *reads* ([why](docs/adr/0005-read-only-sdks.md)):
+
+```python
+from sourceorrery import SecretReader            # pip install sourceorrery
+
+with SecretReader("development") as reader, reader.get("database-password") as secret:
+    connect(password=secret.value.expose_text())  # zeroised when the block ends
+```
+
+The same five calls exist for JavaScript/TypeScript, Rust, Java, .NET, Go,
+C, C++ and PHP, each with typed errors whose hint says what to do
+(`sourceorrery secret set ...`, which passphrase sources were tried, ...).
+See [docs/sdks](docs/sdks/index.md).
+
 ## What SourceOrrery does and does not protect
 
 Three different guarantees, kept separate on purpose
@@ -108,9 +124,11 @@ crates/
   sourceorrery-crypto    XChaCha20-Poly1305, Argon2id, envelope key wrapping
   sourceorrery-storage   encrypted SQLite vault, OS-keyring + passphrase protectors
   sourceorrery-cli       the `sourceorrery` binary
-  sourceorrery-ffi       stable C ABI (cbindgen header) for language bindings
+  sourceorrery           the read-only client (Rust SDK): unlock order, manifest, hints
+  sourceorrery-ffi       stable C ABI (cbindgen header): so_reader_* for SDKs
+bindings/                Python, Node, Java, .NET, Go, C++, PHP SDKs
 tests/conformance        the semantics every backend and SDK must pass
-docs/                    architecture, threat model, vault format, roadmap
+docs/                    architecture, threat model, vault format, SDK guides, roadmap
 ```
 
 The Rust core owns every semantic. Storage backends and (future) language
@@ -134,8 +152,9 @@ protectors only.
 
 ## Roadmap
 
-1. **Core and local CLI** — this release.
-2. First-class SDKs over the C ABI (shipped): .NET, Python, Node.js.
+1. **Core and local CLI** — shipped.
+2. **Read-only SDKs** for Python, JavaScript/TypeScript, Rust, Java, .NET,
+   Go, C, C++ and PHP, and a release pipeline — this release.
 3. Authenticated local broker, capability tokens, agent-aware profiles.
 4. Enterprise: remote providers, workload identity, rotation, RBAC.
 5. Community SDKs via the published C ABI and conformance harness.

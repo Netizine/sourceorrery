@@ -13,7 +13,20 @@ and `docs/threat-model.md` before changing anything security-relevant.
 - `crates/sourceorrery-storage` — encrypted SQLite vault, key protectors,
   OS keyring access, vault registry (paths).
 - `crates/sourceorrery-cli` — the `sourceorrery` binary.
+- `crates/sourceorrery` — the read-only client (the Rust SDK): CLI unlock
+  order, `Project::load` mirroring `sourceorrery run`, and the actionable
+  `hint` every error carries. All SDK logic lives here.
+- `crates/sourceorrery-ffi` — the C ABI (cbindgen header checked in CI).
+  `so_reader_*` / `so_project_*` are read-only and are what SDKs link;
+  `so_vault_*` is for tooling. The only crate allowed to use `unsafe`.
+- `bindings/{python,node,java,dotnet,go,cpp,php}` — the SDKs. Python and
+  Node are native extensions over `crates/sourceorrery` (own workspace
+  roots, own lock files); the rest call the C ABI. `bindings/README.md` is
+  the C ABI reference and index.
 - `tests/conformance` — lifecycle + security suite every backend/SDK must pass.
+- `scripts/ci/fixture-vault.sh` — creates, with the CLI only, the vault
+  every SDK test suite reads; `scripts/release/set-version.py` stamps a
+  release version into every manifest.
 
 ## Rules that are not negotiable
 
@@ -27,6 +40,14 @@ and `docs/threat-model.md` before changing anything security-relevant.
 - New semantics go in core with a conformance test, not in a backend.
 - Tests use passphrase protectors with `Argon2Params::TESTING`; never touch
   the real OS credential store in tests.
+- SDKs are read-only (ADR 0005): no set/update/delete/recover/purge,
+  protector or audit calls in any binding, ever. Bindings carry no logic
+  beyond "stable code → typed error"; unlock order, manifest semantics and
+  error hints live in `crates/sourceorrery`. A new read-only operation goes
+  there and into `so_reader_*` first, then into every binding, with its
+  test and example.
+- Every SDK test suite and example must pass in CI against the fixture
+  vault; `bindings/go/sourceorrery.h` must equal the generated header.
 
 ## Commands
 
@@ -43,6 +64,18 @@ For manual testing use an isolated home and a passphrase vault:
 export SOURCEORRERY_HOME=/tmp/so-home SOURCEORRERY_PASSPHRASE=dev-only
 sourceorrery vault create development --protector passphrase
 ```
+
+SDK tests read the shared fixture vault (same thing, scripted):
+
+```bash
+cargo build --release -p sourceorrery-cli -p sourceorrery-ffi
+eval "$(bash scripts/ci/fixture-vault.sh)"     # exports SOURCEORRERY_HOME, _PASSPHRASE, _TEST_*, _NATIVE_DIR
+cd bindings/python && maturin develop --release && python -m pytest   # and so on per binding README
+```
+
+Bash heredocs with Rust or YAML content fail on this Windows machine; write
+files with the Write tool or run a Python patch script with `python -I`.
+Docker validates Linux (`rust:1-bookworm` needs `libdbus-1-dev pkg-config`).
 
 ## Conventions
 

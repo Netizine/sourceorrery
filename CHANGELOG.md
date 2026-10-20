@@ -6,6 +6,44 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — milestone 2: read-only SDKs for ten languages and a release pipeline
+
+* `sourceorrery` crate: the read-only client every SDK is built on.
+  `SecretReader` opens a vault the way the CLI does (OS credential store,
+  then an explicit passphrase, `SOURCEORRERY_PASSPHRASE` and
+  `SOURCEORRERY_PASSPHRASE_FILE`, never a prompt), reads the newest
+  accessible or an explicit version, reads properties and resolves
+  `sourceorrery://` references; `Project::load` resolves a
+  `sourceorrery.toml` like `sourceorrery run`. Every `Error` carries the
+  stable code, an `ErrorKind` and a *hint* saying what to do (which CLI
+  command creates the vault, which passphrase sources were tried, why a
+  version was refused by policy, that `crypto` means comparing with a
+  backup, that `unsupported` means adding a passphrase protector).
+* C ABI: read-only `so_reader_*` and `so_project_*` handles over that
+  crate, plus `so_last_error_hint()`; `so_vault_*` errors report hints
+  too. `examples/get_secret.c` is the read-only C sample.
+* SDKs, all read-only (ADR 0005), each with typed errors chosen by code,
+  values that are zeroised on close and print as `[REDACTED]`, a project
+  loader, a tested example and a user guide under `docs/sdks/`: Python
+  (`sourceorrery` on PyPI, PyO3/maturin abi3 wheels), JavaScript/TypeScript
+  (`@sourceorrery/sdk` on npm, napi-rs with platform packages), Rust (the
+  crate), Java (`ai.sourceorrery:sourceorrery`, Foreign Function and Memory
+  API), .NET (`SourceOrrery` on NuGet, `LibraryImport`), Go
+  (`github.com/netizine/sourceorrery/bindings/go`, cgo), C, C++
+  (header-only `sourceorrery.hpp`) and PHP (`sourceorrery/sourceorrery`,
+  FFI). Technology choices in ADR 0006.
+* CI runs every SDK's tests and example on Ubuntu, Windows and macOS
+  against a vault the CLI creates in the job
+  (`scripts/ci/fixture-vault.sh`), lints the extension crates and checks
+  the Go module's vendored header.
+* Release workflow (`release.yml`, `workflow_dispatch` with `version` and
+  `dry_run`): builds the CLI and the C ABI for six targets, wheels, npm,
+  Maven and NuGet packages with the native libraries embedded, a GitHub
+  Release with `SHA256SUMS`, and per-registry publish jobs (crates.io,
+  PyPI, npm, NuGet, Maven Central, pkg.go.dev, Packagist) that are skipped
+  until their secrets exist. `scripts/release/set-version.py` stamps the
+  version into every manifest. Procedure and secrets: `docs/release.md`.
+
 ### Security — fixes from the second 20 October 2026 review (vault schema 3)
 
 * **Row state is bound to the audit chain.** A row's HMAC tag proved it was
