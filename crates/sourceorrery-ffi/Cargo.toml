@@ -22,9 +22,10 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 default = ["os-keyring"]
 # Protect vault keys with the OS credential store. Disable for headless
 # servers that only use passphrase protectors.
-os-keyring = ["sourceorrery-storage/os-keyring"]
+os-keyring = ["sourceorrery-storage/os-keyring", "sourceorrery/os-keyring"]
 
 [dependencies]
+sourceorrery.workspace = true
 sourceorrery-core.workspace = true
 sourceorrery-crypto.workspace = true
 sourceorrery-storage.workspace = true

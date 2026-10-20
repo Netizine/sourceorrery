@@ -5,9 +5,13 @@ members = [
     "crates/sourceorrery-crypto",
     "crates/sourceorrery-storage",
     "crates/sourceorrery-cli",
+    "crates/sourceorrery",
     "crates/sourceorrery-ffi",
     "tests/conformance",
 ]
+# Native extension crates build with their own toolchains (maturin, napi)
+# and keep their own lock files.
+exclude = ["bindings/python", "bindings/node"]
 
 [workspace.package]
 version = "0.1.0"
@@ -25,6 +29,7 @@ keywords = ["secrets", "vault", "keyring", "security", "cli"]
 sourceorrery-core = { path = "crates/sourceorrery-core", version = "0.1.0" }
 sourceorrery-crypto = { path = "crates/sourceorrery-crypto", version = "0.1.0" }
 sourceorrery-storage = { path = "crates/sourceorrery-storage", version = "0.1.0", default-features = false }
+sourceorrery = { path = "crates/sourceorrery", version = "0.1.0", default-features = false }
 
 # shared
 serde = { version = "1", features = ["derive"] }

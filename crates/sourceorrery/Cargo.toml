@@ -1,0 +1,32 @@
+[package]
+name = "sourceorrery"
+description = "Read-only SourceOrrery client: open a vault, get secrets, resolve references, load a project manifest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories.workspace = true
+keywords.workspace = true
+
+[features]
+default = ["os-keyring"]
+# Unlock vault keys from the OS credential store. Disable for headless
+# servers that only use passphrase protectors.
+os-keyring = ["sourceorrery-storage/os-keyring"]
+
+[dependencies]
+sourceorrery-core.workspace = true
+sourceorrery-storage.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+sourceorrery-crypto.workspace = true
+tempfile.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true

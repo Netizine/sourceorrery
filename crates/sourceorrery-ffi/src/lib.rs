@@ -1,12 +1,24 @@
 //! # SourceOrrery C ABI
 //!
-//! A stable, minimal C interface over [`sourceorrery_storage::SqliteVault`]
-//! for language bindings (.NET, Python, Node.js, ...) and for anyone building
-//! their own. The semantics are exactly those of
-//! [`sourceorrery_core::SecretClient`]; this crate adds no behaviour of its
-//! own, in line with ADR 0001 (the Rust core owns all semantics).
+//! A stable, minimal C interface over the SourceOrrery core for language
+//! bindings and for anyone building their own. The semantics are exactly
+//! those of [`sourceorrery_core::SecretClient`] and of the read-only client
+//! in the [`sourceorrery`] crate; this crate adds no behaviour of its own, in
+//! line with ADR 0001 (the Rust core owns all semantics).
 //!
 //! The generated header lives at `include/sourceorrery.h`.
+//!
+//! ## Two handle types
+//!
+//! * `so_reader_*` and `so_project_*` ([`reader`]) are **read-only**: open a
+//!   vault the way the CLI does, read values and metadata, resolve
+//!   references, load a project manifest. The shipped language SDKs link
+//!   only these, so an application built on them cannot write to a vault.
+//! * `so_vault_*` and `so_secret_*` ([`vault`]) expose the full
+//!   `SecretClient` lifecycle for tooling that administers vaults.
+//!
+//! Every failure reported through either set carries, besides the stable
+//! code and message, a hint ([`so_last_error_hint`]) that says what to do.
 //!
 //! ## Conventions
 //!
@@ -22,16 +34,18 @@
 //!   queries) crosses as JSON in the shape produced by the core's serde
 //!   implementations: `snake_case` keys, RFC 3339 timestamps.
 //! * **Errors**: every fallible call returns an [`so_status`]. On
-//!   `SO_STATUS_ERROR` the stable code ([`sourceorrery_core::SecretError::code`])
-//!   and a human-readable message are available from [`so_last_error_code`]
-//!   and [`so_last_error_message`] until the next SourceOrrery call on the
-//!   same thread. Argument problems detected at this boundary (null pointers,
+//!   `SO_STATUS_ERROR` the stable code ([`sourceorrery_core::SecretError::code`]),
+//!   a human-readable message and an actionable hint are available from
+//!   [`so_last_error_code`], [`so_last_error_message`] and
+//!   [`so_last_error_hint`] until the next SourceOrrery call on the same
+//!   thread. Argument problems detected at this boundary (null pointers,
 //!   invalid UTF-8, malformed JSON) use the core's `invalid_argument` code.
 //!   A panic caught at the boundary yields `SO_STATUS_PANIC` with the code
 //!   `internal`.
 //! * **Secret values** are never logged, formatted or embedded in JSON. They
 //!   cross only as raw bytes: into [`so_secret_set`] and out of
-//!   [`so_secret_get`]. The copy handed to the caller is zeroised by
+//!   [`so_secret_get`], [`so_reader_get`], [`so_reader_resolve`] and
+//!   [`so_project_entry`]. The copy handed to the caller is zeroised by
 //!   [`so_bytes_free`]; the Rust-side copy is zeroised when the call returns.
 //! * **Threads**: a vault handle may be used from several threads at once.
 //!   Closing it must not race with any other use of it. Error state is per
@@ -47,13 +61,21 @@
 pub mod buffer;
 pub mod error;
 pub mod json;
+pub mod reader;
 pub mod vault;
 
 use std::ffi::{CString, c_char};
 use std::sync::OnceLock;
 
 pub use buffer::{so_bytes, so_bytes_free};
-pub use error::{so_last_error_clear, so_last_error_code, so_last_error_message, so_status};
+pub use error::{
+    so_last_error_clear, so_last_error_code, so_last_error_hint, so_last_error_message, so_status,
+};
+pub use reader::{
+    so_project, so_project_count, so_project_entry, so_project_free, so_project_info,
+    so_project_load, so_reader, so_reader_close, so_reader_descriptor, so_reader_get,
+    so_reader_open, so_reader_properties, so_reader_resolve,
+};
 pub use vault::{
     so_audit_events, so_secret_delete, so_secret_get, so_secret_get_deleted,
     so_secret_get_properties, so_secret_list, so_secret_list_deleted, so_secret_purge,

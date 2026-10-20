@@ -68,6 +68,18 @@ typedef int32_t so_status;
 #endif // __cplusplus
 
 /**
+ * The secrets a `sourceorrery.toml` manifest declares, resolved. Opaque:
+ * created by [`so_project_load`], released by [`so_project_free`].
+ */
+typedef struct so_project so_project;
+
+/**
+ * A read-only vault handle. Opaque: created by [`so_reader_open`],
+ * released by [`so_reader_close`], usable from several threads at once.
+ */
+typedef struct so_reader so_reader;
+
+/**
  * An unlocked vault. Opaque: created by [`so_vault_create`] or
  * [`so_vault_open`], released by [`so_vault_close`], usable from several
  * threads at once.
@@ -143,9 +155,199 @@ const char *so_last_error_code(void);
 const char *so_last_error_message(void);
 
 /**
+ * What to do about the error reported by the last call on this thread
+ * (which command creates the vault, which passphrase sources were tried,
+ * why a version was refused, ...), or `NULL` if that call succeeded or has
+ * nothing specific to suggest. Wording may change between releases. The
+ * string is NUL-terminated and valid until the next SourceOrrery call on
+ * this thread. It never contains a secret value.
+ */
+const char *so_last_error_hint(void);
+
+/**
  * Forget the error state of this thread.
  */
 void so_last_error_clear(void);
+
+/**
+ * Open a vault for reading, the way the CLI does.
+ *
+ * `name` is the vault name. `options_json` (nullable) is a
+ * [`ReaderOptions`] document. Unlock order: the OS credential store, then
+ * `passphrase` if non-null, then `SOURCEORRERY_PASSPHRASE`, then the
+ * passphrase file from the options or `SOURCEORRERY_PASSPHRASE_FILE`.
+ * There is no prompt. A vault in an older on-disk format is refused with
+ * `migration_required`.
+ *
+ * On success `*out_handle` holds the handle; on failure it is `NULL` and
+ * `so_last_error_hint()` says what to do.
+ *
+ * # Safety
+ *
+ * Every `(pointer, length)` pair must be `NULL` or readable for that many
+ * bytes for the duration of the call, and `out_handle` must be valid for
+ * writes. The caller's `passphrase` buffer is copied and should be
+ * zeroised by the caller afterwards.
+ */
+so_status so_reader_open(const uint8_t *name,
+                         size_t name_len,
+                         const uint8_t *options_json,
+                         size_t options_json_len,
+                         const uint8_t *passphrase,
+                         size_t passphrase_len,
+                         struct so_reader **out_handle);
+
+/**
+ * Close a reader. The vault key held in memory is zeroised. `NULL` is
+ * accepted and ignored.
+ *
+ * # Safety
+ *
+ * `handle` must be `NULL` or a handle from [`so_reader_open`] that is
+ * closed exactly once and is not in use by any other thread at the time
+ * of the call.
+ */
+void so_reader_close(struct so_reader *handle);
+
+/**
+ * Non-sensitive description of the vault as JSON
+ * (`sourceorrery_core::VaultDescriptor`).
+ *
+ * # Safety
+ *
+ * `handle` must be a live reader; `out_json` must be valid for writes.
+ */
+so_status so_reader_descriptor(const struct so_reader *handle,
+                               struct so_bytes *out_json);
+
+/**
+ * Read a secret's value and metadata.
+ *
+ * `version` (nullable) selects a specific version; `NULL` selects the
+ * newest accessible one (enabled and inside its time window). Policy
+ * refusals are `disabled`, `not_yet_valid` and `expired`.
+ * `*out_properties_json` receives the version's `SecretProperties`;
+ * `*out_value` receives the plaintext, which the caller must release with
+ * `so_bytes_free` as soon as it has been used.
+ *
+ * # Safety
+ *
+ * `handle` must be a live reader; `name` and `version` must be `NULL` or
+ * readable for their lengths; both output pointers must be valid for
+ * writes and distinct.
+ */
+so_status so_reader_get(const struct so_reader *handle,
+                        const uint8_t *name,
+                        size_t name_len,
+                        const uint8_t *version,
+                        size_t version_len,
+                        struct so_bytes *out_properties_json,
+                        struct so_bytes *out_value);
+
+/**
+ * Read metadata only. Policy is not applied, so disabled and expired
+ * versions can be inspected. `version` (nullable) as for [`so_reader_get`].
+ *
+ * # Safety
+ *
+ * As [`so_reader_get`], with one output pointer.
+ */
+so_status so_reader_properties(const struct so_reader *handle,
+                               const uint8_t *name,
+                               size_t name_len,
+                               const uint8_t *version,
+                               size_t version_len,
+                               struct so_bytes *out_properties_json);
+
+/**
+ * Resolve a `sourceorrery://vault/name[/version]` reference. The reference
+ * must name the vault this reader is bound to (`invalid_argument`
+ * otherwise). Outputs as for [`so_reader_get`].
+ *
+ * # Safety
+ *
+ * `handle` must be a live reader; `reference` must be readable for
+ * `reference_len` bytes; both output pointers must be valid for writes and
+ * distinct.
+ */
+so_status so_reader_resolve(const struct so_reader *handle,
+                            const uint8_t *reference,
+                            size_t reference_len,
+                            struct so_bytes *out_properties_json,
+                            struct so_bytes *out_value);
+
+/**
+ * Resolve every secret a `sourceorrery.toml` manifest declares, the way
+ * `sourceorrery run` does.
+ *
+ * `manifest_path` (nullable) is the manifest file; `NULL` finds the nearest
+ * `sourceorrery.toml` above the current directory. `options_json` and
+ * `passphrase` are as for [`so_reader_open`] and apply to every vault the
+ * manifest names. A required secret that cannot be read fails the whole
+ * call with that secret's error; an optional one that is missing, refused
+ * by policy or whose vault does not exist is left out.
+ *
+ * # Safety
+ *
+ * As [`so_reader_open`].
+ */
+so_status so_project_load(const uint8_t *manifest_path,
+                          size_t manifest_path_len,
+                          const uint8_t *options_json,
+                          size_t options_json_len,
+                          const uint8_t *passphrase,
+                          size_t passphrase_len,
+                          struct so_project **out_handle);
+
+/**
+ * Number of secrets that resolved, or `0` for `NULL`.
+ *
+ * # Safety
+ *
+ * `handle` must be `NULL` or a live handle from [`so_project_load`].
+ */
+size_t so_project_count(const struct so_project *handle);
+
+/**
+ * Non-sensitive summary of a loaded project as JSON ([`ProjectInfo`]:
+ * `name`, `manifest_path`, `count`).
+ *
+ * # Safety
+ *
+ * `handle` must be a live handle from [`so_project_load`]; `out_json` must
+ * be valid for writes.
+ */
+so_status so_project_info(const struct so_project *handle,
+                          struct so_bytes *out_json);
+
+/**
+ * The `index`-th resolved secret (manifest order, `0`-based).
+ * `*out_entry_json` receives a [`ProjectEntry`] (`name`, `env`,
+ * `reference`, `required`, `properties`); `*out_value` receives the value,
+ * to be released with `so_bytes_free` as soon as it has been used. An index
+ * at or past [`so_project_count`] is `invalid_argument`.
+ *
+ * # Safety
+ *
+ * `handle` must be a live handle from [`so_project_load`]; both output
+ * pointers must be valid for writes and distinct.
+ */
+so_status so_project_entry(const struct so_project *handle,
+                           size_t index,
+                           struct so_bytes *out_entry_json,
+                           struct so_bytes *out_value);
+
+/**
+ * Release a project. Every value it holds is zeroised. `NULL` is accepted
+ * and ignored.
+ *
+ * # Safety
+ *
+ * `handle` must be `NULL` or a handle from [`so_project_load`] that is
+ * freed exactly once and is not in use by any other thread at the time of
+ * the call.
+ */
+void so_project_free(struct so_project *handle);
 
 /**
  * Create a vault and return an open handle to it.
