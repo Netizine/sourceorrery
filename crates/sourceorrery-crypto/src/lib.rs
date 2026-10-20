@@ -8,6 +8,8 @@
 //! |----------------------------|--------------------------------|
 //! | Value / key encryption     | XChaCha20-Poly1305 (24-byte random nonce) |
 //! | Passphrase → key           | Argon2id (v1.3)                |
+//! | Sub-key derivation         | HKDF-SHA256                    |
+//! | Metadata / audit integrity | HMAC-SHA256                    |
 //! | Randomness                 | OS CSPRNG via `getrandom`      |
 //!
 //! Every ciphertext is bound to its location with additional authenticated
@@ -20,12 +22,14 @@ pub mod aead;
 pub mod envelope;
 pub mod kdf;
 pub mod key;
+pub mod mac;
 pub mod random;
 
 pub use aead::{Ciphertext, NONCE_LEN, TAG_LEN, open, seal};
 pub use envelope::{unwrap_key, wrap_key};
 pub use kdf::{Argon2Params, SALT_LEN, derive_key};
 pub use key::{KEY_LEN, SymmetricKey};
+pub use mac::{MAC_LEN, derive_subkey, mac, verify_mac};
 pub use random::{random_bytes, random_hex};
 
 use thiserror::Error;

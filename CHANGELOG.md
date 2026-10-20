@@ -28,6 +28,28 @@ uses [Semantic Versioning](https://semver.org/).
   shown only with `get --reveal`.
 * Conformance and security test suites; CI on Ubuntu, Windows and macOS.
 
+### Added — metadata and audit-log integrity (vault schema 2)
+
+* `sourceorrery-crypto`: `derive_subkey` (HKDF-SHA256) and `mac` /
+  `verify_mac` (HMAC-SHA256, constant-time comparison).
+* `sourceorrery-storage`: a metadata key derived from the vault DEK
+  authenticates every `secrets` and `secret_versions` row (enabled flag,
+  time window, content type, tags, deletion state). Tampered rows are
+  refused with error code `crypto` and an audit `failure`; a forged
+  deletion is neither honoured nor purged. The audit log is a keyed hash
+  chain (`prev_hash`, `hash`, `keyed`) with a keyed head record in
+  `vault_meta`; rows removed from the end of the log are detected on the
+  next keyed write and recorded as `audit_verify` / `failure`.
+  `SqliteVault::verify_audit_chain()` reports breaks, truncations and
+  unkeyed (pre-unlock) rows. Writes use `BEGIN IMMEDIATE` and a busy
+  timeout, and failed operations keep their audit row.
+* `sourceorrery-core`: audit operations `vault_migrate` and `audit_verify`.
+* CLI: `sourceorrery audit --verify` (table or JSON; exit 1 when not
+  intact).
+* Schema version 1 vaults are migrated to schema 2 in one transaction on
+  first unlock (`vault_migrate` audit row); a newer schema is still refused
+  cleanly.
+
 ### Added — milestone 2 (in progress): C ABI and language bindings
 
 * `sourceorrery-ffi`: a stable C ABI over the encrypted vault for language

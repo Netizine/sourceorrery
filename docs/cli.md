@@ -58,13 +58,31 @@ Timestamps are RFC 3339, e.g. `2026-12-31T00:00:00Z`.
 
 ```
 sourceorrery audit [--secret NAME] [--operation OP] [--since TIME] [--limit N]
+sourceorrery audit --verify
 ```
 
-Newest first. Operations: `vault_create`, `vault_open`, `protector_add`,
-`protector_remove`, `secret_set`, `secret_get`, `secret_list`,
-`secret_update`, `secret_delete`, `secret_recover`, `secret_purge`.
-Outcomes: `success`, `denied` (policy), `failure`. Detail holds the error
-code — never a value.
+Newest first. Operations: `vault_create`, `vault_open`, `vault_migrate`,
+`protector_add`, `protector_remove`, `secret_set`, `secret_get`,
+`secret_list`, `secret_update`, `secret_delete`, `secret_recover`,
+`secret_purge`, `audit_verify`. Outcomes: `success`, `denied` (policy),
+`failure`. Detail holds the error code or a short note — never a value.
+
+`--verify` checks the log's keyed hash chain instead of listing it (see
+[vault-format.md](vault-format.md#audit-chain)) and prints:
+
+| field | meaning |
+|-------|---------|
+| `rows` | audit rows examined |
+| `keyed` | rows authenticated with the vault key |
+| `unkeyed` | rows written before the vault was unlocked (failed unlock attempts); chained with a public key, so forgeable but not silently removable |
+| `first_broken` | id of the first row whose link or hash does not verify, else `-` / `null` |
+| `truncations` | times a write found rows removed from the end of the log (each is an `audit_verify` / `failure` event) |
+| `head_valid` | the recorded chain head names the newest keyed row |
+| `result` | `intact` or `BROKEN` |
+
+The result is always printed (as JSON with `-o json`); when the chain is not
+intact the command also fails with exit status 1. Verification is read-only,
+but opening the vault to run it writes the usual `vault_open` row.
 
 ## Project manifest: `init`, `check`, `run`
 

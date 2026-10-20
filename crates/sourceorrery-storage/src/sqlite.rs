@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use sourceorrery_core::audit::{AuditEvent, AuditOperation, AuditOutcome, AuditQuery};
 use sourceorrery_core::policy::{self, SoftDeletePolicy};
 use sourceorrery_core::{
@@ -12,9 +12,10 @@ use sourceorrery_core::{
     SecretError, SecretProperties, SetSecretOptions, UpdateSecretProperties, VaultDescriptor,
     timestamp, validate_secret_name, validate_vault_name, validate_version_id,
 };
-use sourceorrery_crypto::{Ciphertext, SymmetricKey, aead, envelope, kdf, random};
+use sourceorrery_crypto::{Ciphertext, MAC_LEN, SymmetricKey, aead, envelope, kdf, random};
 use time::OffsetDateTime;
 
+use crate::integrity::{self, AuditFields, AuditVerification, SecretFields, VersionFields};
 use crate::keystore;
 use crate::protector::{ProtectorInfo, ProtectorKind, ProtectorRecord, ProtectorSpec};
 use crate::registry::restrict_permissions;
@@ -23,6 +24,9 @@ use crate::{BACKEND_NAME, SCHEMA_VERSION};
 
 /// Maximum passphrase attempts per `open`.
 pub const MAX_UNLOCK_ATTEMPTS: u32 = 3;
+
+/// Oldest on-disk schema this build can open (and migrate forward).
+const OLDEST_SUPPORTED_SCHEMA: u32 = 1;
 
 /// Settings fixed at vault creation.
 #[derive(Clone, Copy, Debug)]
@@ -44,6 +48,7 @@ impl Default for CreateVaultOptions {
 
 #[derive(Clone, Debug)]
 struct Meta {
+    schema: u32,
     name: String,
     id: String,
     created_on: OffsetDateTime,
@@ -64,6 +69,8 @@ impl Meta {
 pub struct SqliteVault {
     conn: Mutex<Connection>,
     dek: SymmetricKey,
+    /// HKDF sub-key of `dek` that authenticates metadata and the audit chain.
+    metadata_key: SymmetricKey,
     meta: Meta,
     path: PathBuf,
     actor: Principal,
@@ -91,7 +98,8 @@ CREATE TABLE IF NOT EXISTS secrets (
     created_on         INTEGER NOT NULL,
     deleted_on         INTEGER,
     scheduled_purge_on INTEGER,
-    recovery_id        TEXT
+    recovery_id        TEXT,
+    tag                BLOB
 );
 CREATE TABLE IF NOT EXISTS secret_versions (
     name         TEXT NOT NULL REFERENCES secrets(name) ON DELETE CASCADE,
@@ -106,6 +114,7 @@ CREATE TABLE IF NOT EXISTS secret_versions (
     expires_on   INTEGER,
     created_on   INTEGER NOT NULL,
     updated_on   INTEGER NOT NULL,
+    tag          BLOB,
     PRIMARY KEY (name, version)
 );
 CREATE INDEX IF NOT EXISTS secret_versions_by_seq ON secret_versions(name, seq DESC);
@@ -117,16 +126,44 @@ CREATE TABLE IF NOT EXISTS audit_events (
     secret_name TEXT,
     version     TEXT,
     outcome     TEXT NOT NULL,
-    detail      TEXT
+    detail      TEXT,
+    prev_hash   BLOB,
+    hash        BLOB,
+    keyed       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS audit_events_by_secret ON audit_events(secret_name, id DESC);
 ";
 
+/// Columns added by the schema 1 → 2 migration.
+const MIGRATE_V1_TO_V2: &str = "
+ALTER TABLE secrets ADD COLUMN tag BLOB;
+ALTER TABLE secret_versions ADD COLUMN tag BLOB;
+ALTER TABLE audit_events ADD COLUMN prev_hash BLOB;
+ALTER TABLE audit_events ADD COLUMN hash BLOB;
+ALTER TABLE audit_events ADD COLUMN keyed INTEGER NOT NULL DEFAULT 0;
+";
+
 fn open_connection(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path).map_err(db)?;
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")
-        .map_err(db)?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON; PRAGMA busy_timeout = 5000;",
+    )
+    .map_err(db)?;
     Ok(conn)
+}
+
+/// Start a write transaction.
+///
+/// `BEGIN IMMEDIATE` takes the write lock up front, so two processes cannot
+/// both read the audit chain head and then append to it. The `body`
+/// savepoint lets [`SqliteVault::fail`] discard a half-done operation while
+/// still committing its audit row.
+fn begin_write(conn: &mut Connection) -> Result<Transaction<'_>> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db)?;
+    tx.execute_batch("SAVEPOINT body").map_err(db)?;
+    Ok(tx)
 }
 
 #[allow(clippy::needless_pass_by_value)] // used as a `map_err` function pointer
@@ -137,6 +174,11 @@ fn db(err: rusqlite::Error) -> SecretError {
 #[allow(clippy::needless_pass_by_value)] // used as a `map_err` function pointer
 fn crypto(err: sourceorrery_crypto::CryptoError) -> SecretError {
     SecretError::Crypto(err.to_string())
+}
+
+/// The error for a row whose integrity tag does not verify. Names only.
+fn integrity_error(name: &str) -> SecretError {
+    SecretError::Crypto(format!("metadata integrity check failed for {name}"))
 }
 
 fn nanos(ts: OffsetDateTime) -> Result<i64> {
@@ -187,20 +229,74 @@ type AuditRow = (
     Option<String>,
 );
 
+/// An audit row plus its chain columns.
+struct ChainRow {
+    row: AuditRow,
+    prev_hash: Option<Vec<u8>>,
+    hash: Option<Vec<u8>>,
+    keyed: bool,
+}
+
+impl ChainRow {
+    fn fields<'a>(&'a self, vault_id: &'a str) -> AuditFields<'a> {
+        let (id, occurred_on, actor, operation, secret_name, version, outcome, detail) = &self.row;
+        AuditFields {
+            vault_id,
+            id: *id,
+            occurred_on: *occurred_on,
+            actor,
+            operation,
+            secret_name: secret_name.as_deref(),
+            version: version.as_deref(),
+            outcome,
+            detail: detail.as_deref(),
+            keyed: self.keyed,
+        }
+    }
+}
+
 struct SecretRow {
+    created_on: i64,
     deleted_on: Option<i64>,
     scheduled_purge_on: Option<i64>,
     recovery_id: Option<String>,
 }
 
+impl SecretRow {
+    fn fields<'a>(&'a self, vault_id: &'a str, name: &'a str) -> SecretFields<'a> {
+        SecretFields {
+            vault_id,
+            name,
+            created_on: self.created_on,
+            deleted_on: self.deleted_on,
+            scheduled_purge_on: self.scheduled_purge_on,
+            recovery_id: self.recovery_id.as_deref(),
+        }
+    }
+}
+
 struct VersionRow {
     props: SecretProperties,
     ciphertext: Ciphertext,
+    /// Stored fields the tag covers that `props` does not carry verbatim.
+    seq: i64,
+    created_on: i64,
+}
+
+/// Everything needed to insert one new version row.
+struct NewVersion<'a> {
+    name: &'a str,
+    version: &'a str,
+    seq: i64,
+    ciphertext: &'a Ciphertext,
+    options: &'a SetSecretOptions,
+    now: i64,
 }
 
 #[allow(clippy::struct_field_names)]
 struct RawVersion {
     version: String,
+    seq: i64,
     nonce: Vec<u8>,
     ciphertext: Vec<u8>,
     content_type: Option<String>,
@@ -210,10 +306,30 @@ struct RawVersion {
     expires_on: Option<i64>,
     created_on: i64,
     updated_on: i64,
+    tag: Option<Vec<u8>>,
 }
 
 impl RawVersion {
-    fn into_row(self, meta: &Meta, name: &str) -> Result<VersionRow> {
+    fn fields<'a>(&'a self, vault_id: &'a str, name: &'a str) -> VersionFields<'a> {
+        VersionFields {
+            vault_id,
+            name,
+            version: &self.version,
+            seq: self.seq,
+            enabled: self.enabled,
+            content_type: self.content_type.as_deref(),
+            tags_json: &self.tags_json,
+            not_before: self.not_before,
+            expires_on: self.expires_on,
+            created_on: self.created_on,
+            updated_on: self.updated_on,
+        }
+    }
+
+    fn into_row(self, meta: &Meta, key: &SymmetricKey, name: &str) -> Result<VersionRow> {
+        if !integrity::verify_version_tag(key, &self.fields(&meta.id, name), self.tag.as_deref()) {
+            return Err(integrity_error(name));
+        }
         let tags: BTreeMap<String, String> = serde_json::from_str(&self.tags_json)
             .map_err(|err| SecretError::Storage(format!("corrupt tags for {name}: {err}")))?;
         let props = SecretProperties {
@@ -230,8 +346,297 @@ impl RawVersion {
             recovery_level: meta.recovery_level,
         };
         let ciphertext = Ciphertext::from_parts(&self.nonce, self.ciphertext).map_err(crypto)?;
-        Ok(VersionRow { props, ciphertext })
+        Ok(VersionRow {
+            props,
+            ciphertext,
+            seq: self.seq,
+            created_on: self.created_on,
+        })
     }
+}
+
+fn query_raw_versions(conn: &Connection, name: &str) -> Result<Vec<RawVersion>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT version, seq, nonce, ciphertext, content_type, tags_json, enabled,
+                    not_before, expires_on, created_on, updated_on, tag
+             FROM secret_versions WHERE name = ?1 ORDER BY seq DESC",
+        )
+        .map_err(db)?;
+    let raw = stmt
+        .query_map(params![name], |row| {
+            Ok(RawVersion {
+                version: row.get(0)?,
+                seq: row.get(1)?,
+                nonce: row.get(2)?,
+                ciphertext: row.get(3)?,
+                content_type: row.get(4)?,
+                tags_json: row.get(5)?,
+                enabled: row.get::<_, i64>(6)? != 0,
+                not_before: row.get(7)?,
+                expires_on: row.get(8)?,
+                created_on: row.get(9)?,
+                updated_on: row.get(10)?,
+                tag: row.get(11)?,
+            })
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)?;
+    Ok(raw)
+}
+
+// ---------------------------------------------------------------------------
+// Audit writer
+// ---------------------------------------------------------------------------
+
+/// Appends rows to the audit chain.
+///
+/// `key` is `None` only before the vault is unlocked; rows written then are
+/// chained with the all-zero key and flagged unkeyed.
+struct AuditWriter<'a> {
+    meta: &'a Meta,
+    key: Option<&'a SymmetricKey>,
+    actor: &'a Principal,
+}
+
+impl AuditWriter<'_> {
+    /// Append one row. Runs in the caller's transaction when there is one,
+    /// otherwise in its own immediate transaction so the read-then-append
+    /// on the chain head is atomic across processes.
+    fn record(
+        &self,
+        conn: &Connection,
+        operation: AuditOperation,
+        secret_name: Option<&str>,
+        version: Option<&str>,
+        outcome: AuditOutcome,
+        detail: Option<&str>,
+    ) -> Result<()> {
+        if self.meta.schema < 2 {
+            // Pre-migration rows (failed unlocks of a schema 1 vault): the
+            // chain columns do not exist yet; the migration chains them.
+            return record_legacy(
+                conn,
+                self.actor,
+                operation,
+                secret_name,
+                version,
+                outcome,
+                detail,
+            );
+        }
+        let own_tx = conn.is_autocommit();
+        if own_tx {
+            conn.execute_batch("BEGIN IMMEDIATE").map_err(db)?;
+        }
+        let result = self.append(conn, operation, secret_name, version, outcome, detail);
+        if own_tx {
+            match &result {
+                Ok(()) => conn.execute_batch("COMMIT").map_err(db)?,
+                Err(_) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                }
+            }
+        }
+        result
+    }
+
+    /// Append a row. A keyed append first checks that the recorded chain
+    /// head is still the newest keyed row; if rows have been removed from
+    /// the end of the log since the last keyed write, an `audit_verify` /
+    /// `failure` row recording that goes in first, so the evidence becomes
+    /// part of the chain before the head is re-anchored.
+    fn append(
+        &self,
+        conn: &Connection,
+        operation: AuditOperation,
+        secret_name: Option<&str>,
+        version: Option<&str>,
+        outcome: AuditOutcome,
+        detail: Option<&str>,
+    ) -> Result<()> {
+        if let Some(key) = self.key
+            && let Some(problem) = head_problem(conn, key, &self.meta.id)?
+        {
+            self.append_row(
+                conn,
+                AuditOperation::AuditVerify,
+                None,
+                None,
+                AuditOutcome::Failure,
+                Some(&problem),
+            )?;
+        }
+        self.append_row(conn, operation, secret_name, version, outcome, detail)
+    }
+
+    fn append_row(
+        &self,
+        conn: &Connection,
+        operation: AuditOperation,
+        secret_name: Option<&str>,
+        version: Option<&str>,
+        outcome: AuditOutcome,
+        detail: Option<&str>,
+    ) -> Result<()> {
+        let occurred_on = nanos(timestamp::now())?;
+        let actor = self.actor.to_string();
+        let prev = last_hash(conn)?;
+        let keyed = self.key.is_some();
+        conn.execute(
+            "INSERT INTO audit_events
+                (occurred_on, actor, operation, secret_name, version, outcome, detail,
+                 prev_hash, keyed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                occurred_on,
+                actor,
+                operation.as_str(),
+                secret_name,
+                version,
+                outcome.as_str(),
+                detail,
+                prev.as_slice(),
+                i64::from(keyed),
+            ],
+        )
+        .map_err(db)?;
+        let id = conn.last_insert_rowid();
+        let fields = AuditFields {
+            vault_id: &self.meta.id,
+            id,
+            occurred_on,
+            actor: &actor,
+            operation: operation.as_str(),
+            secret_name,
+            version,
+            outcome: outcome.as_str(),
+            detail,
+            keyed,
+        };
+        let zero = integrity::zero_key();
+        let key = self.key.unwrap_or(&zero);
+        let hash = integrity::audit_hash(key, &prev, &fields);
+        conn.execute(
+            "UPDATE audit_events SET hash = ?2 WHERE id = ?1",
+            params![id, hash.as_slice()],
+        )
+        .map_err(db)?;
+        if let Some(key) = self.key {
+            write_head(conn, key, &self.meta.id, id, &hash)?;
+        }
+        Ok(())
+    }
+}
+
+/// Schema 1 insert: no chain columns.
+fn record_legacy(
+    conn: &Connection,
+    actor: &Principal,
+    operation: AuditOperation,
+    secret_name: Option<&str>,
+    version: Option<&str>,
+    outcome: AuditOutcome,
+    detail: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO audit_events (occurred_on, actor, operation, secret_name, version, outcome, detail)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            nanos(timestamp::now())?,
+            actor.to_string(),
+            operation.as_str(),
+            secret_name,
+            version,
+            outcome.as_str(),
+            detail
+        ],
+    )
+    .map_err(db)?;
+    Ok(())
+}
+
+/// Chain hash of the newest audit row, or zeros for an empty log.
+fn last_hash(conn: &Connection) -> Result<[u8; MAC_LEN]> {
+    let last: Option<Option<Vec<u8>>> = conn
+        .query_row(
+            "SELECT hash FROM audit_events ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db)?;
+    Ok(integrity::hash_or_zero(last.flatten().as_deref()))
+}
+
+fn write_head(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+    id: i64,
+    hash: &[u8; MAC_LEN],
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![
+            integrity::AUDIT_HEAD_KEY,
+            integrity::head_value(key, vault_id, id, hash)
+        ],
+    )
+    .map_err(db)?;
+    Ok(())
+}
+
+fn read_head(conn: &Connection) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT value FROM vault_meta WHERE key = ?1",
+        params![integrity::AUDIT_HEAD_KEY],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(db)
+}
+
+/// `(id, hash)` of the newest row written with the metadata key.
+fn last_keyed_row(conn: &Connection) -> Result<Option<(i64, Vec<u8>)>> {
+    conn.query_row(
+        "SELECT id, hash FROM audit_events WHERE keyed = 1 ORDER BY id DESC LIMIT 1",
+        [],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get::<_, Option<Vec<u8>>>(1)?.unwrap_or_default(),
+            ))
+        },
+    )
+    .optional()
+    .map_err(db)
+}
+
+/// Compare the recorded chain head with the newest keyed row. `None` when
+/// they agree; otherwise a short, value-free description of the problem,
+/// suitable as audit detail.
+fn head_problem(conn: &Connection, key: &SymmetricKey, vault_id: &str) -> Result<Option<String>> {
+    Ok(match (read_head(conn)?, last_keyed_row(conn)?) {
+        (None, None) => None,
+        (None, Some(_)) => Some("audit chain head missing".to_owned()),
+        (Some(_), None) => Some("audit chain head stale: no keyed rows remain".to_owned()),
+        (Some(head), Some((id, hash))) => {
+            if integrity::head_matches(key, vault_id, &head, id, &hash) {
+                None
+            } else {
+                Some(match integrity::head_id(&head) {
+                    Some(head_id) if head_id > id => {
+                        format!("rows removed after event {id} (head was event {head_id})")
+                    }
+                    Some(head_id) => format!("audit chain head stale (head was event {head_id})"),
+                    None => "audit chain head invalid".to_owned(),
+                })
+            }
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +685,7 @@ impl SqliteVault {
 
         let now = timestamp::now();
         let meta = Meta {
+            schema: SCHEMA_VERSION,
             name: name.to_owned(),
             id: random::random_hex(16).map_err(crypto)?,
             created_on: now,
@@ -305,11 +711,16 @@ impl SqliteVault {
         }
 
         let dek = SymmetricKey::generate().map_err(crypto)?;
+        let metadata_key = integrity::derive_metadata_key(&dek);
         let actor = Principal::local_user();
         add_protector(&conn, &meta, &dek, protector, None)?;
-        record_audit(
+        AuditWriter {
+            meta: &meta,
+            key: Some(&metadata_key),
+            actor: &actor,
+        }
+        .record(
             &conn,
-            &actor,
             AuditOperation::VaultCreate,
             None,
             None,
@@ -320,6 +731,7 @@ impl SqliteVault {
         Ok(Self {
             conn: Mutex::new(conn),
             dek,
+            metadata_key,
             meta,
             path: path.to_path_buf(),
             actor,
@@ -331,6 +743,9 @@ impl SqliteVault {
     /// OS-keyring protectors are tried first (no interaction). If none
     /// unlocks the vault, `unlock` is asked for a passphrase up to
     /// [`MAX_UNLOCK_ATTEMPTS`] times. Every failed attempt is audited.
+    ///
+    /// A vault written by an older schema version is migrated forward, in
+    /// one transaction, the first time it is unlocked by this build.
     pub fn open(path: &Path, unlock: &dyn UnlockProvider) -> Result<Self> {
         if !path.is_file() {
             return Err(SecretError::VaultNotFound {
@@ -350,6 +765,12 @@ impl SqliteVault {
                 "vault has no key protectors".to_owned(),
             ));
         }
+        // Rows written here precede unlock: no metadata key yet.
+        let unkeyed = AuditWriter {
+            meta: &meta,
+            key: None,
+            actor: &actor,
+        };
 
         let mut reasons: Vec<String> = Vec::new();
 
@@ -411,9 +832,8 @@ impl SqliteVault {
                         return Self::finish_open(conn, dek, meta, path, actor);
                     }
                 }
-                record_audit(
+                unkeyed.record(
                     &conn,
-                    &actor,
                     AuditOperation::VaultOpen,
                     None,
                     None,
@@ -424,9 +844,8 @@ impl SqliteVault {
             }
         }
 
-        record_audit(
+        unkeyed.record(
             &conn,
-            &actor,
             AuditOperation::VaultOpen,
             None,
             None,
@@ -437,15 +856,23 @@ impl SqliteVault {
     }
 
     fn finish_open(
-        conn: Connection,
+        mut conn: Connection,
         dek: SymmetricKey,
-        meta: Meta,
+        mut meta: Meta,
         path: &Path,
         actor: Principal,
     ) -> Result<Self> {
-        record_audit(
+        let metadata_key = integrity::derive_metadata_key(&dek);
+        if meta.schema < SCHEMA_VERSION {
+            migrate_v1_to_v2(&mut conn, &mut meta, &metadata_key, &actor)?;
+        }
+        AuditWriter {
+            meta: &meta,
+            key: Some(&metadata_key),
+            actor: &actor,
+        }
+        .record(
             &conn,
-            &actor,
             AuditOperation::VaultOpen,
             None,
             None,
@@ -455,6 +882,7 @@ impl SqliteVault {
         let vault = Self {
             conn: Mutex::new(conn),
             dek,
+            metadata_key,
             meta,
             path: path.to_path_buf(),
             actor,
@@ -515,11 +943,10 @@ impl SqliteVault {
     /// Add another way to unlock this vault.
     pub fn add_protector(&self, spec: ProtectorSpec, label: Option<&str>) -> Result<ProtectorInfo> {
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(db)?;
+        let tx = begin_write(&mut conn)?;
         let info = add_protector(&tx, &self.meta, &self.dek, spec, label)?;
-        record_audit(
+        self.audit(
             &tx,
-            &self.actor,
             AuditOperation::ProtectorAdd,
             None,
             None,
@@ -534,7 +961,7 @@ impl SqliteVault {
     /// removed: that would make the vault permanently unreadable.
     pub fn remove_protector(&self, id_or_label: &str) -> Result<()> {
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(db)?;
+        let tx = begin_write(&mut conn)?;
         let protectors = read_protectors(&tx)?;
         let target = protectors
             .iter()
@@ -555,9 +982,8 @@ impl SqliteVault {
             params![target.id],
         )
         .map_err(db)?;
-        record_audit(
+        self.audit(
             &tx,
-            &self.actor,
             AuditOperation::ProtectorRemove,
             None,
             None,
@@ -566,6 +992,50 @@ impl SqliteVault {
         )?;
         tx.commit().map_err(db)?;
         Ok(())
+    }
+
+    /// Check every audit row's chain hash and the recorded chain head.
+    ///
+    /// Read-only: writes no audit row of its own. See
+    /// [`AuditVerification`] for how to read the result.
+    pub fn verify_audit_chain(&self) -> Result<AuditVerification> {
+        let conn = self.lock()?;
+        let rows = read_chain(&conn)?;
+        let zero = integrity::zero_key();
+        let mut prev = integrity::ZERO_HASH;
+        let mut out = AuditVerification {
+            rows: 0,
+            keyed: 0,
+            unkeyed: 0,
+            first_broken: None,
+            truncations: 0,
+            head_valid: head_problem(&conn, &self.metadata_key, &self.meta.id)?.is_none(),
+        };
+        for row in &rows {
+            out.rows += 1;
+            let key = if row.keyed {
+                out.keyed += 1;
+                &self.metadata_key
+            } else {
+                out.unkeyed += 1;
+                &zero
+            };
+            let fields = row.fields(&self.meta.id);
+            let linked = row.prev_hash.as_deref() == Some(prev.as_slice());
+            let authentic = integrity::verify_audit_hash(key, &prev, &fields, row.hash.as_deref());
+            if !(linked && authentic) && out.first_broken.is_none() {
+                out.first_broken = Some(u64::try_from(fields.id).unwrap_or_default());
+            }
+            if row.keyed
+                && authentic
+                && fields.operation == AuditOperation::AuditVerify.as_str()
+                && fields.outcome == AuditOutcome::Failure.as_str()
+            {
+                out.truncations += 1;
+            }
+            prev = integrity::hash_or_zero(row.hash.as_deref());
+        }
+        Ok(out)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
@@ -577,7 +1047,7 @@ impl SqliteVault {
     /// Purge soft-deleted secrets whose retention has elapsed.
     fn purge_expired_deletions(&self) -> Result<usize> {
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(db)?;
+        let tx = begin_write(&mut conn)?;
         let now = nanos(timestamp::now())?;
         let expired: Vec<String> = {
             let mut stmt = tx
@@ -593,21 +1063,49 @@ impl SqliteVault {
             rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db)?
         };
         let system = Principal::system();
+        let writer = AuditWriter {
+            meta: &self.meta,
+            key: Some(&self.metadata_key),
+            actor: &system,
+        };
+        let mut purged = 0;
         for name in &expired {
+            // A deletion state that does not verify was not written by this
+            // vault: leave the row alone (reads will refuse it) and record
+            // the failure rather than purge on an attacker's say-so.
+            if let Err(err) = self.load_secret_row(&tx, name) {
+                writer.record(
+                    &tx,
+                    AuditOperation::SecretPurge,
+                    Some(name),
+                    None,
+                    AuditOutcome::Failure,
+                    Some(err.code()),
+                )?;
+                continue;
+            }
             tx.execute("DELETE FROM secrets WHERE name = ?1", params![name])
                 .map_err(db)?;
-            record_audit(
+            writer.record(
                 &tx,
-                &system,
                 AuditOperation::SecretPurge,
                 Some(name),
                 None,
                 AuditOutcome::Success,
                 Some("retention elapsed"),
             )?;
+            purged += 1;
         }
         tx.commit().map_err(db)?;
-        Ok(expired.len())
+        Ok(purged)
+    }
+
+    fn writer(&self) -> AuditWriter<'_> {
+        AuditWriter {
+            meta: &self.meta,
+            key: Some(&self.metadata_key),
+            actor: &self.actor,
+        }
     }
 
     fn audit(
@@ -619,13 +1117,17 @@ impl SqliteVault {
         outcome: AuditOutcome,
         detail: Option<&str>,
     ) -> Result<()> {
-        record_audit(conn, &self.actor, operation, name, version, outcome, detail)
+        self.writer()
+            .record(conn, operation, name, version, outcome, detail)
     }
 
-    /// Audit a failed operation and return its error.
+    /// Abandon the operation in `tx`, audit its failure and return the error.
+    ///
+    /// Everything written since [`begin_write`] is rolled back; the audit
+    /// row alone is committed so failures stay on the record.
     fn fail<T>(
         &self,
-        conn: &Connection,
+        tx: Transaction<'_>,
         operation: AuditOperation,
         name: Option<&str>,
         version: Option<&str>,
@@ -638,16 +1140,191 @@ impl SqliteVault {
             | SecretError::PermissionDenied(_) => AuditOutcome::Denied,
             _ => AuditOutcome::Failure,
         };
-        record_audit(
-            conn,
-            &self.actor,
-            operation,
-            name,
-            version,
-            outcome,
-            Some(err.code()),
-        )?;
+        tx.execute_batch("ROLLBACK TO SAVEPOINT body; RELEASE SAVEPOINT body;")
+            .map_err(db)?;
+        self.writer()
+            .record(&tx, operation, name, version, outcome, Some(err.code()))?;
+        tx.commit().map_err(db)?;
         Err(err)
+    }
+
+    /// Finish a metadata-only read: integrity failures are audited, other
+    /// errors (not found, deleted, ...) pass through unrecorded as before.
+    fn finish_read<T>(
+        &self,
+        tx: Transaction<'_>,
+        operation: AuditOperation,
+        name: Option<&str>,
+        result: Result<T>,
+    ) -> Result<T> {
+        match result {
+            Err(err @ SecretError::Crypto(_)) => self.fail(tx, operation, name, None, err),
+            other => other,
+        }
+    }
+
+    // --- authenticated reads -------------------------------------------
+
+    fn load_secret_row(&self, conn: &Connection, name: &str) -> Result<Option<SecretRow>> {
+        let found: Option<(SecretRow, Option<Vec<u8>>)> = conn
+            .query_row(
+                "SELECT created_on, deleted_on, scheduled_purge_on, recovery_id, tag
+                 FROM secrets WHERE name = ?1",
+                params![name],
+                |row| {
+                    Ok((
+                        SecretRow {
+                            created_on: row.get(0)?,
+                            deleted_on: row.get(1)?,
+                            scheduled_purge_on: row.get(2)?,
+                            recovery_id: row.get(3)?,
+                        },
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(db)?;
+        match found {
+            None => Ok(None),
+            Some((row, tag)) => {
+                let fields = row.fields(&self.meta.id, name);
+                if integrity::verify_secret_tag(&self.metadata_key, &fields, tag.as_deref()) {
+                    Ok(Some(row))
+                } else {
+                    Err(integrity_error(name))
+                }
+            }
+        }
+    }
+
+    /// Load a live (not deleted) secret row or the matching error.
+    fn require_live(&self, conn: &Connection, name: &str) -> Result<SecretRow> {
+        match self.load_secret_row(conn, name)? {
+            None => Err(SecretError::NotFound {
+                name: name.to_owned(),
+            }),
+            Some(row) if row.deleted_on.is_some() => Err(SecretError::Deleted {
+                name: name.to_owned(),
+            }),
+            Some(row) => Ok(row),
+        }
+    }
+
+    /// Load a deleted secret row or the matching error.
+    fn require_deleted(&self, conn: &Connection, name: &str) -> Result<SecretRow> {
+        match self.load_secret_row(conn, name)? {
+            None => Err(SecretError::NotFound {
+                name: name.to_owned(),
+            }),
+            Some(row) if row.deleted_on.is_none() => Err(SecretError::NotDeleted {
+                name: name.to_owned(),
+            }),
+            Some(row) => Ok(row),
+        }
+    }
+
+    /// All versions of `name`, newest first, each with its tag verified.
+    fn load_versions(&self, conn: &Connection, name: &str) -> Result<Vec<VersionRow>> {
+        query_raw_versions(conn, name)?
+            .into_iter()
+            .map(|r| r.into_row(&self.meta, &self.metadata_key, name))
+            .collect()
+    }
+
+    fn newest_props(&self, conn: &Connection, name: &str) -> Result<SecretProperties> {
+        self.load_versions(conn, name)?
+            .into_iter()
+            .next()
+            .map(|v| v.props)
+            .ok_or_else(|| SecretError::Storage(format!("secret '{name}' has no versions")))
+    }
+
+    fn deleted_from_row(
+        &self,
+        conn: &Connection,
+        name: &str,
+        row: &SecretRow,
+    ) -> Result<DeletedSecret> {
+        let deleted_on = row.deleted_on.ok_or_else(|| SecretError::NotDeleted {
+            name: name.to_owned(),
+        })?;
+        Ok(DeletedSecret {
+            properties: self.newest_props(conn, name)?,
+            deleted_on: from_nanos(deleted_on)?,
+            scheduled_purge_on: opt_from_nanos(row.scheduled_purge_on)?,
+            recovery_id: row
+                .recovery_id
+                .clone()
+                .unwrap_or_else(|| recovery_id(&self.meta.name, name)),
+        })
+    }
+
+    // --- authenticated writes ------------------------------------------
+
+    /// Insert one version row together with its tag.
+    fn insert_version(&self, conn: &Connection, new: &NewVersion<'_>) -> Result<()> {
+        let tags_json = serde_json::to_string(&new.options.tags)
+            .map_err(|err| SecretError::Storage(err.to_string()))?;
+        let not_before = opt_nanos(new.options.not_before)?;
+        let expires_on = opt_nanos(new.options.expires_on)?;
+        let tag = integrity::version_tag(
+            &self.metadata_key,
+            &VersionFields {
+                vault_id: &self.meta.id,
+                name: new.name,
+                version: new.version,
+                seq: new.seq,
+                enabled: new.options.enabled,
+                content_type: new.options.content_type.as_deref(),
+                tags_json: &tags_json,
+                not_before,
+                expires_on,
+                created_on: new.now,
+                updated_on: new.now,
+            },
+        );
+        conn.execute(
+            "INSERT INTO secret_versions
+                (name, version, seq, nonce, ciphertext, content_type, tags_json, enabled,
+                 not_before, expires_on, created_on, updated_on, tag)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12)",
+            params![
+                new.name,
+                new.version,
+                new.seq,
+                new.ciphertext.nonce.as_slice(),
+                new.ciphertext.bytes,
+                new.options.content_type,
+                tags_json,
+                i64::from(new.options.enabled),
+                not_before,
+                expires_on,
+                new.now,
+                tag.as_slice(),
+            ],
+        )
+        .map_err(db)?;
+        Ok(())
+    }
+
+    /// Write a `secrets` row's deletion state together with its tag.
+    fn write_secret_state(&self, conn: &Connection, name: &str, row: &SecretRow) -> Result<()> {
+        let tag = integrity::secret_tag(&self.metadata_key, &row.fields(&self.meta.id, name));
+        conn.execute(
+            "UPDATE secrets
+             SET deleted_on = ?2, scheduled_purge_on = ?3, recovery_id = ?4, tag = ?5
+             WHERE name = ?1",
+            params![
+                name,
+                row.deleted_on,
+                row.scheduled_purge_on,
+                row.recovery_id,
+                tag.as_slice()
+            ],
+        )
+        .map_err(db)?;
+        Ok(())
     }
 }
 
@@ -673,7 +1350,7 @@ fn read_meta(conn: &Connection) -> Result<Meta> {
     let schema: u32 = get("schema_version")?
         .parse()
         .map_err(|_| SecretError::Storage("corrupt schema_version".to_owned()))?;
-    if schema != SCHEMA_VERSION {
+    if !(OLDEST_SUPPORTED_SCHEMA..=SCHEMA_VERSION).contains(&schema) {
         return Err(SecretError::Storage(format!(
             "vault schema version {schema} is not supported by this build (expects {SCHEMA_VERSION})"
         )));
@@ -689,6 +1366,7 @@ fn read_meta(conn: &Connection) -> Result<Meta> {
         .parse()
         .map_err(|_| SecretError::Storage("corrupt retention_days".to_owned()))?;
     Ok(Meta {
+        schema,
         name: get("name")?.clone(),
         id: get("id")?.clone(),
         created_on,
@@ -844,131 +1522,159 @@ fn add_protector(
     })
 }
 
-fn record_audit(
-    conn: &Connection,
-    actor: &Principal,
-    operation: AuditOperation,
-    secret_name: Option<&str>,
-    version: Option<&str>,
-    outcome: AuditOutcome,
-    detail: Option<&str>,
-) -> Result<()> {
-    conn.execute(
-        "INSERT INTO audit_events (occurred_on, actor, operation, secret_name, version, outcome, detail)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            nanos(timestamp::now())?,
-            actor.to_string(),
-            operation.as_str(),
-            secret_name,
-            version,
-            outcome.as_str(),
-            detail
-        ],
-    )
-    .map_err(db)?;
-    Ok(())
-}
-
-fn load_secret_row(conn: &Connection, name: &str) -> Result<Option<SecretRow>> {
-    conn.query_row(
-        "SELECT deleted_on, scheduled_purge_on, recovery_id FROM secrets WHERE name = ?1",
-        params![name],
-        |row| {
-            Ok(SecretRow {
-                deleted_on: row.get(0)?,
-                scheduled_purge_on: row.get(1)?,
-                recovery_id: row.get(2)?,
-            })
-        },
-    )
-    .optional()
-    .map_err(db)
-}
-
-/// Load a live (not deleted) secret row or the matching error.
-fn require_live(conn: &Connection, name: &str) -> Result<SecretRow> {
-    match load_secret_row(conn, name)? {
-        None => Err(SecretError::NotFound {
-            name: name.to_owned(),
-        }),
-        Some(row) if row.deleted_on.is_some() => Err(SecretError::Deleted {
-            name: name.to_owned(),
-        }),
-        Some(row) => Ok(row),
-    }
-}
-
-/// Load a deleted secret row or the matching error.
-fn require_deleted(conn: &Connection, name: &str) -> Result<SecretRow> {
-    match load_secret_row(conn, name)? {
-        None => Err(SecretError::NotFound {
-            name: name.to_owned(),
-        }),
-        Some(row) if row.deleted_on.is_none() => Err(SecretError::NotDeleted {
-            name: name.to_owned(),
-        }),
-        Some(row) => Ok(row),
-    }
-}
-
-/// All versions of `name`, newest first.
-fn load_versions(conn: &Connection, meta: &Meta, name: &str) -> Result<Vec<VersionRow>> {
+/// Every audit row with its chain columns, oldest first.
+fn read_chain(conn: &Connection) -> Result<Vec<ChainRow>> {
     let mut stmt = conn
         .prepare(
-            "SELECT version, nonce, ciphertext, content_type, tags_json, enabled,
-                    not_before, expires_on, created_on, updated_on
-             FROM secret_versions WHERE name = ?1 ORDER BY seq DESC",
+            "SELECT id, occurred_on, actor, operation, secret_name, version, outcome, detail,
+                    prev_hash, hash, keyed
+             FROM audit_events ORDER BY id",
         )
         .map_err(db)?;
-    let raw: Vec<RawVersion> = stmt
-        .query_map(params![name], |row| {
-            Ok(RawVersion {
-                version: row.get(0)?,
-                nonce: row.get(1)?,
-                ciphertext: row.get(2)?,
-                content_type: row.get(3)?,
-                tags_json: row.get(4)?,
-                enabled: row.get::<_, i64>(5)? != 0,
-                not_before: row.get(6)?,
-                expires_on: row.get(7)?,
-                created_on: row.get(8)?,
-                updated_on: row.get(9)?,
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ChainRow {
+                row: (
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ),
+                prev_hash: row.get(8)?,
+                hash: row.get(9)?,
+                keyed: row.get::<_, i64>(10)? != 0,
             })
         })
         .map_err(db)?
         .collect::<rusqlite::Result<_>>()
         .map_err(db)?;
-    raw.into_iter().map(|r| r.into_row(meta, name)).collect()
+    Ok(rows)
 }
 
-fn newest_props(conn: &Connection, meta: &Meta, name: &str) -> Result<SecretProperties> {
-    load_versions(conn, meta, name)?
-        .into_iter()
-        .next()
-        .map(|v| v.props)
-        .ok_or_else(|| SecretError::Storage(format!("secret '{name}' has no versions")))
+// ---------------------------------------------------------------------------
+// Migration
+// ---------------------------------------------------------------------------
+
+/// Bring a schema 1 vault to schema 2 in one transaction: add the integrity
+/// columns, tag every secret and version row, chain every audit row with the
+/// metadata key, record the migration and bump `schema_version`.
+fn migrate_v1_to_v2(
+    conn: &mut Connection,
+    meta: &mut Meta,
+    key: &SymmetricKey,
+    actor: &Principal,
+) -> Result<()> {
+    let tx = begin_write(conn)?;
+    tx.execute_batch(MIGRATE_V1_TO_V2).map_err(db)?;
+    migrate_secret_tags(&tx, meta, key)?;
+    migrate_version_tags(&tx, meta, key)?;
+    migrate_audit_chain(&tx, meta, key)?;
+    tx.execute(
+        "UPDATE vault_meta SET value = ?1 WHERE key = 'schema_version'",
+        params![SCHEMA_VERSION.to_string()],
+    )
+    .map_err(db)?;
+    meta.schema = SCHEMA_VERSION;
+    AuditWriter {
+        meta,
+        key: Some(key),
+        actor,
+    }
+    .record(
+        &tx,
+        AuditOperation::VaultMigrate,
+        None,
+        None,
+        AuditOutcome::Success,
+        Some("schema 1 -> 2"),
+    )?;
+    tx.commit().map_err(db)
 }
 
-fn deleted_from_row(
-    conn: &Connection,
-    meta: &Meta,
-    name: &str,
-    row: &SecretRow,
-) -> Result<DeletedSecret> {
-    let deleted_on = row.deleted_on.ok_or_else(|| SecretError::NotDeleted {
-        name: name.to_owned(),
-    })?;
-    Ok(DeletedSecret {
-        properties: newest_props(conn, meta, name)?,
-        deleted_on: from_nanos(deleted_on)?,
-        scheduled_purge_on: opt_from_nanos(row.scheduled_purge_on)?,
-        recovery_id: row
-            .recovery_id
-            .clone()
-            .unwrap_or_else(|| recovery_id(&meta.name, name)),
-    })
+fn migrate_secret_tags(conn: &Connection, meta: &Meta, key: &SymmetricKey) -> Result<()> {
+    let rows: Vec<(String, SecretRow)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT name, created_on, deleted_on, scheduled_purge_on, recovery_id FROM secrets",
+            )
+            .map_err(db)?;
+        stmt.query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                SecretRow {
+                    created_on: row.get(1)?,
+                    deleted_on: row.get(2)?,
+                    scheduled_purge_on: row.get(3)?,
+                    recovery_id: row.get(4)?,
+                },
+            ))
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)?
+    };
+    for (name, row) in &rows {
+        let tag = integrity::secret_tag(key, &row.fields(&meta.id, name));
+        conn.execute(
+            "UPDATE secrets SET tag = ?2 WHERE name = ?1",
+            params![name, tag.as_slice()],
+        )
+        .map_err(db)?;
+    }
+    Ok(())
 }
+
+fn migrate_version_tags(conn: &Connection, meta: &Meta, key: &SymmetricKey) -> Result<()> {
+    let names: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT name FROM secrets").map_err(db)?;
+        stmt.query_map([], |row| row.get(0))
+            .map_err(db)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(db)?
+    };
+    for name in &names {
+        for raw in query_raw_versions(conn, name)? {
+            let tag = integrity::version_tag(key, &raw.fields(&meta.id, name));
+            conn.execute(
+                "UPDATE secret_versions SET tag = ?3 WHERE name = ?1 AND version = ?2",
+                params![name, raw.version, tag.as_slice()],
+            )
+            .map_err(db)?;
+        }
+    }
+    Ok(())
+}
+
+fn migrate_audit_chain(conn: &Connection, meta: &Meta, key: &SymmetricKey) -> Result<()> {
+    let mut prev = integrity::ZERO_HASH;
+    let mut head: Option<(i64, [u8; MAC_LEN])> = None;
+    for mut row in read_chain(conn)? {
+        // Every historical row is chained under the metadata key, including
+        // failed unlocks recorded by the schema 1 build.
+        row.keyed = true;
+        let fields = row.fields(&meta.id);
+        let hash = integrity::audit_hash(key, &prev, &fields);
+        conn.execute(
+            "UPDATE audit_events SET prev_hash = ?2, hash = ?3, keyed = 1 WHERE id = ?1",
+            params![fields.id, prev.as_slice(), hash.as_slice()],
+        )
+        .map_err(db)?;
+        head = Some((fields.id, hash));
+        prev = hash;
+    }
+    if let Some((id, hash)) = head {
+        write_head(conn, key, &meta.id, id, &hash)?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Version selection
+// ---------------------------------------------------------------------------
 
 fn select_version<'a>(
     name: &str,
@@ -1026,14 +1732,16 @@ impl SecretClient for SqliteVault {
         validate_secret_name(name)?;
         options.validate()?;
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(db)?;
+        let tx = begin_write(&mut conn)?;
+        let op = AuditOperation::SecretSet;
         let now = timestamp::now();
+        let now_nanos = nanos(now)?;
 
-        match load_secret_row(&tx, name)? {
-            Some(row) if row.deleted_on.is_some() => {
+        match self.load_secret_row(&tx, name) {
+            Ok(Some(row)) if row.deleted_on.is_some() => {
                 return self.fail(
-                    &tx,
-                    AuditOperation::SecretSet,
+                    tx,
+                    op,
                     Some(name),
                     None,
                     SecretError::DeletedConflict {
@@ -1041,14 +1749,23 @@ impl SecretClient for SqliteVault {
                     },
                 );
             }
-            Some(_) => {}
-            None => {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                let row = SecretRow {
+                    created_on: now_nanos,
+                    deleted_on: None,
+                    scheduled_purge_on: None,
+                    recovery_id: None,
+                };
+                let tag =
+                    integrity::secret_tag(&self.metadata_key, &row.fields(&self.meta.id, name));
                 tx.execute(
-                    "INSERT INTO secrets (name, created_on) VALUES (?1, ?2)",
-                    params![name, nanos(now)?],
+                    "INSERT INTO secrets (name, created_on, tag) VALUES (?1, ?2, ?3)",
+                    params![name, now_nanos, tag.as_slice()],
                 )
                 .map_err(db)?;
             }
+            Err(err) => return self.fail(tx, op, Some(name), None, err),
         }
 
         let version = random::random_hex(16).map_err(crypto)?;
@@ -1066,28 +1783,17 @@ impl SecretClient for SqliteVault {
         )
         .map_err(crypto)?;
         drop(value);
-        let tags_json = serde_json::to_string(&options.tags)
-            .map_err(|err| SecretError::Storage(err.to_string()))?;
-        tx.execute(
-            "INSERT INTO secret_versions
-                (name, version, seq, nonce, ciphertext, content_type, tags_json, enabled,
-                 not_before, expires_on, created_on, updated_on)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
-            params![
+        self.insert_version(
+            &tx,
+            &NewVersion {
                 name,
-                version,
+                version: &version,
                 seq,
-                ciphertext.nonce.as_slice(),
-                ciphertext.bytes,
-                options.content_type,
-                tags_json,
-                i64::from(options.enabled),
-                opt_nanos(options.not_before)?,
-                opt_nanos(options.expires_on)?,
-                nanos(now)?,
-            ],
-        )
-        .map_err(db)?;
+                ciphertext: &ciphertext,
+                options: &options,
+                now: now_nanos,
+            },
+        )?;
 
         let props = SecretProperties {
             vault: self.meta.name.clone(),
@@ -1104,7 +1810,7 @@ impl SecretClient for SqliteVault {
         };
         self.audit(
             &tx,
-            AuditOperation::SecretSet,
+            op,
             Some(name),
             Some(&version),
             AuditOutcome::Success,
@@ -1116,15 +1822,19 @@ impl SecretClient for SqliteVault {
 
     fn get_secret(&self, name: &str, version: Option<&str>) -> Result<Secret> {
         validate_secret_name(name)?;
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
+        let tx = begin_write(&mut conn)?;
         let op = AuditOperation::SecretGet;
-        if let Err(err) = require_live(&conn, name) {
-            return self.fail(&conn, op, Some(name), version, err);
+        if let Err(err) = self.require_live(&tx, name) {
+            return self.fail(tx, op, Some(name), version, err);
         }
-        let versions = load_versions(&conn, &self.meta, name)?;
+        let versions = match self.load_versions(&tx, name) {
+            Ok(v) => v,
+            Err(err) => return self.fail(tx, op, Some(name), version, err),
+        };
         let chosen = match select_version(name, &versions, version, timestamp::now(), true) {
             Ok(v) => v,
-            Err(err) => return self.fail(&conn, op, Some(name), version, err),
+            Err(err) => return self.fail(tx, op, Some(name), version, err),
         };
         let plaintext = match aead::open(
             &self.dek,
@@ -1133,23 +1843,18 @@ impl SecretClient for SqliteVault {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return self.fail(
-                    &conn,
-                    op,
-                    Some(name),
-                    Some(&chosen.props.version),
-                    crypto(err),
-                );
+                return self.fail(tx, op, Some(name), Some(&chosen.props.version), crypto(err));
             }
         };
         self.audit(
-            &conn,
+            &tx,
             op,
             Some(name),
             Some(&chosen.props.version),
             AuditOutcome::Success,
             None,
         )?;
+        tx.commit().map_err(db)?;
         Ok(Secret {
             properties: chosen.props.clone(),
             value: SecretBytes::new(plaintext.to_vec()),
@@ -1158,16 +1863,22 @@ impl SecretClient for SqliteVault {
 
     fn get_secret_properties(&self, name: &str, version: Option<&str>) -> Result<SecretProperties> {
         validate_secret_name(name)?;
-        let conn = self.lock()?;
-        require_live(&conn, name)?;
-        let versions = load_versions(&conn, &self.meta, name)?;
-        select_version(name, &versions, version, timestamp::now(), false).map(|v| v.props.clone())
+        let mut conn = self.lock()?;
+        let tx = begin_write(&mut conn)?;
+        let result = self.require_live(&tx, name).and_then(|_| {
+            let versions = self.load_versions(&tx, name)?;
+            select_version(name, &versions, version, timestamp::now(), false)
+                .map(|v| v.props.clone())
+        });
+        self.finish_read(tx, AuditOperation::SecretGet, Some(name), result)
     }
 
     fn list_properties_of_secrets(&self) -> Result<Vec<SecretProperties>> {
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
+        let tx = begin_write(&mut conn)?;
+        let op = AuditOperation::SecretList;
         let names: Vec<String> = {
-            let mut stmt = conn
+            let mut stmt = tx
                 .prepare("SELECT name FROM secrets WHERE deleted_on IS NULL ORDER BY name")
                 .map_err(db)?;
             stmt.query_map([], |row| row.get(0))
@@ -1177,27 +1888,33 @@ impl SecretClient for SqliteVault {
         };
         let mut out = Vec::with_capacity(names.len());
         for name in &names {
-            out.push(newest_props(&conn, &self.meta, name)?);
+            // The secrets row itself is verified too: a tampered
+            // `deleted_on` must not resurface a secret in listings.
+            let listed = self
+                .require_live(&tx, name)
+                .and_then(|_| self.newest_props(&tx, name));
+            match listed {
+                Ok(props) => out.push(props),
+                Err(err) => return self.fail(tx, op, Some(name), None, err),
+            }
         }
-        self.audit(
-            &conn,
-            AuditOperation::SecretList,
-            None,
-            None,
-            AuditOutcome::Success,
-            None,
-        )?;
+        self.audit(&tx, op, None, None, AuditOutcome::Success, None)?;
+        tx.commit().map_err(db)?;
         Ok(out)
     }
 
     fn list_properties_of_secret_versions(&self, name: &str) -> Result<Vec<SecretProperties>> {
         validate_secret_name(name)?;
-        let conn = self.lock()?;
-        require_live(&conn, name)?;
-        Ok(load_versions(&conn, &self.meta, name)?
-            .into_iter()
-            .map(|v| v.props)
-            .collect())
+        let mut conn = self.lock()?;
+        let tx = begin_write(&mut conn)?;
+        let result = self.require_live(&tx, name).and_then(|_| {
+            Ok(self
+                .load_versions(&tx, name)?
+                .into_iter()
+                .map(|v| v.props)
+                .collect())
+        });
+        self.finish_read(tx, AuditOperation::SecretGet, Some(name), result)
     }
 
     fn update_secret_properties(
@@ -1211,25 +1928,47 @@ impl SecretClient for SqliteVault {
             return Err(SecretError::InvalidArgument("nothing to update".to_owned()));
         }
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(db)?;
+        let tx = begin_write(&mut conn)?;
         let op = AuditOperation::SecretUpdate;
-        if let Err(err) = require_live(&tx, name) {
-            return self.fail(&tx, op, Some(name), version, err);
+        if let Err(err) = self.require_live(&tx, name) {
+            return self.fail(tx, op, Some(name), version, err);
         }
-        let versions = load_versions(&tx, &self.meta, name)?;
+        let versions = match self.load_versions(&tx, name) {
+            Ok(v) => v,
+            Err(err) => return self.fail(tx, op, Some(name), version, err),
+        };
         let now = timestamp::now();
         let target = match select_version(name, &versions, version, now, false) {
             Ok(v) => v,
-            Err(err) => return self.fail(&tx, op, Some(name), version, err),
+            Err(err) => return self.fail(tx, op, Some(name), version, err),
         };
         let mut props = target.props.clone();
         update.apply(&mut props, now)?;
         let tags_json = serde_json::to_string(&props.tags)
             .map_err(|err| SecretError::Storage(err.to_string()))?;
+        let not_before = opt_nanos(props.not_before)?;
+        let expires_on = opt_nanos(props.expires_on)?;
+        let updated_on = nanos(now)?;
+        let tag = integrity::version_tag(
+            &self.metadata_key,
+            &VersionFields {
+                vault_id: &self.meta.id,
+                name,
+                version: &props.version,
+                seq: target.seq,
+                enabled: props.enabled,
+                content_type: props.content_type.as_deref(),
+                tags_json: &tags_json,
+                not_before,
+                expires_on,
+                created_on: target.created_on,
+                updated_on,
+            },
+        );
         tx.execute(
             "UPDATE secret_versions
              SET enabled = ?3, content_type = ?4, tags_json = ?5, not_before = ?6,
-                 expires_on = ?7, updated_on = ?8
+                 expires_on = ?7, updated_on = ?8, tag = ?9
              WHERE name = ?1 AND version = ?2",
             params![
                 name,
@@ -1237,9 +1976,10 @@ impl SecretClient for SqliteVault {
                 i64::from(props.enabled),
                 props.content_type,
                 tags_json,
-                opt_nanos(props.not_before)?,
-                opt_nanos(props.expires_on)?,
-                nanos(now)?,
+                not_before,
+                expires_on,
+                updated_on,
+                tag.as_slice(),
             ],
         )
         .map_err(db)?;
@@ -1258,22 +1998,27 @@ impl SecretClient for SqliteVault {
     fn delete_secret(&self, name: &str) -> Result<DeletedSecret> {
         validate_secret_name(name)?;
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(db)?;
+        let tx = begin_write(&mut conn)?;
         let op = AuditOperation::SecretDelete;
-        if let Err(err) = require_live(&tx, name) {
-            return self.fail(&tx, op, Some(name), None, err);
-        }
-        let props = newest_props(&tx, &self.meta, name)?;
+        let row = match self.require_live(&tx, name) {
+            Ok(row) => row,
+            Err(err) => return self.fail(tx, op, Some(name), None, err),
+        };
+        let props = match self.newest_props(&tx, name) {
+            Ok(props) => props,
+            Err(err) => return self.fail(tx, op, Some(name), None, err),
+        };
         let now = timestamp::now();
         let deleted = if self.meta.recovery_level.soft_delete_enabled() {
             let purge_on = self.meta.retention().scheduled_purge_on(now);
             let rid = recovery_id(&self.meta.name, name);
-            tx.execute(
-                "UPDATE secrets SET deleted_on = ?2, scheduled_purge_on = ?3, recovery_id = ?4
-                 WHERE name = ?1",
-                params![name, nanos(now)?, nanos(purge_on)?, rid],
-            )
-            .map_err(db)?;
+            let state = SecretRow {
+                created_on: row.created_on,
+                deleted_on: Some(nanos(now)?),
+                scheduled_purge_on: Some(nanos(purge_on)?),
+                recovery_id: Some(rid.clone()),
+            };
+            self.write_secret_state(&tx, name, &state)?;
             DeletedSecret {
                 properties: props,
                 deleted_on: now,
@@ -1308,15 +2053,19 @@ impl SecretClient for SqliteVault {
 
     fn get_deleted_secret(&self, name: &str) -> Result<DeletedSecret> {
         validate_secret_name(name)?;
-        let conn = self.lock()?;
-        let row = require_deleted(&conn, name)?;
-        deleted_from_row(&conn, &self.meta, name, &row)
+        let mut conn = self.lock()?;
+        let tx = begin_write(&mut conn)?;
+        let result = self
+            .require_deleted(&tx, name)
+            .and_then(|row| self.deleted_from_row(&tx, name, &row));
+        self.finish_read(tx, AuditOperation::SecretGet, Some(name), result)
     }
 
     fn list_deleted_secrets(&self) -> Result<Vec<DeletedSecret>> {
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
+        let tx = begin_write(&mut conn)?;
         let names: Vec<String> = {
-            let mut stmt = conn
+            let mut stmt = tx
                 .prepare("SELECT name FROM secrets WHERE deleted_on IS NOT NULL ORDER BY name")
                 .map_err(db)?;
             stmt.query_map([], |row| row.get(0))
@@ -1324,30 +2073,41 @@ impl SecretClient for SqliteVault {
                 .collect::<rusqlite::Result<_>>()
                 .map_err(db)?
         };
-        names
-            .iter()
-            .map(|name| {
-                let row = require_deleted(&conn, name)?;
-                deleted_from_row(&conn, &self.meta, name, &row)
-            })
-            .collect()
+        let mut out = Vec::with_capacity(names.len());
+        for name in &names {
+            let listed = self
+                .require_deleted(&tx, name)
+                .and_then(|row| self.deleted_from_row(&tx, name, &row));
+            match listed {
+                Ok(deleted) => out.push(deleted),
+                Err(err) => {
+                    return self.finish_read(tx, AuditOperation::SecretList, Some(name), Err(err));
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn recover_deleted_secret(&self, name: &str) -> Result<SecretProperties> {
         validate_secret_name(name)?;
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(db)?;
+        let tx = begin_write(&mut conn)?;
         let op = AuditOperation::SecretRecover;
-        if let Err(err) = require_deleted(&tx, name) {
-            return self.fail(&tx, op, Some(name), None, err);
-        }
-        tx.execute(
-            "UPDATE secrets SET deleted_on = NULL, scheduled_purge_on = NULL, recovery_id = NULL
-             WHERE name = ?1",
-            params![name],
-        )
-        .map_err(db)?;
-        let props = newest_props(&tx, &self.meta, name)?;
+        let row = match self.require_deleted(&tx, name) {
+            Ok(row) => row,
+            Err(err) => return self.fail(tx, op, Some(name), None, err),
+        };
+        let state = SecretRow {
+            created_on: row.created_on,
+            deleted_on: None,
+            scheduled_purge_on: None,
+            recovery_id: None,
+        };
+        self.write_secret_state(&tx, name, &state)?;
+        let props = match self.newest_props(&tx, name) {
+            Ok(props) => props,
+            Err(err) => return self.fail(tx, op, Some(name), None, err),
+        };
         self.audit(
             &tx,
             op,
@@ -1363,10 +2123,10 @@ impl SecretClient for SqliteVault {
     fn purge_deleted_secret(&self, name: &str) -> Result<()> {
         validate_secret_name(name)?;
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(db)?;
+        let tx = begin_write(&mut conn)?;
         let op = AuditOperation::SecretPurge;
-        if let Err(err) = require_deleted(&tx, name) {
-            return self.fail(&tx, op, Some(name), None, err);
+        if let Err(err) = self.require_deleted(&tx, name) {
+            return self.fail(tx, op, Some(name), None, err);
         }
         tx.execute("DELETE FROM secrets WHERE name = ?1", params![name])
             .map_err(db)?;
@@ -1480,6 +2240,12 @@ mod tests {
         assert!(events.iter().any(|e| {
             e.operation == AuditOperation::VaultOpen && e.outcome == AuditOutcome::Denied
         }));
+
+        // The pre-unlock rows are unkeyed but the chain is still intact.
+        let check = vault.verify_audit_chain().unwrap();
+        assert!(check.is_intact(), "{check:?}");
+        assert_eq!(check.unkeyed, 2, "one denied attempt and one failure row");
+        assert_eq!(check.rows, check.keyed + check.unkeyed);
     }
 
     #[test]
@@ -1498,5 +2264,40 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code(), "invalid_argument");
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn failed_operations_keep_their_audit_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dev.sorvault");
+        let vault =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), spec()).unwrap();
+        assert_eq!(
+            vault.recover_deleted_secret("missing").unwrap_err().code(),
+            "not_found"
+        );
+        assert_eq!(
+            vault
+                .update_secret_properties(
+                    "missing",
+                    None,
+                    UpdateSecretProperties {
+                        enabled: Some(false),
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err()
+                .code(),
+            "not_found"
+        );
+        let events = vault.audit_events(AuditQuery::default()).unwrap();
+        let failures: Vec<_> = events
+            .iter()
+            .filter(|e| e.outcome == AuditOutcome::Failure)
+            .map(|e| e.operation)
+            .collect();
+        assert!(failures.contains(&AuditOperation::SecretRecover));
+        assert!(failures.contains(&AuditOperation::SecretUpdate));
+        assert!(vault.verify_audit_chain().unwrap().is_intact());
     }
 }

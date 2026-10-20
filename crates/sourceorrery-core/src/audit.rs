@@ -38,6 +38,12 @@ pub enum AuditOperation {
     SecretRecover,
     /// A deleted secret was permanently purged.
     SecretPurge,
+    /// The vault file was migrated to a newer schema version.
+    VaultMigrate,
+    /// The audit chain head was checked before appending to the log.
+    /// Recorded only when the check fails: rows were removed from the end
+    /// of the log, or the head record is missing or invalid.
+    AuditVerify,
 }
 
 impl AuditOperation {
@@ -55,11 +61,13 @@ impl AuditOperation {
             Self::SecretDelete => "secret_delete",
             Self::SecretRecover => "secret_recover",
             Self::SecretPurge => "secret_purge",
+            Self::VaultMigrate => "vault_migrate",
+            Self::AuditVerify => "audit_verify",
         }
     }
 
     /// Every operation, for documentation and exhaustive tests.
-    pub const ALL: [AuditOperation; 11] = [
+    pub const ALL: [AuditOperation; 13] = [
         Self::VaultCreate,
         Self::VaultOpen,
         Self::ProtectorAdd,
@@ -71,6 +79,8 @@ impl AuditOperation {
         Self::SecretDelete,
         Self::SecretRecover,
         Self::SecretPurge,
+        Self::VaultMigrate,
+        Self::AuditVerify,
     ];
 }
 

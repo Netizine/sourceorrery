@@ -291,3 +291,26 @@ fn completions_generate() {
     let out = env.ok(&["completions", "bash"]);
     assert!(out.contains("sourceorrery"));
 }
+
+#[test]
+fn audit_verify_reports_an_intact_chain() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "k", "v1");
+    env.ok(&["secret", "get", "k", "--vault", "dev"]);
+
+    let table = env.ok(&["audit", "--verify", "--vault", "dev"]);
+    assert!(table.contains("intact"), "{table}");
+    assert!(!table.contains("BROKEN"));
+
+    let json = env.ok(&["audit", "--verify", "--vault", "dev", "-o", "json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(parsed["first_broken"].is_null());
+    assert_eq!(parsed["truncations"], 0);
+    assert_eq!(parsed["head_valid"], true);
+    assert!(parsed["rows"].as_u64().unwrap() >= 4);
+
+    // --verify is a mode of its own.
+    let out = env.run(&["audit", "--verify", "--limit", "3", "--vault", "dev"]);
+    assert!(!out.status.success());
+}

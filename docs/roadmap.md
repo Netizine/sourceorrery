@@ -12,7 +12,7 @@
 - [x] Value-free manifest `sourceorrery.toml`; `sourceorrery://` references
 - [x] Conformance + security suites; CI on Ubuntu/Windows/macOS; release workflow
 - [ ] Manual validation of the OS-keyring path on macOS and a Linux desktop
-- [ ] Metadata and audit-log integrity (MAC over mutable metadata)
+- [x] Metadata and audit-log integrity (MAC over mutable metadata)
 - [ ] `backup` / `restore` (encrypted export of a vault or a secret)
 - [ ] Package managers: Homebrew, WinGet, Scoop, `cargo install`; signed releases
 - [ ] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`

@@ -308,6 +308,9 @@ pub struct AuditArgs {
     /// Maximum number of events, newest first.
     #[arg(long, default_value_t = 50)]
     pub limit: usize,
+    /// Verify the audit log's hash chain instead of listing events. Exits 1 if it is not intact.
+    #[arg(long, conflicts_with_all = ["secret", "operation", "since", "limit"])]
+    pub verify: bool,
 }
 
 #[derive(Debug, Args)]

@@ -22,15 +22,22 @@
 //! Encrypted: every secret value. Plaintext: vault metadata, secret names,
 //! version identifiers, tags, timestamps and audit events. Do not put
 //! sensitive information in names or tags.
+//!
+//! Plaintext is not unprotected: mutable metadata (enabled flags, time
+//! windows, tags, deletion state) carries an HMAC tag under a key derived
+//! from the DEK, and the audit log is a keyed hash chain. See
+//! [`integrity`].
 
 #![forbid(unsafe_code)]
 
+pub mod integrity;
 pub mod keystore;
 pub mod protector;
 pub mod registry;
 pub mod sqlite;
 pub mod unlock;
 
+pub use integrity::AuditVerification;
 pub use protector::{ProtectorInfo, ProtectorKind, ProtectorSpec};
 pub use registry::VaultRegistry;
 pub use sqlite::{CreateVaultOptions, SqliteVault};
@@ -39,8 +46,9 @@ pub use unlock::{NoInteraction, PassphrasePrompt, StaticPassphrase, UnlockProvid
 /// Backend identifier reported in [`sourceorrery_core::VaultDescriptor`].
 pub const BACKEND_NAME: &str = "encrypted-sqlite";
 
-/// On-disk schema version written to new vaults.
-pub const SCHEMA_VERSION: u32 = 1;
+/// On-disk schema version written to new vaults. Older vaults are migrated
+/// forward on first unlock; see [`sqlite::SqliteVault::open`].
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// File extension of vault files.
 pub const VAULT_FILE_EXTENSION: &str = "sorvault";
