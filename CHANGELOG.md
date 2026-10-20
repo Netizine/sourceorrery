@@ -79,6 +79,22 @@ uses [Semantic Versioning](https://semver.org/).
 * The docs site's error-code reference tolerates rustfmt's multiline
   `#[error(...)]` attributes; `npm run build` works again.
 
+### Changed — version reads load only the value they return
+
+* Both 20 October 2026 reviews noted that every read of a secret loaded the
+  nonce and ciphertext of **all** its versions: `get` of one version,
+  `get_secret_properties`, `versions`, `list` and `list-deleted` (which
+  summarise each secret by its newest version) all materialised every
+  value's ciphertext just to verify metadata. The version query is now a
+  metadata projection (exactly the columns the row tag covers, plus the
+  tag), and `get_secret` fetches the nonce and ciphertext of the one version
+  it has selected, in the same transaction, after selection. The tag and
+  checkpoint rules are unchanged and apply to every metadata row read
+  exactly as before; version selection is unchanged (core policy). A value
+  that is damaged on disk is therefore noticed only when that version is
+  returned: the other versions of the secret list, inspect and read as
+  before. On-disk format and verification rules are unchanged.
+
 ### Changed — storage module layout
 
 * `sourceorrery-storage`'s single `sqlite.rs` is now the `sqlite/` module:

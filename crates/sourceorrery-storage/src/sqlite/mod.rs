@@ -55,7 +55,7 @@ use self::protectors::{
     Unlocked, add_protector, any_keyring_protector_wrapped_newer, read_protectors,
     rewrap_protector, try_passphrases, try_unwrap,
 };
-use self::rows::{NewVersion, SecretRow, select_version};
+use self::rows::{NewVersion, SecretRow, load_ciphertext, select_version};
 use self::schema::{
     Meta, SCHEMA, crypto, db, from_nanos, nanos, open_connection, opt_nanos, read_meta,
     recovery_id, value_aad, write_settings_tag,
@@ -618,10 +618,16 @@ impl SecretClient for SqliteVault {
             Ok(v) => v,
             Err(err) => return self.fail(tx, op, Some(name), version, err),
         };
+        // Only the selected version's value is read; the other versions'
+        // ciphertext never leaves the file.
+        let ciphertext = match load_ciphertext(&tx, name, &chosen.props.version) {
+            Ok(c) => c,
+            Err(err) => return self.fail(tx, op, Some(name), Some(&chosen.props.version), err),
+        };
         let plaintext = match aead::open(
             &self.dek,
             value_aad(&self.meta.id, name, &chosen.props.version).as_bytes(),
-            &chosen.ciphertext,
+            &ciphertext,
         ) {
             Ok(p) => p,
             Err(err) => {

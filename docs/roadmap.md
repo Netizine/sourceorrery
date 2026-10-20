@@ -13,6 +13,8 @@
 - [x] Conformance + security suites; CI on Ubuntu/Windows/macOS; release workflow
 - [ ] Manual validation of the OS-keyring path on macOS and a Linux desktop
 - [x] Metadata and audit-log integrity (MAC over mutable metadata)
+- [x] Reads load only the value they return (metadata projection for every version query; one ciphertext row per `get`)
+- [ ] Listing cost: `list` and `list-deleted` still verify every version row and every checkpoint row of every secret, one query per secret, because which version is newest can only be judged against the complete set. A bulk checkpoint read and pagination on `list_*` are open; pagination is an API change and goes through core with a conformance test
 - [ ] `backup` / `restore` (encrypted export of a vault or a secret)
 - [ ] Package managers: Homebrew, WinGet, Scoop, `cargo install`; signed releases
 - [x] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`, deployed by Azure Static Web Apps (custom domain pending)
