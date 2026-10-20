@@ -1,7 +1,8 @@
 //! Passphrase-based key derivation with Argon2id.
 
-use argon2::{Algorithm, Argon2, Params, Version};
+use argon2::{Algorithm, Argon2, Block, Params, Version};
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::key::{KEY_LEN, SymmetricKey};
 use crate::{CryptoError, Result};
@@ -64,6 +65,12 @@ impl Default for Argon2Params {
 }
 
 /// Derive a 256-bit key from a passphrase and salt.
+///
+/// Argon2's working memory is allocated here rather than inside the library,
+/// so that every block is zeroised when the derivation ends (on success and
+/// on error) instead of being returned to the allocator still holding the
+/// final lane state, from which the key can be read back. The output buffer
+/// is zeroised the same way once the key has been copied out of it.
 pub fn derive_key(passphrase: &[u8], salt: &[u8], params: Argon2Params) -> Result<SymmetricKey> {
     if salt.len() < 8 {
         return Err(CryptoError::Kdf("salt must be at least 8 bytes".to_owned()));
@@ -83,12 +90,19 @@ pub fn derive_key(passphrase: &[u8], salt: &[u8], params: Argon2Params) -> Resul
         Some(KEY_LEN),
     )
     .map_err(|err| CryptoError::Kdf(err.to_string()))?;
+    let mut memory = working_memory(&params);
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut out = [0u8; KEY_LEN];
+    let mut out = Zeroizing::new([0u8; KEY_LEN]);
     argon
-        .hash_password_into(passphrase, salt, &mut out)
+        .hash_password_into_with_memory(passphrase, salt, out.as_mut_slice(), memory.as_mut_slice())
         .map_err(|err| CryptoError::Kdf(err.to_string()))?;
-    Ok(SymmetricKey::from_bytes(out))
+    Ok(SymmetricKey::from_bytes(*out))
+}
+
+/// The block array Argon2 fills for `params`, owned by the caller and
+/// zeroised on drop.
+fn working_memory(params: &Params) -> Zeroizing<Vec<Block>> {
+    Zeroizing::new(vec![Block::new(); params.block_count()])
 }
 
 #[cfg(test)]
@@ -133,5 +147,27 @@ mod tests {
     #[test]
     fn rejects_short_salt() {
         assert!(derive_key(b"x", &[0u8; 4], Argon2Params::TESTING).is_err());
+    }
+
+    /// The caller-owned, zeroised working memory must produce the same key
+    /// as the library's own allocation, and be sized exactly as Argon2 needs.
+    #[test]
+    fn caller_owned_memory_matches_the_reference_derivation() {
+        let salt = [7u8; SALT_LEN];
+        let ours = derive_key(b"correct horse", &salt, Argon2Params::TESTING).unwrap();
+
+        let params = Params::new(
+            Argon2Params::TESTING.memory_kib,
+            Argon2Params::TESTING.iterations,
+            Argon2Params::TESTING.parallelism,
+            Some(KEY_LEN),
+        )
+        .unwrap();
+        assert_eq!(working_memory(&params).len(), params.block_count());
+        let mut reference = [0u8; KEY_LEN];
+        Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+            .hash_password_into(b"correct horse", &salt, &mut reference)
+            .unwrap();
+        assert_eq!(ours, SymmetricKey::from_bytes(reference));
     }
 }

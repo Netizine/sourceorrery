@@ -8,14 +8,15 @@ use sourceorrery_core::policy;
 use sourceorrery_core::{
     DeletedSecret, Result, SecretError, SecretProperties, SetSecretOptions, validate_version_id,
 };
-use sourceorrery_crypto::{Ciphertext, SymmetricKey};
+use sourceorrery_crypto::{Ciphertext, MAC_LEN, SymmetricKey};
 use time::OffsetDateTime;
 
 use super::SqliteVault;
 use super::schema::{
-    Meta, crypto, db, from_nanos, integrity_error, opt_from_nanos, opt_nanos, recovery_id,
+    Meta, crypto, db, from_nanos, integrity_error, integrity_error_because, opt_from_nanos,
+    opt_nanos, recovery_id,
 };
-use crate::integrity::{self, SecretFields, VersionFields};
+use crate::integrity::{self, Checkpoint, SecretFields, VersionFields};
 
 pub(super) struct SecretRow {
     pub(super) created_on: i64,
@@ -192,6 +193,13 @@ pub(super) fn select_version<'a>(
 }
 
 impl SqliteVault {
+    /// The `secrets` row for `name`, if the secret exists.
+    ///
+    /// The row is honoured only when it is the state the audit chain last
+    /// recorded for it: its tag must equal the newest keyed checkpoint and
+    /// must verify over the stored fields. A row with no checkpoint, a row
+    /// the chain records as removed, and a missing row the chain records as
+    /// present are all refused with `crypto`.
     pub(super) fn load_secret_row(
         &self,
         conn: &Connection,
@@ -216,9 +224,24 @@ impl SqliteVault {
             )
             .optional()
             .map_err(db)?;
-        match found {
-            None => Ok(None),
-            Some((row, tag)) => {
+        let checkpoint = self.checkpoints(conn, name)?.state;
+        match (found, checkpoint) {
+            (None, None | Some(Checkpoint::Absent)) => Ok(None),
+            (None, Some(Checkpoint::Present(_))) => Err(integrity_error_because(
+                name,
+                "the secret row is missing but the audit log records it as present",
+            )),
+            (Some(_), None) => Err(integrity_error_because(
+                name,
+                "the secret row has no checkpoint in the audit log",
+            )),
+            (Some((row, tag)), Some(checkpoint)) => {
+                if !checkpoint.matches(tag.as_deref()) {
+                    return Err(integrity_error_because(
+                        name,
+                        "the secret row is not the state the audit log last recorded",
+                    ));
+                }
                 let fields = row.fields(&self.meta.id, name);
                 if integrity::verify_secret_tag(&self.metadata_key, &fields, tag.as_deref()) {
                     Ok(Some(row))
@@ -255,11 +278,38 @@ impl SqliteVault {
         }
     }
 
-    /// All versions of `name`, newest first, each with its tag verified.
+    /// All versions of `name`, newest first, each with its tag verified and
+    /// equal to the newest checkpoint the audit chain holds for it. Every
+    /// version the chain records must be present: removing the newest
+    /// version's row would otherwise quietly make an older value current.
     pub(super) fn load_versions(&self, conn: &Connection, name: &str) -> Result<Vec<VersionRow>> {
-        query_raw_versions(conn, name)?
-            .into_iter()
-            .map(|r| r.into_row(&self.meta, &self.metadata_key, name))
+        let raw = query_raw_versions(conn, name)?;
+        let checkpoints = self.checkpoints(conn, name)?.versions;
+        for version in checkpoints.keys() {
+            if !raw.iter().any(|r| &r.version == version) {
+                return Err(integrity_error_because(
+                    name,
+                    &format!("version {version} is missing but the audit log records it"),
+                ));
+            }
+        }
+        raw.into_iter()
+            .map(|r| match checkpoints.get(&r.version) {
+                None => Err(integrity_error_because(
+                    name,
+                    &format!("version {} has no checkpoint in the audit log", r.version),
+                )),
+                Some(checkpoint) if !checkpoint.matches(r.tag.as_deref()) => {
+                    Err(integrity_error_because(
+                        name,
+                        &format!(
+                            "version {} is not the state the audit log last recorded",
+                            r.version
+                        ),
+                    ))
+                }
+                Some(_) => r.into_row(&self.meta, &self.metadata_key, name),
+            })
             .collect()
     }
 
@@ -292,9 +342,16 @@ impl SqliteVault {
     }
 
     // --- authenticated writes ------------------------------------------
+    //
+    // Each returns the tag it stored, which the caller records as the row's
+    // checkpoint in the same transaction's audit event.
 
     /// Insert one version row together with its tag.
-    pub(super) fn insert_version(&self, conn: &Connection, new: &NewVersion<'_>) -> Result<()> {
+    pub(super) fn insert_version(
+        &self,
+        conn: &Connection,
+        new: &NewVersion<'_>,
+    ) -> Result<[u8; MAC_LEN]> {
         let tags_json = serde_json::to_string(&new.options.tags)
             .map_err(|err| SecretError::Storage(err.to_string()))?;
         let not_before = opt_nanos(new.options.not_before)?;
@@ -336,7 +393,23 @@ impl SqliteVault {
             ],
         )
         .map_err(db)?;
-        Ok(())
+        Ok(tag)
+    }
+
+    /// Insert a new, live `secrets` row together with its tag.
+    pub(super) fn insert_secret(
+        &self,
+        conn: &Connection,
+        name: &str,
+        row: &SecretRow,
+    ) -> Result<[u8; MAC_LEN]> {
+        let tag = integrity::secret_tag(&self.metadata_key, &row.fields(&self.meta.id, name));
+        conn.execute(
+            "INSERT INTO secrets (name, created_on, tag) VALUES (?1, ?2, ?3)",
+            params![name, row.created_on, tag.as_slice()],
+        )
+        .map_err(db)?;
+        Ok(tag)
     }
 
     /// Write a `secrets` row's deletion state together with its tag.
@@ -345,7 +418,7 @@ impl SqliteVault {
         conn: &Connection,
         name: &str,
         row: &SecretRow,
-    ) -> Result<()> {
+    ) -> Result<[u8; MAC_LEN]> {
         let tag = integrity::secret_tag(&self.metadata_key, &row.fields(&self.meta.id, name));
         conn.execute(
             "UPDATE secrets
@@ -360,6 +433,33 @@ impl SqliteVault {
             ],
         )
         .map_err(db)?;
+        Ok(tag)
+    }
+
+    /// Remove a `secrets` row (its versions cascade). The caller records
+    /// [`Checkpoint::Absent`] for the name.
+    pub(super) fn delete_secret_row(conn: &Connection, name: &str) -> Result<()> {
+        conn.execute("DELETE FROM secrets WHERE name = ?1", params![name])
+            .map_err(db)?;
         Ok(())
+    }
+
+    /// Every name the vault may hold: the rows in `secrets` plus the names
+    /// the audit chain records as present, so that a row removed out of
+    /// band is still visited (and refused) by a listing.
+    pub(super) fn candidate_names(&self, conn: &Connection) -> Result<Vec<String>> {
+        let mut names: std::collections::BTreeSet<String> = {
+            let mut stmt = conn.prepare("SELECT name FROM secrets").map_err(db)?;
+            stmt.query_map([], |row| row.get(0))
+                .map_err(db)?
+                .collect::<rusqlite::Result<_>>()
+                .map_err(db)?
+        };
+        names.extend(super::audit::checkpointed_names(
+            conn,
+            &self.metadata_key,
+            &self.meta.id,
+        )?);
+        Ok(names.into_iter().collect())
     }
 }

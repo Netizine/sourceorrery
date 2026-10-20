@@ -144,6 +144,12 @@ unsafe fn vault<'a>(handle: *const so_vault) -> Result<&'a SqliteVault> {
 
 /// An output slot, reset to `initial` before anything else can fail.
 ///
+/// The slot may hold uninitialised memory: a C caller passes `so_bytes out;`
+/// without zeroing it. It is therefore written through the raw pointer first
+/// and a reference is formed only once it holds a `T`; forming the reference
+/// first would be undefined behaviour, and the assignment would drop
+/// whatever garbage the slot held.
+///
 /// # Safety
 ///
 /// `ptr` is NULL or valid for writes of `T` for the lifetime `'a`.
@@ -152,10 +158,13 @@ unsafe fn output<'a, T>(ptr: *mut T, initial: T, what: &str) -> Result<&'a mut T
         return Err(invalid(format!("{what}: NULL")));
     }
     // SAFETY: the caller guarantees `ptr` is valid for writes of `T` and
-    // not aliased for the duration of the call.
-    let slot = unsafe { &mut *ptr };
-    *slot = initial;
-    Ok(slot)
+    // not aliased for the duration of the call; `write` neither reads nor
+    // drops the previous contents, and the reference is created only after
+    // the slot has been initialised.
+    unsafe {
+        ptr.write(initial);
+        Ok(&mut *ptr)
+    }
 }
 
 fn registry(home: Option<&str>) -> Result<VaultRegistry> {

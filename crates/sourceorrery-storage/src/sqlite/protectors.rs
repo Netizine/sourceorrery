@@ -12,7 +12,7 @@ use sourceorrery_crypto::{Ciphertext, SymmetricKey, envelope, kdf, random};
 
 use super::audit::AuditWriter;
 use super::schema::{
-    Meta, begin_write, crypto, db, from_nanos, nanos, open_connection, protector_aad, read_meta,
+    Meta, crypto, db, from_nanos, nanos, open_connection, protector_aad, read_meta,
 };
 use super::{
     MAX_PASSPHRASE_PROTECTORS, MAX_UNLOCK_ATTEMPTS, OLDEST_SUPPORTED_SCHEMA, SCHEMA_VERSION,
@@ -143,13 +143,10 @@ pub(super) fn rewrap_protector(
     Ok(())
 }
 
-/// True when any OS-keyring protector's stored key unwraps under the
-/// current schema's AAD: evidence that the file was already in the current
-/// format whatever its schema marker says.
-pub(super) fn any_keyring_protector_wrapped_current(
-    conn: &Connection,
-    meta: &Meta,
-) -> Result<bool> {
+/// True when any OS-keyring protector's stored key unwraps under the AAD of
+/// a schema newer than the file's marker: evidence that the file was
+/// already in a newer format whatever its marker says.
+pub(super) fn any_keyring_protector_wrapped_newer(conn: &Connection, meta: &Meta) -> Result<bool> {
     for protector in read_protectors(conn)? {
         let ProtectorKind::OsKeyring { account, .. } = &protector.kind else {
             continue;
@@ -157,12 +154,7 @@ pub(super) fn any_keyring_protector_wrapped_current(
         let Ok(Some(kek)) = keystore::load_key(account) else {
             continue;
         };
-        let current = envelope::unwrap_key(
-            &kek,
-            &protector.wrapped,
-            protector_aad(&meta.id, &protector.id, SCHEMA_VERSION).as_bytes(),
-        );
-        if current.is_ok() {
+        if matches!(try_unwrap(meta, &protector, &kek), Ok((_, schema)) if schema > meta.schema) {
             return Ok(true);
         }
     }
@@ -205,16 +197,16 @@ pub(super) fn read_protectors(conn: &Connection) -> Result<Vec<ProtectorRecord>>
         .collect()
 }
 
-/// Unwrap the vault key with `kek`, trying the current schema's AAD first
-/// and then the oldest supported one. Returns the key and the schema whose
-/// AAD matched.
+/// Unwrap the vault key with `kek`, trying every supported schema's AAD from
+/// the current one down to the oldest. Returns the key and the schema whose
+/// AAD matched, which is the format the key was last bound to.
 pub(super) fn try_unwrap(
     meta: &Meta,
     protector: &ProtectorRecord,
     kek: &SymmetricKey,
 ) -> Result<(SymmetricKey, u32)> {
     let mut last = None;
-    for schema in [SCHEMA_VERSION, OLDEST_SUPPORTED_SCHEMA] {
+    for schema in (OLDEST_SUPPORTED_SCHEMA..=SCHEMA_VERSION).rev() {
         match envelope::unwrap_key(
             kek,
             &protector.wrapped,
@@ -233,36 +225,34 @@ pub(super) fn try_unwrap(
 /// The label for a new protector: the caller's, if unique and non-empty,
 /// else the kind's label, suffixed with part of the id when already taken.
 pub(super) fn choose_label(
-    conn: &Connection,
+    installed: &[ProtectorRecord],
     requested: Option<&str>,
     kind_label: &str,
     id: &str,
 ) -> Result<String> {
-    let existing: Vec<String> = read_protectors(conn)?
-        .into_iter()
-        .map(|p| p.label)
-        .collect();
+    let existing: Vec<&str> = installed.iter().map(|p| p.label.as_str()).collect();
     if let Some(custom) = requested {
         if custom.trim().is_empty() {
             return Err(SecretError::InvalidArgument(
                 "protector label must not be empty".to_owned(),
             ));
         }
-        if existing.iter().any(|l| l == custom) {
+        if existing.contains(&custom) {
             return Err(SecretError::InvalidArgument(format!(
                 "a protector labelled '{custom}' already exists"
             )));
         }
         return Ok(custom.to_owned());
     }
-    let base = kind_label.to_owned();
-    Ok(if existing.contains(&base) {
-        format!("{base}-{}", &id[..4])
+    Ok(if existing.contains(&kind_label) {
+        format!("{kind_label}-{}", &id[..4])
     } else {
-        base
+        kind_label.to_owned()
     })
 }
 
+/// Install a protector. Runs inside the caller's write transaction, so the
+/// count of passphrase protectors it checks cannot change underneath it.
 pub(super) fn add_protector(
     conn: &Connection,
     meta: &Meta,
@@ -274,7 +264,22 @@ pub(super) fn add_protector(
 
     // Validate everything that can fail cheaply before touching the OS
     // credential store, so a rejected label never leaves an orphan key.
-    let label = choose_label(conn, label, spec.kind_label(), &id)?;
+    let installed = read_protectors(conn)?;
+    let label = choose_label(&installed, label, spec.kind_label(), &id)?;
+    if matches!(spec, ProtectorSpec::Passphrase { .. }) {
+        // Unlock tries at most this many passphrase protectors, so accepting
+        // one more would install a credential that can never unlock.
+        let passphrases = installed
+            .iter()
+            .filter(|p| matches!(p.kind, ProtectorKind::Passphrase { .. }))
+            .count();
+        if passphrases >= MAX_PASSPHRASE_PROTECTORS {
+            return Err(SecretError::InvalidArgument(format!(
+                "a vault can have at most {MAX_PASSPHRASE_PROTECTORS} passphrase protectors; \
+                 remove one before adding another"
+            )));
+        }
+    }
 
     let (kind, kek, stored_account) = match spec {
         ProtectorSpec::OsKeyring => {
@@ -394,10 +399,18 @@ impl SqliteVault {
     }
 
     /// Add another way to unlock this vault.
+    ///
+    /// At most `MAX_PASSPHRASE_PROTECTORS` (eight)
+    /// passphrase protectors are accepted, because unlock tries no more than
+    /// that; a rejected addition installs nothing and is audited as a
+    /// `protector_add` failure.
     pub fn add_protector(&self, spec: ProtectorSpec, label: Option<&str>) -> Result<ProtectorInfo> {
         let mut conn = self.lock()?;
-        let tx = begin_write(&mut conn)?;
-        let info = add_protector(&tx, &self.meta, &self.dek, spec, label)?;
+        let tx = self.begin(&mut conn, AuditOperation::ProtectorAdd)?;
+        let info = match add_protector(&tx, &self.meta, &self.dek, spec, label) {
+            Ok(info) => info,
+            Err(err) => return self.fail(tx, AuditOperation::ProtectorAdd, None, None, err),
+        };
         self.audit(
             &tx,
             AuditOperation::ProtectorAdd,
@@ -419,19 +432,33 @@ impl SqliteVault {
     /// beside this one references it. Returns a note when the entry was kept
     /// (so the caller can tell the user), `None` otherwise.
     pub fn remove_protector(&self, id_or_label: &str) -> Result<Option<String>> {
+        let op = AuditOperation::ProtectorRemove;
         let mut conn = self.lock()?;
-        let tx = begin_write(&mut conn)?;
+        let tx = self.begin(&mut conn, op)?;
         let protectors = read_protectors(&tx)?;
-        let target = protectors
+        let Some(target) = protectors
             .iter()
             .find(|p| p.id == id_or_label || p.label == id_or_label)
-            .ok_or_else(|| {
-                SecretError::InvalidArgument(format!("no protector named '{id_or_label}'"))
-            })?;
+        else {
+            // The argument is arbitrary input and is not recorded.
+            return self.fail(
+                tx,
+                op,
+                None,
+                None,
+                SecretError::InvalidArgument(format!("no protector named '{id_or_label}'")),
+            );
+        };
         if protectors.len() == 1 {
-            return Err(SecretError::InvalidArgument(
-                "cannot remove the last key protector; add another one first".to_owned(),
-            ));
+            return self.fail(
+                tx,
+                op,
+                None,
+                None,
+                SecretError::InvalidArgument(
+                    "cannot remove the last key protector; add another one first".to_owned(),
+                ),
+            );
         }
         let keyring_account = match &target.kind {
             ProtectorKind::OsKeyring { account, .. } => Some(account.clone()),
@@ -446,7 +473,7 @@ impl SqliteVault {
         .map_err(db)?;
         self.audit(
             &tx,
-            AuditOperation::ProtectorRemove,
+            op,
             None,
             None,
             AuditOutcome::Success,

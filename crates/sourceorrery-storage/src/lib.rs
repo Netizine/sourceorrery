@@ -25,8 +25,9 @@
 //!
 //! Plaintext is not unprotected: mutable metadata (enabled flags, time
 //! windows, tags, deletion state) carries an HMAC tag under a key derived
-//! from the DEK, and the audit log is a keyed hash chain. See
-//! [`integrity`].
+//! from the DEK, the audit log is a keyed hash chain, and every change to a
+//! row is checkpointed in that chain so an older authentic copy of the row
+//! cannot be replayed. See [`integrity`].
 
 #![forbid(unsafe_code)]
 
@@ -46,9 +47,10 @@ pub use unlock::{NoInteraction, PassphrasePrompt, StaticPassphrase, UnlockProvid
 /// Backend identifier reported in [`sourceorrery_core::VaultDescriptor`].
 pub const BACKEND_NAME: &str = "encrypted-sqlite";
 
-/// On-disk schema version written to new vaults. Older vaults are migrated
-/// forward on first unlock; see [`sqlite::SqliteVault::open`].
-pub const SCHEMA_VERSION: u32 = 2;
+/// On-disk schema version written to new vaults. Older vaults are refused by
+/// [`sqlite::SqliteVault::open`] with `migration_required` and migrated
+/// forward by the explicit [`VaultRegistry::migrate`] (`vault migrate`).
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// File extension of vault files.
 pub const VAULT_FILE_EXTENSION: &str = "sorvault";

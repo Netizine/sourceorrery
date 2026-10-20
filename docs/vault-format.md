@@ -1,4 +1,4 @@
-# Vault file format (schema version 2)
+# Vault file format (schema version 3)
 
 A vault is a single SQLite database, `<home>/vaults/<name>.sorvault`, created
 with `PRAGMA foreign_keys = ON`, `PRAGMA secure_delete = ON` and a 5 s busy
@@ -15,7 +15,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 
 | key | value |
 |-----|-------|
-| `schema_version` | `2` |
+| `schema_version` | `3` |
 | `name` | vault name |
 | `id` | 32 hex chars, random; bound into every AAD and every integrity tag |
 | `created_on` | Unix nanoseconds |
@@ -32,7 +32,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `label` | unique human label (`os-keyring`, `passphrase`, `ci`, …) |
 | `kind_json` | `{"kind":"os-keyring","service":"sourceorrery","account":"vault/<vault id>/<id>"}` or `{"kind":"passphrase","salt":"<hex 16 bytes>","params":{"memory_kib":65536,"iterations":3,"parallelism":1}}` |
 | `wrapped_nonce` | 24-byte XChaCha20 nonce |
-| `wrapped_dek` | DEK encrypted under the protector's KEK; AAD `sourceorrery/v<schema>/protector/<vault id>/<protector id>`, so the wrapped key is bound to the on-disk format it was written for (`v2` now; `v1` only on protectors not yet re-wrapped since a migration) |
+| `wrapped_dek` | DEK encrypted under the protector's KEK; AAD `sourceorrery/v<schema>/protector/<vault id>/<protector id>`, so the wrapped key is bound to the on-disk format it was written for (`v3` now; an older `v<n>` only on protectors not yet re-wrapped since a migration) |
 | `created_on` | Unix nanoseconds |
 
 ### `secrets`
@@ -75,6 +75,12 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `prev_hash` | `hash` of the previous row (32 zero bytes for the first) |
 | `hash` | `HMAC-SHA256(k, canonical(prev_hash, row))` (see *Audit chain*) |
 | `keyed` | 1 when `k` is the metadata key, 0 when it is the all-zero key |
+| `state_tag` | checkpoint of the `secrets` row named by `secret_name` after this event: the row's new `tag`, or the empty blob when the row was removed; NULL when the event did not change it (see *Checkpoints*) |
+| `version_tag` | checkpoint of the `secret_versions` row named by `secret_name` + `version`, likewise |
+
+Index `audit_checkpoints` on `(secret_name, id)` covers the rows where
+either checkpoint column is set, so finding a secret's checkpoints does not
+scan its reads.
 
 ## Key hierarchy
 
@@ -103,7 +109,9 @@ tried against every passphrase protector. Every failed attempt is an audit row
 Only `secret_versions.ciphertext` and `key_protectors.wrapped_dek`.
 Names, tags, timestamps, flags and audit rows are plaintext. Since schema 2
 the mutable plaintext is **authenticated**, so it can be read without the
-key but not changed without detection (see [threat-model.md](threat-model.md)).
+key but not changed without detection, and since schema 3 each row is also
+**bound to the audit chain**, so an older authentic copy of it cannot be
+put back (see [threat-model.md](threat-model.md)).
 
 ## Metadata tags
 
@@ -114,6 +122,40 @@ verify is refused with error code `crypto` ("metadata integrity check failed
 for `<name>`") and a `failure` audit row. Nothing is ever repaired or
 purged on the strength of unverified metadata: a forged `deleted_on` is not
 honoured, and a forged purge date does not purge.
+
+## Checkpoints
+
+A tag proves that the vault wrote a row at some point, not that the row is
+current: an earlier copy of the same row, tag included, verifies just as
+well. So every audit event that changes a row also records the state the
+row has afterwards, as a *checkpoint* in the event itself:
+
+| event | `state_tag` | `version_tag` |
+|-------|-------------|---------------|
+| `secret_set` | new `secrets` row's tag (only when the secret is created) | new version row's tag |
+| `secret_update` | | updated version row's tag |
+| `secret_delete` (soft) | deleted-state tag | |
+| `secret_recover` | live-state tag | |
+| `secret_delete` (purgeable vault), `secret_purge`, retention purge | empty blob: the row is gone | |
+| `vault_migrate` (one per row, detail `checkpoint`) | the row's tag as found | the row's tag as found |
+
+Both columns are part of the row's chain hash, so a checkpoint cannot be
+edited, inserted or removed without breaking the chain, and only keyed
+rows whose hash verifies count (an unkeyed row is forgeable by design).
+
+Before a row is honoured, its stored `tag` must equal the **newest**
+checkpoint for it in the chain, and the tag must verify over the row's
+fields. The rule has no accept-if-none case: a row with no checkpoint, a row
+whose checkpoint is the empty blob, and a *missing* row whose checkpoint
+says it exists are all refused with `crypto` and a `failure` audit row. For
+versions, every version checkpointed since the secret was last recorded
+absent must be present, so removing the newest version does not make an
+older value current. Listings visit every name the chain records, not only
+the rows left in the table.
+
+Because the newest checkpoint is what matters, every operation first checks
+that the chain head still names the newest keyed row; a shortened chain is
+not consulted (see *Audit chain*).
 
 ### Canonical encoding
 
@@ -128,11 +170,14 @@ from one kind of row, or another vault, never verifies for a different one.
 |--------|--------|------------------|
 | version | `sourceorrery/v2/version` | vault id, name, version, seq, enabled, content_type?, tags_json, not_before?, expires_on?, created_on, updated_on |
 | secret | `sourceorrery/v2/secret` | vault id, name, created_on, deleted_on?, scheduled_purge_on?, recovery_id? |
-| audit row | `sourceorrery/v2/audit` | vault id, prev_hash, id, occurred_on, actor, operation, secret_name?, version?, outcome, detail?, keyed |
+| audit row | `sourceorrery/v3/audit` | vault id, prev_hash, id, occurred_on, actor, operation, secret_name?, version?, outcome, detail?, keyed, state_tag?, version_tag? |
 | audit head | `sourceorrery/v2/audit-head` | vault id, id, hash |
+| settings | `sourceorrery/v2/settings` | vault id, schema_version, name, created_on, recovery_level, retention_days |
 
-`?` marks an optional field; timestamps are their stored Unix-nanosecond
-integers.
+`?` marks an optional field (`state_tag?` and `version_tag?` are optional
+byte strings); timestamps are their stored Unix-nanosecond integers. The
+audit-row domain changed to `v3` when the checkpoint fields were added;
+the migration re-chains every existing row under it.
 
 ## Audit chain
 
@@ -158,7 +203,15 @@ appends an `audit_verify` / `failure` row saying so (for example
 `rows removed after event 41 (head was event 44)`), and only then the
 requested row. The evidence is itself part of the chain; removing it is
 another truncation and is detected the same way at the next keyed write.
-Note that `vault_open` is a keyed write, so the check runs on every unlock.
+
+Since schema 3 the chain is also the record of current row state, so a
+shortened chain must not be consulted. Every unlock and every operation
+therefore checks the head *first*: when it is stale, the unlock or
+operation is **refused** with `crypto` ("audit log integrity: rows removed
+after event 41 …"), and that refusal is what writes the `audit_verify` /
+`failure` row and re-anchors the head. The next unlock proceeds on the
+surviving history, with the truncation permanently on record; see the
+threat model for what that does and does not prove.
 
 `SqliteVault::verify_audit_chain()` (`sourceorrery audit --verify`) walks
 the whole log and reports: rows, keyed and unkeyed counts, `first_broken`
@@ -175,21 +228,39 @@ migrating is an explicit, one-way command, `sourceorrery vault migrate`,
 because the legacy format carries no integrity data and its contents can
 only be taken on trust.
 
-The migration is guarded by the key wrapping. Schema 2 wraps the vault key
-under an AAD that names the format, so a schema 2 file whose marker was
-edited back to `1` cannot be unwrapped as a legacy vault: the protector that
-unlocks it reports the format it was bound to, every OS-keyring protector is
-checked the same way, and a mismatch aborts the migration with `crypto`.
-Only a key genuinely wrapped under the schema 1 AAD enters the migration,
-which then adds the integrity columns, tags every row, chains the audit log,
-writes `settings_tag`, re-wraps every key it holds under the new AAD and
-bumps `schema_version`, all in one transaction. A passphrase protector that
-was not used for the migration is re-wrapped the next time it unlocks the
-vault.
+The migration is guarded by the key wrapping. Since schema 2 the vault key
+is wrapped under an AAD that names the format, so a file whose marker was
+edited back to an older number cannot be unwrapped as that older format:
+the protector that unlocks it reports the format it was bound to, every
+OS-keyring protector is checked the same way, and a key bound to a newer
+schema than the marker aborts the migration with `crypto`. Only a key
+genuinely wrapped under the marker's AAD enters the migration.
+
+The migration brings schema 1 and schema 2 files to schema 3 in one
+transaction: a schema 1 file first gains the integrity columns and a tag on
+every row; both then gain the checkpoint columns, every audit row is
+re-chained under the current encoding (keyed), one `vault_migrate`
+checkpoint event is recorded per `secrets` row and per `secret_versions`
+row with the tag the row has (a row with no tag gets no checkpoint and
+stays refused), `settings_tag` is written, every key the migration holds is
+re-wrapped under the new AAD and `schema_version` is bumped; a final
+`vault_migrate` row records `schema <n> -> 3`. A schema 2 file whose audit
+head is stale is refused, as an unlock would be, rather than re-chained. A
+passphrase protector that was not used for the migration is re-wrapped the
+next time it unlocks the vault.
 
 Argon2 parameters stored on a protector are capped before they are run
 (1 GiB, 64 passes, 16 lanes; a protector beyond the ceiling is skipped) and
-at most eight passphrase protectors are tried per attempt.
+at most eight passphrase protectors are tried per attempt; `vault protector
+add` refuses a ninth, so every installed passphrase can unlock.
+
+## Creating a vault
+
+The vault file is created exclusively (`O_EXCL` / `CREATE_NEW`) before
+anything is written to it, so of several processes creating the same name
+at once exactly one owns the file; the others fail with `vault_exists` and
+never touch it. Only the owner removes the file again if the rest of
+creation (for example installing an OS-keyring protector) fails.
 
 ## Deleting a vault
 

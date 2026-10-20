@@ -690,3 +690,42 @@ fn close_and_free_accept_null() {
     // SAFETY: NULL is accepted.
     unsafe { so_bytes_free(ptr::null_mut()) };
 }
+
+/// A C caller passes `so_bytes out;` or `so_vault *handle;` without zeroing
+/// it. The library must initialise such a slot through the raw pointer, never
+/// read or drop what it held, and leave it in the documented failure state.
+/// Written against `MaybeUninit` so Miri can check the contract.
+#[test]
+fn uninitialised_output_slots_are_initialised_on_failure() {
+    let mut out = std::mem::MaybeUninit::<so_bytes>::uninit();
+    // SAFETY: `out` is valid for writes; a NULL handle makes the call fail
+    // after the slot has been reset.
+    let status = unsafe { so_vault_descriptor(ptr::null(), out.as_mut_ptr()) };
+    assert_eq!(status, so_status::SO_STATUS_ERROR);
+    assert_eq!(last_code().as_deref(), Some("invalid_argument"));
+    // SAFETY: the call initialised the slot.
+    let out = unsafe { out.assume_init() };
+    assert!(out.ptr.is_null());
+    assert_eq!(out.len, 0);
+
+    let home = Home::new();
+    let home_path = home.path();
+    let home_arg = arg(&home_path);
+    let name = arg("no_such_vault"); // an invalid name fails before any I/O
+    let mut handle = std::mem::MaybeUninit::<*mut so_vault>::uninit();
+    // SAFETY: as above.
+    let status = unsafe {
+        so_vault_open(
+            home_arg.0,
+            home_arg.1,
+            name.0,
+            name.1,
+            ptr::null(),
+            0,
+            handle.as_mut_ptr(),
+        )
+    };
+    assert_eq!(status, so_status::SO_STATUS_ERROR);
+    // SAFETY: the call initialised the slot.
+    assert!(unsafe { handle.assume_init() }.is_null());
+}

@@ -2,6 +2,8 @@
 //! that pins the newest keyed row, verification, and the completion helpers
 //! that every vault operation ends with.
 
+use std::collections::BTreeMap;
+
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sourceorrery_core::audit::{AuditOperation, AuditOutcome};
 use sourceorrery_core::{Principal, Result, SecretError, timestamp, validate_secret_name};
@@ -9,7 +11,7 @@ use sourceorrery_crypto::{MAC_LEN, SymmetricKey};
 
 use super::SqliteVault;
 use super::schema::{Meta, begin_write, db, nanos};
-use crate::integrity::{self, AuditFields, AuditVerification};
+use crate::integrity::{self, AuditFields, AuditVerification, Checkpoint};
 
 /// `(id, occurred_on, actor, operation, secret_name, version, outcome, detail)`
 pub(super) type AuditRow = (
@@ -23,12 +25,14 @@ pub(super) type AuditRow = (
     Option<String>,
 );
 
-/// An audit row plus its chain columns.
+/// An audit row plus its chain and checkpoint columns.
 pub(super) struct ChainRow {
     pub(super) row: AuditRow,
     pub(super) prev_hash: Option<Vec<u8>>,
     pub(super) hash: Option<Vec<u8>>,
     pub(super) keyed: bool,
+    pub(super) state_tag: Option<Vec<u8>>,
+    pub(super) version_tag: Option<Vec<u8>>,
 }
 
 impl ChainRow {
@@ -45,8 +49,36 @@ impl ChainRow {
             outcome,
             detail: detail.as_deref(),
             keyed: self.keyed,
+            state_tag: self.state_tag.as_deref(),
+            version_tag: self.version_tag.as_deref(),
         }
     }
+
+    /// True when `hash` is this row's chain hash under `key`.
+    fn authentic(&self, key: &SymmetricKey, vault_id: &str) -> bool {
+        let prev = integrity::hash_or_zero(self.prev_hash.as_deref());
+        integrity::verify_audit_hash(key, &prev, &self.fields(vault_id), self.hash.as_deref())
+    }
+}
+
+/// The row checkpoints a success event carries (see `integrity`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Checkpoints {
+    /// State of the `secrets` row the event names.
+    pub(super) state: Option<Checkpoint>,
+    /// State of the `secret_versions` row the event names.
+    pub(super) version: Option<Checkpoint>,
+}
+
+/// One audit event to append.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Entry<'a> {
+    pub(super) operation: AuditOperation,
+    pub(super) secret_name: Option<&'a str>,
+    pub(super) version: Option<&'a str>,
+    pub(super) outcome: AuditOutcome,
+    pub(super) detail: Option<&'a str>,
+    pub(super) checkpoints: Checkpoints,
 }
 
 /// Appends rows to the audit chain.
@@ -64,9 +96,9 @@ pub(super) struct AuditWriter<'a> {
 }
 
 impl AuditWriter<'_> {
-    /// Append one row. Runs in the caller's transaction when there is one,
-    /// otherwise in its own immediate transaction so the read-then-append
-    /// on the chain head is atomic across processes.
+    /// Append one row without checkpoints. Runs in the caller's transaction
+    /// when there is one, otherwise in its own immediate transaction so the
+    /// read-then-append on the chain head is atomic across processes.
     pub(super) fn record(
         &self,
         conn: &Connection,
@@ -76,24 +108,31 @@ impl AuditWriter<'_> {
         outcome: AuditOutcome,
         detail: Option<&str>,
     ) -> Result<()> {
-        if self.meta.schema < 2 {
-            // Pre-migration rows (failed unlocks of a schema 1 vault): the
-            // chain columns do not exist yet; the migration chains them.
-            return record_legacy(
-                conn,
-                self.actor,
+        self.record_entry(
+            conn,
+            &Entry {
                 operation,
                 secret_name,
                 version,
                 outcome,
                 detail,
-            );
+                checkpoints: Checkpoints::default(),
+            },
+        )
+    }
+
+    /// Append one row. As [`AuditWriter::record`].
+    pub(super) fn record_entry(&self, conn: &Connection, entry: &Entry<'_>) -> Result<()> {
+        if self.meta.schema < 2 {
+            // Pre-migration rows (failed unlocks of a schema 1 vault): the
+            // chain columns do not exist yet; the migration chains them.
+            return record_legacy(conn, self.actor, entry);
         }
         let own_tx = conn.is_autocommit();
         if own_tx {
             conn.execute_batch("BEGIN IMMEDIATE").map_err(db)?;
         }
-        let result = self.append(conn, operation, secret_name, version, outcome, detail);
+        let result = self.append(conn, entry);
         if own_tx {
             match &result {
                 Ok(()) => conn.execute_batch("COMMIT").map_err(db)?,
@@ -110,73 +149,92 @@ impl AuditWriter<'_> {
     /// the end of the log since the last keyed write, an `audit_verify` /
     /// `failure` row recording that goes in first, so the evidence becomes
     /// part of the chain before the head is re-anchored.
-    pub(super) fn append(
-        &self,
-        conn: &Connection,
-        operation: AuditOperation,
-        secret_name: Option<&str>,
-        version: Option<&str>,
-        outcome: AuditOutcome,
-        detail: Option<&str>,
-    ) -> Result<()> {
+    pub(super) fn append(&self, conn: &Connection, entry: &Entry<'_>) -> Result<()> {
         if let Some(key) = self.key
             && let Some(problem) = head_problem(conn, key, &self.meta.id, self.allow_empty_chain)?
         {
             self.append_row(
                 conn,
-                AuditOperation::AuditVerify,
-                None,
-                None,
-                AuditOutcome::Failure,
-                Some(&problem),
+                &Entry {
+                    operation: AuditOperation::AuditVerify,
+                    secret_name: None,
+                    version: None,
+                    outcome: AuditOutcome::Failure,
+                    detail: Some(&problem),
+                    checkpoints: Checkpoints::default(),
+                },
             )?;
         }
-        self.append_row(conn, operation, secret_name, version, outcome, detail)
+        self.append_row(conn, entry)
     }
 
-    pub(super) fn append_row(
-        &self,
-        conn: &Connection,
-        operation: AuditOperation,
-        secret_name: Option<&str>,
-        version: Option<&str>,
-        outcome: AuditOutcome,
-        detail: Option<&str>,
-    ) -> Result<()> {
+    pub(super) fn append_row(&self, conn: &Connection, entry: &Entry<'_>) -> Result<()> {
         let occurred_on = nanos(timestamp::now())?;
         let actor = self.actor.to_string();
         let prev = last_hash(conn)?;
         let keyed = self.key.is_some();
-        conn.execute(
-            "INSERT INTO audit_events
-                (occurred_on, actor, operation, secret_name, version, outcome, detail,
-                 prev_hash, keyed)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                occurred_on,
-                actor,
-                operation.as_str(),
-                secret_name,
-                version,
-                outcome.as_str(),
-                detail,
-                prev.as_slice(),
-                i64::from(keyed),
-            ],
-        )
-        .map_err(db)?;
+        let state_tag = entry.checkpoints.state.as_ref().map(Checkpoint::as_blob);
+        let version_tag = entry.checkpoints.version.as_ref().map(Checkpoint::as_blob);
+        if self.meta.schema >= 3 {
+            conn.execute(
+                "INSERT INTO audit_events
+                    (occurred_on, actor, operation, secret_name, version, outcome, detail,
+                     prev_hash, keyed, state_tag, version_tag)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    occurred_on,
+                    actor,
+                    entry.operation.as_str(),
+                    entry.secret_name,
+                    entry.version,
+                    entry.outcome.as_str(),
+                    entry.detail,
+                    prev.as_slice(),
+                    i64::from(keyed),
+                    state_tag,
+                    version_tag,
+                ],
+            )
+            .map_err(db)?;
+        } else {
+            // A schema 2 file before its migration (a refused unlock, or a
+            // refused migration): it has no checkpoint columns yet and no
+            // checkpoint is ever recorded in it. The migration re-chains
+            // these rows under the current encoding.
+            debug_assert!(state_tag.is_none() && version_tag.is_none());
+            conn.execute(
+                "INSERT INTO audit_events
+                    (occurred_on, actor, operation, secret_name, version, outcome, detail,
+                     prev_hash, keyed)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    occurred_on,
+                    actor,
+                    entry.operation.as_str(),
+                    entry.secret_name,
+                    entry.version,
+                    entry.outcome.as_str(),
+                    entry.detail,
+                    prev.as_slice(),
+                    i64::from(keyed),
+                ],
+            )
+            .map_err(db)?;
+        }
         let id = conn.last_insert_rowid();
         let fields = AuditFields {
             vault_id: &self.meta.id,
             id,
             occurred_on,
             actor: &actor,
-            operation: operation.as_str(),
-            secret_name,
-            version,
-            outcome: outcome.as_str(),
-            detail,
+            operation: entry.operation.as_str(),
+            secret_name: entry.secret_name,
+            version: entry.version,
+            outcome: entry.outcome.as_str(),
+            detail: entry.detail,
             keyed,
+            state_tag,
+            version_tag,
         };
         let zero = integrity::zero_key();
         let key = self.key.unwrap_or(&zero);
@@ -194,26 +252,18 @@ impl AuditWriter<'_> {
 }
 
 /// Schema 1 insert: no chain columns.
-pub(super) fn record_legacy(
-    conn: &Connection,
-    actor: &Principal,
-    operation: AuditOperation,
-    secret_name: Option<&str>,
-    version: Option<&str>,
-    outcome: AuditOutcome,
-    detail: Option<&str>,
-) -> Result<()> {
+pub(super) fn record_legacy(conn: &Connection, actor: &Principal, entry: &Entry<'_>) -> Result<()> {
     conn.execute(
         "INSERT INTO audit_events (occurred_on, actor, operation, secret_name, version, outcome, detail)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             nanos(timestamp::now())?,
             actor.to_string(),
-            operation.as_str(),
-            secret_name,
-            version,
-            outcome.as_str(),
-            detail
+            entry.operation.as_str(),
+            entry.secret_name,
+            entry.version,
+            entry.outcome.as_str(),
+            entry.detail
         ],
     )
     .map_err(db)?;
@@ -278,6 +328,15 @@ pub(super) fn last_keyed_row(conn: &Connection) -> Result<Option<(i64, Vec<u8>)>
     .map_err(db)
 }
 
+/// The error for an operation refused because the chain head is stale.
+pub(super) fn truncated_message(problem: &str) -> String {
+    format!(
+        "audit log integrity: {problem}. The state recorded by the missing events cannot be \
+         verified, so this operation was refused; the detection is now on record \
+         (`sourceorrery audit --verify`) and later operations proceed on the surviving history"
+    )
+}
+
 /// Compare the recorded chain head with the newest keyed row. `None` when
 /// they agree; otherwise a short, value-free description of the problem,
 /// suitable as audit detail.
@@ -308,37 +367,167 @@ pub(super) fn head_problem(
     })
 }
 
+const CHAIN_COLUMNS: &str =
+    "id, occurred_on, actor, operation, secret_name, version, outcome, detail,
+                             prev_hash, hash, keyed, state_tag, version_tag";
+
+fn chain_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChainRow> {
+    Ok(ChainRow {
+        row: (
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            row.get(5)?,
+            row.get(6)?,
+            row.get(7)?,
+        ),
+        prev_hash: row.get(8)?,
+        hash: row.get(9)?,
+        keyed: row.get::<_, i64>(10)? != 0,
+        state_tag: row.get(11)?,
+        version_tag: row.get(12)?,
+    })
+}
+
 /// Every audit row with its chain columns, oldest first.
 pub(super) fn read_chain(conn: &Connection) -> Result<Vec<ChainRow>> {
     let mut stmt = conn
-        .prepare(
-            "SELECT id, occurred_on, actor, operation, secret_name, version, outcome, detail,
-                    prev_hash, hash, keyed
-             FROM audit_events ORDER BY id",
-        )
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events ORDER BY id"
+        ))
         .map_err(db)?;
     let rows = stmt
-        .query_map([], |row| {
-            Ok(ChainRow {
-                row: (
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                ),
-                prev_hash: row.get(8)?,
-                hash: row.get(9)?,
-                keyed: row.get::<_, i64>(10)? != 0,
-            })
-        })
+        .query_map([], chain_row)
         .map_err(db)?
         .collect::<rusqlite::Result<_>>()
         .map_err(db)?;
     Ok(rows)
+}
+
+/// What the keyed audit chain records as the current state of one secret:
+/// the newest checkpoint of its `secrets` row, and the checkpoint of each of
+/// its versions since the row was last recorded absent (versions of an
+/// earlier, purged secret of the same name do not count).
+#[derive(Debug, Default)]
+pub(super) struct SecretCheckpoints {
+    pub(super) state: Option<Checkpoint>,
+    pub(super) versions: BTreeMap<String, Checkpoint>,
+}
+
+/// Checkpoint rows for `name`, every one authenticated under `key`: an
+/// attacker who can write the file can append rows flagged keyed, so a
+/// checkpoint counts only if its chain hash verifies, and a checkpoint row
+/// that does not verify is an error rather than skipped, since skipping it
+/// would promote an older checkpoint to newest.
+fn read_checkpoints(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+    name: &str,
+) -> Result<Vec<ChainRow>> {
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events
+             WHERE secret_name = ?1 AND keyed = 1
+               AND (state_tag IS NOT NULL OR version_tag IS NOT NULL)
+             ORDER BY id"
+        ))
+        .map_err(db)?;
+    let rows: Vec<ChainRow> = stmt
+        .query_map(params![name], chain_row)
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)?;
+    for row in &rows {
+        if !row.authentic(key, vault_id) {
+            return Err(SecretError::Crypto(format!(
+                "audit checkpoint for {name} does not verify (event {})",
+                row.row.0
+            )));
+        }
+    }
+    Ok(rows)
+}
+
+fn decode_checkpoint(blob: Option<&[u8]>, name: &str, id: i64) -> Result<Option<Checkpoint>> {
+    blob.map(|blob| {
+        Checkpoint::from_blob(blob).ok_or_else(|| {
+            SecretError::Crypto(format!(
+                "audit checkpoint for {name} is malformed (event {id})"
+            ))
+        })
+    })
+    .transpose()
+}
+
+/// The chain's current state for `name`. See [`SecretCheckpoints`].
+pub(super) fn secret_checkpoints(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+    name: &str,
+) -> Result<SecretCheckpoints> {
+    let mut out = SecretCheckpoints::default();
+    for row in read_checkpoints(conn, key, vault_id, name)? {
+        let id = row.row.0;
+        if let Some(state) = decode_checkpoint(row.state_tag.as_deref(), name, id)? {
+            if state == Checkpoint::Absent {
+                // The secret was removed: whatever versions it had are gone
+                // with it, and a later secret of the same name starts afresh.
+                out.versions.clear();
+            }
+            out.state = Some(state);
+        }
+        if let Some(version) = decode_checkpoint(row.version_tag.as_deref(), name, id)? {
+            let Some(version_id) = row.row.5.clone() else {
+                return Err(SecretError::Crypto(format!(
+                    "audit checkpoint for {name} names no version (event {id})"
+                )));
+            };
+            out.versions.insert(version_id, version);
+        }
+    }
+    Ok(out)
+}
+
+/// Names whose newest keyed state checkpoint says the secret exists, so a
+/// `secrets` row removed out of band is still looked for. Checkpoint rows
+/// are authenticated as in [`secret_checkpoints`].
+pub(super) fn checkpointed_names(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events
+             WHERE secret_name IS NOT NULL AND keyed = 1 AND state_tag IS NOT NULL
+             ORDER BY id"
+        ))
+        .map_err(db)?;
+    let rows: Vec<ChainRow> = stmt
+        .query_map([], chain_row)
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)?;
+    let mut newest: BTreeMap<String, bool> = BTreeMap::new();
+    for row in rows {
+        let name = row.row.4.clone().unwrap_or_default();
+        if !row.authentic(key, vault_id) {
+            return Err(SecretError::Crypto(format!(
+                "audit checkpoint for {name} does not verify (event {})",
+                row.row.0
+            )));
+        }
+        let present = !row.state_tag.as_deref().is_some_and(<[u8]>::is_empty);
+        newest.insert(name, present);
+    }
+    Ok(newest
+        .into_iter()
+        .filter_map(|(name, present)| present.then_some(name))
+        .collect())
 }
 
 impl SqliteVault {
@@ -389,6 +578,8 @@ impl SqliteVault {
     /// Purge soft-deleted secrets whose retention has elapsed.
     pub(super) fn purge_expired_deletions(&self) -> Result<usize> {
         let mut conn = self.lock()?;
+        // Runs right after the `vault_open` row, which has already checked
+        // and, if need be, re-anchored the chain head.
         let tx = begin_write(&mut conn)?;
         let now = nanos(timestamp::now())?;
         let expired: Vec<String> = {
@@ -429,13 +620,19 @@ impl SqliteVault {
             }
             tx.execute("DELETE FROM secrets WHERE name = ?1", params![name])
                 .map_err(db)?;
-            writer.record(
+            writer.record_entry(
                 &tx,
-                AuditOperation::SecretPurge,
-                Some(name),
-                None,
-                AuditOutcome::Success,
-                Some("retention elapsed"),
+                &Entry {
+                    operation: AuditOperation::SecretPurge,
+                    secret_name: Some(name),
+                    version: None,
+                    outcome: AuditOutcome::Success,
+                    detail: Some("retention elapsed"),
+                    checkpoints: Checkpoints {
+                        state: Some(Checkpoint::Absent),
+                        version: None,
+                    },
+                },
             )?;
             purged += 1;
         }
@@ -450,6 +647,62 @@ impl SqliteVault {
             actor: &self.actor,
             allow_empty_chain: false,
         }
+    }
+
+    /// Start an operation: take the write lock and make sure the audit
+    /// chain's head still names its newest keyed row.
+    ///
+    /// Row state is judged against the newest checkpoint in the chain, so a
+    /// log whose tail was removed must not be consulted: it would present an
+    /// older checkpoint as current. The operation is refused and audited as
+    /// a failure; recording it puts the detection itself on the chain (an
+    /// `audit_verify` / `failure` row) and re-anchors the head, so later
+    /// operations proceed on the surviving history.
+    pub(super) fn begin<'c>(
+        &self,
+        conn: &'c mut Connection,
+        operation: AuditOperation,
+    ) -> Result<Transaction<'c>> {
+        let tx = begin_write(conn)?;
+        match head_problem(&tx, &self.metadata_key, &self.meta.id, false)? {
+            None => Ok(tx),
+            Some(problem) => self.fail(
+                tx,
+                operation,
+                None,
+                None,
+                SecretError::Crypto(truncated_message(&problem)),
+            ),
+        }
+    }
+
+    /// The current state of `name` according to the keyed audit chain.
+    pub(super) fn checkpoints(&self, conn: &Connection, name: &str) -> Result<SecretCheckpoints> {
+        secret_checkpoints(conn, &self.metadata_key, &self.meta.id, name)
+    }
+
+    /// Record a successful change to `name`, with the state the changed
+    /// rows now have.
+    pub(super) fn audit_change(
+        &self,
+        conn: &Connection,
+        operation: AuditOperation,
+        name: &str,
+        version: Option<&str>,
+        detail: Option<&str>,
+        checkpoints: Checkpoints,
+    ) -> Result<()> {
+        self.writer().record_entry(
+            conn,
+            &Entry {
+                operation,
+                secret_name: Some(name),
+                version,
+                outcome: AuditOutcome::Success,
+                detail,
+                checkpoints,
+            },
+        )
     }
 
     /// Validate a secret name inside an operation so that a rejected name is

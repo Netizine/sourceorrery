@@ -278,6 +278,15 @@ async function writeDecisionsIndex(adrs) {
 	return dest;
 }
 
+/**
+ * The text of a Rust string literal's body: a backslash before a newline
+ * removes the newline and the next line's leading whitespace, `\"` is a
+ * quote and `\\` a backslash.
+ */
+function rustStringLiteral(body) {
+	return body.replace(/\\\n\s*/g, '').replace(/\\(["\\])/g, '$1');
+}
+
 /** Build the error-code reference from the `SecretError` enum so it cannot drift. */
 async function writeErrorCodes() {
 	const source = 'crates/sourceorrery-core/src/error.rs';
@@ -286,14 +295,19 @@ async function writeErrorCodes() {
 	const enumBody = rust.match(/pub enum SecretError \{([\s\S]*?)\n\}/)?.[1];
 	if (!enumBody) throw new Error(`${source}: could not find 'pub enum SecretError'`);
 	const variants = [];
-	const variantRe = /((?:[ \t]*\/\/\/[^\n]*\n)+)[ \t]*#\[error\("((?:[^"\\]|\\.)*)"\)\]\s*(\w+)/g;
+	// `#[error("...")]` as rustfmt writes it: the attribute may be broken
+	// across lines around the string, and the string itself may contain
+	// `\`-newline continuations, so whitespace is allowed around the literal
+	// and an escape may be followed by any character, newline included.
+	const variantRe =
+		/((?:[ \t]*\/\/\/[^\n]*\n)+)[ \t]*#\[error\(\s*"((?:[^"\\]|\\[\s\S])*)"\s*\)\]\s*(\w+)/g;
 	for (const match of enumBody.matchAll(variantRe)) {
 		const doc = match[1]
 			.split('\n')
 			.map((line) => line.replace(/^\s*\/\/\/ ?/, '').trim())
 			.filter(Boolean)
 			.join(' ');
-		variants.push({ name: match[3], doc, message: match[2].replace(/\\"/g, '"') });
+		variants.push({ name: match[3], doc, message: rustStringLiteral(match[2]) });
 	}
 
 	const codeBody = rust.match(/pub fn code\(&self\)[\s\S]*?match self \{([\s\S]*?)\n\s*\}/)?.[1];

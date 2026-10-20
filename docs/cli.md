@@ -14,7 +14,9 @@ sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--passphrase-file FILE
 | `-v` | `SOURCEORRERY_LOG` | Diagnostics on stderr. Never prints values. |
 
 Exit status: `0` success, `1` any error (code in JSON mode), `2` usage error.
-`run` exits with the child's status.
+`run` exits with the child's status, whole: a Windows status above 255
+(such as `3010`) is passed through unchanged, and a Unix child killed by a
+signal exits `128 + signal`, as a shell would.
 
 Running `sourceorrery` with no arguments prints the text logo, a link to
 sourceorrery.ai and a quick start. On a terminal the logo is drawn with
@@ -38,10 +40,10 @@ attempts are audited.
 | `vault list` | Vaults in the home directory. |
 | `vault info` | Metadata and protectors of the selected vault. |
 | `vault protector list` | Installed protectors. |
-| `vault protector add --kind passphrase\|os-keyring [--label L]` | Add another way to unlock (e.g. a passphrase for WSL/Docker/CI). |
+| `vault protector add --kind passphrase\|os-keyring [--label L]` | Add another way to unlock (e.g. a passphrase for WSL/Docker/CI). At most 8 passphrase protectors: unlock tries no more than that, so a ninth is refused rather than installed and never tried. |
 | `vault protector remove ID_OR_LABEL` | Remove a protector. The last one cannot be removed. The OS-keyring entry is deleted after the change is committed, and only if it is provably this vault's. |
 | `vault destroy NAME [--yes] [--keep-os-key]` | Delete the vault file and the OS-keyring entries it provably owns (entries another vault file references are kept and reported). Irreversible. |
-| `vault migrate NAME` | Upgrade a vault written by an older release. Explicit on purpose: older vaults carry no integrity data, so only migrate a file you trust. A file that was already in the current format is refused. |
+| `vault migrate NAME` | Upgrade a vault written by an older release (schema 1 or 2) to the current format. Explicit on purpose: the rows it finds are taken on trust once, so only migrate a file you trust. A file that was already in the current format, or whose audit log was truncated, is refused. |
 
 ## `secret`
 
@@ -90,6 +92,15 @@ Newest first. Operations: `vault_create`, `vault_open`, `vault_migrate`, `secret
 The result is always printed (as JSON with `-o json`); when the chain is not
 intact the command also fails with exit status 1. Verification is read-only,
 but opening the vault to run it writes the usual `vault_open` row.
+
+If rows were removed from the end of the log since the last write, the
+first command that unlocks the vault fails with `crypto` ("audit log
+integrity: rows removed after event N …"): the vault judges every row
+against the newest checkpoint in the log, so a shortened log is not
+consulted. That refusal records the truncation (`audit_verify` /
+`failure`, visible to `audit --verify` from then on) and the next command
+proceeds on the surviving history. Treat it as evidence that the file was
+edited, and compare with a backup.
 
 ## Project manifest: `init`, `check`, `run`
 

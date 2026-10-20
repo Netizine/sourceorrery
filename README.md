@@ -91,11 +91,14 @@ Removing `.env` closes the accidental-exposure routes. It does not stop code
 running with your privileges from calling the same API you can. SourceOrrery
 says so rather than promising otherwise.
 
-Every operation that reads or changes a secret, including metadata reads, is
-recorded in a keyed audit chain; reading the log and verifying it are not.
-Tampering with the file is detected, not prevented: restoring a complete older
-copy of a vault cannot be noticed without a checkpoint kept outside the file,
-so keep the last `audit --verify` output or back the file up.
+Every operation that reads or changes a secret, including metadata reads and
+rejected attempts, is recorded in a keyed audit chain; reading the log and
+verifying it are not. Each change also records the new state of the rows it
+touched in that chain, so putting an older copy of a row back (a re-enabled
+version, an undeleted secret) is refused. Tampering with the file is
+detected, not prevented: restoring a complete older copy of a vault cannot be
+noticed without a checkpoint kept outside the file, so keep the last
+`audit --verify` output or back the file up.
 
 ## Architecture
 

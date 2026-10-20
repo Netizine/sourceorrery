@@ -95,9 +95,13 @@ CREATE TABLE IF NOT EXISTS audit_events (
     detail      TEXT,
     prev_hash   BLOB,
     hash        BLOB,
-    keyed       INTEGER NOT NULL DEFAULT 0
+    keyed       INTEGER NOT NULL DEFAULT 0,
+    state_tag   BLOB,
+    version_tag BLOB
 );
 CREATE INDEX IF NOT EXISTS audit_events_by_secret ON audit_events(secret_name, id DESC);
+CREATE INDEX IF NOT EXISTS audit_checkpoints ON audit_events(secret_name, id)
+    WHERE state_tag IS NOT NULL OR version_tag IS NOT NULL;
 ";
 
 /// Columns added by the schema 1 → 2 migration.
@@ -107,6 +111,15 @@ ALTER TABLE secret_versions ADD COLUMN tag BLOB;
 ALTER TABLE audit_events ADD COLUMN prev_hash BLOB;
 ALTER TABLE audit_events ADD COLUMN hash BLOB;
 ALTER TABLE audit_events ADD COLUMN keyed INTEGER NOT NULL DEFAULT 0;
+";
+
+/// Columns and index added by the schema 2 → 3 migration: the checkpoint
+/// tags that bind row state to the audit chain.
+pub(super) const MIGRATE_V2_TO_V3: &str = "
+ALTER TABLE audit_events ADD COLUMN state_tag BLOB;
+ALTER TABLE audit_events ADD COLUMN version_tag BLOB;
+CREATE INDEX IF NOT EXISTS audit_checkpoints ON audit_events(secret_name, id)
+    WHERE state_tag IS NOT NULL OR version_tag IS NOT NULL;
 ";
 
 pub(super) fn open_connection(path: &Path) -> Result<Connection> {
@@ -147,6 +160,14 @@ pub(super) fn integrity_error(name: &str) -> SecretError {
     SecretError::Crypto(format!("metadata integrity check failed for {name}"))
 }
 
+/// [`integrity_error`] with the reason the row was refused. `reason` must
+/// name rows and events only, never a value.
+pub(super) fn integrity_error_because(name: &str, reason: &str) -> SecretError {
+    SecretError::Crypto(format!(
+        "metadata integrity check failed for {name}: {reason}"
+    ))
+}
+
 pub(super) fn nanos(ts: OffsetDateTime) -> Result<i64> {
     i64::try_from(timestamp::to_unix_nanos(ts))
         .map_err(|_| SecretError::InvalidArgument("timestamp out of range".to_owned()))
@@ -169,9 +190,9 @@ pub(super) fn value_aad(vault_id: &str, name: &str, version: &str) -> String {
 }
 
 /// AAD binding a wrapped vault key to its protector *and* to the on-disk
-/// schema it was wrapped under. A key wrapped under schema 2 cannot be
-/// unwrapped as if the file were schema 1, which is what lets a rolled-back
-/// schema marker be told apart from a genuine legacy vault.
+/// schema it was wrapped under. A key wrapped under one schema cannot be
+/// unwrapped as if the file were an older one, which is what lets a
+/// rolled-back schema marker be told apart from a genuine legacy vault.
 pub(super) fn protector_aad(vault_id: &str, protector_id: &str, schema: u32) -> String {
     format!("sourceorrery/v{schema}/protector/{vault_id}/{protector_id}")
 }

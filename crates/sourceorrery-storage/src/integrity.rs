@@ -15,12 +15,25 @@
 //!   *head* record in `vault_meta` pins the last row written with the key so
 //!   truncating the log is detected too.
 //!
+//! A row tag proves a row was written by the vault at *some* point, not that
+//! it is the row's current state: an older authentic copy of the row, tag
+//! included, would still verify. Schema version 3 therefore makes the audit
+//! chain the record of current state as well. Every event that changes a
+//! `secrets` or `secret_versions` row carries the tag that row has
+//! afterwards (`state_tag`, `version_tag`), or the `Checkpoint::Absent`
+//! marker when the row was removed, and the hash covers both. Before a row
+//! is honoured its stored tag must equal the newest such *checkpoint* for it
+//! in the keyed chain, so replaying an older row, resurrecting a purged one
+//! or removing a version out of band is refused with `crypto`, and the
+//! chain head is checked first so a truncated log cannot present an older
+//! checkpoint as the newest.
+//!
 //! Rows the vault writes **before** it is unlocked (failed `vault_open`
 //! attempts) cannot use the metadata key. They are chained with an all-zero
 //! key and flagged `keyed = 0`; verification reports them as *unkeyed* rather
 //! than broken. Such rows are forgeable by design, but they still take part
 //! in the chain, so inserting or deleting one ahead of a keyed row is
-//! detected.
+//! detected, and they never count as checkpoints.
 //!
 //! ## Canonical encoding
 //!
@@ -42,8 +55,9 @@ pub const METADATA_KEY_LABEL: &str = "sourceorrery/v2/metadata";
 pub(crate) const VERSION_DOMAIN: &str = "sourceorrery/v2/version";
 /// Domain string of a `secrets` tag.
 pub(crate) const SECRET_DOMAIN: &str = "sourceorrery/v2/secret";
-/// Domain string of an `audit_events` chain hash.
-pub(crate) const AUDIT_DOMAIN: &str = "sourceorrery/v2/audit";
+/// Domain string of an `audit_events` chain hash (schema 3: the row's
+/// checkpoint tags are part of the hashed record).
+pub(crate) const AUDIT_DOMAIN: &str = "sourceorrery/v3/audit";
 /// Domain string of the audit chain head record.
 pub(crate) const AUDIT_HEAD_DOMAIN: &str = "sourceorrery/v2/audit-head";
 /// `vault_meta` key holding the audit chain head.
@@ -118,6 +132,13 @@ impl Canonical {
     pub(crate) fn opt_int(self, value: Option<i64>) -> Self {
         match value {
             Some(v) => self.flag(true).int(v),
+            None => self.flag(false),
+        }
+    }
+
+    pub(crate) fn opt_bytes(self, value: Option<&[u8]>) -> Self {
+        match value {
+            Some(v) => self.flag(true).bytes(v),
             None => self.flag(false),
         }
     }
@@ -220,6 +241,52 @@ pub(crate) fn verify_secret_tag(
 }
 
 // ---------------------------------------------------------------------------
+// Checkpoints
+// ---------------------------------------------------------------------------
+
+/// What a keyed audit event records about a row's state afterwards: the
+/// tag the row now carries, or that the row no longer exists. Stored in the
+/// event's `state_tag` (for a `secrets` row) or `version_tag` (for a
+/// `secret_versions` row) column; `NULL` there means the event did not
+/// touch that row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Checkpoint {
+    /// The row was removed (purged, hard-deleted or cascaded away); it must
+    /// not exist.
+    Absent,
+    /// The row exists and carries exactly this tag.
+    Present([u8; MAC_LEN]),
+}
+
+impl Checkpoint {
+    /// The column value: the tag, or the empty blob for [`Checkpoint::Absent`].
+    pub(crate) fn as_blob(&self) -> &[u8] {
+        match self {
+            Self::Absent => &[],
+            Self::Present(tag) => tag,
+        }
+    }
+
+    /// Decode a column value; `None` for a value of neither valid shape.
+    pub(crate) fn from_blob(blob: &[u8]) -> Option<Self> {
+        if blob.is_empty() {
+            return Some(Self::Absent);
+        }
+        <[u8; MAC_LEN]>::try_from(blob).ok().map(Self::Present)
+    }
+
+    /// True when a row with `stored` tag (or no row, for `None`) is exactly
+    /// the state this checkpoint recorded.
+    pub(crate) fn matches(&self, stored: Option<&[u8]>) -> bool {
+        match (self, stored) {
+            (Self::Absent, None) => true,
+            (Self::Present(tag), Some(stored)) => stored == tag,
+            _ => false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Audit chain
 // ---------------------------------------------------------------------------
 
@@ -236,6 +303,11 @@ pub(crate) struct AuditFields<'a> {
     pub outcome: &'a str,
     pub detail: Option<&'a str>,
     pub keyed: bool,
+    /// Checkpoint of the `secrets` row named by `secret_name`, as stored.
+    pub state_tag: Option<&'a [u8]>,
+    /// Checkpoint of the `secret_versions` row named by `secret_name` and
+    /// `version`, as stored.
+    pub version_tag: Option<&'a [u8]>,
 }
 
 impl AuditFields<'_> {
@@ -251,6 +323,8 @@ impl AuditFields<'_> {
             .str(self.outcome)
             .opt_str(self.detail)
             .flag(self.keyed)
+            .opt_bytes(self.state_tag)
+            .opt_bytes(self.version_tag)
             .finish()
     }
 }
@@ -512,6 +586,73 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_blob_round_trip_and_matching() {
+        let tag = [9u8; MAC_LEN];
+        let present = Checkpoint::Present(tag);
+        assert_eq!(Checkpoint::from_blob(present.as_blob()), Some(present));
+        assert_eq!(Checkpoint::from_blob(&[]), Some(Checkpoint::Absent));
+        assert_eq!(Checkpoint::from_blob(&[1u8; 5]), None);
+        assert!(present.matches(Some(&tag)));
+        assert!(!present.matches(Some(&[8u8; MAC_LEN])));
+        assert!(!present.matches(None), "a checkpointed row must exist");
+        assert!(Checkpoint::Absent.matches(None));
+        assert!(
+            !Checkpoint::Absent.matches(Some(&tag)),
+            "a purged row must stay gone"
+        );
+    }
+
+    #[test]
+    fn audit_hash_covers_the_checkpoint_tags() {
+        let k = key(3);
+        let base = AuditFields {
+            vault_id: "vault",
+            id: 7,
+            occurred_on: 100,
+            actor: "user:me",
+            operation: "secret_update",
+            secret_name: Some("db"),
+            version: Some("0123"),
+            outcome: "success",
+            detail: None,
+            keyed: true,
+            state_tag: None,
+            version_tag: Some(&[1u8; MAC_LEN]),
+        };
+        let h = audit_hash(&k, &ZERO_HASH, &base);
+        assert!(verify_audit_hash(&k, &ZERO_HASH, &base, Some(&h)));
+        let other_tag = [2u8; MAC_LEN];
+        for changed in [
+            AuditFields {
+                version_tag: Some(&other_tag),
+                ..base
+            },
+            AuditFields {
+                version_tag: None,
+                ..base
+            },
+            AuditFields {
+                version_tag: Some(&[]),
+                ..base
+            },
+            AuditFields {
+                state_tag: Some(&[]),
+                ..base
+            },
+            AuditFields {
+                state_tag: Some(&[1u8; MAC_LEN]),
+                version_tag: None,
+                ..base
+            },
+        ] {
+            assert!(
+                !verify_audit_hash(&k, &ZERO_HASH, &changed, Some(&h)),
+                "hash must not verify after changing {changed:?}"
+            );
+        }
+    }
+
+    #[test]
     fn audit_chain_links_and_head() {
         let k = key(3);
         let first = AuditFields {
@@ -525,6 +666,8 @@ mod tests {
             outcome: "success",
             detail: Some("encrypted-sqlite"),
             keyed: true,
+            state_tag: None,
+            version_tag: None,
         };
         let h1 = audit_hash(&k, &ZERO_HASH, &first);
         assert!(verify_audit_hash(&k, &ZERO_HASH, &first, Some(&h1)));

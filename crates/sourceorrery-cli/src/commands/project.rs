@@ -204,7 +204,11 @@ pub fn check(ctx: &Ctx, args: &CheckArgs) -> anyhow::Result<()> {
 
 pub fn run(ctx: &Ctx, args: &RunArgs) -> ExitCode {
     match run_inner(ctx, args) {
-        Ok(code) => code,
+        // The child's status is passed on whole. `ExitCode` only carries a
+        // byte, which would turn a Windows status such as 3010 into 1, so
+        // the process ends here; every plaintext buffer was already dropped
+        // inside `run_inner`.
+        Ok(status) => std::process::exit(status),
         Err(err) => {
             let code = err
                 .downcast_ref::<SecretError>()
@@ -215,7 +219,23 @@ pub fn run(ctx: &Ctx, args: &RunArgs) -> ExitCode {
     }
 }
 
-fn run_inner(ctx: &Ctx, args: &RunArgs) -> anyhow::Result<ExitCode> {
+/// The exit status to report for a finished child: its exit code, or the
+/// shell convention `128 + signal` when a Unix child was killed by a signal.
+fn child_status(status: std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return 128 + signal;
+        }
+    }
+    1
+}
+
+fn run_inner(ctx: &Ctx, args: &RunArgs) -> anyhow::Result<i32> {
     let (program, program_args) = args
         .command
         .split_first()
@@ -280,11 +300,10 @@ fn run_inner(ctx: &Ctx, args: &RunArgs) -> anyhow::Result<ExitCode> {
     let status = command
         .status()
         .with_context(|| format!("failed to start {}", program.to_string_lossy()))?;
+    // Both hold copies of the values: release them before the process exits
+    // without running destructors.
+    drop(command);
     drop(env);
 
-    let code = status
-        .code()
-        .and_then(|c| u8::try_from(c).ok())
-        .unwrap_or(1);
-    Ok(ExitCode::from(code))
+    Ok(child_status(status))
 }

@@ -1,25 +1,33 @@
-//! The explicit schema 1 → 2 migration: adds the integrity columns, tags
-//! every row, chains the audit log, authenticates the settings and re-wraps
-//! every key it holds under the new format, in one transaction.
+//! The explicit forward migration of an older vault file, in one
+//! transaction: schema 1 gains the integrity columns and tags on every row;
+//! schema 2 gains the checkpoint columns; the audit log is chained under the
+//! current encoding; every surviving row is checkpointed; the settings are
+//! authenticated; every key the migration holds is re-wrapped under the new
+//! format.
 
 use rusqlite::{Connection, params};
 use sourceorrery_core::audit::{AuditOperation, AuditOutcome};
-use sourceorrery_core::{Principal, Result};
+use sourceorrery_core::{Principal, Result, SecretError};
 use sourceorrery_crypto::{MAC_LEN, SymmetricKey};
 
 use super::SCHEMA_VERSION;
-use super::audit::{AuditWriter, read_chain, write_head};
+use super::audit::{AuditWriter, Checkpoints, Entry, head_problem, read_chain, write_head};
 use super::protectors::{Unlocked, read_protectors, rewrap_protector, try_unwrap};
 use super::rows::{SecretRow, query_raw_versions};
-use super::schema::{MIGRATE_V1_TO_V2, Meta, begin_write, db, write_settings_tag};
-use crate::integrity;
+use super::schema::{
+    MIGRATE_V1_TO_V2, MIGRATE_V2_TO_V3, Meta, begin_write, db, write_settings_tag,
+};
+use crate::integrity::{self, Checkpoint};
 use crate::keystore;
 use crate::protector::ProtectorKind;
 
-/// Bring a schema 1 vault to schema 2 in one transaction: add the integrity
-/// columns, tag every secret and version row, chain every audit row with the
-/// metadata key, record the migration and bump `schema_version`.
-pub(super) fn migrate_v1_to_v2(
+/// Bring a vault at `meta.schema` to [`SCHEMA_VERSION`] in one transaction.
+///
+/// A schema 2 file whose audit chain head is stale is refused: migrating it
+/// would re-chain the shortened log and launder the truncation. Recording
+/// the refusal re-anchors the head, so a second `vault migrate` proceeds on
+/// the surviving history, exactly as a refused unlock does.
+pub(super) fn migrate(
     conn: &mut Connection,
     meta: &mut Meta,
     dek: &SymmetricKey,
@@ -27,10 +35,40 @@ pub(super) fn migrate_v1_to_v2(
     actor: &Principal,
     unlocked: &Unlocked,
 ) -> Result<()> {
+    let from = meta.schema;
     let tx = begin_write(conn)?;
-    tx.execute_batch(MIGRATE_V1_TO_V2).map_err(db)?;
-    migrate_secret_tags(&tx, meta, key)?;
-    migrate_version_tags(&tx, meta, key)?;
+    if from >= 2
+        && let Some(problem) = head_problem(&tx, key, &meta.id, false)?
+    {
+        AuditWriter {
+            meta,
+            key: Some(key),
+            actor,
+            allow_empty_chain: false,
+        }
+        .record(
+            &tx,
+            AuditOperation::VaultMigrate,
+            None,
+            None,
+            AuditOutcome::Failure,
+            Some("audit log truncated"),
+        )?;
+        tx.commit().map_err(db)?;
+        return Err(SecretError::Crypto(super::audit::truncated_message(
+            &problem,
+        )));
+    }
+
+    if from < 2 {
+        tx.execute_batch(MIGRATE_V1_TO_V2).map_err(db)?;
+        migrate_secret_tags(&tx, meta, key)?;
+        migrate_version_tags(&tx, meta, key)?;
+    }
+    if from < 3 {
+        tx.execute_batch(MIGRATE_V2_TO_V3).map_err(db)?;
+    }
+    // Every historical row is re-chained under the current encoding, keyed.
     migrate_audit_chain(&tx, meta, key)?;
     tx.execute(
         "UPDATE vault_meta SET value = ?1 WHERE key = 'schema_version'",
@@ -38,6 +76,12 @@ pub(super) fn migrate_v1_to_v2(
     )
     .map_err(db)?;
     meta.schema = SCHEMA_VERSION;
+
+    // From here on the chain records row state. Every row the file holds is
+    // checkpointed as it is now: the migration is the one moment the file's
+    // contents are taken on trust (see the threat model).
+    write_checkpoints(&tx, meta, key, actor)?;
+
     // Bind every key we hold to the new format: the protector that unlocked
     // us, and any OS-keyring protector whose key the store gives back. Other
     // passphrase protectors are re-wrapped the next time they unlock.
@@ -68,7 +112,7 @@ pub(super) fn migrate_v1_to_v2(
         None,
         None,
         AuditOutcome::Success,
-        Some("schema 1 -> 2"),
+        Some(&format!("schema {from} -> {SCHEMA_VERSION}")),
     )?;
     tx.commit().map_err(db)
 }
@@ -158,6 +202,80 @@ pub(super) fn migrate_audit_chain(
     }
     if let Some((id, hash)) = head {
         write_head(conn, key, &meta.id, id, &hash)?;
+    }
+    Ok(())
+}
+
+/// Record one `vault_migrate` checkpoint event per `secrets` row and per
+/// `secret_versions` row, carrying the tag the row has now. A row without a
+/// tag (already refused by schema 2) gets no checkpoint and stays refused.
+fn write_checkpoints(
+    conn: &Connection,
+    meta: &Meta,
+    key: &SymmetricKey,
+    actor: &Principal,
+) -> Result<()> {
+    let writer = AuditWriter {
+        meta,
+        key: Some(key),
+        actor,
+        allow_empty_chain: true,
+    };
+    let secrets: Vec<(String, Option<Vec<u8>>)> = {
+        let mut stmt = conn
+            .prepare("SELECT name, tag FROM secrets ORDER BY name")
+            .map_err(db)?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(db)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(db)?
+    };
+    for (name, tag) in &secrets {
+        let Some(tag) = tag.as_deref().and_then(Checkpoint::from_blob) else {
+            continue;
+        };
+        writer.record_entry(
+            conn,
+            &Entry {
+                operation: AuditOperation::VaultMigrate,
+                secret_name: Some(name),
+                version: None,
+                outcome: AuditOutcome::Success,
+                detail: Some("checkpoint"),
+                checkpoints: Checkpoints {
+                    state: Some(tag),
+                    version: None,
+                },
+            },
+        )?;
+    }
+    let versions: Vec<(String, String, Option<Vec<u8>>)> = {
+        let mut stmt = conn
+            .prepare("SELECT name, version, tag FROM secret_versions ORDER BY name, seq")
+            .map_err(db)?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(db)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(db)?
+    };
+    for (name, version, tag) in &versions {
+        let Some(tag) = tag.as_deref().and_then(Checkpoint::from_blob) else {
+            continue;
+        };
+        writer.record_entry(
+            conn,
+            &Entry {
+                operation: AuditOperation::VaultMigrate,
+                secret_name: Some(name),
+                version: Some(version),
+                outcome: AuditOutcome::Success,
+                detail: Some("checkpoint"),
+                checkpoints: Checkpoints {
+                    state: None,
+                    version: Some(tag),
+                },
+            },
+        )?;
     }
     Ok(())
 }

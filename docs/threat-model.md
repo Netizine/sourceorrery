@@ -19,7 +19,8 @@ documentation and marketing must never blur them.
 * Integrity of ciphertext-to-record binding (which value belongs to which
   secret/version).
 * Integrity of the audit log and policy state (enabled flags, time windows,
-  deletion state). Authenticated since vault schema version 2.
+  deletion state). Authenticated since vault schema version 2 and bound to
+  the audit chain since version 3.
 
 Secret *names*, tags, version ids, timestamps and audit metadata are **not**
 treated as secrets. Users are told not to put sensitive information in them.
@@ -50,7 +51,12 @@ treated as secrets. Users are told not to put sensitive information in them.
 | Soft delete + recovery | Default 90-day retention; explicit privileged purge |
 | Audit without values, including failed unlocks | `audit_events` table; `vault_open` denied/failure rows |
 | Metadata integrity | HMAC-SHA256 tag on every `secrets` / `secret_versions` row under an HKDF sub-key of the DEK; verified on every read, written on every insert/update; forged deletion state is neither honoured nor purged (`storage::integrity`, `storage::sqlite`) |
-| Audit log integrity | Keyed hash chain over `audit_events` plus a keyed head record; truncation detected on every keyed write and recorded as `audit_verify` / `failure`; `sourceorrery audit --verify` reports breaks, truncations and unkeyed rows (`storage::integrity`, `storage::sqlite`) |
+| Row state bound to the audit chain | Every change records the changed row's new tag (or its removal) as a checkpoint in its own keyed audit event; a row is honoured only when its tag equals the newest checkpoint, so an authentic *older* copy of a row (re-enabled, undeleted, resurrected after purge) or a version removed out of band is refused with `crypto` (`storage::sqlite::rows`, [vault-format.md](vault-format.md#checkpoints)) |
+| Audit log integrity | Keyed hash chain over `audit_events` plus a keyed head record; a stale head (rows removed from the end, head missing or invalid) refuses the unlock or operation that finds it and is recorded as `audit_verify` / `failure`; `sourceorrery audit --verify` reports breaks, truncations and unkeyed rows (`storage::integrity`, `storage::sqlite`) |
+| Every rejected operation is audited | Invalid names, rejected time windows and tags, empty updates and refused protector changes go through the same failure path as any other error: the operation body is rolled back and one `failure` row is committed (an invalid name is not recorded, since it is arbitrary input) |
+| Exclusive vault creation | The vault file is created with `O_EXCL` / `CREATE_NEW`; concurrent creators get `vault_exists` and never remove the winner's file |
+| Accepted credentials can unlock | At most 8 passphrase protectors can be installed, matching what unlock will try |
+| KDF residue | Argon2's working memory and output buffer are caller-owned and zeroised when the derivation ends |
 | Secure deletion on purge | SQLite `secure_delete = ON` |
 | File permissions | `0700` dir / `0600` file on Unix; profile ACLs on Windows |
 | Memory hygiene | `zeroize` on `SecretBytes`, `SymmetricKey`, decrypted buffers |
@@ -78,17 +84,28 @@ treated as secrets. Users are told not to put sensitive information in them.
 5. **Integrity, not availability.** A tamperer can still destroy data
    (delete rows, corrupt the file) and can forge or remove the *unkeyed*
    audit rows written by failed unlock attempts. Tampering is detected and
-   recorded, not prevented or repaired; keep backups. The chain is only as
-   trustworthy as the key: anyone who can unlock the vault can rewrite its
-   history, which is the same-user boundary above.
-6. **Complete-snapshot rollback.** Restoring an older copy of the entire
-   vault file is a consistent, correctly authenticated state; nothing inside
-   the file can show that newer history existed. Detecting it needs a
-   checkpoint kept outside the file: the id and hash reported by
-   `audit --verify`, or a backup to compare with.
-7. **Legacy import is trusted once.** A genuine schema 1 vault has no
-   integrity data, so `vault migrate` takes its contents at face value, by
-   explicit command, exactly once. A passphrase protector that was not used
+   recorded, not prevented or repaired; keep backups. A row or checkpoint
+   that no longer verifies stays refused until the file is restored from a
+   backup; there is no repair command. The chain is only as trustworthy as
+   the key: anyone who can unlock the vault can rewrite its history, which
+   is the same-user boundary above.
+6. **Snapshot rollback.** Restoring an older copy of the entire vault file
+   is a consistent, correctly authenticated state; nothing inside the file
+   can show that newer history existed. Detecting it needs a checkpoint kept
+   outside the file: the id and hash reported by `audit --verify`, or a
+   backup to compare with. A *partial* rollback — putting back an older copy
+   of a row **and** removing the audit rows that recorded the later change —
+   is the same attack in a smaller form, and the file alone cannot tell the
+   surviving history from the truth either. What it can do is refuse to be
+   quiet about it: the chain head no longer matches, so the next unlock is
+   refused with `crypto` and the truncation is recorded in the chain for
+   good; after that the surviving history is what the vault goes by. Replay
+   of a row *without* touching the log is refused outright (schema 3).
+7. **Migration is trusted once.** `vault migrate` takes the rows it finds at
+   face value, by explicit command, exactly once: a schema 1 vault has no
+   integrity data at all, and a schema 2 vault's rows are authenticated but
+   not yet bound to the chain, so a row replayed into either file before the
+   migration becomes its checkpoint. A passphrase protector that was not used
    for the migration stays bound to the old format until it next unlocks the
    vault, and until then a rollback attack through that passphrase remains
    possible on that file.

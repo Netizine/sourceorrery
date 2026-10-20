@@ -6,6 +6,41 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security — fixes from the second 20 October 2026 review (vault schema 3)
+
+* **Row state is bound to the audit chain.** A row's HMAC tag proved it was
+  written by the vault, not that it was current, so an older authentic copy
+  of a version row (from before a disable or a window change) or of a
+  secret row (from before a soft delete or purge) could be put back and
+  would verify. Every change now records the changed row's new tag, or its
+  removal, as a *checkpoint* in its own audit event (`state_tag`,
+  `version_tag`, covered by the chain hash), and a row is honoured only when
+  its tag equals the newest checkpoint for it. Rows with no checkpoint,
+  resurrected rows, and rows or versions removed out of band are refused
+  with `crypto`. Because the newest checkpoint is what counts, a stale chain
+  head now **refuses** the unlock or operation that finds it (once; the
+  refusal is recorded and re-anchors the head) instead of being noted and
+  absorbed. This is on-disk **schema 3**; `vault migrate` brings schema 1
+  and 2 files forward and checkpoints every row it finds. The audit-row
+  canonical domain is now `sourceorrery/v3/audit`.
+* **Concurrent `vault create` can no longer delete the winner's file.** The
+  path is reserved with exclusive creation; a losing creator gets
+  `vault_exists` and never touches the file.
+* **At most 8 passphrase protectors can be installed**, matching the number
+  unlock tries, so an accepted credential always works.
+* **Every rejected operation is audited**: invalid names (not recorded),
+  rejected time windows and tags, empty updates, and refused protector
+  additions and removals all leave one `failure` row with the operation
+  rolled back.
+* `run` passes the child's exit status through whole (Windows statuses above
+  255 such as `3010`; `128 + signal` for a signalled Unix child).
+* The C ABI initialises output slots through the raw pointer before taking a
+  reference, so an uninitialised `so_bytes out;` from C is sound.
+* Argon2 runs in caller-owned, zeroised working memory with a zeroised output
+  buffer, so the derived key no longer survives in freed memory.
+* The docs site's error-code reference tolerates rustfmt's multiline
+  `#[error(...)]` attributes; `npm run build` works again.
+
 ### Changed — storage module layout
 
 * `sourceorrery-storage`'s single `sqlite.rs` is now the `sqlite/` module:

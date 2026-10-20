@@ -428,3 +428,33 @@ fn manifest_errors_do_not_echo_rejected_values() {
         );
     }
 }
+
+/// `run` reports the child's status whole: a Windows code above 255 (3010,
+/// "reboot required") must not collapse to 1, and a Unix child killed by a
+/// signal reports the shell's `128 + signal`.
+#[test]
+fn run_passes_the_child_exit_status_through_whole() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.set("development", "database-password", "pw");
+    let init = env.run(&["init", "--project-name", "demo"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let small: &[&str] = if cfg!(windows) {
+        &["run", "--", "cmd", "/C", "exit 7"]
+    } else {
+        &["run", "--", "sh", "-c", "exit 7"]
+    };
+    let out = env.run(small);
+    assert_eq!(out.status.code(), Some(7), "{}", stderr(&out));
+
+    if cfg!(windows) {
+        let out = env.run(&["run", "--", "cmd", "/C", "exit 3010"]);
+        assert_eq!(out.status.code(), Some(3010), "{}", stderr(&out));
+    } else {
+        let out = env.run(&["run", "--", "sh", "-c", "exit 200"]);
+        assert_eq!(out.status.code(), Some(200), "{}", stderr(&out));
+        let out = env.run(&["run", "--", "sh", "-c", "kill -9 $$"]);
+        assert_eq!(out.status.code(), Some(137), "{}", stderr(&out));
+    }
+}
