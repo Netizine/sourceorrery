@@ -121,8 +121,21 @@ type VaultDescriptor struct {
 // Reader is a read-only handle on one vault. It may be used from several
 // goroutines at once. Close zeroises the vault key held in memory.
 type Reader struct {
-	handle *C.so_reader
+	handle *readerHandle
 	vault  string
+}
+
+// readerHandle is a separate allocation so that a GC cleanup can own it:
+// Close clears ptr, and the cleanup then has nothing left to free.
+type readerHandle struct {
+	ptr *C.so_reader
+}
+
+func (h *readerHandle) close() {
+	if h.ptr != nil {
+		C.so_reader_close(h.ptr)
+		h.ptr = nil
+	}
 }
 
 // Open opens vault with the given options (nil: the CLI's defaults). The
@@ -143,8 +156,8 @@ func Open(vault string, opts *OpenOptions) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	reader := &Reader{handle: handle, vault: vault}
-	runtime.AddCleanup(reader, func(h *C.so_reader) { C.so_reader_close(h) }, handle)
+	reader := &Reader{handle: &readerHandle{ptr: handle}, vault: vault}
+	runtime.AddCleanup(reader, (*readerHandle).close, reader.handle)
 	return reader, nil
 }
 
@@ -174,6 +187,7 @@ func (r *Reader) get(name, version string) (*Secret, error) {
 			bytesPtr([]byte(version)), C.size_t(len(version)),
 			&props, &value)
 	})
+	runtime.KeepAlive(r)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +209,7 @@ func (r *Reader) Properties(name, version string) (SecretProperties, error) {
 			bytesPtr([]byte(version)), C.size_t(len(version)),
 			&props)
 	})
+	runtime.KeepAlive(r)
 	if err != nil {
 		return properties, err
 	}
@@ -215,6 +230,7 @@ func (r *Reader) Resolve(reference string) (*Secret, error) {
 			bytesPtr([]byte(reference)), C.size_t(len(reference)),
 			&props, &value)
 	})
+	runtime.KeepAlive(r)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +246,7 @@ func (r *Reader) Descriptor() (VaultDescriptor, error) {
 	}
 	var out C.so_bytes
 	err = call(func() C.so_status { return C.so_reader_descriptor(handle, &out) })
+	runtime.KeepAlive(r)
 	if err != nil {
 		return descriptor, err
 	}
@@ -240,34 +257,36 @@ func (r *Reader) Descriptor() (VaultDescriptor, error) {
 // Close releases the vault. Idempotent. The reader must not be in use by
 // another goroutine at the time of the call.
 func (r *Reader) Close() error {
-	if r.handle != nil {
-		C.so_reader_close(r.handle)
-		r.handle = nil
-	}
+	r.handle.close()
 	return nil
 }
 
 // Closed reports whether Close has run.
-func (r *Reader) Closed() bool { return r.handle == nil }
+func (r *Reader) Closed() bool { return r.handle.ptr == nil }
 
 func (r *Reader) require() (*C.so_reader, error) {
-	if r.handle == nil {
+	if r.handle.ptr == nil {
 		return nil, &Error{Code: "invalid_argument", Message: "reader is closed"}
 	}
-	return r.handle, nil
+	return r.handle.ptr, nil
 }
 
 // SecretValue holds a value in native memory until Close zeroises it.
 // Bytes and Text return copies the application owns. String and
 // MarshalJSON print [REDACTED].
 type SecretValue struct {
-	bytes C.so_bytes
+	// A separate allocation owned by the GC cleanup as well: so_bytes_free
+	// resets it to the empty buffer, so a Close followed by the cleanup (or
+	// the reverse) frees nothing twice.
+	bytes *C.so_bytes
 }
 
 func newValue(bytes *C.so_bytes) *SecretValue {
-	value := &SecretValue{bytes: *bytes}
+	owned := new(C.so_bytes)
+	*owned = *bytes
 	*bytes = C.so_bytes{}
-	runtime.AddCleanup(value, func(b *C.so_bytes) { C.so_bytes_free(b) }, &value.bytes)
+	value := &SecretValue{bytes: owned}
+	runtime.AddCleanup(value, func(b *C.so_bytes) { C.so_bytes_free(b) }, owned)
 	return value
 }
 
@@ -276,7 +295,9 @@ func (v *SecretValue) Bytes() []byte {
 	if v.bytes.ptr == nil {
 		return nil
 	}
-	return C.GoBytes(unsafe.Pointer(v.bytes.ptr), C.int(v.bytes.len))
+	copy := C.GoBytes(unsafe.Pointer(v.bytes.ptr), C.int(v.bytes.len))
+	runtime.KeepAlive(v)
+	return copy
 }
 
 // Text returns the value decoded as UTF-8 (a copy).
@@ -289,7 +310,10 @@ func (v *SecretValue) Len() int { return int(v.bytes.len) }
 func (v *SecretValue) Closed() bool { return v.bytes.ptr == nil }
 
 // Close zeroises and frees the native bytes. Idempotent.
-func (v *SecretValue) Close() { C.so_bytes_free(&v.bytes) }
+func (v *SecretValue) Close() {
+	C.so_bytes_free(v.bytes)
+	runtime.KeepAlive(v)
+}
 
 // String returns [REDACTED].
 func (v *SecretValue) String() string { return "[REDACTED]" }
