@@ -7,6 +7,7 @@
 //   - takes the title from the first H1 and removes that H1 from the body,
 //   - derives a description from the first paragraph (or a configured one),
 //   - rewrites relative links between docs to site URLs,
+//   - turns `<!-- tabs -->` blocks into Starlight <Tabs> (see convertTabs),
 //   - adds an edit link that points at the source file in docs/, not here.
 //
 // It also generates two pages from other sources of truth:
@@ -53,7 +54,7 @@ const PAGES = {
 	'docs/roadmap.md': {
 		dest: 'roadmap.md',
 		description:
-			'Milestones from the local CLI shipped today to language bindings, the authenticated local broker, enterprise providers and community SDKs.',
+			'Milestones from the local CLI and read-only SDKs shipped in 0.1.0 to the authenticated local broker, enterprise providers and community SDKs.',
 	},
 	'docs/release.md': {
 		dest: 'reference/release.md',
@@ -65,15 +66,51 @@ const PAGES = {
 		description:
 			'The read-only client for ten languages: what every SDK does, how it unlocks a vault, the typed errors with hints, and how values are guarded.',
 	},
-	'docs/sdks/python.md': { dest: 'sdks/python.md' },
-	'docs/sdks/javascript.md': { dest: 'sdks/javascript.md' },
-	'docs/sdks/rust.md': { dest: 'sdks/rust.md' },
-	'docs/sdks/java.md': { dest: 'sdks/java.md' },
-	'docs/sdks/dotnet.md': { dest: 'sdks/dotnet.md' },
-	'docs/sdks/go.md': { dest: 'sdks/go.md' },
-	'docs/sdks/c.md': { dest: 'sdks/c.md' },
-	'docs/sdks/cpp.md': { dest: 'sdks/cpp.md' },
-	'docs/sdks/php.md': { dest: 'sdks/php.md' },
+	'docs/sdks/python.md': {
+		dest: 'sdks/python.md',
+		description:
+			'The read-only Python SDK: install the 0.1.0 wheel from the release, open a vault, get a secret, handle typed errors with hints, load a project.',
+	},
+	'docs/sdks/javascript.md': {
+		dest: 'sdks/javascript.md',
+		description:
+			'The read-only JavaScript and TypeScript SDK: install 0.1.0, open a vault, get a secret, handle typed errors with hints, load a project.',
+	},
+	'docs/sdks/rust.md': {
+		dest: 'sdks/rust.md',
+		description:
+			'The read-only Rust client crate every SDK is built on: install 0.1.0 from the tag, open a vault, get a secret, handle errors by kind, load a project.',
+	},
+	'docs/sdks/java.md': {
+		dest: 'sdks/java.md',
+		description:
+			'The read-only Java SDK (Foreign Function and Memory API): install the 0.1.0 jar from the release, open a vault, get a secret, handle typed exceptions, load a project.',
+	},
+	'docs/sdks/dotnet.md': {
+		dest: 'sdks/dotnet.md',
+		description:
+			'The read-only .NET SDK: install the 0.1.0 package from the release, open a vault, get a secret, handle typed exceptions, load a project.',
+	},
+	'docs/sdks/go.md': {
+		dest: 'sdks/go.md',
+		description:
+			'The read-only Go SDK (cgo over the C ABI): install 0.1.0 and the native library from the release, open a vault, get a secret, match errors by sentinel, load a project.',
+	},
+	'docs/sdks/c.md': {
+		dest: 'sdks/c.md',
+		description:
+			'The read-only C ABI: install the 0.1.0 archive from the release, open a vault, get a secret, read the per-thread error state, load a project.',
+	},
+	'docs/sdks/cpp.md': {
+		dest: 'sdks/cpp.md',
+		description:
+			'The header-only C++17 wrapper: install the 0.1.0 archive from the release, open a vault, get a secret, catch typed errors, load a project.',
+	},
+	'docs/sdks/php.md': {
+		dest: 'sdks/php.md',
+		description:
+			'The read-only PHP SDK (FFI): install the native library from the 0.1.0 release and the package from the tag, open a vault, get a secret, handle typed exceptions, load a project.',
+	},
 };
 
 /** Directories whose links map to a section of the site. */
@@ -100,9 +137,9 @@ async function main() {
 	const written = [];
 	const adrs = [];
 	for (const [source, page] of Object.entries(PAGES)) {
-		const result = await syncPage(source, page);
-		written.push(page.dest);
-		if (page.adr) adrs.push(result);
+		const { dest, adr } = await syncPage(source, page);
+		written.push(dest);
+		if (adr) adrs.push(adr);
 	}
 
 	written.push(await writeDecisionsIndex(adrs));
@@ -144,7 +181,9 @@ async function syncPage(source, page) {
 	const body = raw.slice(h1.index + h1[0].length).replace(/^\n+/, '');
 
 	const description = page.description ?? deriveDescription(body, page);
-	const rewritten = rewriteLinks(body, source);
+	const { markdown: rewritten, tabs } = convertTabs(rewriteLinks(body, source), source);
+	// A page with platform tabs needs MDX for the <Tabs> component; the rest stay Markdown.
+	const dest = tabs ? page.dest.replace(/\.md$/, '.mdx') : page.dest;
 
 	const frontmatter = {
 		title,
@@ -163,20 +202,75 @@ async function syncPage(source, page) {
 		adr = { number, title, status, date, href: destToHref(page.dest) };
 	}
 
+	const note = `Generated from ${source} by site/scripts/sync-docs.mjs. Edit the source file, not this copy.`;
 	const output = [
 		'---',
 		yaml(frontmatter),
 		'---',
-		`<!-- Generated from ${source} by site/scripts/sync-docs.mjs. Edit the source file, not this copy. -->`,
+		tabs ? `{/* ${note} */}` : `<!-- ${note} -->`,
 		'',
+		...(tabs ? ["import { Tabs, TabItem } from '@astrojs/starlight/components';", ''] : []),
 		rewritten.trimEnd(),
 		'',
 	].join('\n');
 
-	const destination = path.join(outDir, page.dest);
+	const destination = path.join(outDir, dest);
 	await mkdir(path.dirname(destination), { recursive: true });
 	await writeFile(destination, output);
-	return adr;
+	return { dest, adr };
+}
+
+/**
+ * Platform tabs. In docs/ a block such as
+ *
+ *     <!-- tabs: os -->
+ *     #### Windows
+ *     ...
+ *     #### macOS
+ *     ...
+ *     <!-- /tabs -->
+ *
+ * reads as ordinary headings on GitHub. On the site each heading becomes a
+ * <TabItem> and the block a <Tabs>; the optional key after the colon is the
+ * Starlight syncKey, so the platform chosen on one page is selected on every
+ * page. The heading level is whatever the first heading in the block uses.
+ * Fenced code inside a tab is left alone.
+ */
+const TABS_BLOCK = /^<!-- tabs(?::\s*([\w-]+))? -->[ \t]*\n([\s\S]*?)^<!-- \/tabs -->[ \t]*\n?/gm;
+
+function convertTabs(markdown, source) {
+	let tabs = false;
+	const converted = markdown.replace(TABS_BLOCK, (match, syncKey, inner) => {
+		tabs = true;
+		const items = [];
+		let fence = null;
+		let level = null;
+		for (const line of inner.split('\n')) {
+			const fenceMatch = line.match(/^(`{3,}|~{3,})/);
+			if (fenceMatch) {
+				if (!fence) fence = fenceMatch[1];
+				else if (line.startsWith(fence)) fence = null;
+			}
+			const heading = fence ? null : line.match(/^(#{2,6}) (.+?)\s*$/);
+			if (heading && (level === null || heading[1].length === level)) {
+				level = heading[1].length;
+				items.push({ label: plainText(heading[2]), lines: [] });
+				continue;
+			}
+			if (items.length === 0) {
+				if (line.trim()) throw new Error(`${source}: text before the first heading of a tabs block`);
+				continue;
+			}
+			items.at(-1).lines.push(line);
+		}
+		if (items.length === 0) throw new Error(`${source}: a tabs block needs a heading per tab`);
+		const open = syncKey ? `<Tabs syncKey=${JSON.stringify(syncKey)}>` : '<Tabs>';
+		const body = items.map(
+			({ label, lines }) => `<TabItem label=${JSON.stringify(label)}>\n\n${lines.join('\n').trim()}\n\n</TabItem>`
+		);
+		return `${open}\n${body.join('\n')}\n</Tabs>\n`;
+	});
+	return { markdown: converted, tabs };
 }
 
 /** Rewrite relative Markdown links so they resolve on the site. Fenced code is left alone. */
@@ -275,7 +369,7 @@ async function writeDecisionsIndex(adrs) {
 		yaml({
 			title: 'Architecture decision records',
 			description:
-				'The decisions made before and during milestone 1, each with its context, the decision itself and its consequences.',
+				'The decisions made so far, each with its context, the decision itself and its consequences.',
 			editUrl: `${BLOB_URL}${ADR_SOURCE_DIR}`,
 			sidebar: { label: 'Overview', order: 0 },
 		}),
@@ -374,7 +468,7 @@ async function writeErrorCodes() {
 		'- The CLI exits with status `1` and, in `--output json` mode, prints',
 		'  `{"error":{"code":"…","message":"…"}}` on stderr.',
 		'- Audit rows record the code in their `detail` column, never a value.',
-		'- SDKs (milestone 2) map codes to idiomatic exceptions.',
+		'- SDKs map codes to typed errors, each carrying a hint that says what to do.',
 		'',
 		'Messages carry names, versions and timestamps only. No error ever contains',
 		'a secret value.',

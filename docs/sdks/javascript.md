@@ -1,14 +1,69 @@
 # JavaScript and TypeScript
 
+## Install
+
+### From the release
+
+The npm packages are on the
+[v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+as tarballs: `sourceorrery-sdk-0.1.0.tgz` is `@sourceorrery/sdk`, and
+`sourceorrery-sdk-<platform>-0.1.0.tgz` (one each for `win32-x64-msvc`,
+`win32-arm64-msvc`, `darwin-x64`, `darwin-arm64`, `linux-x64-gnu` and
+`linux-arm64-gnu`) carries the native addon for that platform.
+
+**The 0.1.0 main tarball cannot be used as published.** It is missing the
+generated loader (`index.js`) that `@sourceorrery/sdk` requires at load time,
+because the release job packed the package without generating it; the next
+release fixes that. Until then, pack the main package from the tagged source
+(Rust 1.88+ and a C compiler required) and install the platform tarball from
+the release next to it:
+
+<!-- tabs: os -->
+
+#### Windows
+
+```powershell
+git clone --branch v0.1.0 https://github.com/Netizine/sourceorrery
+cd sourceorrery\bindings\node
+npm ci; npm run build; npm pack        # writes sourceorrery-sdk-0.1.0.tgz, loader included
+
+cd <your project>
+npm install <path to>\sourceorrery-sdk-0.1.0.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-sdk-win32-x64-msvc-0.1.0.tgz   # win32-arm64-msvc on Arm
+```
+
+#### macOS
+
+```bash
+git clone --branch v0.1.0 https://github.com/Netizine/sourceorrery
+(cd sourceorrery/bindings/node && npm ci && npm run build && npm pack)   # writes sourceorrery-sdk-0.1.0.tgz, loader included
+
+cd <your project>
+npm install <path to>/sourceorrery-sdk-0.1.0.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-sdk-darwin-arm64-0.1.0.tgz   # darwin-x64 on Intel
+```
+
+#### Linux
+
+```bash
+git clone --branch v0.1.0 https://github.com/Netizine/sourceorrery
+(cd sourceorrery/bindings/node && npm ci && npm run build && npm pack)   # writes sourceorrery-sdk-0.1.0.tgz, loader included
+
+cd <your project>
+npm install <path to>/sourceorrery-sdk-0.1.0.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-sdk-linux-x64-gnu-0.1.0.tgz   # linux-arm64-gnu on arm64
+```
+
+<!-- /tabs -->
+
+### From npm
+
 ```bash
 npm install @sourceorrery/sdk
 ```
 
+This works once the packages are published on npm; 0.1.0 is not there yet.
+The main package then pulls in the platform package as an optional
+dependency and nothing is compiled on install.
+
 A napi-rs native addon for Node.js 20+ with TypeScript types included.
-The main package pulls in one of `@sourceorrery/sdk-win32-x64-msvc`,
-`-win32-arm64-msvc`, `-darwin-x64`, `-darwin-arm64`, `-linux-x64-gnu` or
-`-linux-arm64-gnu` as an optional dependency; nothing is compiled on
-install.
 
 ## Get a secret
 

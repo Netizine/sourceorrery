@@ -1,11 +1,59 @@
 # Python
 
+## Install
+
+### From the release
+
+[v0.1.0](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+ships abi3 wheels for Python 3.11+ on Windows, macOS and Linux (glibc), x64
+and arm64, built with PyO3 and maturin, with no runtime dependencies. Install
+the wheel for your platform straight from the release:
+
+<!-- tabs: os -->
+
+#### Windows
+
+```bash
+# x64
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-0.1.0-cp311-abi3-win_amd64.whl
+# Arm64
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-0.1.0-cp311-abi3-win_arm64.whl
+```
+
+#### macOS
+
+```bash
+# Apple silicon
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-0.1.0-cp311-abi3-macosx_11_0_arm64.whl
+# Intel
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-0.1.0-cp311-abi3-macosx_10_12_x86_64.whl
+```
+
+#### Linux
+
+```bash
+# x64
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl
+# arm64
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-0.1.0-cp311-abi3-manylinux_2_28_aarch64.whl
+```
+
+<!-- /tabs -->
+
+To pin it, put the same URL in `requirements.txt` as
+`sourceorrery @ https://…/sourceorrery-0.1.0-cp311-abi3-win_amd64.whl`;
+append `#sha256=<hash>` with the hash from the release's `SHA256SUMS` and
+pip verifies the download. Any other platform builds the sdist from the same
+release (`sourceorrery-0.1.0.tar.gz`; Rust 1.88+ required) with
+`pip install <its URL>`.
+
+### From PyPI
+
 ```bash
 pip install sourceorrery
 ```
 
-Wheels for Python 3.11+ on Windows, macOS and Linux (glibc, x86-64 and
-arm64), built with PyO3 and maturin. No runtime dependencies.
+This works once the package is published on PyPI; 0.1.0 is not there yet.
 
 ## Get a secret
 
