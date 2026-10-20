@@ -27,6 +27,14 @@ The site header uses `logo-mark.png`, the orrery emblem cropped from
 `logo.png`, because the full logo's dark wordmark is invisible on the dark
 theme; the name is rendered as text beside it.
 
+## Dependency overrides
+
+`package.json` pins `postcss-selector-parser` to `^7.1.6` through `overrides`
+(advisory GHSA-rj75-hqrm-r3gf). It is reached only via Starlight's
+expressive-code → postcss-nested 6, which still declares the vulnerable 6.x
+line; the 7.x API is unchanged for that use. Drop the override once
+`@expressive-code/core` depends on postcss-nested 7 or later.
+
 ## Deployment
 
 Not configured yet. `.github/workflows/docs.yml` builds the site on every
