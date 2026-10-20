@@ -16,6 +16,12 @@ sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--passphrase-file FILE
 Exit status: `0` success, `1` any error (code in JSON mode), `2` usage error.
 `run` exits with the child's status.
 
+Running `sourceorrery` with no arguments prints the text logo, a link to
+sourceorrery.ai and a quick start. On a terminal the logo is drawn with
+Unicode half blocks in colours chosen to read on dark and light
+backgrounds; when piped it is plain text. `SOURCEORRERY_BANNER=unicode|plain`
+forces a style.
+
 ## Unlocking
 
 A vault is unlocked, in order, by: its OS-keyring protector (Windows

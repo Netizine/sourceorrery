@@ -15,8 +15,7 @@ use clap_complete::Shell;
     long_about = "SourceOrrery keeps secrets in an encrypted local vault and delivers them to \
                   your application at run time, so no .env file ever needs to exist.\n\n\
                   Metadata commands (list, versions, get) never print secret values. \
-                  Use `secret get --reveal` to disclose a value on purpose.",
-    arg_required_else_help = true
+                  Use `secret get --reveal` to disclose a value on purpose."
 )]
 pub struct Cli {
     /// Vault to operate on (default: the project vault named in sourceorrery.toml).
@@ -44,8 +43,9 @@ pub struct Cli {
     #[arg(short, long, global = true, action = ArgAction::Count)]
     pub verbose: u8,
 
+    /// With no subcommand, `sourceorrery` prints its banner and a quick start.
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]

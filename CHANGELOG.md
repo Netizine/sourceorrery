@@ -28,6 +28,14 @@ uses [Semantic Versioning](https://semver.org/).
   shown only with `get --reveal`.
 * Conformance and security test suites; CI on Ubuntu, Windows and macOS.
 
+### Added — CLI banner
+
+* `sourceorrery` with no arguments shows the SourceOrrery wordmark rendered
+  with Unicode half blocks (plain text when piped), a clickable
+  `sourceorrery.ai` link and a quick start. Colours are chosen to stay
+  legible on dark and light terminals; `NO_COLOR` and `SOURCEORRERY_BANNER`
+  are honoured.
+
 ### Added — metadata and audit-log integrity (vault schema 2)
 
 * `sourceorrery-crypto`: `derive_subkey` (HKDF-SHA256) and `mac` /

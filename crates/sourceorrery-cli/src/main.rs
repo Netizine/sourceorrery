@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod banner;
 mod cli;
 mod commands;
 mod context;
@@ -20,12 +21,19 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     init_tracing(cli.verbose);
 
+    let Some(command) = &cli.command else {
+        return match banner::print() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => report(&err.into(), cli.output),
+        };
+    };
+
     let ctx = match Ctx::from_cli(&cli) {
         Ok(ctx) => ctx,
         Err(err) => return report(&err, cli.output),
     };
 
-    let result = match &cli.command {
+    let result = match command {
         Command::Vault(cmd) => commands::vault::run(&ctx, cmd),
         Command::Secret(cmd) => commands::secret::run(&ctx, cmd),
         Command::Audit(args) => commands::audit::run(&ctx, args),

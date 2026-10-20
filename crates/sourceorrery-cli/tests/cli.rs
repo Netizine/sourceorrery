@@ -314,3 +314,26 @@ fn audit_verify_reports_an_intact_chain() {
     let out = env.run(&["audit", "--verify", "--limit", "3", "--vault", "dev"]);
     assert!(!out.status.success());
 }
+
+#[test]
+fn no_arguments_prints_the_banner_without_touching_a_vault() {
+    let env = Env::new();
+    // Piped stdout: plain style, no escape sequences, no vault or home needed.
+    let out = env.run(&[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("SourceOrrery"));
+    assert!(text.contains("https://sourceorrery.ai"));
+    assert!(text.contains("Quick start"));
+    assert!(!text.contains('\x1b'));
+
+    let out = env
+        .cmd(&[])
+        .env("SOURCEORRERY_BANNER", "unicode")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = stdout(&out);
+    assert!(text.contains('\u{2588}'), "half-block art expected");
+    assert!(text.contains("sourceorrery.ai"));
+}
