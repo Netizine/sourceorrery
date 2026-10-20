@@ -247,7 +247,10 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           export CGO_LDFLAGS="-L$SOURCEORRERY_NATIVE_DIR"
-          export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" DYLD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" PATH="$SOURCEORRERY_NATIVE_DIR:$PATH"
+          # Git Bash splits PATH on ':', so a D:/... entry must be given in POSIX form.
+          native="$SOURCEORRERY_NATIVE_DIR"
+          case "$(uname -s)" in MINGW*|MSYS*) native="$(cygpath -u "$native")" ;; esac
+          export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" DYLD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" PATH="$native:$PATH"
           gofmt -l . && test -z "$(gofmt -l .)"
           go vet ./...
           go test -v ./...
