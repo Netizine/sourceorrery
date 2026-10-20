@@ -209,6 +209,16 @@ jobs:
       - name: Stamp the version
         shell: bash
         run: python3 scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      # The sdist is built first, on the host: the wheel build below runs as
+      # root inside the manylinux container, and a dist/ directory it created
+      # would not be writable by the runner user afterwards.
+      - name: Build the sdist
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          command: sdist
+          args: --out ../../dist/wheels
       - name: Build the wheel
         uses: PyO3/maturin-action@v1
         with:
@@ -217,17 +227,10 @@ jobs:
           manylinux: ${{ matrix.manylinux }}
           args: --release --locked --out ../../dist/wheels
           # No sccache: the option leaves RUSTC_WRAPPER=sccache in the job after
-          # the containerised build, and the host-side sdist step has no sccache.
+          # the containerised build, and a host-side step has no sccache.
           # The Secret Service client needs libdbus in the manylinux container.
           before-script-linux: |
             if command -v dnf >/dev/null; then dnf install -y dbus-devel pkgconf-pkg-config; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libdbus-1-dev pkg-config; fi
-      - name: Build the sdist
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        uses: PyO3/maturin-action@v1
-        with:
-          working-directory: bindings/python
-          command: sdist
-          args: --out ../../dist/wheels
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}
