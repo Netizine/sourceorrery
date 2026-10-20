@@ -418,10 +418,13 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
+          # Only success and skipped pass. Anything else fails, including
+          # results GitHub does not document: a macOS job that no runner
+          # ever picked up reported "abandoned" and used to slip through.
           status=0
           for job in $(jq -r 'keys[]' <<< "$NEEDS"); do
             result="$(jq -r --arg job "$job" '.[$job].result' <<< "$NEEDS")"
             echo "$job: $result"
-            case "$result" in failure|cancelled) status=1 ;; esac
+            case "$result" in success|skipped) ;; *) status=1 ;; esac
           done
           exit "$status"
