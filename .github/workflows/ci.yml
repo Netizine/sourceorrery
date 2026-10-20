@@ -75,6 +75,28 @@ jobs:
           cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/smoke.c -L target/debug -lsourceorrery_ffi -o /tmp/so-smoke
           LD_LIBRARY_PATH=target/debug /tmp/so-smoke "$(mktemp -d)"
 
+  dotnet:
+    name: .NET SDK (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build the C ABI the SDK loads
+        run: cargo build -p sourceorrery-ffi --release --locked
+      - name: Test the .NET SDK (conformance scenarios ported to C#)
+        # Passphrase vaults in a temporary home only; no OS keyring is required.
+        run: dotnet test bindings/dotnet/SourceOrrery.sln --configuration Release
+        env:
+          SOURCEORRERY_NATIVE_DIR: ${{ github.workspace }}/target/release
+
   docs:
     name: rustdoc
     runs-on: ubuntu-latest

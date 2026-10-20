@@ -1,0 +1,8 @@
+# .NET build output
+bin/
+obj/
+TestResults/
+*.user
+
+# Native libraries are built by cargo and copied in; never commit them.
+runtimes/

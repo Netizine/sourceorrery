@@ -9,7 +9,7 @@ logic. The compatibility contract is the SourceOrrery API and
 |----------|------------|------|--------|
 | Rust | `sourceorrery-core` + `sourceorrery-storage` crates | First-class | Shipped (milestone 1) |
 | C | `sourceorrery-ffi` stable C ABI, header generated with cbindgen | First-class | **Shipped** (below) |
-| C# / .NET | P/Invoke over the C ABI (`LibraryImport`) | First-class | Planned (below); blocked on a .NET 8+ SDK on the development machine |
+| C# / .NET | P/Invoke over the C ABI (`LibraryImport`) | First-class | **Shipped** (`bindings/dotnet`, below) |
 | Python | PyO3 + Maturin wheels | First-class | Planned |
 | Node.js / TypeScript | napi-rs | First-class | Planned |
 | Java / Kotlin | JNI or Java FFM; UniFFI for Kotlin | First-class | Planned |
@@ -140,11 +140,18 @@ thread-safety behaviour.
 
 ## .NET SDK plan: `bindings/dotnet/`
 
-**Status (2026-10-20):** not started. No .NET SDK is installed on the
-development machine (`dotnet` is absent from `PATH`, `Program Files`,
-`LocalAppData` and `DOTNET_ROOT`). Install the .NET 8 SDK (for example
-`winget install Microsoft.DotNet.SDK.8`) and follow this plan; everything
-below is designed against the shipped header.
+**Status (2026-10-20):** implemented as planned below and passing all 44
+tests on Windows (`cargo build -p sourceorrery-ffi --release` then
+`dotnet test bindings/dotnet`); the `dotnet` CI job runs the same on Linux,
+Windows and macOS. Deviations from the plan, all deliberate: the resolver
+tries `SOURCEORRERY_NATIVE_DIR` *first* so an explicit override always wins
+over a packaged library; the scoped accessor is `Use(SecretBytesAction)`
+because `Action<ReadOnlySpan<byte>>` is not a legal type on .NET 8;
+`AuditOperation`, `AuditOutcome` and `PrincipalKind` are extensible string
+structs (the core's lists are append-only, so an unknown label is kept, not
+rejected); and `SecretProperties` / `VaultDescriptor` implement value
+equality over their collections so ported assertions such as
+`assert_eq!(get_deleted_secret(..), deleted)` hold.
 
 ### Layout
 
@@ -180,10 +187,10 @@ bindings/dotnet/
 * Strings go in as UTF-8 via `Encoding.UTF8.GetBytes` into a stack or
   pooled buffer; `null` becomes `(null, 0)`.
 * `NativeLibraryLoader` registers a `DllImportResolver` on first use that
-  probes `runtimes/<rid>/native/`, the directory named by
-  `SOURCEORRERY_NATIVE_DIR`, and finally the default search path, mapping
-  `sourceorrery_ffi` to `sourceorrery_ffi.dll` / `libsourceorrery_ffi.so` /
-  `libsourceorrery_ffi.dylib`.
+  probes the directory named by `SOURCEORRERY_NATIVE_DIR`, then
+  `runtimes/<rid>/native/` and the application directory, and finally the
+  default search path, mapping `sourceorrery_ffi` to `sourceorrery_ffi.dll`
+  / `libsourceorrery_ffi.so` / `libsourceorrery_ffi.dylib`.
 * On startup the library compares `so_abi_version()` with the constant it
   was compiled against and throws `SourceOrreryException("abi_mismatch")`
   on a mismatch.
@@ -221,10 +228,11 @@ public sealed class SecretClient : IDisposable
   `passphrase == null` means "use the OS credential store", matching the ABI.
 * `SecretValue : IDisposable` keeps the native `so_bytes` and never copies
   it into managed memory on its own. `Use(ReadOnlySpanAction<byte, TState> action, TState state)`
-  and `Use(Action<ReadOnlySpan<byte>>)` are the scoped accessors; `Length`
-  is public; `CopyTo(Span<byte>)` is the plain getter; `ToString()` returns
-  `"[REDACTED]"`; `Dispose()` calls `so_bytes_free` (zeroise + free) and
-  is idempotent. A `string` getter is deliberately absent: .NET strings
+  and `Use(SecretBytesAction)` (a `delegate void (ReadOnlySpan<byte>)`) are
+  the scoped accessors; `Length` is public; `CopyTo(Span<byte>)` is the
+  plain getter; `ToString()` returns `"[REDACTED]"`; `Dispose()` calls
+  `so_bytes_free` (zeroise + free) and is idempotent, after which the value
+  reads as empty. A `string` getter is deliberately absent: .NET strings
   cannot be wiped. `Secret` is a `sealed class : IDisposable` holding
   `Properties` and `Value` and disposing the value.
 * Models are `sealed record` types deserialised with a source-generated
@@ -280,6 +288,8 @@ store), and creates passphrase vaults with `Argon2Parameters.Testing`
 | `wrong_passphrase_is_refused_and_recorded` | `WrongPassphraseIsRefusedAndRecorded` |
 | — | `DisposedValueIsZeroed` (span is empty and length 0 after `Dispose`) |
 | — | `ClientIsThreadSafe` (parallel gets and sets on one client) |
+| — | `DisposedClientRefusesCalls` (`ObjectDisposedException`; disposing twice is harmless) |
+| — | `SdkTests`: ABI and contract versions, the exact request documents the SDK writes (`Optional<T>` tri-state, RFC 3339 `Z` timestamps), the core's response shapes (omitted fields, unknown audit labels), and the code-to-exception table |
 
 The test project copies the native library next to its output with an
 MSBuild item (`$(SourceOrreryNativeDir)` defaulting to

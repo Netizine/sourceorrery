@@ -146,3 +146,13 @@ uses [Semantic Versioning](https://semver.org/).
   per-thread `so_last_error_code()`. It is the only crate allowed to use
   `unsafe`; every block states its invariant. Covered by Rust smoke tests
   that call the exported functions and by a C example compiled in CI.
+* `bindings/dotnet`: the .NET SDK (`SourceOrrery` package, .NET 8+), the
+  first language binding over the C ABI. `SecretClient` exposes every
+  `SecretClient` method of the core through `LibraryImport` P/Invoke
+  (trimming- and AOT-compatible); values stay in native memory inside a
+  `SecretValue` that is zeroised on dispose, prints as `[REDACTED]` and has
+  no string getter; metadata is deserialised from the ABI's JSON with a
+  source-generated context; `UpdateSecretProperties` keeps the core's
+  tri-state through `Optional<T>`; every error is a typed exception that
+  preserves the stable code. The xUnit suite ports the lifecycle and
+  security conformance scenarios and runs on Linux, Windows and macOS in CI.
