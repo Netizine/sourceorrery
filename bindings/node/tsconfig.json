@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "ESNext.Disposable"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "paths": { "@sourceorrery/sdk": ["./lib/index.d.ts"] }
+  },
+  "include": ["lib/index.d.ts", "examples/get-secret.ts", "index.d.ts"]
+}

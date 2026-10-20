@@ -53,8 +53,8 @@ pub use error::{Error, ErrorKind, Result};
 pub use project::{Project, ProjectSecret};
 pub use reader::{OpenOptions, SecretReader};
 pub use sourceorrery_core::{
-    CONTRACT_VERSION, RecoveryLevel, Secret, SecretBytes, SecretProperties, SecretReference,
-    VaultDescriptor,
+    CONTRACT_VERSION, RecoveryLevel, Secret, SecretBytes, SecretError, SecretProperties,
+    SecretReference, VaultDescriptor,
 };
 pub use unlock::{PassphraseSource, UnlockReport};
 
