@@ -170,3 +170,6 @@ the lifecycle, policy, error, hint and thread-safety behaviour.
    (`scripts/ci/fixture-vault.sh` documents its contents), an example, a
    `docs/sdks/<language>.md` page, and a CI job that runs all of it on the
    three operating systems.
+5. Write the conformance runner (`tests/conformance/sdk/README.md` has the
+   protocol; every other binding's `conformance/` directory is a model),
+   register its default command in `harness.py` and run it in the CI job.

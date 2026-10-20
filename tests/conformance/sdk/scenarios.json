@@ -1,0 +1,217 @@
+{
+  "$comment": "Cross-language SDK conformance scenarios. Every SDK runner executes each scenario against the fixture vault from scripts/ci/fixture-vault.sh and tests/conformance/sdk/harness.py compares what it observed with `expect`. Variables: ${vault} ${home} ${passphrase} ${manifest} ${old_version} come from the SOURCEORRERY_TEST_* / SOURCEORRERY_* environment. Protocol: tests/conformance/sdk/README.md.",
+  "scenarios": [
+    {
+      "id": "open-unknown-vault",
+      "about": "A vault that does not exist is reported with the command that creates it and the directory that was searched.",
+      "op": "open",
+      "args": { "vault": "no-such-vault" },
+      "expect": {
+        "outcome": "error",
+        "code": "vault_not_found",
+        "hint_contains": ["sourceorrery vault create no-such-vault", "${home}"]
+      }
+    },
+    {
+      "id": "open-wrong-passphrase",
+      "about": "A passphrase that does not unlock the vault is `locked`; the hint lists every source that was tried and never echoes the passphrase.",
+      "op": "open",
+      "args": { "passphrase": "wrong-passphrase", "environment": "false" },
+      "expect": {
+        "outcome": "error",
+        "code": "locked",
+        "hint_contains": ["passphrase option: tried", "SOURCEORRERY_PASSPHRASE: not set", "--vault ${vault}"],
+        "message_excludes": ["wrong-passphrase"],
+        "hint_excludes": ["wrong-passphrase"]
+      }
+    },
+    {
+      "id": "open-no-source",
+      "about": "No passphrase at all (and no OS-keyring protector) is `locked` too, with every source reported empty.",
+      "op": "open",
+      "args": { "environment": "false" },
+      "expect": {
+        "outcome": "error",
+        "code": "locked",
+        "hint_contains": ["passphrase option: not given"]
+      }
+    },
+    {
+      "id": "open-explicit-options",
+      "about": "An explicit home and passphrase open the vault without the environment; the descriptor names the vault and its protectors.",
+      "op": "open",
+      "args": { "home": "${home}", "passphrase": "${passphrase}", "environment": "false" },
+      "expect": {
+        "outcome": "ok",
+        "descriptor.name": "${vault}",
+        "descriptor.protectors_contains": ["passphrase"]
+      }
+    },
+    {
+      "id": "open-from-environment",
+      "about": "With no options the vault is unlocked from SOURCEORRERY_PASSPHRASE, like the CLI.",
+      "op": "open",
+      "args": {},
+      "expect": { "outcome": "ok", "descriptor.name": "${vault}" }
+    },
+    {
+      "id": "get-latest",
+      "about": "`get` without a version returns the newest accessible version with its metadata.",
+      "op": "get",
+      "args": { "name": "database-password" },
+      "expect": {
+        "outcome": "ok",
+        "value": "ci-secret-value",
+        "version": { "not": "${old_version}" },
+        "enabled": true,
+        "content_type": "text/plain",
+        "tags": { "env": "ci" },
+        "reference": "sourceorrery://${vault}/database-password/${version}"
+      }
+    },
+    {
+      "id": "get-explicit-version",
+      "about": "An explicit version returns exactly that version; old versions are immutable.",
+      "op": "get",
+      "args": { "name": "database-password", "version": "${old_version}" },
+      "expect": { "outcome": "ok", "value": "first-version", "version": "${old_version}" }
+    },
+    {
+      "id": "properties-newest",
+      "about": "`properties` without a version describes the newest version.",
+      "op": "properties",
+      "args": { "name": "database-password" },
+      "expect": { "outcome": "ok", "version": { "not": "${old_version}" }, "enabled": true, "content_type": "text/plain", "tags": { "env": "ci" } }
+    },
+    {
+      "id": "properties-explicit-version",
+      "about": "`properties` with a version describes that version.",
+      "op": "properties",
+      "args": { "name": "database-password", "version": "${old_version}" },
+      "expect": { "outcome": "ok", "version": "${old_version}", "enabled": true }
+    },
+    {
+      "id": "resolve-latest",
+      "about": "A reference without a version resolves to the newest accessible version.",
+      "op": "resolve",
+      "args": { "reference": "sourceorrery://${vault}/database-password" },
+      "expect": { "outcome": "ok", "value": "ci-secret-value", "version": { "not": "${old_version}" } }
+    },
+    {
+      "id": "resolve-pinned",
+      "about": "A reference with a version resolves to exactly that version.",
+      "op": "resolve",
+      "args": { "reference": "sourceorrery://${vault}/database-password/${old_version}" },
+      "expect": { "outcome": "ok", "value": "first-version", "version": "${old_version}" }
+    },
+    {
+      "id": "resolve-other-vault",
+      "about": "A reference to another vault is refused: a reader is bound to one vault.",
+      "op": "resolve",
+      "args": { "reference": "sourceorrery://other-vault/database-password" },
+      "expect": { "outcome": "error", "code": "invalid_argument" }
+    },
+    {
+      "id": "resolve-not-a-reference",
+      "about": "Something that is not a reference is `invalid_argument` with the reference syntax in the hint.",
+      "op": "resolve",
+      "args": { "reference": "not-a-reference" },
+      "expect": { "outcome": "error", "code": "invalid_argument", "hint_contains": ["sourceorrery://vault/name"] }
+    },
+    {
+      "id": "disabled-newest-falls-back",
+      "about": "When the newest version is disabled, `get` falls back to the newest accessible one (ADR 0004).",
+      "op": "get",
+      "args": { "name": "rotated-key" },
+      "expect": { "outcome": "ok", "value": "old", "enabled": true }
+    },
+    {
+      "id": "disabled-newest-inspectable",
+      "about": "`properties` applies no policy, so the disabled newest version is still inspectable.",
+      "op": "properties",
+      "args": { "name": "rotated-key" },
+      "expect": { "outcome": "ok", "enabled": false }
+    },
+    {
+      "id": "disabled-explicit-refused",
+      "about": "Asking for the disabled version explicitly is a policy refusal with the command that re-enables it.",
+      "op": "get-newest-explicit",
+      "args": { "name": "rotated-key" },
+      "expect": { "outcome": "error", "code": "disabled", "hint_contains": ["--enable"], "transient": false }
+    },
+    {
+      "id": "expired",
+      "about": "An expired version is refused by policy; the hint explains the decision.",
+      "op": "get",
+      "args": { "name": "expired-token" },
+      "expect": { "outcome": "error", "code": "expired", "hint_starts_with": "Policy", "transient": false }
+    },
+    {
+      "id": "not-yet-valid",
+      "about": "A version before its activation time is refused by policy and marked transient.",
+      "op": "get",
+      "args": { "name": "future-token" },
+      "expect": { "outcome": "error", "code": "not_yet_valid", "hint_starts_with": "Policy", "transient": true }
+    },
+    {
+      "id": "deleted",
+      "about": "A soft-deleted secret says how to recover it.",
+      "op": "get",
+      "args": { "name": "deleted-secret" },
+      "expect": { "outcome": "error", "code": "deleted", "hint_contains": ["secret recover deleted-secret"] }
+    },
+    {
+      "id": "not-found",
+      "about": "A missing secret says how to store it; the message is the core's own.",
+      "op": "get",
+      "args": { "name": "missing" },
+      "expect": {
+        "outcome": "error",
+        "code": "not_found",
+        "message": "secret 'missing' was not found",
+        "hint_contains": ["sourceorrery secret set missing --vault ${vault}"]
+      }
+    },
+    {
+      "id": "version-not-found",
+      "about": "A missing version says how to list the versions that exist.",
+      "op": "get",
+      "args": { "name": "database-password", "version": "deadbeef" },
+      "expect": { "outcome": "error", "code": "version_not_found", "hint_contains": ["secret versions database-password"] }
+    },
+    {
+      "id": "invalid-name",
+      "about": "A name that breaks the naming rules is `invalid_name`.",
+      "op": "get",
+      "args": { "name": "bad_name" },
+      "expect": { "outcome": "error", "code": "invalid_name" }
+    },
+    {
+      "id": "load-project",
+      "about": "Loading the manifest mirrors `sourceorrery run`: required secrets resolve, optional ones that cannot are left out.",
+      "op": "load",
+      "args": { "manifest": "${manifest}" },
+      "expect": {
+        "outcome": "ok",
+        "project.name": "ci-project",
+        "project.count": 2,
+        "project.secrets": { "DATABASE_PASSWORD": "ci-secret-value", "ROTATED": "old" },
+        "project.absent": ["missing-optional", "expired-token"]
+      }
+    },
+    {
+      "id": "load-missing-manifest",
+      "about": "A manifest that does not exist is a `manifest` error.",
+      "op": "load",
+      "args": { "manifest": "${manifest}.missing" },
+      "expect": { "outcome": "error", "code": "manifest" }
+    },
+    {
+      "id": "load-locked-vault",
+      "about": "A vault that exists but cannot be unlocked fails the load even though the manifest has optional entries.",
+      "op": "load",
+      "args": { "manifest": "${manifest}", "passphrase": "wrong", "environment": "false" },
+      "expect": { "outcome": "error", "code": "locked" }
+    }
+  ]
+}

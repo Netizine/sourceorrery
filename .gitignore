@@ -3,6 +3,9 @@
 **/*.rs.bk
 *.pdb
 
+# Compiled C/C++ examples and conformance runners
+/build/
+
 # Local vaults must never be committed
 *.sqlite
 *.sqlite-wal

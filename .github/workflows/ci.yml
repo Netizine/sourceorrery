@@ -125,6 +125,11 @@ jobs:
         run: |
           if cargo run --release --locked -p sourceorrery --example get_secret -- "$SOURCEORRERY_TEST_VAULT" missing 2> err.txt; then exit 1; fi
           grep -q 'not_found' err.txt && grep -q 'sourceorrery secret set missing' err.txt
+      - name: Conformance harness
+        shell: bash
+        run: |
+          cargo build --release --locked -p sourceorrery --example conformance
+          ${{ runner.os == 'Windows' && 'python' || 'python3' }} tests/conformance/sdk/harness.py --runner rust
 
   sdk-python:
     name: SDK Python (${{ matrix.os }})
@@ -150,6 +155,9 @@ jobs:
       - name: Example
         shell: bash
         run: python bindings/python/examples/get_secret.py "$SOURCEORRERY_TEST_VAULT" database-password
+      - name: Conformance harness
+        shell: bash
+        run: python tests/conformance/sdk/harness.py --runner python
 
   sdk-node:
     name: SDK Node.js (${{ matrix.os }})
@@ -178,6 +186,9 @@ jobs:
         run: |
           node examples/get-secret.mjs "$SOURCEORRERY_TEST_VAULT" database-password
           node --experimental-strip-types --no-warnings examples/get-secret.ts "$SOURCEORRERY_TEST_VAULT" database-password
+      - name: Conformance harness
+        working-directory: ${{ github.workspace }}
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tests/conformance/sdk/harness.py --runner node
 
   sdk-c-cpp:
     name: SDK C and C++ (${{ matrix.os }})
@@ -197,10 +208,15 @@ jobs:
           cc -Wall -Wextra -Werror $inc crates/sourceorrery-ffi/examples/get_secret.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o get_secret_c
           c++ -std=c++17 -Wall -Wextra -Werror $inc bindings/cpp/examples/get_secret.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o get_secret_cpp
           c++ -std=c++17 -Wall -Wextra -Werror $inc bindings/cpp/tests/reader_test.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o reader_test
+          mkdir -p build
+          cc -Wall -Wextra -Werror $inc crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
+          c++ -std=c++17 -Wall -Wextra -Werror $inc bindings/cpp/conformance/run.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_cpp
           export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" DYLD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR"
           ./reader_test
           ./get_secret_c "$SOURCEORRERY_TEST_VAULT" database-password
           ./get_secret_cpp "$SOURCEORRERY_TEST_VAULT" database-password
+          python3 tests/conformance/sdk/harness.py --runner c
+          python3 tests/conformance/sdk/harness.py --runner cpp
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - name: Compile and run (MSVC)
@@ -211,10 +227,15 @@ jobs:
           cl /nologo /W4 /WX %INC% crates/sourceorrery-ffi/examples/get_secret.c /Fe:get_secret_c.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
           cl /nologo /std:c++17 /EHsc /W4 /WX %INC% bindings/cpp/examples/get_secret.cpp /Fe:get_secret_cpp.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
           cl /nologo /std:c++17 /EHsc /W4 /WX %INC% bindings/cpp/tests/reader_test.cpp /Fe:reader_test.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
+          if not exist build mkdir build
+          cl /nologo /W4 /WX %INC% crates/sourceorrery-ffi/examples/conformance.c /Fe:build/conformance_c.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
+          cl /nologo /std:c++17 /EHsc /W4 /WX %INC% bindings/cpp/conformance/run.cpp /Fe:build/conformance_cpp.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
           set PATH=%SOURCEORRERY_NATIVE_DIR%;%PATH%
           reader_test.exe || exit /b 1
           get_secret_c.exe %SOURCEORRERY_TEST_VAULT% database-password || exit /b 1
           get_secret_cpp.exe %SOURCEORRERY_TEST_VAULT% database-password || exit /b 1
+          python tests/conformance/sdk/harness.py --runner c || exit /b 1
+          python tests/conformance/sdk/harness.py --runner cpp || exit /b 1
       - name: CMake build of the C++ SDK
         if: runner.os != 'Windows'
         shell: bash
@@ -255,6 +276,8 @@ jobs:
           go vet ./...
           go test -v ./...
           go run ./examples/get-secret "$SOURCEORRERY_TEST_VAULT" database-password
+          go build -o "conformance-go$([ "$RUNNER_OS" = Windows ] && echo .exe)" ./conformance
+          ${{ runner.os == 'Windows' && 'python' || 'python3' }} ../../tests/conformance/sdk/harness.py --runner go
 
   sdk-java:
     name: SDK Java (${{ matrix.os }})
@@ -279,6 +302,9 @@ jobs:
         run: mvn -B --no-transfer-progress test
       - name: Example
         run: java --enable-native-access=ALL-UNNAMED -cp target/classes examples/GetSecret.java "$SOURCEORRERY_TEST_VAULT" database-password
+      - name: Conformance harness
+        working-directory: ${{ github.workspace }}
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tests/conformance/sdk/harness.py --runner java
 
   sdk-dotnet:
     name: SDK .NET (${{ matrix.os }})
@@ -302,6 +328,11 @@ jobs:
       - name: Pack (no native libraries; the release workflow adds them)
         shell: bash
         run: dotnet pack bindings/dotnet/SourceOrrery/SourceOrrery.csproj --nologo -c Release -o dist/nuget
+      - name: Conformance harness
+        shell: bash
+        run: |
+          dotnet build bindings/dotnet/conformance -c Release --nologo
+          ${{ runner.os == 'Windows' && 'python' || 'python3' }} tests/conformance/sdk/harness.py --runner dotnet
 
   sdk-php:
     name: SDK PHP (${{ matrix.os }})
@@ -327,6 +358,9 @@ jobs:
       - name: Example
         shell: bash
         run: php bindings/php/examples/get_secret.php "$SOURCEORRERY_TEST_VAULT" database-password
+      - name: Conformance harness
+        shell: bash
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tests/conformance/sdk/harness.py --runner php
 
   docs:
     name: rustdoc

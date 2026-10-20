@@ -24,6 +24,11 @@ and `docs/threat-model.md` before changing anything security-relevant.
   roots, own lock files); the rest call the C ABI. `bindings/README.md` is
   the C ABI reference and index.
 - `tests/conformance` — lifecycle + security suite every backend/SDK must pass.
+  `tests/conformance/sdk/` is the cross-language harness: `scenarios.json`
+  is the contract, `harness.py` drives one SDK's runner (`conformance/`
+  under each binding, `examples/conformance.rs|.c` for Rust and C) and
+  judges what it observed. A new read-only behaviour gets a scenario there;
+  a new op means a change to every runner.
 - `scripts/ci/fixture-vault.sh` — creates, with the CLI only, the vault
   every SDK test suite reads; `scripts/release/set-version.py` stamps a
   release version into every manifest.
