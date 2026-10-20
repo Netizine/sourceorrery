@@ -20,7 +20,7 @@ const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const repoRoot = path.resolve(siteRoot, '..');
 const outDir = path.join(siteRoot, 'src', 'content', 'docs');
 
-const REPO_URL = 'https://github.com/sourceorrery/sourceorrery';
+const REPO_URL = 'https://github.com/Netizine/sourceorrery';
 const BLOB_URL = `${REPO_URL}/blob/main/`;
 const EDIT_URL = `${REPO_URL}/edit/main/`;
 

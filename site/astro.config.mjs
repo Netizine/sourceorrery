@@ -2,9 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
-// TODO: confirm the repository URL once it is public. It is also hard-coded
-// in scripts/sync-docs.mjs for edit links and links to files outside docs/.
-const GITHUB_URL = 'https://github.com/sourceorrery/sourceorrery';
+const GITHUB_URL = 'https://github.com/Netizine/sourceorrery';
 
 // https://astro.build/config
 export default defineConfig({
@@ -23,7 +21,39 @@ export default defineConfig({
 				// Pages synced from docs/ override this with their source file.
 				baseUrl: `${GITHUB_URL}/edit/main/site/`,
 			},
-			customCss: ['./src/styles/custom.css'],
+			customCss: [
+				// Self-hosted type: serif for text, a sans for interface labels, a mono for code.
+				'@fontsource-variable/source-serif-4/opsz.css',
+				'@fontsource-variable/source-serif-4/opsz-italic.css',
+				'@fontsource-variable/inter',
+				'@fontsource-variable/jetbrains-mono',
+				'./src/styles/paper.css',
+			],
+			components: {
+				Hero: './src/components/Hero.astro',
+			},
+			expressiveCode: {
+				themes: ['github-light', 'github-dark-dimmed'],
+				useStarlightUiThemeColors: true,
+				styleOverrides: {
+					borderRadius: '2px',
+					borderWidth: '1px',
+					codeFontFamily: "'JetBrains Mono Variable', ui-monospace, Consolas, monospace",
+					codeFontSize: '0.9rem',
+					codeLineHeight: '1.6',
+					codePaddingBlock: '1rem',
+					codePaddingInline: '1.25rem',
+					// Paper-toned code backgrounds instead of the themes' own.
+					codeBackground: ({ theme }) => (theme.type === 'dark' ? '#1e1c18' : '#edeae1'),
+					frames: {
+						shadowColor: 'transparent',
+						editorTabBarBackground: ({ theme }) => (theme.type === 'dark' ? '#1a1916' : '#e6e2d8'),
+						terminalTitlebarBackground: ({ theme }) => (theme.type === 'dark' ? '#1a1916' : '#e6e2d8'),
+						terminalBackground: ({ theme }) => (theme.type === 'dark' ? '#1e1c18' : '#edeae1'),
+					},
+				},
+			},
+			lastUpdated: true,
 			credits: false,
 			sidebar: [
 				{ label: 'Getting started', slug: 'getting-started' },

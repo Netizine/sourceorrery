@@ -1,0 +1,191 @@
+---
+/**
+ * Cover-style hero for the landing page.
+ *
+ * Replaces Starlight's centred hero with an editorial layout: a small
+ * letter-spaced kicker, a large serif title whose second line is italic,
+ * an italic deck, the actions, and a row of small-caps metadata, with the
+ * emblem set to the right like a cover illustration.
+ */
+import { Image } from 'astro:assets';
+import { LinkButton } from '@astrojs/starlight/components';
+
+const { data } = Astro.locals.starlightRoute.entry;
+const { title = data.title, tagline, image, actions = [] } = data.hero || {};
+
+const file = image && 'file' in image ? image.file : undefined;
+const alt = (image && 'alt' in image && image.alt) || '';
+
+const meta = [
+	{ label: 'Status', value: 'Milestone 1 · local-first' },
+	{ label: 'Licence', value: 'MIT or Apache-2.0' },
+	{
+		label: 'Source',
+		value: 'github.com/Netizine/sourceorrery',
+		href: 'https://github.com/Netizine/sourceorrery',
+	},
+];
+---
+
+<section class="so-cover">
+	<div class="so-cover__copy">
+		<p class="so-kicker">Open source · Rust-native · Local-first</p>
+		<h1 id="_top" data-page-title set:html={title} />
+		{tagline && <p class="so-cover__deck" set:html={tagline} />}
+		{
+			actions.length > 0 && (
+				<div class="so-cover__actions">
+					{actions.map(
+						({ attrs: { class: className, ...attrs } = {}, icon, link: href, text, variant }) => (
+							<LinkButton {href} {variant} icon={icon?.name} class:list={[className]} {...attrs}>
+								{text}
+								{icon?.html && <Fragment set:html={icon.html} />}
+							</LinkButton>
+						)
+					)}
+				</div>
+			)
+		}
+		<dl class="so-cover__meta">
+			{
+				meta.map((item) => (
+					<div>
+						<dt>{item.label}</dt>
+						<dd>{item.href ? <a href={item.href}>{item.value}</a> : item.value}</dd>
+					</div>
+				))
+			}
+		</dl>
+	</div>
+	{
+		file && (
+			<div class="so-cover__art">
+				<Image src={file} alt={alt} width={520} height={520} loading="eager" decoding="async" />
+			</div>
+		)
+	}
+</section>
+
+<style>
+	.so-cover {
+		display: grid;
+		grid-template-columns: 100%;
+		gap: 2.5rem;
+		align-items: center;
+		padding-block: clamp(1.5rem, 5vw, 4.5rem) clamp(1rem, 3vw, 2.5rem);
+	}
+
+	.so-kicker {
+		font-family: var(--so-font-ui);
+		font-size: 0.72rem;
+		font-weight: 600;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+		margin: 0 0 1.4rem;
+	}
+
+	h1 {
+		font-family: var(--sl-font);
+		font-weight: 700;
+		font-size: clamp(2.5rem, 1.5rem + 3.6vw, 4.5rem);
+		line-height: 1.04;
+		letter-spacing: -0.022em;
+		color: var(--so-heading);
+		margin: 0;
+		max-width: 16ch;
+	}
+
+	h1 :global(em) {
+		font-style: italic;
+		font-weight: 500;
+		color: var(--sl-color-text-accent);
+	}
+
+	.so-cover__deck {
+		font-family: var(--sl-font);
+		font-style: italic;
+		font-size: clamp(1.05rem, 0.95rem + 0.5vw, 1.3rem);
+		line-height: 1.5;
+		color: var(--sl-color-gray-2);
+		max-width: 46ch;
+		margin: 1.6rem 0 0;
+	}
+
+	.so-cover__deck :global(code) {
+		font-style: normal;
+		font-size: 0.85em;
+		background: var(--sl-color-bg-inline-code);
+		border-radius: 2px;
+		padding: 0.05em 0.3em;
+	}
+
+	.so-cover__deck :global(em) {
+		font-style: normal;
+		font-weight: 600;
+	}
+
+	.so-cover__actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem 1.5rem;
+		align-items: center;
+		margin-top: 2rem;
+	}
+
+	.so-cover__meta {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(11rem, max-content));
+		gap: 1.25rem 3rem;
+		margin: 2.75rem 0 0;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--sl-color-hairline);
+	}
+
+	.so-cover__meta dt {
+		font-family: var(--so-font-ui);
+		font-size: 0.66rem;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-4);
+		margin: 0 0 0.3rem;
+	}
+
+	.so-cover__meta dd {
+		margin: 0;
+		font-size: 0.95rem;
+		color: var(--sl-color-gray-1);
+	}
+
+	.so-cover__meta a {
+		color: var(--sl-color-text-accent);
+		text-decoration: none;
+	}
+
+	.so-cover__meta a:hover {
+		text-decoration: underline;
+	}
+
+	.so-cover__art {
+		justify-self: center;
+	}
+
+	.so-cover__art img {
+		width: min(60%, 16rem);
+		height: auto;
+		margin-inline: auto;
+		display: block;
+	}
+
+	@media (min-width: 60rem) {
+		.so-cover {
+			grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
+			gap: 4rem;
+		}
+
+		.so-cover__art img {
+			width: min(100%, 22rem);
+		}
+	}
+</style>

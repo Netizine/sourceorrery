@@ -35,6 +35,19 @@ expressive-code → postcss-nested 6, which still declares the vulnerable 6.x
 line; the 7.x API is unchanged for that use. Drop the override once
 `@expressive-code/core` depends on postcss-nested 7 or later.
 
+## Theme
+
+`src/styles/paper.css` holds the whole look: warm paper palette (light and
+dark), Source Serif 4 for text, Inter for interface labels, JetBrains Mono for
+code, booktabs-style tables and left-bar callouts. The landing page uses the
+cover-style hero in `src/components/Hero.astro`. Fonts are self-hosted from
+the `@fontsource-variable/*` packages.
+
+Build with the dev server stopped: `astro dev` and `astro build` share the
+Expressive Code cache, and building while `npm run dev` is running can leave
+pages pointing at stylesheet hashes that the build did not emit (the link
+check then fails).
+
 ## Deployment
 
 Azure Static Web Apps, through the Azure-generated workflow

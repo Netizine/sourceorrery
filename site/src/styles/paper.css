@@ -1,0 +1,555 @@
+/*
+ * SourceOrrery documentation theme — "paper".
+ *
+ * Warm paper stock, a serif text face, navy ink for headings and links,
+ * small letter-spaced sans labels, thin hairlines, and callouts drawn as
+ * tinted panels with a coloured left bar. Dark mode keeps the same
+ * structure on a warm charcoal so the site never flips to a stark black.
+ *
+ * Starlight exposes its design tokens as --sl-* custom properties; this
+ * file overrides those and adds a few --so-* tokens of its own. Starlight's
+ * own rules live in cascade layers, so plain (unlayered) rules here win.
+ */
+
+/* ------------------------------------------------------------------ */
+/* Typography                                                           */
+/* ------------------------------------------------------------------ */
+
+:root {
+	--so-font-ui: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--sl-font: 'Source Serif 4 Variable', 'Source Serif 4', Georgia, 'Times New Roman', serif;
+	--sl-font-mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', Consolas, 'Liberation Mono', monospace;
+	--sl-line-height: 1.65;
+	--sl-line-height-headings: 1.15;
+	--sl-content-width: 47rem;
+	--sl-shadow-sm: none;
+	--sl-shadow-md: none;
+	--sl-shadow-lg: 0 1px 2px rgb(0 0 0 / 0.06);
+	font-feature-settings: 'kern', 'liga', 'onum' 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Palette — dark (Starlight's default scheme lives on :root)           */
+/* ------------------------------------------------------------------ */
+
+:root {
+	color-scheme: dark;
+
+	--sl-color-white: #ece7dc;
+	--sl-color-gray-1: #ddd7cb;
+	--sl-color-gray-2: #bfb8aa;
+	--sl-color-gray-3: #8f8879;
+	--sl-color-gray-4: #5f5a50;
+	--sl-color-gray-5: #3b3832;
+	--sl-color-gray-6: #27251f;
+	--sl-color-gray-7: #1f1d19;
+	--sl-color-black: #171613;
+
+	--sl-color-bg: #171613;
+	--sl-color-bg-nav: #1c1a16;
+	--sl-color-bg-sidebar: #1c1a16;
+	--sl-color-bg-inline-code: #2a2722;
+	--sl-color-hairline: #332f29;
+	--sl-color-hairline-light: #2a2722;
+	--sl-color-hairline-shade: #3d3831;
+
+	--sl-color-accent-low: #1d2b42;
+	--sl-color-accent: #7fa4d6;
+	--sl-color-accent-high: #c6d8f0;
+	--sl-color-text: #d9d3c6;
+	--sl-color-text-accent: #9fbde6;
+	--sl-color-text-invert: #171613;
+
+	--so-heading: #ece7dc;
+	--so-heading-2: #b7cdee;
+	--so-panel: #1e1c18;
+	--so-callout-blue-bg: #1f2a3b;
+	--so-callout-blue-bar: #6f93c8;
+	--so-callout-taupe-bg: #2a2620;
+	--so-callout-taupe-bar: #a79a82;
+	--so-callout-red-bg: #35221f;
+	--so-callout-red-bar: #c06b62;
+	--so-callout-green-bg: #1f2a1e;
+	--so-callout-green-bar: #7fa174;
+	--so-button-bg: #c6d8f0;
+	--so-button-fg: #171613;
+	--so-selection: #2f4a73;
+}
+
+/* ------------------------------------------------------------------ */
+/* Palette — light ("paper")                                            */
+/* ------------------------------------------------------------------ */
+
+:root[data-theme='light'] {
+	color-scheme: light;
+
+	--sl-color-white: #1f1d1a;
+	--sl-color-gray-1: #2b2825;
+	--sl-color-gray-2: #45413b;
+	--sl-color-gray-3: #6a655c;
+	--sl-color-gray-4: #9b9488;
+	--sl-color-gray-5: #c9c2b4;
+	--sl-color-gray-6: #e2dcd0;
+	--sl-color-gray-7: #ebe7de;
+	--sl-color-black: #f5f2ec;
+
+	--sl-color-bg: #f5f2ec;
+	--sl-color-bg-nav: #f0ece4;
+	--sl-color-bg-sidebar: #f0ece4;
+	--sl-color-bg-inline-code: #e9e4d9;
+	--sl-color-hairline: #d8d2c6;
+	--sl-color-hairline-light: #e4dfd4;
+	--sl-color-hairline-shade: #cbc4b6;
+
+	--sl-color-accent-low: #dfe7f1;
+	--sl-color-accent: #2a4b7c;
+	--sl-color-accent-high: #16304f;
+	--sl-color-text: #2a2723;
+	--sl-color-text-accent: #1f3f73;
+	--sl-color-text-invert: #f5f2ec;
+
+	--so-heading: #16304f;
+	--so-heading-2: #2a4b7c;
+	--so-panel: #faf8f3;
+	--so-callout-blue-bg: #e2e9f3;
+	--so-callout-blue-bar: #3b5d93;
+	--so-callout-taupe-bg: #ebe5d8;
+	--so-callout-taupe-bar: #9b8d75;
+	--so-callout-red-bg: #f1e1dc;
+	--so-callout-red-bar: #9c4a42;
+	--so-callout-green-bg: #e3ebe0;
+	--so-callout-green-bar: #5c7a55;
+	--so-button-bg: #1f3f73;
+	--so-button-fg: #f5f2ec;
+	--so-selection: #d6e1f0;
+}
+
+::selection {
+	background: var(--so-selection);
+}
+
+/* ------------------------------------------------------------------ */
+/* Chrome: header, sidebar, table of contents                           */
+/* ------------------------------------------------------------------ */
+
+header.header,
+.sidebar-pane,
+.right-sidebar,
+.pagination-links,
+footer {
+	font-family: var(--so-font-ui);
+}
+
+header.header {
+	background: var(--sl-color-bg-nav);
+	border-bottom: 1px solid var(--sl-color-hairline);
+}
+
+.site-title {
+	font-family: var(--sl-font);
+	font-weight: 700;
+	font-size: 1.25rem;
+	letter-spacing: -0.01em;
+	color: var(--so-heading);
+	gap: 0.6rem;
+}
+
+.site-title img {
+	height: 1.9rem;
+	width: auto;
+}
+
+.sidebar-pane {
+	border-inline-end: 1px solid var(--sl-color-hairline);
+}
+
+.sidebar-content .group-label .large,
+.sidebar-content .group-label span.large {
+	font-family: var(--so-font-ui);
+	font-size: 0.7rem;
+	font-weight: 600;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--sl-color-gray-3);
+}
+
+.sidebar-content summary {
+	padding-block: 0.45rem;
+}
+
+.sidebar-content a {
+	font-size: 0.9rem;
+	border-radius: 0;
+	color: var(--sl-color-gray-2);
+	padding-block: 0.3rem;
+}
+
+.sidebar-content a:hover {
+	color: var(--sl-color-text-accent);
+}
+
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+	background: transparent;
+	color: var(--sl-color-text-accent);
+	font-weight: 600;
+	box-shadow: inset 2px 0 0 var(--sl-color-text-accent);
+}
+
+.right-sidebar h2,
+#starlight__on-this-page {
+	font-family: var(--so-font-ui);
+	font-size: 0.7rem;
+	font-weight: 600;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--sl-color-gray-3);
+}
+
+.right-sidebar a {
+	font-size: 0.85rem;
+}
+
+.right-sidebar a[aria-current='true'] {
+	color: var(--sl-color-text-accent);
+	font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ */
+/* Article text                                                         */
+/* ------------------------------------------------------------------ */
+
+.sl-markdown-content {
+	font-size: 1.0625rem;
+	color: var(--sl-color-text);
+}
+
+h1[data-page-title],
+.sl-markdown-content h1 {
+	font-family: var(--sl-font);
+	font-weight: 700;
+	font-size: clamp(2rem, 1.5rem + 1.5vw, 2.75rem);
+	line-height: 1.1;
+	letter-spacing: -0.015em;
+	color: var(--so-heading);
+	padding-bottom: 0.9rem;
+	border-bottom: 1px solid var(--sl-color-hairline);
+}
+
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4,
+.sl-markdown-content h5 {
+	font-family: var(--so-font-ui);
+	letter-spacing: -0.005em;
+}
+
+.sl-markdown-content h2 {
+	font-size: 1.45rem;
+	font-weight: 700;
+	color: var(--so-heading);
+	margin-top: 2.4em;
+}
+
+.sl-markdown-content h3 {
+	font-size: 1.15rem;
+	font-weight: 650;
+	color: var(--so-heading-2);
+}
+
+.sl-markdown-content h4 {
+	font-size: 0.8rem;
+	font-weight: 650;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--sl-color-gray-3);
+}
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+	color: var(--sl-color-text-accent);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-decoration-color: color-mix(in srgb, var(--sl-color-text-accent) 45%, transparent);
+	text-underline-offset: 0.16em;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+	text-decoration-color: currentColor;
+}
+
+.sl-markdown-content strong {
+	font-weight: 650;
+	color: var(--sl-color-white);
+}
+
+.sl-markdown-content hr {
+	border: 0;
+	border-top: 1px solid var(--sl-color-hairline);
+	margin-block: 2.5rem;
+}
+
+.sl-markdown-content blockquote:not(:where(.not-content *)) {
+	border-inline-start: 3px solid var(--so-callout-taupe-bar);
+	padding-inline-start: 1.1rem;
+	font-style: italic;
+	color: var(--sl-color-gray-2);
+}
+
+/* Inline code: a quiet tint on the paper, not a pill. */
+.sl-markdown-content code:not(:where(.not-content *, pre *)) {
+	font-size: 0.86em;
+	background: var(--sl-color-bg-inline-code);
+	border-radius: 2px;
+	padding: 0.1em 0.35em;
+	color: var(--sl-color-white);
+}
+
+/* ------------------------------------------------------------------ */
+/* Tables, in the booktabs manner: rules above and below, no verticals  */
+/* ------------------------------------------------------------------ */
+
+.sl-markdown-content table:not(:where(.not-content *)) {
+	border-collapse: collapse;
+	font-size: 0.95em;
+	border-top: 1.5px solid var(--sl-color-gray-2);
+	border-bottom: 1.5px solid var(--sl-color-gray-2);
+	width: 100%;
+}
+
+.sl-markdown-content th:not(:where(.not-content *)) {
+	font-family: var(--so-font-ui);
+	font-size: 0.78rem;
+	font-weight: 650;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--sl-color-gray-2);
+	text-align: start;
+	padding: 0.65rem 0.9rem;
+	border: 0;
+	border-bottom: 1px solid var(--sl-color-gray-3);
+	background: transparent;
+}
+
+.sl-markdown-content td:not(:where(.not-content *)) {
+	padding: 0.65rem 0.9rem;
+	border: 0;
+	border-bottom: 1px solid var(--sl-color-hairline-light);
+	vertical-align: top;
+}
+
+.sl-markdown-content tr:last-child td:not(:where(.not-content *)) {
+	border-bottom: 0;
+}
+
+.sl-markdown-content tr:nth-child(2n) td:not(:where(.not-content *)) {
+	background: transparent;
+}
+
+/* ------------------------------------------------------------------ */
+/* Callouts: tinted panel, coloured left bar, small-caps title           */
+/* ------------------------------------------------------------------ */
+
+.starlight-aside {
+	border: 0;
+	border-inline-start: 4px solid var(--sl-color-asides-border);
+	border-radius: 2px;
+	padding: 1.1rem 1.35rem 1.15rem;
+	box-shadow: none;
+	background: var(--so-aside-bg);
+}
+
+.starlight-aside__icon {
+	display: none;
+}
+
+.starlight-aside__title {
+	font-family: var(--so-font-ui);
+	font-size: 0.72rem;
+	font-weight: 650;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--sl-color-asides-text-accent);
+	margin-bottom: 0.4rem;
+}
+
+.starlight-aside__content {
+	color: var(--sl-color-text);
+}
+
+.starlight-aside--note,
+.starlight-aside--tip {
+	--sl-color-asides-border: var(--so-callout-blue-bar);
+	--sl-color-asides-text-accent: var(--so-callout-blue-bar);
+	--so-aside-bg: var(--so-callout-blue-bg);
+}
+
+.starlight-aside--tip {
+	--sl-color-asides-border: var(--so-callout-green-bar);
+	--sl-color-asides-text-accent: var(--so-callout-green-bar);
+	--so-aside-bg: var(--so-callout-green-bg);
+}
+
+.starlight-aside--caution {
+	--sl-color-asides-border: var(--so-callout-taupe-bar);
+	--sl-color-asides-text-accent: var(--so-callout-taupe-bar);
+	--so-aside-bg: var(--so-callout-taupe-bg);
+}
+
+.starlight-aside--danger {
+	--sl-color-asides-border: var(--so-callout-red-bar);
+	--sl-color-asides-text-accent: var(--so-callout-red-bar);
+	--so-aside-bg: var(--so-callout-red-bg);
+}
+
+/* ------------------------------------------------------------------ */
+/* Cards, link cards, buttons, pagination                               */
+/* ------------------------------------------------------------------ */
+
+.card {
+	border: 1px solid var(--sl-color-hairline);
+	border-radius: 2px;
+	background: var(--so-panel);
+	box-shadow: none;
+	padding: 1.3rem 1.45rem;
+}
+
+.card .title {
+	font-family: var(--sl-font);
+	font-weight: 700;
+	font-size: 1.15rem;
+	color: var(--so-heading);
+}
+
+.card .icon {
+	border: 0;
+	background: transparent;
+	color: var(--so-callout-blue-bar);
+	padding: 0;
+}
+
+.card .body {
+	font-size: 0.97rem;
+	color: var(--sl-color-gray-2);
+}
+
+.sl-link-card {
+	border: 1px solid var(--sl-color-hairline);
+	border-radius: 2px;
+	background: var(--so-panel);
+	box-shadow: none;
+}
+
+.sl-link-card:hover {
+	background: var(--sl-color-gray-7);
+	border-color: var(--sl-color-gray-5);
+}
+
+.sl-link-card .title {
+	font-family: var(--sl-font);
+	font-weight: 700;
+	color: var(--so-heading);
+}
+
+.sl-link-card .description {
+	font-size: 0.95rem;
+	color: var(--sl-color-gray-2);
+}
+
+.sl-link-button {
+	font-family: var(--so-font-ui);
+	font-weight: 600;
+	font-size: 0.95rem;
+	border-radius: 2px;
+	letter-spacing: 0.01em;
+}
+
+.sl-link-button.primary {
+	background: var(--so-button-bg);
+	border-color: var(--so-button-bg);
+	color: var(--so-button-fg);
+}
+
+.sl-link-button.primary:hover {
+	filter: brightness(1.1);
+}
+
+.sl-link-button.secondary {
+	border-color: var(--sl-color-gray-4);
+	color: var(--sl-color-text);
+}
+
+.sl-link-button.minimal {
+	color: var(--sl-color-text-accent);
+}
+
+.pagination-links a {
+	border: 1px solid var(--sl-color-hairline);
+	border-radius: 2px;
+	box-shadow: none;
+	background: var(--so-panel);
+}
+
+.pagination-links a:hover {
+	border-color: var(--sl-color-gray-4);
+}
+
+.pagination-links .link-title {
+	font-family: var(--sl-font);
+	font-weight: 700;
+	color: var(--so-heading);
+}
+
+footer .meta,
+footer .kudos {
+	font-size: 0.8rem;
+	color: var(--sl-color-gray-3);
+}
+
+/* ------------------------------------------------------------------ */
+/* Code blocks: paper-toned frame, no shadow                            */
+/* ------------------------------------------------------------------ */
+
+.expressive-code .frame {
+	border-radius: 2px;
+	box-shadow: none;
+}
+
+.expressive-code .frame pre {
+	font-size: 0.9rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Landing page helpers                                                 */
+/* ------------------------------------------------------------------ */
+
+.guarantees td:first-child {
+	white-space: nowrap;
+}
+
+/* Section headings on the splash page read as chapter titles. */
+[data-has-hero] .sl-markdown-content h2 {
+	font-family: var(--sl-font);
+	font-size: 1.75rem;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+	margin-top: 3rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Search dialog and theme select pick up the paper too                 */
+/* ------------------------------------------------------------------ */
+
+dialog.dialog-frame,
+.dialog-frame {
+	background: var(--sl-color-bg);
+	border: 1px solid var(--sl-color-hairline);
+	border-radius: 2px;
+	box-shadow: var(--sl-shadow-lg);
+}
+
+site-search button[data-open-modal] {
+	border-radius: 2px;
+	border-color: var(--sl-color-hairline);
+	background: var(--sl-color-bg);
+	font-family: var(--so-font-ui);
+}
