@@ -15,7 +15,7 @@
 - [x] Metadata and audit-log integrity (MAC over mutable metadata)
 - [ ] `backup` / `restore` (encrypted export of a vault or a secret)
 - [ ] Package managers: Homebrew, WinGet, Scoop, `cargo install`; signed releases
-- [x] Docs site at sourceorrery.ai (Astro Starlight) from `docs/` (deployment pending)
+- [x] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`, deployed by Azure Static Web Apps (custom domain pending)
 
 ## Milestone 2 — first-class language bindings
 

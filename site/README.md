@@ -37,6 +37,9 @@ line; the 7.x API is unchanged for that use. Drop the override once
 
 ## Deployment
 
-Not configured yet. `.github/workflows/docs.yml` builds the site on every
-push to `main` and every pull request and keeps `dist/` as an artifact; the
-TODO in that file lists the Cloudflare Pages and GitHub Pages options.
+Azure Static Web Apps, through the Azure-generated workflow
+`.github/workflows/azure-static-web-apps-*.yml` (app location `/site`, no API,
+output `dist`). Every push to `main` builds and publishes the site; pull
+requests get preview environments. `.github/workflows/docs.yml` remains as the
+build-and-link-check gate. The custom domain `sourceorrery.ai` is configured in
+the Azure portal under the static web app's *Custom domains*.
