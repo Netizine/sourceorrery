@@ -228,7 +228,7 @@ mod tests {
     fn empty_explicit_passphrase_is_not_a_candidate() {
         let empty = SecretBytes::from("");
         let unlock = NonInteractiveUnlock::gather(Some(&empty), None, false).unwrap();
-        assert!(unlock.report.supplied.is_empty());
+        assert_eq!(unlock.report.supplied, Vec::new());
         assert_eq!(unlock.passphrase(&prompt(1)).unwrap(), None);
     }
 }
