@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Sourceorrery</title>
+  <desc id="description">Stationary code brackets surround a glowing sun while planets and points orbit it.</desc>
+  <defs>
+    <radialGradient id="sun" cx="32%" cy="28%" r="75%">
+      <stop stop-color="#74ecff"/>
+      <stop offset=".26" stop-color="#129aca"/>
+      <stop offset=".63" stop-color="#00578e"/>
+      <stop offset="1" stop-color="#00143a"/>
+    </radialGradient>
+    <radialGradient id="planet" cx="29%" cy="24%" r="80%">
+      <stop stop-color="#abfaff"/>
+      <stop offset=".25" stop-color="#18bedf"/>
+      <stop offset=".64" stop-color="#006eab"/>
+      <stop offset="1" stop-color="#031338"/>
+    </radialGradient>
+    <linearGradient id="bracket" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#005080"/>
+      <stop offset=".37" stop-color="#00e5f4"/>
+      <stop offset=".7" stop-color="#007dae"/>
+      <stop offset="1" stop-color="#002658"/>
+    </linearGradient>
+    <linearGradient id="orbit" x1="90" y1="170" x2="431" y2="324" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#003879"/>
+      <stop offset=".34" stop-color="#00dfff"/>
+      <stop offset=".67" stop-color="#0757a8"/>
+      <stop offset="1" stop-color="#52f5ff"/>
+    </linearGradient>
+    <filter id="glow" x="-90%" y="-90%" width="280%" height="280%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    <path id="outer-track" d="M256 103 C341 103 409 171 409 256 C409 341 341 409 256 409 C171 409 103 341 103 256 C103 171 171 103 256 103Z"/>
+    <path id="slanted-track" d="M413 204 C439 239 382 293 289 317 C191 343 103 315 82 279 C58 238 155 188 256 172 C331 158 394 175 413 204Z"/>
+    <path id="inner-track" d="M256 174 C320 174 365 208 365 254 C365 300 320 332 256 332 C192 332 147 300 147 254 C147 208 192 174 256 174Z"/>
+    <g id="large-planet">
+      <circle r="27" fill="#00bdf4" opacity=".42" filter="url(#glow)"/>
+      <circle r="23" fill="url(#planet)" stroke="#5af3ff" stroke-width="1.6"/>
+      <path d="M-15-13C-7-21 5-20 13-13" fill="none" stroke="#b2ffff" stroke-opacity=".67" stroke-width="2"/>
+    </g>
+    <g id="small-planet">
+      <circle r="17" fill="#00bbff" opacity=".5" filter="url(#glow)"/>
+      <circle r="14" fill="url(#planet)" stroke="#5ceeff" stroke-width="1.4"/>
+    </g>
+    <g id="tiny-planet">
+      <circle r="11" fill="#01ccff" opacity=".52" filter="url(#glow)"/>
+      <circle r="8" fill="url(#planet)" stroke="#84faff" stroke-width="1.2"/>
+    </g>
+  </defs>
+  <style>
+    @keyframes ring-turn { to { transform: rotate(1turn); } }
+    .ring-outer, .ring-polar, .ring-slanted, .ring-inner {
+      transform-box: view-box;
+      transform-origin: center;
+      animation: ring-turn linear infinite;
+    }
+    .ring-outer { animation-duration: 40s; }
+    .ring-polar { animation-duration: 31s; animation-direction: reverse; }
+    .ring-slanted { animation-duration: 27s; animation-direction: reverse; }
+    .ring-inner { animation-duration: 17s; }
+    .resting { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .ring-outer, .ring-polar, .ring-slanted, .ring-inner { animation: none; }
+      .moving { display: none; }
+      .resting { display: inline; }
+    }
+  </style>
+
+  <g fill="none" stroke-linecap="round">
+    <g class="ring-outer">
+      <circle cx="256" cy="256" r="153" stroke="#061a44" stroke-width="8"/>
+      <path d="M256 103A153 153 0 0 1 404 216 M382 346A153 153 0 0 1 273 408 M122 331A153 153 0 0 1 171 129" stroke="#0b4c89" stroke-width="2" opacity=".8"/>
+    </g>
+    <g class="ring-polar"><ellipse cx="256" cy="256" rx="83" ry="147" transform="rotate(36 256 256)" stroke="#082458" stroke-width="3"/></g>
+    <path d="M256 103V409" stroke="#063269" stroke-width="8"/>
+    <path d="M256 103V409" stroke="#39dfff" stroke-width="1.5" opacity=".65"/>
+    <g class="ring-slanted">
+      <use href="#slanted-track" stroke="#052254" stroke-width="9"/>
+      <use href="#slanted-track" stroke="url(#orbit)" stroke-width="2" opacity=".9"/>
+    </g>
+    <g class="ring-inner">
+      <use href="#inner-track" stroke="#052153" stroke-width="6"/>
+      <path d="M155 256C174 211 264 196 336 218" stroke="#1297d2" stroke-width="2" opacity=".78"/>
+    </g>
+  </g>
+
+  <circle cx="256" cy="276" r="64" fill="#00baff" opacity=".35" filter="url(#glow)"/>
+  <circle cx="256" cy="276" r="58" fill="url(#sun)" stroke="#1cdeff" stroke-width="2"/>
+  <path d="M209 244C221 222 246 215 266 219" fill="none" stroke="#a4faff" stroke-opacity=".54" stroke-width="2"/>
+  <g class="ring-slanted">
+    <path d="M86 283C115 323 204 338 289 317C369 297 421 253 414 218" fill="none" stroke="#0a315e" stroke-width="9" stroke-linecap="round"/>
+    <path d="M86 283C115 323 204 338 289 317C369 297 421 253 414 218" fill="none" stroke="url(#orbit)" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M83 217L24 270Q18 276 24 282L83 329 M429 217L488 270Q494 276 488 282L429 329" stroke="#021843" stroke-width="29"/>
+    <path d="M83 217L24 270Q18 276 24 282L83 329 M429 217L488 270Q494 276 488 282L429 329" stroke="url(#bracket)" stroke-width="5"/>
+    <path d="M76 223L26 270 M436 223L486 270" stroke="#82fbff" stroke-width="1.4" opacity=".8"/>
+  </g>
+
+  <g class="moving">
+    <g class="ring-outer">
+      <g><use href="#small-planet"/><animateMotion dur="19s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+      <g><use href="#small-planet"/><animateMotion dur="19s" begin="-9.5s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+      <g fill="#32e7ff">
+        <g opacity=".95"><circle r="4"/><animateMotion dur="19s" begin="-1.8s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".8"><circle r="3.5"/><animateMotion dur="19s" begin="-1.45s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".68"><circle r="3"/><animateMotion dur="19s" begin="-1.1s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".55"><circle r="2.5"/><animateMotion dur="19s" begin="-.75s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".42"><circle r="2"/><animateMotion dur="19s" begin="-.4s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".95"><circle r="4"/><animateMotion dur="19s" begin="-11.3s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".8"><circle r="3.5"/><animateMotion dur="19s" begin="-10.95s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".68"><circle r="3"/><animateMotion dur="19s" begin="-10.6s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".55"><circle r="2.5"/><animateMotion dur="19s" begin="-10.25s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".42"><circle r="2"/><animateMotion dur="19s" begin="-9.9s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+      </g>
+    </g>
+    <g class="ring-slanted">
+      <g><use href="#large-planet"/><animateMotion dur="12s" repeatCount="indefinite"><mpath href="#slanted-track"/></animateMotion></g>
+      <g><use href="#small-planet"/><animateMotion dur="12s" begin="-7.5s" repeatCount="indefinite"><mpath href="#slanted-track"/></animateMotion></g>
+    </g>
+    <g class="ring-inner">
+      <g><use href="#tiny-planet"/><animateMotion dur="8s" repeatCount="indefinite"><mpath href="#inner-track"/></animateMotion></g>
+      <g><use href="#tiny-planet"/><animateMotion dur="8s" begin="-4s" repeatCount="indefinite"><mpath href="#inner-track"/></animateMotion></g>
+    </g>
+  </g>
+  <g class="resting">
+    <use href="#small-planet" x="256" y="103"/>
+    <use href="#small-planet" x="256" y="409"/>
+    <use href="#large-planet" x="413" y="204"/>
+    <use href="#small-planet" x="140" y="315"/>
+    <use href="#tiny-planet" x="256" y="174"/>
+    <use href="#tiny-planet" x="256" y="332"/>
+  </g>
+</svg>

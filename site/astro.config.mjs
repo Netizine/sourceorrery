@@ -12,10 +12,19 @@ export default defineConfig({
 			title: 'SourceOrrery',
 			description: 'Secrets belong to the runtime, not the repository.',
 			logo: {
-				src: './src/assets/logo-mark.png',
+				// The emblem in two tunings, one per theme; the name is rendered as text beside it.
+				light: './src/assets/sourceorrery-light.svg',
+				dark: './src/assets/sourceorrery-dark.svg',
 				alt: 'SourceOrrery',
 			},
-			favicon: '/favicon.png',
+			favicon: '/favicon.svg',
+			head: [
+				// Safari does not load SVG favicons; it takes this PNG (see scripts/make-favicon.mjs).
+				{
+					tag: 'link',
+					attrs: { rel: 'icon', href: '/favicon.png', type: 'image/png', sizes: '128x128' },
+				},
+			],
 			social: [{ icon: 'github', label: 'GitHub', href: GITHUB_URL }],
 			editLink: {
 				// Pages synced from docs/ override this with their source file.

@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">SourceOrrery</title>
+  <desc id="description">Fixed code brackets surround a glowing sun as rings and planets orbit at different speeds.</desc>
+  <defs>
+    <radialGradient id="sun" cx="32%" cy="27%" r="76%">
+      <stop stop-color="#eaffff"/>
+      <stop offset=".27" stop-color="#65c4d3"/>
+      <stop offset=".66" stop-color="#226c94"/>
+      <stop offset="1" stop-color="#122d50"/>
+    </radialGradient>
+    <radialGradient id="planet" cx="30%" cy="25%" r="80%">
+      <stop stop-color="#ffffff"/>
+      <stop offset=".24" stop-color="#a4e2e2"/>
+      <stop offset=".65" stop-color="#3988a7"/>
+      <stop offset="1" stop-color="#193b5e"/>
+    </radialGradient>
+    <linearGradient id="bracket" x2="1" y2="1">
+      <stop stop-color="#2b7294"/>
+      <stop offset=".5" stop-color="#69c1cf"/>
+      <stop offset="1" stop-color="#205a80"/>
+    </linearGradient>
+    <linearGradient id="orbit" x1="90" y1="170" x2="431" y2="324" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#25557d"/>
+      <stop offset=".35" stop-color="#419cb4"/>
+      <stop offset=".7" stop-color="#275f8e"/>
+      <stop offset="1" stop-color="#56acba"/>
+    </linearGradient>
+    <filter id="glow" x="-90%" y="-90%" width="280%" height="280%"><feGaussianBlur stdDeviation="4"/></filter>
+    <path id="outer-track" d="M256 103 C341 103 409 171 409 256 C409 341 341 409 256 409 C171 409 103 341 103 256 C103 171 171 103 256 103Z"/>
+    <path id="slanted-track" d="M413 204 C439 239 382 293 289 317 C191 343 103 315 82 279 C58 238 155 188 256 172 C331 158 394 175 413 204Z"/>
+    <path id="inner-track" d="M256 174 C320 174 365 208 365 254 C365 300 320 332 256 332 C192 332 147 300 147 254 C147 208 192 174 256 174Z"/>
+    <g id="large-planet">
+      <circle r="27" fill="#66adbd" opacity=".16" filter="url(#glow)"/>
+      <circle r="23" fill="url(#planet)" stroke="#245d81" stroke-width="1.6"/>
+      <path d="M-15-13C-7-21 5-20 13-13" fill="none" stroke="#e0faf8" stroke-opacity=".8" stroke-width="2"/>
+    </g>
+    <g id="small-planet">
+      <circle r="17" fill="#66adbd" opacity=".17" filter="url(#glow)"/>
+      <circle r="14" fill="url(#planet)" stroke="#245d81" stroke-width="1.4"/>
+    </g>
+    <g id="tiny-planet">
+      <circle r="11" fill="#66adbd" opacity=".18" filter="url(#glow)"/>
+      <circle r="8" fill="url(#planet)" stroke="#245d81" stroke-width="1.2"/>
+    </g>
+  </defs>
+  <style>
+    @keyframes turn { to { transform: rotate(1turn); } }
+    .ring-outer, .ring-polar, .ring-slanted, .ring-inner {
+      transform-box: view-box;
+      transform-origin: center;
+      animation: turn linear infinite;
+    }
+    .ring-outer { animation-duration: 40s; }
+    .ring-polar { animation-duration: 31s; animation-direction: reverse; }
+    .ring-slanted { animation-duration: 27s; animation-direction: reverse; }
+    .ring-inner { animation-duration: 17s; }
+    .outer-base { stroke: #294b71; }
+    .outer-accent { stroke: #347e9c; }
+    .polar-base { stroke: #416384; }
+    .spine-base { stroke: #305375; }
+    .spine-accent { stroke: #72bdd0; }
+    .slanted-base { stroke: #234469; }
+    .slanted-accent { stroke: url(#orbit); }
+    .inner-base { stroke: #355a7c; }
+    .inner-accent { stroke: #4489a3; }
+    .bracket-base { stroke: #183452; }
+    .bracket-accent { stroke: url(#bracket); }
+    .bracket-glint { stroke: #b7e7e9; }
+    .resting { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .ring-outer, .ring-polar, .ring-slanted, .ring-inner { animation: none; }
+      .moving { display: none; }
+      .resting { display: inline; }
+    }
+  </style>
+
+  <g fill="none" stroke-linecap="round">
+    <g class="ring-outer">
+      <circle cx="256" cy="256" r="153" class="outer-base" stroke-width="8"/>
+      <path d="M256 103A153 153 0 0 1 404 216 M382 346A153 153 0 0 1 273 408 M122 331A153 153 0 0 1 171 129" class="outer-accent" stroke-width="2.5"/>
+    </g>
+    <g class="ring-polar"><ellipse cx="256" cy="256" rx="83" ry="147" transform="rotate(36 256 256)" class="polar-base" stroke-width="3"/></g>
+    <path d="M256 103V409" class="spine-base" stroke-width="8"/>
+    <path d="M256 103V409" class="spine-accent" stroke-width="1.5" opacity=".7"/>
+    <g class="ring-slanted">
+      <use href="#slanted-track" class="slanted-base" stroke-width="9"/>
+      <use href="#slanted-track" class="slanted-accent" stroke-width="2.5"/>
+    </g>
+    <g class="ring-inner">
+      <use href="#inner-track" class="inner-base" stroke-width="6"/>
+      <path d="M155 256C174 211 264 196 336 218" class="inner-accent" stroke-width="2"/>
+    </g>
+  </g>
+
+  <circle cx="256" cy="276" r="64" fill="#66adbd" opacity=".12" filter="url(#glow)"/>
+  <circle cx="256" cy="276" r="58" fill="url(#sun)" stroke="#20587b" stroke-width="2"/>
+  <path d="M209 244C221 222 246 215 266 219" fill="none" stroke="#ecffff" stroke-opacity=".73" stroke-width="2"/>
+  <g class="ring-slanted" fill="none" stroke-linecap="round">
+    <path d="M86 283C115 323 204 338 289 317C369 297 421 253 414 218" class="slanted-base" stroke-width="9"/>
+    <path d="M86 283C115 323 204 338 289 317C369 297 421 253 414 218" class="slanted-accent" stroke-width="2.5"/>
+  </g>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M83 217L24 270Q18 276 24 282L83 329 M429 217L488 270Q494 276 488 282L429 329" class="bracket-base" stroke-width="29"/>
+    <path d="M83 217L24 270Q18 276 24 282L83 329 M429 217L488 270Q494 276 488 282L429 329" class="bracket-accent" stroke-width="5"/>
+    <path d="M76 223L26 270 M436 223L486 270" class="bracket-glint" stroke-width="1.4" opacity=".75"/>
+  </g>
+
+  <g class="moving">
+    <g class="ring-outer">
+      <g><use href="#small-planet"/><animateMotion dur="19s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+      <g><use href="#small-planet"/><animateMotion dur="19s" begin="-9.5s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+      <g fill="#296f94">
+        <g opacity=".95"><circle r="4"/><animateMotion dur="19s" begin="-1.8s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".8"><circle r="3.5"/><animateMotion dur="19s" begin="-1.45s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".68"><circle r="3"/><animateMotion dur="19s" begin="-1.1s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".55"><circle r="2.5"/><animateMotion dur="19s" begin="-.75s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".42"><circle r="2"/><animateMotion dur="19s" begin="-.4s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".95"><circle r="4"/><animateMotion dur="19s" begin="-11.3s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".8"><circle r="3.5"/><animateMotion dur="19s" begin="-10.95s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".68"><circle r="3"/><animateMotion dur="19s" begin="-10.6s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".55"><circle r="2.5"/><animateMotion dur="19s" begin="-10.25s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+        <g opacity=".42"><circle r="2"/><animateMotion dur="19s" begin="-9.9s" repeatCount="indefinite"><mpath href="#outer-track"/></animateMotion></g>
+      </g>
+    </g>
+    <g class="ring-slanted">
+      <g><use href="#large-planet"/><animateMotion dur="12s" repeatCount="indefinite"><mpath href="#slanted-track"/></animateMotion></g>
+      <g><use href="#small-planet"/><animateMotion dur="12s" begin="-7.5s" repeatCount="indefinite"><mpath href="#slanted-track"/></animateMotion></g>
+    </g>
+    <g class="ring-inner">
+      <g><use href="#tiny-planet"/><animateMotion dur="8s" repeatCount="indefinite"><mpath href="#inner-track"/></animateMotion></g>
+      <g><use href="#tiny-planet"/><animateMotion dur="8s" begin="-4s" repeatCount="indefinite"><mpath href="#inner-track"/></animateMotion></g>
+    </g>
+  </g>
+  <g class="resting">
+    <use href="#small-planet" x="256" y="103"/>
+    <use href="#small-planet" x="256" y="409"/>
+    <use href="#large-planet" x="413" y="204"/>
+    <use href="#small-planet" x="140" y="315"/>
+    <use href="#tiny-planet" x="256" y="174"/>
+    <use href="#tiny-planet" x="256" y="332"/>
+  </g>
+</svg>

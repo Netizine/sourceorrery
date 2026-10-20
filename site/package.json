@@ -11,7 +11,7 @@
     "build": "astro build",
     "postbuild": "node scripts/check-links.mjs",
     "check-links": "node scripts/check-links.mjs",
-    "logo-mark": "node scripts/make-logo-mark.mjs",
+    "favicon": "node scripts/make-favicon.mjs",
     "preview": "astro preview",
     "astro": "astro"
   },
