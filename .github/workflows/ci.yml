@@ -386,3 +386,42 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------
+  # The one status check branch protection on `main` requires. It passes
+  # when every job above passed or was skipped and fails when any failed
+  # or was cancelled. A job that is not in `needs:` is not enforced, so
+  # every new job must be added here.
+  # ---------------------------------------------------------------------
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - fmt
+      - clippy
+      - test
+      - ffi-header
+      - bindings-lint
+      - sdk-rust
+      - sdk-python
+      - sdk-node
+      - sdk-c-cpp
+      - sdk-go
+      - sdk-java
+      - sdk-dotnet
+      - sdk-php
+      - docs
+      - audit
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          status=0
+          for job in $(jq -r 'keys[]' <<< "$NEEDS"); do
+            result="$(jq -r --arg job "$job" '.[$job].result' <<< "$NEEDS")"
+            echo "$job: $result"
+            case "$result" in failure|cancelled) status=1 ;; esac
+          done
+          exit "$status"
