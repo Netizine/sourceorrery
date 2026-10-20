@@ -22,6 +22,26 @@ uses [Semantic Versioning](https://semver.org/).
   know the repository, then waits for the version to appear
   (`docs/release.md`, *The PHP package and Packagist*).
 
+### Fixed
+
+* Release workflow: the `@sourceorrery/sdk` npm tarball now contains the
+  loader (`index.js`) and the types (`index.d.ts`) that `napi build`
+  generates. The 0.1.0 tarball shipped without them, so
+  `require('@sourceorrery/sdk')` failed with `MODULE_NOT_FOUND` (the six
+  platform tarballs were fine). The `node-build` job keeps the two files
+  as an artifact that `node-package` adds before `npm pack`, and the job
+  then installs the packed main and `linux-x64-gnu` tarballs into a
+  scratch project and requires the module, so a tarball that cannot be
+  loaded fails the release instead of shipping.
+* `bindings/node`: `npm ci` works with npm 11, which refuses a lock file
+  that lacks entries for the declared optional dependencies (npm 10 let
+  the unresolvable platform packages through). `package.json` now depends
+  on the platform packages as `file:npm/<platform>` links to their
+  committed manifests, so the lock resolves without the registry;
+  `scripts/release/set-version.py` turns the links into the release
+  version when it stamps the manifests, and the release jobs run `npm ci`
+  before stamping.
+
 ## [0.1.0] - 2026-10-20
 
 ### Added — cross-language SDK conformance harness
