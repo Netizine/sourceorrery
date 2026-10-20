@@ -349,9 +349,15 @@ jobs:
           php-version: "8.3"
           extensions: ffi, json
           ini-values: ffi.enable=true
-      - name: Composer manifest is valid
+      - name: The manifest Packagist reads is valid
         shell: bash
-        run: composer validate --strict bindings/php/composer.json
+        run: composer validate --strict composer.json
+      # Any semver does: the tag is created in a scratch copy of the checkout.
+      # Git Bash hands Composer POSIX temp paths on Windows, so Unix runners only.
+      - name: The package installs from a tag through Composer
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/ci/php-package-install.sh 0.0.0
       - name: Tests
         shell: bash
         run: php bindings/php/tests/run.php

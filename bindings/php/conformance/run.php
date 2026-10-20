@@ -5,7 +5,8 @@
 
 declare(strict_types=1);
 
-require file_exists(__DIR__ . '/../vendor/autoload.php') ? __DIR__ . '/../vendor/autoload.php' : __DIR__ . '/../autoload.php';
+// Composer's autoloader if `composer install` ran at the repository root, else the bundled one.
+require file_exists(__DIR__ . '/../../../vendor/autoload.php') ? __DIR__ . '/../../../vendor/autoload.php' : __DIR__ . '/../autoload.php';
 
 use SourceOrrery\OpenOptions;
 use SourceOrrery\Project;

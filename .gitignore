@@ -27,3 +27,7 @@ dist/
 # Never, ever
 .env
 .env.*
+
+# Composer (the PHP package manifest is composer.json at the root)
+/vendor/
+/composer.lock

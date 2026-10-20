@@ -19,10 +19,14 @@
         "ext-json": "*"
     },
     "autoload": {
-        "psr-4": { "SourceOrrery\\": "src/" }
+        "psr-4": { "SourceOrrery\\": "bindings/php/src/" },
+        "classmap": [
+            "bindings/php/src/SourceOrreryException.php",
+            "bindings/php/src/Project.php"
+        ]
     },
     "scripts": {
-        "test": "php tests/run.php"
+        "test": "php bindings/php/tests/run.php"
     },
     "config": {
         "sort-packages": true

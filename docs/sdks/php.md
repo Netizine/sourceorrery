@@ -53,10 +53,10 @@ export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
 
 Verify a download against the release's `SHA256SUMS` before unpacking it.
 Instead of the variable, the library can also sit under `native/<os>-<arch>/`
-inside the package or on the loader's search path.
+next to the SDK's `src/` directory or on the loader's search path.
 
-The package, `sourceorrery/sourceorrery`, is not on Packagist yet. Install
-it from the same tag as a Composer path repository:
+0.1.0 predates the package's Packagist manifest, so Packagist has no 0.1.0.
+Install the package from the same tag as a Composer path repository:
 
 ```bash
 git clone --depth 1 --branch v0.1.0 https://github.com/Netizine/sourceorrery vendor-src/sourceorrery
@@ -70,8 +70,16 @@ composer require "sourceorrery/sourceorrery:*@dev"
 composer require sourceorrery/sourceorrery
 ```
 
-This works once the package is published on Packagist; 0.1.0 is not there
-yet. The native library still comes from the release archive as above.
+Every release after 0.1.0 is a version on Packagist, named by its tag. The
+package is the repository: Packagist reads `composer.json` at the
+repository root, so what Composer installs into
+`vendor/sourceorrery/sourceorrery` is the tree at that tag, with the SDK
+autoloaded from `bindings/php/src/`. The native library still comes from
+the release archive as above; `SOURCEORRERY_NATIVE_DIR` names its
+directory, or put it under `bindings/php/native/<os>-<arch>/` inside the
+installed package. To try an unreleased revision, add
+`https://github.com/Netizine/sourceorrery` as a `vcs` repository and
+require `dev-main`.
 
 ## Get a secret
 
