@@ -53,6 +53,9 @@ and `docs/threat-model.md` before changing anything security-relevant.
   test and example.
 - Every SDK test suite and example must pass in CI against the fixture
   vault; `bindings/go/sourceorrery.h` must equal the generated header.
+- `main` is branch-protected and its only required status check is the `CI`
+  gate job at the end of `.github/workflows/ci.yml`; a new CI job must be
+  added to that job's `needs:` list or it is not enforced.
 
 ## Commands
 
