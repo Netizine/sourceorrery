@@ -30,3 +30,11 @@ npm run build            # napi build --platform --release
 eval "$(bash ../../scripts/ci/fixture-vault.sh)"
 npm test
 ```
+
+`npm run build` generates `index.js` (the loader) and `index.d.ts` next to
+the addon; both are in `.gitignore` and both ship in the package. The
+`npm/<platform>` directories are the platform packages' manifests
+(`npx napi create-npm-dirs` regenerates them from `package.json`), and
+`package.json` depends on them as `file:npm/<platform>` links so that
+`npm ci` resolves without the platform packages being on the registry.
+The release workflow stamps the version in place of the links.

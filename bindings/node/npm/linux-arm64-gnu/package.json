@@ -1,0 +1,40 @@
+{
+  "name": "@sourceorrery/sdk-linux-arm64-gnu",
+  "version": "0.1.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "sourceorrery.linux-arm64-gnu.node",
+  "files": [
+    "sourceorrery.linux-arm64-gnu.node"
+  ],
+  "description": "Read secrets from a SourceOrrery vault: secrets belong to the runtime, not the repository",
+  "keywords": [
+    "secrets",
+    "vault",
+    "keyring",
+    "security",
+    "dotenv",
+    "napi-rs"
+  ],
+  "homepage": "https://sourceorrery.ai/sdks/javascript/",
+  "license": "(MIT OR Apache-2.0)",
+  "engines": {
+    "node": ">= 20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Netizine/sourceorrery.git",
+    "directory": "bindings/node"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}
