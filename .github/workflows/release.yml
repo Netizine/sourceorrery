@@ -26,6 +26,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # Hosted runners occasionally fail to resolve crates.io; retry harder.
+  CARGO_NET_RETRY: "10"
 
 concurrency:
   group: release-${{ inputs.version }}
@@ -214,7 +216,8 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
           args: --release --locked --out ../../dist/wheels
-          sccache: "true"
+          # No sccache: the option leaves RUSTC_WRAPPER=sccache in the job after
+          # the containerised build, and the host-side sdist step has no sccache.
           # The Secret Service client needs libdbus in the manylinux container.
           before-script-linux: |
             if command -v dnf >/dev/null; then dnf install -y dbus-devel pkgconf-pkg-config; elif command -v apt-get >/dev/null; then apt-get update && apt-get install -y libdbus-1-dev pkg-config; fi
