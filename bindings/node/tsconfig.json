@@ -10,7 +10,7 @@
     "skipLibCheck": false,
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
-    "paths": { "@sourceorrery/sdk": ["./lib/index.d.ts"] }
+    "paths": { "@sourceorreryai/sdk": ["./lib/index.d.ts"] }
   },
   "include": ["lib/index.d.ts", "examples/get-secret.ts", "index.d.ts"]
 }

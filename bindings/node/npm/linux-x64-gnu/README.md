@@ -1,3 +1,3 @@
-# `@sourceorrery/sdk-linux-x64-gnu`
+# `@sourceorreryai/sdk-linux-x64-gnu`
 
-This is the **x86_64-unknown-linux-gnu** binary for `@sourceorrery/sdk`
+This is the **x86_64-unknown-linux-gnu** binary for `@sourceorreryai/sdk`

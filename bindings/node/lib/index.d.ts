@@ -2,7 +2,7 @@
  * Read secrets from a SourceOrrery vault.
  *
  * ```ts
- * import { SecretReader } from '@sourceorrery/sdk';
+ * import { SecretReader } from '@sourceorreryai/sdk';
  *
  * using reader = new SecretReader('development');
  * using secret = reader.get('database-password');

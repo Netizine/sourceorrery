@@ -1,5 +1,5 @@
 'use strict';
-// Public API of @sourceorrery/sdk. The native addon (../index.js, generated
+// Public API of @sourceorreryai/sdk. The native addon (../index.js, generated
 // by napi-rs) does the work; this file parses metadata JSON into plain
 // objects and turns native failures into typed errors by stable code.
 

@@ -1,7 +1,7 @@
 // Conformance runner for the Node.js SDK (tests/conformance/sdk/README.md).
 //
 //   node run.mjs <op> [key=value ...]
-import { Project, SecretReader, SourceOrreryError } from '@sourceorrery/sdk';
+import { Project, SecretReader, SourceOrreryError } from '@sourceorreryai/sdk';
 
 const [op, ...rest] = process.argv.slice(2);
 const kv = Object.fromEntries(

@@ -39,7 +39,7 @@ the next patch version.
 |-----|--------|
 | `native` (six targets) | `sourceorrery-X.Y.Z-<target>.{tar.gz,zip}`: the CLI. `sourceorrery-ffi-X.Y.Z-<target>.{tar.gz,zip}`: the shared and static C ABI libraries, `sourceorrery.h`, `sourceorrery.hpp`, licences. |
 | `python` (six targets + sdist) | abi3 wheels for Python 3.11+ (`manylinux_2_28` on Linux) and the sdist. |
-| `node-build`, `node-package` | `@sourceorrery/sdk` and the six `@sourceorrery/sdk-<platform>` tarballs. `node-build` compiles the addon per target and, on `x86_64-unknown-linux-gnu`, keeps the `index.js` loader and `index.d.ts` that `napi build` generates (artifact `npm-loader`); `node-package` lays out the platform packages around the addons, adds the loader, packs, then installs the main and `linux-x64-gnu` tarballs into a scratch project and requires `@sourceorrery/sdk`, so a main package that cannot be loaded fails the run. |
+| `node-build`, `node-package` | `@sourceorreryai/sdk` and the six `@sourceorreryai/sdk-<platform>` tarballs. `node-build` compiles the addon per target and, on `x86_64-unknown-linux-gnu`, keeps the `index.js` loader and `index.d.ts` that `napi build` generates (artifact `npm-loader`); `node-package` lays out the platform packages around the addons, adds the loader, packs, then installs the main and `linux-x64-gnu` tarballs into a scratch project and requires `@sourceorreryai/sdk`, so a main package that cannot be loaded fails the run. |
 | `java` | `sourceorrery-X.Y.Z.jar` with the native libraries embedded per platform. |
 | `dotnet` | `SourceOrrery.X.Y.Z.nupkg` with `runtimes/<rid>/native`. |
 | `crates` | a `cargo publish --workspace --dry-run` proving every crate packages in dependency order. |
@@ -71,7 +71,7 @@ time. The **Release packages** workflow
 
 | Registry | Release job | Secrets |
 |----------|-------------|---------|
-| npm | `publish-npm` | `NPM_TOKEN` |
+| npm | `publish-npm` | none (trusted publishing; switched on by the repository variable `NPM_TRUSTED_PUBLISHING`) |
 | PyPI | `publish-pypi` | `PYPI_API_TOKEN` |
 | NuGet | `publish-nuget` | `NUGET_USER` (trusted publishing; no API key) |
 | crates.io | `publish-crates` | `CARGO_REGISTRY_TOKEN` |
@@ -84,27 +84,36 @@ No secret is needed for the GitHub Release itself (`GITHUB_TOKEN` with
 
 ### Setting up each registry
 
-**npm** (`@sourceorrery/sdk` and six `@sourceorrery/sdk-<platform>`
-packages):
+**npm** (`@sourceorreryai/sdk` and six `@sourceorreryai/sdk-<platform>`
+packages), with trusted publishing, so no token is stored anywhere. The
+publish jobs run npm 11 (trusted publishing needs 11.5.1 or later), which
+trades the job's GitHub identity token for a short-lived credential; npm
+grants it only to the workflows each package lists. npm can only attach a
+trusted publisher to a package that exists, so the first version of each
+package is published by hand, once.
 
-1. An npmjs.com account with two-factor authentication, and the
-   organisation `sourceorrery`, which owns the `@sourceorrery` scope.
-2. *Access Tokens → Generate New Token → Granular Access Token*. Packages
-   and scopes: **Read and write**, limited to the `@sourceorrery` scope
-   (the packages do not exist yet, so pick the scope, not packages).
-   Organisations: no access. If the account requires two-factor
-   authentication for writes, tick *Bypass two-factor authentication*, or
-   CI cannot publish. Write tokens expire after at most 90 days: note the
-   date and replace the secret before it.
-3. Save it as `NPM_TOKEN`.
-
-npm intends (target January 2027) to stop tokens that bypass two-factor
-authentication from publishing directly. The replacement is trusted
-publishing: once the packages exist, configure each on npmjs.com
-(*package → Settings → Trusted publisher → GitHub Actions*, repository
-`Netizine/sourceorrery`, workflow `release.yml` and
-`ReleasePackages.yaml`) and give the publish jobs `id-token: write`; no
-token is needed then.
+1. The npmjs.com account `sourceorreryai`, with two-factor authentication.
+   The packages live in its user scope, `@sourceorreryai`.
+2. The first version, by hand: download the release's seven npm tarballs
+   (`sourceorreryai-sdk-*.tgz`), run `npm login`, then
+   `npm publish <tarball> --access public` for the six platform tarballs
+   and, last, the main one, confirming each with two-factor
+   authentication.
+3. For each of the seven packages, at
+   `https://www.npmjs.com/package/<name>/access`, *Trusted Publisher →
+   GitHub Actions*: Organization or user `Netizine`, Repository
+   `sourceorrery`, Workflow filename `release.yml`; then a second one
+   with `ReleasePackages.yaml`. Every field is case-sensitive, and npm
+   checks them only when a publish happens. npm's documentation says a new
+   trusted publisher expires if no publish uses it within two days, so add
+   them shortly before the release that will use them.
+4. The repository variable (not secret) `NPM_TRUSTED_PUBLISHING` set to
+   `true` (*Settings → Secrets and variables → Actions → Variables*).
+   Without it both workflows skip npm.
+5. Optionally, once a release has gone through: each package's
+   *Settings → Publishing access → Require two-factor authentication and
+   disallow tokens*. Trusted publishing keeps working; no token can
+   publish.
 
 **PyPI** (`sourceorrery`):
 
@@ -198,12 +207,11 @@ checked before anything is uploaded, a version a registry already has is
 skipped, and a registry without its secret is skipped. A dry run checks
 every ticked registry, with or without secrets, and uploads nothing.
 
-What 0.1.0 can publish this way: PyPI, NuGet, crates.io and Maven
-Central. Not npm: its `@sourceorrery/sdk` tarball lacks the `index.js`
-loader and cannot be installed, and the job stops before uploading
-anything, since an npm version can never be reused; npm starts with the
-first release cut after the fix. Not Packagist: the 0.1.0 tag has no root
-`composer.json`. Its Go module is already on pkg.go.dev.
+npm cannot be published this way for releases before 0.1.2: they were
+packed under the earlier `@sourceorrery` scope (and the 0.1.0 main tarball
+also lacks its `index.js` loader), so the npm job stops before uploading
+anything, since an npm version can never be reused. Packagist cannot serve
+0.1.0, whose tag has no root `composer.json`.
 
 ## The PHP package and Packagist
 

@@ -6,6 +6,27 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+* npm: the JavaScript/TypeScript SDK is published as `@sourceorreryai/sdk`,
+  with platform packages `@sourceorreryai/sdk-<platform>`, the npm scope
+  SourceOrrery owns; imports change from `'@sourceorrery/sdk'` to
+  `'@sourceorreryai/sdk'`. The 0.1.0 and 0.1.1 release tarballs keep the
+  old name and were never on npm, so 0.1.2 is the first version there.
+* Release workflows: npm publishes with trusted publishing (GitHub OIDC,
+  npm 11, provenance) instead of a stored token. `NPM_TOKEN` is no longer
+  read; the repository variable `NPM_TRUSTED_PUBLISHING` switches npm on
+  once each package lists its trusted publishers (`docs/release.md`).
+* Docs: the install instructions point at the v0.1.1 release and say
+  which registries carry 0.1.1; `cargo install sourceorrery-cli` is listed.
+
+### Fixed
+
+* Release workflow: the Linux wheel builds install `dbus-devel` and
+  `pkgconf-pkg-config` with EPEL disabled. Both come from AlmaLinux's own
+  repositories, and a broken EPEL mirror failed the first 0.1.1 release
+  run.
+
 ## [0.1.1] - 2026-10-21
 
 ### Added

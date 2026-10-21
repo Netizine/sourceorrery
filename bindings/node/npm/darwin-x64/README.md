@@ -1,3 +1,3 @@
-# `@sourceorrery/sdk-darwin-x64`
+# `@sourceorreryai/sdk-darwin-x64`
 
-This is the **x86_64-apple-darwin** binary for `@sourceorrery/sdk`
+This is the **x86_64-apple-darwin** binary for `@sourceorreryai/sdk`
