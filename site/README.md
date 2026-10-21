@@ -35,8 +35,12 @@ note on the homepage only. It promises no cookies, no tracking and no
 phoning home; keep the site and the CLI that way or change the note.
 
 The landing page's architecture diagram is
-`src/assets/sourceorrery-architecture.png`, rendered through Astro's
-`<Image>` (WebP at three widths); replace the file to update it.
+`src/assets/sourceorrery-architecture.svg`, inlined verbatim by
+`src/components/ArchitectureDiagram.astro` so that it follows the site's
+theme toggle (the component copies `data-theme` from `<html>` onto the
+SVG, which carries its own light and dark palettes and embedded fonts).
+Replace the file to update the diagram; keep its root `id`
+(`soa-architecture`) and `data-theme` handling.
 
 ## Commands
 
