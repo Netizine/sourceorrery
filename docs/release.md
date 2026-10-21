@@ -73,7 +73,7 @@ time. The **Release packages** workflow
 |----------|-------------|---------|
 | npm | `publish-npm` | `NPM_TOKEN` |
 | PyPI | `publish-pypi` | `PYPI_API_TOKEN` |
-| NuGet | `publish-nuget` | `NUGET_API_KEY` |
+| NuGet | `publish-nuget` | `NUGET_USER` (trusted publishing; no API key) |
 | crates.io | `publish-crates` | `CARGO_REGISTRY_TOKEN` |
 | Maven Central | `publish-maven` | `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`, `MAVEN_GPG_PASSPHRASE` |
 | Packagist | `publish-packagist` | `PACKAGIST_USERNAME`, `PACKAGIST_API_TOKEN` |
@@ -115,12 +115,27 @@ token is needed then.
 3. After the first upload, replace it with a token scoped to the
    `sourceorrery` project.
 
-**NuGet** (`SourceOrrery`):
+**NuGet** (`SourceOrrery`), with trusted publishing, so no API key is
+stored anywhere. The publish jobs trade the job's GitHub identity token
+for a NuGet key that lives one hour, through `NuGet/login`; nuget.org
+grants it only to the workflows its policy names.
 
-1. Sign in to nuget.org.
-2. *API Keys → Create*: scope **Push new packages and package versions**,
-   glob pattern `SourceOrrery`, expiry up to 365 days. Save it as
-   `NUGET_API_KEY`.
+1. Sign in to nuget.org, click your user name, then *Trusted Publishing*.
+2. Add a policy, owned by your account (or the organisation that will own
+   the package): Repository Owner `Netizine`, Repository `sourceorrery`,
+   Workflow File `release.yml` (the file name only), Environment empty.
+   Allow publishing new packages and new versions, glob `SourceOrrery`.
+   The policy works before the package exists; the first push creates it.
+3. Add a second, identical policy with Workflow File
+   `ReleasePackages.yaml`, so the **Release packages** workflow can push
+   too.
+4. Save your nuget.org profile name (the user name, not the e-mail
+   address) as the repository secret `NUGET_USER`.
+
+A new policy can show as *temporarily active* for 7 days, mostly for
+private repositories, until a first publish locks it to the repository; if
+nothing publishes in that window it turns inactive and can be restarted
+from the same page.
 
 **crates.io** (`sourceorrery-core`, `sourceorrery-crypto`,
 `sourceorrery-storage`, `sourceorrery`, `sourceorrery-ffi`,

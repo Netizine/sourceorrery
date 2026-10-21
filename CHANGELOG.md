@@ -18,6 +18,11 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+* Release workflows: NuGet publishes with trusted publishing instead of a
+  stored API key. `NuGet/login` trades the job's GitHub OIDC token for a
+  one-hour key that nuget.org grants only to the workflows its policy
+  names; the repository secret is now `NUGET_USER` (the nuget.org profile
+  name) and `NUGET_API_KEY` is no longer read (`docs/release.md`).
 * PHP: the Composer manifest is now `composer.json` at the repository
   root, the only place Packagist and Composer `vcs` repositories read it,
   so `composer require sourceorrery/sourceorrery` resolves every release
