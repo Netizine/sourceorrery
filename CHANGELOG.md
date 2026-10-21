@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-21
+
 ### Changed
 
 * npm: the JavaScript/TypeScript SDK is published as `@sourceorreryai/sdk`,
@@ -318,6 +320,7 @@ uses [Semantic Versioning](https://semver.org/).
   `unsafe`; every block states its invariant. Covered by Rust smoke tests
   that call the exported functions and by a C example compiled in CI.
 
-[Unreleased]: https://github.com/Netizine/sourceorrery/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Netizine/sourceorrery/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Netizine/sourceorrery/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Netizine/sourceorrery/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0
