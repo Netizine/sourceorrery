@@ -7,8 +7,8 @@ read-only functions an application needs.
 
 ## Install
 
-The `sourceorrery-ffi-0.1.1-<target>` archive on the
-[v0.1.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1)
+The `sourceorrery-ffi-0.1.3-<target>` archive on the
+[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
 holds the shared library (`libsourceorrery_ffi.so` / `.dylib` /
 `sourceorrery_ffi.dll` with its import library), the static library,
 `include/sourceorrery.h` and the C++ header. Download the one for your
@@ -20,9 +20,9 @@ example below is `get_secret.c` from the next section.
 #### Windows
 
 ```powershell
-$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.1"
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.3"
 $dir = "$env:LOCALAPPDATA\sourceorrery-ffi"
-Invoke-WebRequest "$release/sourceorrery-ffi-0.1.1-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
+Invoke-WebRequest "$release/sourceorrery-ffi-0.1.3-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
 Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 
 cl /I "$dir\include" get_secret.c /link "$dir\sourceorrery_ffi.dll.lib"
@@ -33,8 +33,8 @@ $env:Path = "$dir;$env:Path"          # sourceorrery_ffi.dll must be on PATH at 
 #### macOS
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.1
-archive=sourceorrery-ffi-0.1.1-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.3
+archive=sourceorrery-ffi-0.1.3-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 
@@ -45,8 +45,8 @@ DYLD_LIBRARY_PATH=/opt/sourceorrery ./get_secret
 #### Linux
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.1
-archive=sourceorrery-ffi-0.1.1-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.3
+archive=sourceorrery-ffi-0.1.3-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 

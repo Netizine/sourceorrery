@@ -4,8 +4,8 @@
 
 ### From the release
 
-`sourceorrery-0.1.1.jar` on the
-[v0.1.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1)
+`sourceorrery-0.1.3.jar` on the
+[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
 embeds the native library for Windows, macOS and Linux (x64 and arm64), so
 one jar serves every platform. Install it into your local Maven repository,
 then depend on it as usual:
@@ -15,22 +15,22 @@ then depend on it as usual:
 #### Windows
 
 ```powershell
-Invoke-WebRequest https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-0.1.1.jar -OutFile sourceorrery-0.1.1.jar
-mvn install:install-file "-Dfile=sourceorrery-0.1.1.jar" "-DgroupId=ai.sourceorrery" "-DartifactId=sourceorrery" "-Dversion=0.1.1" "-Dpackaging=jar"
+Invoke-WebRequest https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorrery-0.1.3.jar -OutFile sourceorrery-0.1.3.jar
+mvn install:install-file "-Dfile=sourceorrery-0.1.3.jar" "-DgroupId=ai.sourceorrery" "-DartifactId=sourceorrery" "-Dversion=0.1.3" "-Dpackaging=jar"
 ```
 
 #### macOS
 
 ```bash
-curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-0.1.1.jar
-mvn install:install-file -Dfile=sourceorrery-0.1.1.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.1 -Dpackaging=jar
+curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorrery-0.1.3.jar
+mvn install:install-file -Dfile=sourceorrery-0.1.3.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.3 -Dpackaging=jar
 ```
 
 #### Linux
 
 ```bash
-curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-0.1.1.jar
-mvn install:install-file -Dfile=sourceorrery-0.1.1.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.1 -Dpackaging=jar
+curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorrery-0.1.3.jar
+mvn install:install-file -Dfile=sourceorrery-0.1.3.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.3 -Dpackaging=jar
 ```
 
 <!-- /tabs -->
@@ -39,22 +39,22 @@ mvn install:install-file -Dfile=sourceorrery-0.1.1.jar -DgroupId=ai.sourceorrery
 <dependency>
   <groupId>ai.sourceorrery</groupId>
   <artifactId>sourceorrery</artifactId>
-  <version>0.1.1</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("ai.sourceorrery:sourceorrery:0.1.1")   // Gradle, with mavenLocal() among the repositories
+implementation("ai.sourceorrery:sourceorrery:0.1.3")   // Gradle, with mavenLocal() among the repositories
 ```
 
 Without a local repository, put the jar on the classpath directly:
-`implementation(files("libs/sourceorrery-0.1.1.jar"))` in Gradle, or
-`--class-path sourceorrery-0.1.1.jar` on the `java` command line.
+`implementation(files("libs/sourceorrery-0.1.3.jar"))` in Gradle, or
+`--class-path sourceorrery-0.1.3.jar` on the `java` command line.
 
 ### From Maven Central
 
-The same coordinates resolve from Maven Central for every release from
-0.1.1 on; no local install is needed then.
+The same coordinates resolve from Maven Central; no local install is
+needed then.
 
 Requires Java 22 or newer: the binding uses the Foreign Function and
 Memory API (`java.lang.foreign`) over the C ABI, with no JNI code and no
