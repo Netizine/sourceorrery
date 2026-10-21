@@ -96,9 +96,10 @@ package is published by hand, once.
    The packages live in its user scope, `@sourceorreryai`.
 2. The first version, by hand: download the release's seven npm tarballs
    (`sourceorreryai-sdk-*.tgz`), run `npm login`, then
-   `npm publish <tarball> --access public` for the six platform tarballs
-   and, last, the main one, confirming each with two-factor
-   authentication.
+   `npm publish ./<tarball> --access public` for the six platform
+   tarballs and, last, the main one, confirming each with two-factor
+   authentication. Keep the `./`: npm reads a path such as
+   `dist/<tarball>` as a GitHub repository.
 3. For each of the seven packages, at
    `https://www.npmjs.com/package/<name>/access`, *Trusted Publisher →
    GitHub Actions*: Organization or user `Netizine`, Repository
