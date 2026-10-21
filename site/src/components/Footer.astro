@@ -1,0 +1,44 @@
+---
+/**
+ * Starlight's footer with one addition: on the homepage only, a short
+ * privacy note beneath it. Every other page gets the default footer.
+ *
+ * The note is true as written: the site loads no analytics or third-party
+ * scripts and sets no cookies, and the CLI has no HTTP client and never
+ * checks for updates. Keep it that way, or change the note.
+ */
+import Default from '@astrojs/starlight/components/Footer.astro';
+
+// Starlight normalises the root index page's id to the empty string.
+const isHome = Astro.locals.starlightRoute.id === '';
+---
+
+<Default />
+{
+	isHome && (
+		<p class="so-privacy">
+			<span class="so-privacy__icon" aria-hidden="true">🍪</span>SourceOrrery has no cookie banner
+			because I’m not interested in stalking you around the internet. SourceOrrery takes privacy so
+			seriously that I even refused to build an auto-updater because phoning home once was already
+			one call too many.
+		</p>
+	)
+}
+
+<style>
+	.so-privacy {
+		max-width: 44rem;
+		margin: 2.5rem auto 1rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--sl-color-hairline);
+		font-family: var(--so-font-ui);
+		font-size: 0.8rem;
+		line-height: 1.6;
+		text-align: center;
+		color: var(--sl-color-gray-3);
+	}
+
+	.so-privacy__icon {
+		margin-inline-end: 0.35em;
+	}
+</style>

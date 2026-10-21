@@ -29,6 +29,11 @@ There is no "Edit page" link: `astro.config.mjs` sets no `editLink` and
 `scripts/sync-docs.mjs` writes no `editUrl`. Keep it that way; a page that
 sets `editUrl` in its frontmatter would bring the link back for that page.
 
+The privacy note at the bottom of the landing page lives in
+`src/components/Footer.astro`, which wraps Starlight's footer and adds the
+note on the homepage only. It promises no cookies, no tracking and no
+phoning home; keep the site and the CLI that way or change the note.
+
 The landing page's architecture diagram is
 `src/assets/sourceorrery-architecture.png`, rendered through Astro's
 `<Image>` (WebP at three widths); replace the file to update it.

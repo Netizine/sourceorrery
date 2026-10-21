@@ -50,6 +50,8 @@ export default defineConfig({
 				Hero: './src/components/Hero.astro',
 				// Starlight's own version, with the GitHub link opening in a new tab.
 				SocialIcons: './src/components/SocialIcons.astro',
+				// Starlight's footer plus the homepage's privacy note.
+				Footer: './src/components/Footer.astro',
 			},
 			expressiveCode: {
 				themes: ['github-light', 'github-dark-dimmed'],
