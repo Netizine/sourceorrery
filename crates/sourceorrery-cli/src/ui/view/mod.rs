@@ -8,6 +8,7 @@
 //! sidebar uses for the current page, messages drawn as callouts, and a
 //! footer bar.
 
+mod dialog;
 mod lists;
 mod overview;
 mod secrets;
@@ -25,6 +26,7 @@ use time::macros::format_description;
 use time::{OffsetDateTime, UtcOffset};
 
 use super::app::{App, Message, Tab};
+use super::edit::Dialog;
 use super::session::Session;
 use super::theme::{Callout, Theme};
 use crate::output;
@@ -72,8 +74,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
         frame.render_widget(callout(text, theme), message);
     }
     draw_footer(frame, app, theme, footer);
+    if let Some(open) = &app.dialog {
+        dialog::draw(frame, open, theme);
+    }
     if app.help {
-        draw_help(frame, theme);
+        draw_help(frame, app, theme);
     }
 }
 
@@ -194,6 +199,9 @@ fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
                 format!("  ·  {deletion}  ·  {protectors}"),
                 theme.muted,
             ));
+            if app.is_read_only() {
+                spans.push(Span::styled("  ·  read-only", theme.muted));
+            }
         }
         None => match &app.locked {
             Some(locked) => {
@@ -376,8 +384,18 @@ fn callout(message: &Message, theme: &Theme) -> Paragraph<'static> {
 }
 
 fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
+    let changes = !app.is_read_only() && app.session.as_ref().is_some_and(|s| !s.is_blocked());
     if app.help {
         &[("Esc ?", "close"), ("q", "quit")]
+    } else if let Some(open) = &app.dialog {
+        match open {
+            Dialog::Form(_) => &[
+                ("Tab", "next field"),
+                ("Enter", "review"),
+                ("Esc", "cancel"),
+            ],
+            Dialog::Confirm(_) => &[("Enter", "confirm"), ("Esc", "cancel")],
+        }
     } else if app.editing {
         &[
             ("type", "to filter"),
@@ -392,12 +410,64 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
             ("?", "help"),
             ("q", "quit"),
         ]
+    } else if app.detail.is_some() && changes && app.tab == Tab::Secrets {
+        &[
+            ("↑↓", "versions"),
+            ("space", "on/off"),
+            ("e", "edit"),
+            ("n", "new version"),
+            ("Esc", "back"),
+            ("?", "keys"),
+        ]
+    } else if app.detail.is_some() && changes {
+        &[
+            ("u", "recover"),
+            ("Esc", "back"),
+            ("r", "reload"),
+            ("?", "keys"),
+            ("q", "quit"),
+        ]
     } else if app.detail.is_some() {
         &[
             ("↑↓", "versions"),
             ("Esc", "back"),
             ("r", "reload"),
             ("?", "help"),
+            ("q", "quit"),
+        ]
+    } else {
+        view_hints(app, changes)
+    }
+}
+
+/// The keys a view (not a dialog, search or details) offers.
+fn view_hints(app: &App, changes: bool) -> &'static [(&'static str, &'static str)] {
+    if changes && app.tab == Tab::Overview {
+        &[
+            ("v", "verify chain"),
+            ("a", "add secret"),
+            ("L", "lock"),
+            ("Tab", "views"),
+            ("?", "keys"),
+            ("q", "quit"),
+        ]
+    } else if changes && app.tab == Tab::Secrets {
+        &[
+            ("↑↓", "move"),
+            ("Enter", "details"),
+            ("/", "search"),
+            ("e", "edit"),
+            ("d", "delete"),
+            ("?", "keys"),
+            ("q", "quit"),
+        ]
+    } else if changes && app.tab == Tab::Deleted {
+        &[
+            ("↑↓", "move"),
+            ("Enter", "details"),
+            ("u", "recover"),
+            ("/", "search"),
+            ("?", "keys"),
             ("q", "quit"),
         ]
     } else {
@@ -480,7 +550,16 @@ const HELP_KEYS: [(&str, &str); 13] = [
     ("", ""),
 ];
 
-fn draw_help(frame: &mut Frame<'_>, theme: &Theme) {
+const HELP_CHANGES: [(&str, &str); 6] = [
+    ("space", "enable or disable the selected version"),
+    ("e", "change its metadata"),
+    ("n", "new version: the value at a hidden prompt"),
+    ("a", "new secret"),
+    ("d", "delete the secret"),
+    ("u", "recover a deleted secret (Deleted view)"),
+];
+
+fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     let mut lines: Vec<Line<'_>> = HELP_KEYS
         .iter()
         .map(|(keys, what)| {
@@ -490,6 +569,22 @@ fn draw_help(frame: &mut Frame<'_>, theme: &Theme) {
             ])
         })
         .collect();
+    lines.push(Line::from(Span::styled("CHANGES", theme.label)));
+    if app.is_read_only() {
+        lines.push(Line::from("None: this browser is read-only (--read-only)."));
+    } else {
+        for (keys, what) in HELP_CHANGES {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{keys:<23}"), theme.key),
+                Span::raw(what),
+            ]));
+        }
+        lines.push(Line::from(Span::styled(
+            "Each is confirmed first and recorded by the vault.",
+            theme.muted,
+        )));
+    }
+    lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("SEARCH", theme.label)));
     lines.push(Line::from(
         "Words match anywhere. Secrets: tag:env=prod  status:expired",

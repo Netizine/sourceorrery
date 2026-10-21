@@ -1,18 +1,22 @@
-//! An in-memory vault for the browser's tests, counting each kind of read.
+//! An in-memory vault for the browser's tests, counting each kind of read
+//! and recording each change.
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use sourceorrery_core::{
     AuditEvent, AuditOperation, AuditOutcome, AuditQuery, DeletedSecret, Principal, RecoveryLevel,
-    Result, SecretError, SecretProperties, VaultDescriptor, timestamp,
+    Result, SecretBytes, SecretError, SecretProperties, SetSecretOptions, UpdateSecretProperties,
+    VaultDescriptor, timestamp,
 };
 use time::Duration;
 
 use sourceorrery_storage::{AuditVerification, ProtectorInfo};
 
 use super::app::VaultEntry;
+use super::editor::MetadataEditor;
 use super::source::MetadataSource;
 
 #[derive(Debug, Default)]
@@ -34,6 +38,27 @@ pub struct Fake {
     pub verifies: Cell<usize>,
     /// Report a broken chain.
     pub broken: Cell<bool>,
+    /// Deleting is for good.
+    pub purgeable: Cell<bool>,
+    /// Secrets whose versions are disabled.
+    pub disabled: RefCell<BTreeSet<String>>,
+    /// Changes, in order: what was asked for, and of a value only its length.
+    pub writes: RefCell<Vec<Write>>,
+}
+
+/// A change the browser made.
+#[derive(Clone, Debug)]
+pub enum Write {
+    Update(String, String, UpdateSecretProperties),
+    Delete(String),
+    Recover(String),
+    AddVersion(String, usize, SetSecretOptions),
+}
+
+/// The fake keeps names as `&'static str`; names the browser adds are
+/// leaked to fit. Tests only.
+fn leak(name: &str) -> &'static str {
+    Box::leak(name.to_owned().into_boxed_str())
 }
 
 impl Fake {
@@ -62,7 +87,7 @@ impl Fake {
             vault: "development".into(),
             name: name.to_owned(),
             version: version.to_owned(),
-            enabled: true,
+            enabled: !self.disabled.borrow().contains(name),
             content_type: None,
             tags: self
                 .tags
@@ -110,7 +135,11 @@ impl MetadataSource for Fake {
             backend: "fake".into(),
             path: None,
             created_on: timestamp::now(),
-            recovery_level: RecoveryLevel::Recoverable,
+            recovery_level: if self.purgeable.get() {
+                RecoveryLevel::Purgeable
+            } else {
+                RecoveryLevel::Recoverable
+            },
             retention_days: 90,
             protectors: vec!["passphrase".into()],
         })
@@ -210,5 +239,71 @@ impl MetadataSource for Fake {
             kind: "passphrase".into(),
             created_on: timestamp::now(),
         }])
+    }
+}
+
+impl MetadataEditor for Fake {
+    fn update(
+        &self,
+        name: &str,
+        version: &str,
+        update: UpdateSecretProperties,
+    ) -> Result<SecretProperties> {
+        self.audited(&Cell::new(0))?;
+        if let Some(enabled) = update.enabled {
+            if enabled {
+                self.disabled.borrow_mut().remove(name);
+            } else {
+                self.disabled.borrow_mut().insert(name.to_owned());
+            }
+        }
+        self.writes
+            .borrow_mut()
+            .push(Write::Update(name.to_owned(), version.to_owned(), update));
+        Ok(self.props(name, version))
+    }
+
+    fn delete(&self, name: &str) -> Result<DeletedSecret> {
+        self.audited(&Cell::new(0))?;
+        self.names.borrow_mut().retain(|n| *n != name);
+        if !self.purgeable.get() {
+            self.deleted_names.borrow_mut().push(leak(name));
+        }
+        self.writes
+            .borrow_mut()
+            .push(Write::Delete(name.to_owned()));
+        let now = timestamp::now();
+        Ok(DeletedSecret {
+            properties: self.props(name, "0123456789abcdef0123456789abcdef"),
+            deleted_on: now,
+            scheduled_purge_on: Some(now + Duration::days(90)),
+            recovery_id: String::new(),
+        })
+    }
+
+    fn recover(&self, name: &str) -> Result<SecretProperties> {
+        self.audited(&Cell::new(0))?;
+        self.deleted_names.borrow_mut().retain(|n| *n != name);
+        self.names.borrow_mut().push(leak(name));
+        self.writes
+            .borrow_mut()
+            .push(Write::Recover(name.to_owned()));
+        Ok(self.props(name, "0123456789abcdef0123456789abcdef"))
+    }
+
+    fn add_version(
+        &self,
+        name: &str,
+        value: SecretBytes,
+        options: SetSecretOptions,
+    ) -> Result<SecretProperties> {
+        self.audited(&Cell::new(0))?;
+        if !self.names.borrow().contains(&name) {
+            self.names.borrow_mut().push(leak(name));
+        }
+        self.writes
+            .borrow_mut()
+            .push(Write::AddVersion(name.to_owned(), value.len(), options));
+        Ok(self.props(name, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
     }
 }

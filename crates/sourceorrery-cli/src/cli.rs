@@ -393,6 +393,9 @@ pub struct UiArgs {
         value_name = "MINUTES"
     )]
     pub lock_after: u32,
+    /// Browse only: refuse every change.
+    #[arg(long)]
+    pub read_only: bool,
 }
 
 #[cfg(feature = "ui")]

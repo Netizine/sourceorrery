@@ -43,12 +43,16 @@ and `docs/threat-model.md` before changing anything security-relevant.
 - `SecretBytes` has no `Serialize`. Do not add one. The CLI reveals values
   only in `output::print_revealed` and the JSON branch of `secret get --reveal`.
 - The CLI never accepts a secret value as a command-line argument.
-- The `ui` browser sees a vault only through `ui::source::MetadataSource`,
+- The `ui` browser reads a vault only through `ui::source::MetadataSource`,
   which never gains an operation that returns a value: no screen renders,
-  copies or holds one. Metadata writes, when they come, get their own
-  trait. Every metadata read is audited, so the browser reads each thing
-  once, when it is first shown, and again only on an explicit refresh;
-  never on movement, search or a timer. It never asks a blocked vault
+  copies or holds one. Changes go through `ui::editor::MetadataEditor`,
+  which only `ui::app` uses, once `ui::edit` has checked them and the user
+  has confirmed; it never gains purge, protector or acknowledgement
+  operations. A new value comes only from `prompt::read_hidden` with the
+  screen suspended and goes straight to the vault. Every metadata read is
+  audited, so the browser reads each thing once, when it is first shown,
+  and again only on an explicit refresh (or after a change); never on
+  movement, search or a timer. It never asks a blocked vault
   for secrets (each refusal is recorded).
 - `SecretError::code()` strings are append-only.
 - New semantics go in core with a conformance test, not in a backend.

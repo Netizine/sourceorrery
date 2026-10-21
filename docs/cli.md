@@ -181,13 +181,14 @@ model).
 ## `ui`
 
 ```
-sourceorrery ui [--vault NAME] [--theme dark|light|terminal] [--lock-after MINUTES]
+sourceorrery ui [--vault NAME] [--theme dark|light|terminal] [--lock-after MINUTES] [--read-only]
 ```
 
-An interactive browser for the vaults in the home directory. It shows
-**metadata only**. It cannot read a value: it reaches a vault through an
-interface that has no operation returning one, so nothing it draws, and
-nothing in its memory, is a secret. Stored text is escaped as in every
+An interactive browser for the vaults in the home directory, which can
+also change their metadata. It shows **metadata only**. It cannot read a
+value: it reaches a vault through an interface that has no operation
+returning one, so nothing it draws, and nothing in its memory, is a
+secret. Stored text is escaped as in every
 other table (see `--output` above), so metadata in the file cannot drive
 the terminal. Times are UTC.
 
@@ -213,6 +214,30 @@ unlocked, so a refused start prompts for nothing and records nothing.
 browser drops the open vault: its handle goes, and with it the vault key,
 which is zeroised; everything read from it goes too. `Enter` unlocks it
 again, with the same unlock order and prompt as opening it.
+
+**Changing secrets.** In the Secrets and Deleted views (and their
+details), unless `--read-only` is given:
+
+| Key | Change | The vault records |
+|-----|--------|-------------------|
+| `space` | Enable or disable the selected version (in details: the version selected there; in the list: the newest) | `secret_update` |
+| `e` | Change that version's metadata: enabled, content type, tags, not before, expires | `secret_update` |
+| `n` | A new version of the secret, starting from the newest version's content type and tags | `secret_set` |
+| `a` | A new secret (a new version, if a live secret has the name) | `secret_set` |
+| `d` | Delete the secret: soft in a recoverable vault, for good in a purgeable one | `secret_delete` |
+| `u` | Recover a deleted secret (Deleted view) | `secret_recover` |
+
+Every change is checked first with the vault's own rules (names, tags,
+time windows), so one the vault would refuse is never sent, and then
+shown for confirmation; `Enter` makes it, `Esc` drops it. Deleting for
+good must be confirmed by typing the secret's name. Afterwards the
+browser reads the vault again (one `secret_list`, and a `secret_inspect`
+if details are open). A value is never typed into the browser: for `n`
+and `a`, confirming leaves the screen and asks for it twice at the same
+hidden prompt as `secret set`, then stores it and comes back; an empty
+value, or two that differ, store nothing. Purging, protectors,
+destroying, migrating and acknowledging a truncation are not available
+in the browser; nothing can be changed in a blocked vault.
 
 **A blocked vault.** Vaults are opened for inspection, as `audit` opens
 them. One blocked by an unacknowledged audit-log truncation (see `audit`
@@ -244,6 +269,7 @@ filter; `Esc` clears it.
 | `r` | Read the vault again (on Vaults: list the files again) |
 | `v` | Check the audit chain again |
 | `L` | Lock now: drop the vault and wipe its key |
+| `space` `e` `n` `a` `d` `u` | Changes (see above) |
 | `?` | Keys and search syntax |
 | `q` / `Ctrl-C` | Quit |
 

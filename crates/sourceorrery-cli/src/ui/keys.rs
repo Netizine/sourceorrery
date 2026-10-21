@@ -21,6 +21,15 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
             KeyCode::Char('q') => Some(Action::Quit),
             _ => None,
         },
+        Mode::Dialog => match key.code {
+            KeyCode::Esc => Some(Action::Back),
+            KeyCode::Enter => Some(Action::Commit),
+            KeyCode::Backspace => Some(Action::Erase),
+            KeyCode::Tab | KeyCode::Down => Some(Action::Down),
+            KeyCode::BackTab | KeyCode::Up => Some(Action::Up),
+            KeyCode::Char(c) => Some(Action::Input(c)),
+            _ => None,
+        },
         Mode::Search => match key.code {
             KeyCode::Esc => Some(Action::Back),
             KeyCode::Enter => Some(Action::Commit),
@@ -62,6 +71,12 @@ fn command(code: KeyCode) -> Option<Action> {
         KeyCode::Char('r') => Action::Refresh,
         KeyCode::Char('v') => Action::Verify,
         KeyCode::Char('L') => Action::Lock,
+        KeyCode::Char(' ') => Action::Toggle,
+        KeyCode::Char('e') => Action::Edit,
+        KeyCode::Char('n') => Action::NewVersion,
+        KeyCode::Char('a') => Action::Add,
+        KeyCode::Char('d') => Action::Delete,
+        KeyCode::Char('u') => Action::Recover,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('q') => Action::Quit,
         _ => return None,
@@ -141,6 +156,28 @@ mod tests {
     }
 
     #[test]
+    fn change_keys_and_dialogs() {
+        assert_eq!(normal(KeyCode::Char(' ')), Some(Action::Toggle));
+        assert_eq!(normal(KeyCode::Char('e')), Some(Action::Edit));
+        assert_eq!(normal(KeyCode::Char('n')), Some(Action::NewVersion));
+        assert_eq!(normal(KeyCode::Char('a')), Some(Action::Add));
+        assert_eq!(normal(KeyCode::Char('d')), Some(Action::Delete));
+        assert_eq!(normal(KeyCode::Char('u')), Some(Action::Recover));
+        let dialog = |code| press(code, Mode::Dialog);
+        assert_eq!(
+            dialog(KeyCode::Char('q')),
+            Some(Action::Input('q')),
+            "q is text in a form"
+        );
+        assert_eq!(dialog(KeyCode::Char(' ')), Some(Action::Input(' ')));
+        assert_eq!(dialog(KeyCode::Tab), Some(Action::Down));
+        assert_eq!(dialog(KeyCode::BackTab), Some(Action::Up));
+        assert_eq!(dialog(KeyCode::Enter), Some(Action::Commit));
+        assert_eq!(dialog(KeyCode::Esc), Some(Action::Back));
+        assert_eq!(dialog(KeyCode::Backspace), Some(Action::Erase));
+    }
+
+    #[test]
     fn the_help_closes_and_ignores_the_rest() {
         assert_eq!(press(KeyCode::Char('?'), Mode::Help), Some(Action::Help));
         assert_eq!(press(KeyCode::Esc, Mode::Help), Some(Action::Back));
@@ -158,7 +195,7 @@ mod tests {
 
     #[test]
     fn ctrl_c_quits_in_every_mode_and_other_chords_do_nothing() {
-        for mode in [Mode::Normal, Mode::Search, Mode::Help] {
+        for mode in [Mode::Normal, Mode::Search, Mode::Help, Mode::Dialog] {
             let ctrl_c = key(
                 KeyCode::Char('c'),
                 KeyModifiers::CONTROL,

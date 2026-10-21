@@ -7,9 +7,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use ratatui::widgets::TableState;
-use sourceorrery_core::{AuditEvent, DeletedSecret, SecretError, SecretProperties, timestamp};
+use sourceorrery_core::{
+    AuditEvent, DeletedSecret, SecretBytes, SecretError, SecretProperties, SetSecretOptions,
+    timestamp,
+};
 use time::OffsetDateTime;
 
+use super::edit::{Change, Confirm, Dialog, Form};
 use super::search::Query;
 use super::session::Session;
 use crate::output;
@@ -75,6 +79,18 @@ pub enum Action {
     Verify,
     /// Lock the open vault now: drop it, wiping its key from memory.
     Lock,
+    /// Enable or disable the selected version.
+    Toggle,
+    /// Change the selected version's metadata.
+    Edit,
+    /// Store a new version of the selected secret.
+    NewVersion,
+    /// Store a new secret.
+    Add,
+    /// Delete the selected secret.
+    Delete,
+    /// Recover the selected deleted secret.
+    Recover,
     Help,
     Quit,
 }
@@ -86,6 +102,8 @@ pub enum Mode {
     Normal,
     Search,
     Help,
+    /// A form or a confirmation is open.
+    Dialog,
 }
 
 /// Work only the event loop can do.
@@ -95,6 +113,9 @@ pub enum Request {
     Open(String),
     /// List the vaults in the home directory again.
     ListVaults,
+    /// Read a new value for this secret at the hidden prompt and hand it
+    /// to [`App::write_version`].
+    ReadValue(String),
 }
 
 /// A vault file in the home directory. Listing needs no unlock.
@@ -142,6 +163,12 @@ pub struct App {
     lock_after: Option<Duration>,
     /// The vault that was locked, to unlock again with Enter.
     pub locked: Option<Locked>,
+    /// A form or confirmation over the views.
+    pub dialog: Option<Dialog>,
+    /// A confirmed new version waiting for its value from the hidden prompt.
+    pending_value: Option<(String, SetSecretOptions)>,
+    /// Changes are refused.
+    read_only: bool,
 }
 
 /// A vault the browser locked: its handle and key are gone.
@@ -169,6 +196,9 @@ impl App {
             quit: false,
             lock_after: None,
             locked: None,
+            dialog: None,
+            pending_value: None,
+            read_only: false,
         };
         app.clamp();
         app
@@ -183,6 +213,17 @@ impl App {
 
     pub fn lock_after(&self) -> Option<Duration> {
         self.lock_after
+    }
+
+    /// Refuse every change (`--read-only`).
+    #[must_use]
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// How long until the open vault locks, `idle` after the last key;
@@ -204,6 +245,8 @@ impl App {
         self.detail = None;
         self.editing = false;
         self.help = false;
+        self.dialog = None;
+        self.pending_value = None;
         self.message = Some(Message::Info(format!(
             "locked vault '{vault}': its key is wiped from memory"
         )));
@@ -257,6 +300,8 @@ impl App {
     pub fn mode(&self) -> Mode {
         if self.help {
             Mode::Help
+        } else if self.dialog.is_some() {
+            Mode::Dialog
         } else if self.editing {
             Mode::Search
         } else {
@@ -369,9 +414,19 @@ impl App {
             }
             return;
         }
+        if let Some(dialog) = self.dialog.take() {
+            self.dialog = self.update_dialog(dialog, action);
+            return;
+        }
         match action {
             Action::Quit => self.quit = true,
             Action::Help => self.help = true,
+            Action::Toggle => self.start_toggle(),
+            Action::Edit => self.start_edit(),
+            Action::NewVersion => self.start_new_version(),
+            Action::Add => self.start_add(),
+            Action::Delete => self.start_delete(),
+            Action::Recover => self.start_recover(),
             Action::Back => self.back(),
             Action::Search => {
                 self.detail = None;
@@ -559,18 +614,25 @@ impl App {
             self.request = Some(Request::ListVaults);
             return;
         }
-        let Some(session) = &mut self.session else {
-            return;
-        };
-        if let Err(err) = session.reload() {
-            self.message = Some(failure(
-                "refresh failed; showing what was read before",
-                &err,
-            ));
-            return;
+        match self.reread() {
+            Ok(name) => self.message = Some(Message::Info(format!("reloaded vault '{name}'"))),
+            Err(err) => {
+                self.message = Some(failure(
+                    "refresh failed; showing what was read before",
+                    &err,
+                ));
+            }
         }
+    }
+
+    /// Read the vault again: the list, the current view, the open details
+    /// (with the same version selected). Returns the vault's name.
+    fn reread(&mut self) -> Result<String, SecretError> {
+        let Some(session) = &mut self.session else {
+            return Ok(String::new());
+        };
+        session.reload()?;
         let name = session.vault.name.clone();
-        self.message = Some(Message::Info(format!("reloaded vault '{name}'")));
         self.load_view();
         if let Some(detail) = self.detail.take() {
             let live = self.tab == Tab::Secrets;
@@ -582,15 +644,287 @@ impl App {
                     .any(|d| d.properties.name == detail),
             };
             if still_there {
+                let version = self.versions.selected();
                 self.open_detail(detail, live);
+                self.versions.select(version);
             }
         }
         self.clamp();
+        Ok(name)
+    }
+
+    // --- changes ----------------------------------------------------------
+
+    /// May this browser change the vault now? Says why not.
+    fn can_change(&mut self) -> bool {
+        let why = if self.read_only {
+            Some(
+                "this browser is read-only (--read-only); change secrets with `sourceorrery secret`",
+            )
+        } else if self.session.is_none() {
+            Some("no vault is open")
+        } else if self.session.as_ref().is_some_and(Session::is_blocked) {
+            Some(
+                "the vault is blocked: nothing can change until `sourceorrery audit --acknowledge`",
+            )
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            self.message = Some(Message::Error(why.to_owned()));
+        }
+        why.is_none()
+    }
+
+    /// The version a change applies to: the one selected in the details,
+    /// else the newest version of the secret selected in the list.
+    fn target_version(&self) -> Option<SecretProperties> {
+        if self.tab != Tab::Secrets {
+            return None;
+        }
+        match &self.detail {
+            Some(name) => self
+                .session
+                .as_ref()?
+                .detail(name)?
+                .versions
+                .as_ref()?
+                .get(self.versions.selected().unwrap_or(0))
+                .cloned(),
+            None => self.selected_secret().cloned(),
+        }
+    }
+
+    fn start_toggle(&mut self) {
+        if let Some(p) = self.target_version()
+            && self.can_change()
+        {
+            self.dialog = Some(Dialog::Confirm(Confirm::toggle(&p)));
+        }
+    }
+
+    fn start_edit(&mut self) {
+        if let Some(p) = self.target_version()
+            && self.can_change()
+        {
+            self.dialog = Some(Dialog::Form(Form::edit(&p)));
+        }
+    }
+
+    fn start_new_version(&mut self) {
+        let name = self.target_version().map(|p| p.name);
+        let newest = name.and_then(|name| {
+            self.session
+                .as_ref()?
+                .secrets
+                .iter()
+                .find(|p| p.name == name)
+                .cloned()
+        });
+        if let Some(newest) = newest
+            && self.can_change()
+        {
+            self.dialog = Some(Dialog::Form(Form::new_version(&newest)));
+        }
+    }
+
+    fn start_add(&mut self) {
+        if !matches!(self.tab, Tab::Overview | Tab::Secrets) || !self.can_change() {
+            return;
+        }
+        let Some(session) = &self.session else {
+            return;
+        };
+        let live = session.secrets.iter().map(|p| p.name.clone()).collect();
+        let deleted = session
+            .deleted()
+            .unwrap_or_default()
+            .iter()
+            .map(|d| d.properties.name.clone())
+            .collect();
+        self.dialog = Some(Dialog::Form(Form::add(live, deleted)));
+    }
+
+    fn start_delete(&mut self) {
+        if self.tab != Tab::Secrets {
+            return;
+        }
+        let name = self
+            .detail
+            .clone()
+            .or_else(|| self.selected_secret().map(|p| p.name.clone()));
+        if let Some(name) = name
+            && self.can_change()
+            && let Some(session) = &self.session
+        {
+            let vault = &session.vault;
+            let purgeable = vault.recovery_level == sourceorrery_core::RecoveryLevel::Purgeable;
+            self.dialog = Some(Dialog::Confirm(Confirm::delete(
+                &name,
+                purgeable,
+                vault.retention_days,
+                timestamp::now(),
+            )));
+        }
+    }
+
+    fn start_recover(&mut self) {
+        if self.tab != Tab::Deleted {
+            return;
+        }
+        let name = self
+            .detail
+            .clone()
+            .or_else(|| self.selected_deleted().map(|d| d.properties.name.clone()));
+        if let Some(name) = name
+            && self.can_change()
+        {
+            self.dialog = Some(Dialog::Confirm(Confirm::recover(&name)));
+        }
+    }
+
+    /// One key in an open dialog. Returns the dialog if it stays open.
+    fn update_dialog(&mut self, dialog: Dialog, action: Action) -> Option<Dialog> {
+        match (dialog, action) {
+            (_, Action::Back) => None,
+            (dialog, Action::Quit) => {
+                self.quit = true;
+                Some(dialog)
+            }
+            (Dialog::Form(mut form), action) => {
+                match action {
+                    Action::Up | Action::PrevTab => form.prev(),
+                    Action::Down | Action::NextTab => form.next(),
+                    Action::Input(c) => form.input(c),
+                    Action::Erase => form.erase(),
+                    Action::Commit => {
+                        return match form.submit(timestamp::now()) {
+                            Ok(confirm) => Some(Dialog::Confirm(confirm)),
+                            Err(err) => {
+                                form.error = Some(err);
+                                Some(Dialog::Form(form))
+                            }
+                        };
+                    }
+                    _ => {}
+                }
+                Some(Dialog::Form(form))
+            }
+            (Dialog::Confirm(mut confirm), action) => {
+                match action {
+                    Action::Input(c) => confirm.input(c),
+                    Action::Erase => confirm.erase(),
+                    Action::Commit => match confirm.ready() {
+                        Ok(()) => {
+                            self.carry_out(confirm.change);
+                            return None;
+                        }
+                        Err(err) => confirm.error = Some(err),
+                    },
+                    _ => {}
+                }
+                Some(Dialog::Confirm(confirm))
+            }
+        }
+    }
+
+    /// Make a confirmed change, then read the vault again.
+    fn carry_out(&mut self, change: Change) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        let editor = session.editor();
+        let done = match change {
+            Change::AddVersion { name, options } => {
+                // The value comes from the hidden prompt, outside the screen.
+                self.request = Some(Request::ReadValue(name.clone()));
+                self.pending_value = Some((name, options));
+                return;
+            }
+            Change::Update {
+                name,
+                version,
+                update,
+            } => {
+                let enabled = update.enabled;
+                editor.update(&name, &version, update).map(|p| {
+                    let what = match enabled {
+                        Some(true) => "enabled",
+                        Some(false) => "disabled",
+                        None => "changed",
+                    };
+                    format!("{what} version {} of '{name}'", short(&p.version))
+                })
+            }
+            Change::Delete { name } => editor.delete(&name).map(|d| {
+                if d.recovery_id.is_empty() {
+                    format!("deleted '{name}' for good")
+                } else {
+                    format!("deleted '{name}'; recoverable with u on the Deleted view")
+                }
+            }),
+            Change::Recover { name } => {
+                editor.recover(&name).map(|_| format!("recovered '{name}'"))
+            }
+        };
+        self.after_change(done);
+    }
+
+    /// The event loop's answer to [`Request::ReadValue`]: the value read at
+    /// the hidden prompt, which goes straight to the vault and is dropped
+    /// (and zeroised) there. The browser keeps nothing of it.
+    pub fn write_version(&mut self, value: Result<SecretBytes, String>) {
+        let Some((name, options)) = self.pending_value.take() else {
+            return;
+        };
+        let value = match value {
+            Ok(value) => value,
+            Err(why) => {
+                self.message = Some(Message::Error(format!(
+                    "nothing stored for '{name}': {why}"
+                )));
+                return;
+            }
+        };
+        let Some(session) = &self.session else {
+            return;
+        };
+        let done = session
+            .editor()
+            .add_version(&name, value, options)
+            .map(|p| format!("stored version {} of '{name}'", short(&p.version)));
+        let stored = done.is_ok();
+        self.after_change(done);
+        if stored
+            && self.detail.is_none()
+            && self.tab == Tab::Secrets
+            && let Some(i) = self.shown_secrets().iter().position(|p| p.name == name)
+        {
+            self.select(i);
+        }
+    }
+
+    fn after_change(&mut self, done: Result<String, SecretError>) {
+        match done {
+            Ok(done) => {
+                self.message = Some(match self.reread() {
+                    Ok(_) => Message::Info(done),
+                    Err(err) => {
+                        failure(&format!("{done}, but reading the vault again failed"), &err)
+                    }
+                });
+            }
+            Err(err) => self.message = Some(failure("the vault refused the change", &err)),
+        }
     }
 }
 
 fn failure(what: &str, err: &SecretError) -> Message {
     Message::Error(format!("{what} ({}): {err}", err.code()))
+}
+
+fn short(version: &str) -> String {
+    version.chars().take(8).collect()
 }
 
 #[cfg(test)]
@@ -971,5 +1305,285 @@ pub mod tests {
         app.update(Action::Help);
         app.update(Action::Quit);
         assert!(app.should_quit());
+    }
+
+    // --- changes ------------------------------------------------------
+
+    use super::super::edit::Dialog;
+    use super::super::fake::Write;
+
+    fn writes(fake: &Rc<Fake>) -> Vec<Write> {
+        fake.writes.borrow().clone()
+    }
+
+    fn type_in(app: &mut App, text: &str) {
+        for c in text.chars() {
+            app.update(Action::Input(c));
+        }
+    }
+
+    #[test]
+    fn a_change_asks_first_and_esc_changes_nothing() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Toggle);
+        assert_eq!(app.mode(), Mode::Dialog);
+        assert!(matches!(&app.dialog, Some(Dialog::Confirm(c)) if c.title == "DISABLE VERSION"));
+        app.update(Action::Back);
+        assert!(app.dialog.is_none());
+        assert!(writes(&fake).is_empty());
+    }
+
+    #[test]
+    fn toggling_disables_the_version_and_reads_the_vault_again() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        let lists = fake.lists.get();
+        app.update(Action::Toggle);
+        app.update(Action::Commit);
+        let done = writes(&fake);
+        assert!(
+            matches!(&done[..], [Write::Update(name, version, update)]
+                if name == "a" && version.starts_with("01234567") && update.enabled == Some(false)),
+            "{done:?}"
+        );
+        assert_eq!(fake.lists.get(), lists + 1, "read again after the change");
+        assert!(!app.selected_secret().unwrap().enabled);
+        assert_eq!(
+            app.message,
+            Some(Message::Info("disabled version 01234567 of 'a'".into()))
+        );
+    }
+
+    #[test]
+    fn in_details_a_change_applies_to_the_selected_version() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Open);
+        app.update(Action::Down);
+        app.update(Action::Toggle);
+        app.update(Action::Commit);
+        assert!(
+            matches!(&writes(&fake)[..], [Write::Update(_, v, _)] if v.starts_with("fedcba98"))
+        );
+        assert_eq!(app.detail.as_deref(), Some("a"), "the details stay open");
+        assert_eq!(app.versions.selected(), Some(1), "on the same version");
+    }
+
+    #[test]
+    fn an_edit_sends_only_what_changed() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Edit);
+        app.update(Action::Down);
+        app.update(Action::Down); // enabled, content type, tags
+        type_in(&mut app, "team=payments");
+        app.update(Action::Commit);
+        assert!(matches!(&app.dialog, Some(Dialog::Confirm(c)) if c.title == "CHANGE VERSION"));
+        app.update(Action::Commit);
+        let done = writes(&fake);
+        let [Write::Update(_, _, update)] = &done[..] else {
+            panic!("{done:?}");
+        };
+        assert_eq!(update.enabled, None);
+        assert_eq!(update.content_type, None);
+        assert_eq!(
+            update
+                .tags
+                .as_ref()
+                .and_then(|t| t.get("team"))
+                .map(String::as_str),
+            Some("payments")
+        );
+    }
+
+    #[test]
+    fn a_bad_edit_stays_in_the_form_and_sends_nothing() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Edit);
+        for _ in 0..4 {
+            app.update(Action::Down); // to expires
+        }
+        type_in(&mut app, "soon");
+        app.update(Action::Commit);
+        let Some(Dialog::Form(form)) = &app.dialog else {
+            panic!("{:?}", app.dialog);
+        };
+        assert!(
+            form.error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("expires:"))
+        );
+        assert!(writes(&fake).is_empty());
+    }
+
+    #[test]
+    fn a_soft_delete_is_recovered_from_the_deleted_view() {
+        let fake = Fake::with(&["a", "b"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Delete);
+        app.update(Action::Commit);
+        assert!(matches!(&writes(&fake)[..], [Write::Delete(n)] if n == "a"));
+        assert_eq!(app.shown_secrets().len(), 1);
+
+        app.update(Action::Show(Tab::Deleted));
+        assert_eq!(selected(&app).as_deref(), Some("a"));
+        app.update(Action::Recover);
+        assert!(matches!(&app.dialog, Some(Dialog::Confirm(c)) if c.title == "RECOVER"));
+        app.update(Action::Commit);
+        assert!(matches!(&writes(&fake)[1..], [Write::Recover(n)] if n == "a"));
+        assert!(app.shown_deleted().is_empty());
+    }
+
+    #[test]
+    fn deleting_for_good_must_be_typed_first() {
+        let fake = Fake::with(&["db"]);
+        fake.purgeable.set(true);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Delete);
+        app.update(Action::Commit);
+        assert!(writes(&fake).is_empty());
+        let Some(Dialog::Confirm(confirm)) = &app.dialog else {
+            panic!("{:?}", app.dialog);
+        };
+        assert_eq!(confirm.error.as_deref(), Some("type 'db' to confirm"));
+        type_in(&mut app, "db");
+        app.update(Action::Commit);
+        assert!(matches!(&writes(&fake)[..], [Write::Delete(n)] if n == "db"));
+        assert_eq!(
+            app.message,
+            Some(Message::Info("deleted 'db' for good".into()))
+        );
+    }
+
+    #[test]
+    fn a_new_version_takes_its_value_from_the_hidden_prompt() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::NewVersion);
+        app.update(Action::Commit);
+        assert!(matches!(&app.dialog, Some(Dialog::Confirm(c)) if c.title == "NEW VERSION"));
+        app.update(Action::Commit);
+        assert!(app.dialog.is_none());
+        assert_eq!(app.take_request(), Some(Request::ReadValue("a".into())));
+        assert!(
+            writes(&fake).is_empty(),
+            "nothing is written before the value"
+        );
+
+        app.write_version(Ok(SecretBytes::from("s3cr3t")));
+        let done = writes(&fake);
+        assert!(
+            matches!(&done[..], [Write::AddVersion(n, 6, options)] if n == "a" && options.enabled),
+            "{done:?}"
+        );
+        assert!(matches!(&app.message, Some(Message::Info(t)) if t.starts_with("stored version")));
+        app.write_version(Ok(SecretBytes::from("again")));
+        assert_eq!(writes(&fake).len(), 1, "one value per confirmed change");
+    }
+
+    #[test]
+    fn an_empty_or_failed_prompt_stores_nothing() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::NewVersion);
+        app.update(Action::Commit);
+        app.update(Action::Commit);
+        app.write_version(Err("the value is empty".into()));
+        assert!(writes(&fake).is_empty());
+        assert_eq!(
+            app.message,
+            Some(Message::Error(
+                "nothing stored for 'a': the value is empty".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_new_secret_is_named_in_the_browser_and_selected_once_stored() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Add);
+        type_in(&mut app, "new-key");
+        app.update(Action::Commit);
+        assert!(matches!(&app.dialog, Some(Dialog::Confirm(c)) if c.title == "NEW SECRET"));
+        app.update(Action::Commit);
+        assert_eq!(
+            app.take_request(),
+            Some(Request::ReadValue("new-key".into()))
+        );
+        app.write_version(Ok(SecretBytes::from("v")));
+        assert!(matches!(&writes(&fake)[..], [Write::AddVersion(n, 1, _)] if n == "new-key"));
+        assert_eq!(selected(&app).as_deref(), Some("new-key"));
+    }
+
+    #[test]
+    fn a_refused_change_says_why() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        fake.fail.set(true);
+        app.update(Action::Toggle);
+        app.update(Action::Commit);
+        assert!(writes(&fake).is_empty());
+        assert!(
+            matches!(&app.message, Some(Message::Error(t))
+                if t.starts_with("the vault refused the change (crypto)")),
+            "{:?}",
+            app.message
+        );
+    }
+
+    #[test]
+    fn read_only_refuses_every_change() {
+        let fake = Fake::with(&["a"]);
+        fake.deleted_names.borrow_mut().push("old");
+        let mut app = App::new(Vec::new()).with_read_only(true);
+        app.set_session(Session::open(Box::new(Rc::clone(&fake))).unwrap());
+        app.update(Action::Add);
+        app.update(Action::Show(Tab::Secrets));
+        for action in [
+            Action::Toggle,
+            Action::Edit,
+            Action::NewVersion,
+            Action::Add,
+            Action::Delete,
+        ] {
+            app.update(action);
+            assert!(app.dialog.is_none(), "{action:?}");
+            assert!(matches!(&app.message, Some(Message::Error(t)) if t.contains("read-only")));
+        }
+        app.update(Action::Show(Tab::Deleted));
+        app.update(Action::Recover);
+        assert!(app.dialog.is_none());
+        assert!(writes(&fake).is_empty());
+    }
+
+    #[test]
+    fn a_blocked_vault_cannot_be_changed() {
+        let fake = Fake::with(&["a"]);
+        fake.blocked.set(true);
+        let mut app = app_with(&fake);
+        app.update(Action::Show(Tab::Overview));
+        app.update(Action::Add);
+        assert!(app.dialog.is_none());
+        assert!(matches!(&app.message, Some(Message::Error(t)) if t.contains("blocked")));
+    }
+
+    #[test]
+    fn locking_drops_a_change_in_progress() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::NewVersion);
+        app.update(Action::Commit);
+        app.update(Action::Commit);
+        assert!(app.take_request().is_some());
+        app.lock(true);
+        app.write_version(Ok(SecretBytes::from("late")));
+        assert!(
+            writes(&fake).is_empty(),
+            "the pending version went with the lock"
+        );
+        assert!(app.dialog.is_none());
     }
 }

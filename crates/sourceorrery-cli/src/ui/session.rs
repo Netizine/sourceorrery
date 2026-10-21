@@ -18,7 +18,7 @@ use sourceorrery_core::{
 use sourceorrery_storage::{AuditVerification, ProtectorInfo};
 use time::OffsetDateTime;
 
-use super::source::MetadataSource;
+use super::editor::{MetadataEditor, Vault};
 
 /// Most audit events the audit view holds, newest first.
 pub const AUDIT_LIMIT: usize = 1000;
@@ -28,7 +28,7 @@ pub const ACTIVITY_LIMIT: usize = 50;
 
 #[derive(Debug)]
 pub struct Session {
-    source: Box<dyn MetadataSource>,
+    source: Box<dyn Vault>,
     pub vault: VaultDescriptor,
     /// Unacknowledged truncations, oldest first. Not empty: the vault is
     /// blocked and only its audit log can be shown.
@@ -59,7 +59,7 @@ pub struct Detail {
 }
 
 impl Session {
-    pub fn open(source: Box<dyn MetadataSource>) -> Result<Self> {
+    pub fn open(source: Box<dyn Vault>) -> Result<Self> {
         let vault = source.descriptor()?;
         let blocked = source.truncations()?;
         let secrets = if blocked.is_empty() {
@@ -82,6 +82,12 @@ impl Session {
 
     pub fn is_blocked(&self) -> bool {
         !self.blocked.is_empty()
+    }
+
+    /// The write side of the vault, for `ui::edit` only: the views read
+    /// what this session holds and never see it.
+    pub fn editor(&self) -> &dyn MetadataEditor {
+        &*self.source
     }
 
     /// Read the vault again and forget everything read before.

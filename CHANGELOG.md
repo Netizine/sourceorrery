@@ -6,6 +6,22 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `sourceorrery ui`: changing secrets
+
+* In the Secrets and Deleted views: `space` enables or disables a
+  version, `e` changes its metadata (enabled, content type, tags, not
+  before, expires), `n` stores a new version, `a` a new secret, `d`
+  deletes and `u` recovers. Each change is checked with the vault's own
+  rules first, so a refused one is never sent, then confirmed; deleting
+  for good in a purgeable vault means typing the name.
+* New values are never typed into the browser: confirming `n` or `a`
+  suspends the screen and asks twice at the same hidden prompt as
+  `secret set`, then stores the value and returns.
+* Changes go through a separate write interface, `ui::editor::MetadataEditor`,
+  that the views cannot reach. Purge, protectors, destroy, migrate and
+  acknowledging a truncation stay CLI-only; a blocked vault cannot be
+  changed. `--read-only` refuses every change and marks the header.
+
 ### Added — `sourceorrery ui`: the overview and the idle lock
 
 * A new first view, Overview, where a vault opens: secrets by status (with

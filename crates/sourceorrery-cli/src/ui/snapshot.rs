@@ -402,6 +402,21 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     app.update(Action::Show(Tab::Secrets));
     app.update(Action::Down);
     out.push(("secrets", draw(&mut app, theme, 18)));
+    app.update(Action::Edit);
+    app.update(Action::Down);
+    app.update(Action::Down);
+    out.push(("edit-form", draw(&mut app, theme, 26)));
+    app.update(Action::Back);
+    app.update(Action::Toggle);
+    out.push(("confirm-disable", draw(&mut app, theme, 22)));
+    app.update(Action::Back);
+    app.update(Action::NewVersion);
+    app.update(Action::Commit);
+    out.push(("confirm-new-version", draw(&mut app, theme, 26)));
+    app.update(Action::Back);
+    app.update(Action::Delete);
+    out.push(("confirm-delete", draw(&mut app, theme, 22)));
+    app.update(Action::Back);
     type_text(&mut app, "tag:env");
     out.push(("search", draw(&mut app, theme, 18)));
     app.update(Action::Back);
@@ -439,6 +454,12 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     out.push(("blocked", draw(&mut app, theme, 22)));
     app.update(Action::Show(Tab::Overview));
     out.push(("blocked-overview", draw(&mut app, theme, 36)));
+
+    let mut app = App::new(vaults.clone()).with_read_only(true);
+    let dir2 = tempfile::tempdir().unwrap();
+    app.set_session(Session::open(Box::new(sample_vault(dir2.path()))).unwrap());
+    app.update(Action::Show(Tab::Secrets));
+    out.push(("read-only", draw(&mut app, theme, 18)));
 
     let mut app = App::new(vaults);
     out.push(("no-vault", draw(&mut app, theme, 14)));

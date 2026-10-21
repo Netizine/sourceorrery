@@ -7,6 +7,7 @@ use super::*;
 use crate::ui::app::tests::app_with;
 use crate::ui::app::{Action, Tab};
 use crate::ui::fake::Fake;
+use crate::ui::session::Session;
 
 fn render(app: &mut App, width: u16, height: u16) -> String {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -345,6 +346,89 @@ fn a_locked_browser_says_so_and_how_to_unlock() {
     assert!(screen.contains("Enter unlock"), "{screen}");
     assert!(
         screen.contains("▌ NOTE  locked vault 'development'"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn a_form_shows_its_fields_the_focused_hint_and_errors() {
+    let (_, mut app) = app(&["database-password"]);
+    app.update(Action::Edit);
+    let screen = render(&mut app, 120, 30);
+    assert!(
+        screen.contains("CHANGE VERSION 01234567 OF 'database-password'"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("enabled        yes   space switches yes and no"),
+        "{screen}"
+    );
+    assert!(screen.contains("content type"), "{screen}");
+    assert!(screen.contains("Tab next field"), "{screen}");
+    for _ in 0..4 {
+        app.update(Action::Down);
+    }
+    for c in "soon".chars() {
+        app.update(Action::Input(c));
+    }
+    app.update(Action::Commit);
+    let screen = render(&mut app, 120, 30);
+    assert!(screen.contains("expires        soon▌"), "{screen}");
+    assert!(
+        screen.contains("ERROR  expires: 'soon' is not an RFC 3339 timestamp"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn a_confirmation_says_what_will_happen() {
+    let (_, mut app) = app(&["database-password"]);
+    app.update(Action::Toggle);
+    let screen = render(&mut app, 120, 24);
+    assert!(screen.contains("DISABLE VERSION"), "{screen}");
+    assert!(
+        screen.contains("can no longer be read, by anyone"),
+        "{screen}"
+    );
+    assert!(screen.contains("Enter confirm"), "{screen}");
+}
+
+#[test]
+fn deleting_for_good_shows_what_to_type() {
+    let fake = Fake::with(&["db"]);
+    fake.purgeable.set(true);
+    let mut app = app_with(&fake);
+    app.update(Action::Show(Tab::Secrets));
+    app.update(Action::Delete);
+    for c in "d".chars() {
+        app.update(Action::Input(c));
+    }
+    let screen = render(&mut app, 120, 24);
+    assert!(screen.contains("DELETE FOR GOOD"), "{screen}");
+    assert!(screen.contains("This cannot be undone."), "{screen}");
+    assert!(screen.contains("type 'db' to confirm  d▌"), "{screen}");
+}
+
+#[test]
+fn change_keys_show_only_where_changes_are_possible() {
+    let (_, mut app) = app(&["a"]);
+    let screen = render(&mut app, 130, 14);
+    assert!(
+        screen.contains("e edit") && screen.contains("d delete"),
+        "{screen}"
+    );
+
+    let fake = Fake::with(&["a"]);
+    let mut read_only = App::new(Vec::new()).with_read_only(true);
+    read_only.set_session(Session::open(Box::new(Rc::clone(&fake))).unwrap());
+    read_only.update(Action::Show(Tab::Secrets));
+    let screen = render(&mut read_only, 130, 14);
+    assert!(screen.contains("·  read-only"), "{screen}");
+    assert!(!screen.contains("e edit"), "{screen}");
+    read_only.update(Action::Help);
+    let screen = render(&mut read_only, 130, 44);
+    assert!(
+        screen.contains("None: this browser is read-only"),
         "{screen}"
     );
 }

@@ -18,8 +18,16 @@
 //! After `--lock-after` minutes without a key the browser drops the open
 //! vault, which zeroises its key; `L` does the same at once, and `Enter`
 //! unlocks it again.
+//!
+//! Changes go through [`editor::MetadataEditor`], never through the views,
+//! and only once confirmed (`ui::edit`); `--read-only` refuses them all. A
+//! new value is read at the ordinary hidden prompt with the screen
+//! suspended and passed straight to the vault: it is never drawn, and the
+//! browser keeps nothing of it.
 
 mod app;
+mod edit;
+mod editor;
 #[cfg(test)]
 mod fake;
 mod keys;
@@ -42,7 +50,7 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use sourceorrery_core::SecretError;
+use sourceorrery_core::{SecretBytes, SecretError};
 use time::OffsetDateTime;
 
 use self::app::{App, Request, VaultEntry};
@@ -50,6 +58,7 @@ use self::session::Session;
 use self::theme::Theme;
 use crate::cli::UiArgs;
 use crate::context::Ctx;
+use crate::prompt;
 
 pub fn run(ctx: &Ctx, args: &UiArgs) -> anyhow::Result<()> {
     // These checks come before any unlock, so nothing is prompted for or
@@ -69,7 +78,9 @@ pub fn run(ctx: &Ctx, args: &UiArgs) -> anyhow::Result<()> {
     let theme = Theme::detect(args.theme);
     let lock_after =
         (args.lock_after > 0).then(|| Duration::from_secs(u64::from(args.lock_after) * 60));
-    let mut app = App::new(list_vaults(ctx)?).with_lock_after(lock_after);
+    let mut app = App::new(list_vaults(ctx)?)
+        .with_lock_after(lock_after)
+        .with_read_only(args.read_only);
     // A vault named by --vault or the manifest is opened before the screen
     // is taken over, and a failure ends the command as it would any other.
     if let Some(name) = ctx.selected_vault()? {
@@ -123,6 +134,13 @@ fn event_loop(
                 app.opened(&name, opened);
                 last_key = Instant::now();
             }
+            Some(Request::ReadValue(name)) => {
+                suspend()?;
+                let value = read_value(&name);
+                resume(terminal)?;
+                app.write_version(value);
+                last_key = Instant::now();
+            }
             Some(Request::ListVaults) => match list_vaults(ctx) {
                 Ok(vaults) => app.set_vaults(vaults),
                 Err(err) => {
@@ -143,6 +161,26 @@ fn open(ctx: &Ctx, name: &str) -> Result<Session, String> {
     let _ = writeln!(stderr, "Opening vault '{name}' for the browser…");
     let vault = ctx.inspect(name).map_err(|err| describe(&err))?;
     Session::open(Box::new(vault)).map_err(|err| format!("{err} ({})", err.code()))
+}
+
+/// A new value for `name`, typed twice at the hidden prompt with the screen
+/// suspended. It goes from here to the vault and nowhere else.
+fn read_value(name: &str) -> Result<SecretBytes, String> {
+    let mut stderr = std::io::stderr();
+    let _ = writeln!(
+        stderr,
+        "New version of secret '{}'. The value is not echoed, is stored as typed and is          never shown.",
+        crate::output::sanitize(name)
+    );
+    let first = prompt::read_hidden("Value: ").map_err(|err| err.to_string())?;
+    if first.is_empty() {
+        return Err("the value is empty".to_owned());
+    }
+    let second = prompt::read_hidden("Confirm value: ").map_err(|err| err.to_string())?;
+    if first != second {
+        return Err("the two values differ".to_owned());
+    }
+    Ok(first)
 }
 
 fn describe(err: &anyhow::Error) -> String {
@@ -195,7 +233,7 @@ mod tests {
     use sourceorrery_crypto::Argon2Params;
     use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase};
 
-    use super::app::{Action, App, Tab};
+    use super::app::{Action, App, Request, Tab};
     use super::session::Session;
     use super::theme::Theme;
     use super::view;
@@ -425,5 +463,101 @@ mod tests {
             "nothing was refused, so nothing was recorded"
         );
         assert_eq!(reads(&vault, AuditOperation::SecretGet), 0);
+    }
+
+    /// Changes against a real vault: each is one audited operation, none is
+    /// refused (each was checked first), no value is read, and a new value
+    /// typed at the prompt never reaches the screen.
+    #[test]
+    fn changes_are_recorded_once_and_a_new_value_is_never_shown() {
+        const NEW_VALUE: &str = "ui-new-value-7d2e";
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Rc::new(vault(&dir));
+        let count = |op| reads(&vault, op);
+        let mut app = App::new(Vec::new());
+        app.set_session(Session::open(Box::new(Rc::clone(&vault))).unwrap());
+        app.update(Action::Show(Tab::Secrets));
+        let name = app.selected_secret().unwrap().name.clone();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        let mut screens = Vec::new();
+
+        app.update(Action::Toggle);
+        screens.push(draw(&mut terminal, &mut app));
+        app.update(Action::Commit);
+        assert_eq!(count(AuditOperation::SecretUpdate), 1);
+        assert!(!app.selected_secret().unwrap().enabled);
+
+        app.update(Action::Edit);
+        for _ in 0..2 {
+            app.update(Action::Down);
+        }
+        for c in "env=ci".chars() {
+            app.update(Action::Input(c));
+        }
+        app.update(Action::Commit);
+        screens.push(draw(&mut terminal, &mut app));
+        app.update(Action::Commit);
+        assert_eq!(count(AuditOperation::SecretUpdate), 2);
+
+        app.update(Action::NewVersion);
+        app.update(Action::Commit);
+        screens.push(draw(&mut terminal, &mut app));
+        app.update(Action::Commit);
+        assert_eq!(app.take_request(), Some(Request::ReadValue(name.clone())));
+        app.write_version(Ok(SecretBytes::from(NEW_VALUE)));
+        screens.push(draw(&mut terminal, &mut app));
+        assert_eq!(
+            count(AuditOperation::SecretSet),
+            5,
+            "four from the fixture, one new"
+        );
+        assert_eq!(
+            vault
+                .list_properties_of_secret_versions(&name)
+                .unwrap()
+                .len(),
+            2
+        );
+
+        app.update(Action::Open);
+        screens.push(draw(&mut terminal, &mut app));
+        app.update(Action::Back);
+        app.update(Action::Delete);
+        screens.push(draw(&mut terminal, &mut app));
+        app.update(Action::Commit);
+        assert_eq!(
+            count(AuditOperation::SecretDelete),
+            2,
+            "the fixture's and this one"
+        );
+        app.update(Action::Show(Tab::Deleted));
+        let i = app
+            .shown_deleted()
+            .iter()
+            .position(|d| d.properties.name == name)
+            .unwrap();
+        app.update(Action::Top);
+        for _ in 0..i {
+            app.update(Action::Down);
+        }
+        app.update(Action::Recover);
+        app.update(Action::Commit);
+        screens.push(draw(&mut terminal, &mut app));
+        assert_eq!(count(AuditOperation::SecretRecover), 1);
+
+        let refused = vault
+            .audit_events(AuditQuery::default())
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.outcome != AuditOutcome::Success)
+            .count();
+        assert_eq!(refused, 0, "every change was checked before it was sent");
+        assert_eq!(count(AuditOperation::SecretGet), 0, "no value was read");
+        assert!(
+            screens
+                .iter()
+                .all(|s| !s.contains(NEW_VALUE) && !s.contains(CANARY)),
+            "a value reached the screen"
+        );
     }
 }
