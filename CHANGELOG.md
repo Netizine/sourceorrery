@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-21
+
 ### Added
 
 * **Release packages** workflow (`.github/workflows/ReleasePackages.yaml`):
@@ -295,5 +297,6 @@ uses [Semantic Versioning](https://semver.org/).
   `unsafe`; every block states its invariant. Covered by Rust smoke tests
   that call the exported functions and by a C example compiled in CI.
 
-[Unreleased]: https://github.com/Netizine/sourceorrery/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Netizine/sourceorrery/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Netizine/sourceorrery/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0
