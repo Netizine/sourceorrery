@@ -72,6 +72,9 @@ pub enum Command {
     Check(CheckArgs),
     /// Run a command with the manifest's secrets injected as environment variables.
     Run(RunArgs),
+    /// Browse a vault interactively (metadata only; values are never shown).
+    #[cfg(feature = "ui")]
+    Ui(UiArgs),
     /// Generate shell completions.
     Completions(CompletionsArgs),
 }
@@ -373,6 +376,25 @@ pub struct RunArgs {
         value_name = "COMMAND"
     )]
     pub command: Vec<OsString>,
+}
+
+#[cfg(feature = "ui")]
+#[derive(Debug, Args)]
+pub struct UiArgs {
+    /// Colours: the documentation site's dark or light palette, or the terminal's own.
+    #[arg(long, value_enum, env = "SOURCEORRERY_THEME", default_value_t = UiTheme::Dark)]
+    pub theme: UiTheme,
+}
+
+#[cfg(feature = "ui")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum UiTheme {
+    /// The docs' dark palette: warm charcoal and navy ink, painted over the whole screen.
+    Dark,
+    /// The docs' light palette: paper and navy ink, painted over the whole screen.
+    Light,
+    /// The terminal's own background and named colours.
+    Terminal,
 }
 
 #[derive(Debug, Args)]

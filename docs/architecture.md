@@ -196,6 +196,12 @@ for output, `tracing` for diagnostics. Design rules:
   deliberate disclosure; `run` is the other (into a child's environment).
 * Prompts go to stderr so stdout stays clean for data and `--output json`.
 * Every error carries its stable code in JSON mode.
+* `ui` is an interactive browser built on Ratatui (the `ui` cargo feature,
+  on by default). It sees a vault only through `ui::source::MetadataSource`,
+  which has no operation that returns a value, and it reads the vault only
+  when it starts and when asked to, because every metadata read is audited.
+  Its `dark` and `light` themes are the documentation site's palettes
+  (`site/src/styles/paper.css`); keep the two in step.
 
 Reference: [cli.md](cli.md).
 

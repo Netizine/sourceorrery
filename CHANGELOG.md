@@ -6,6 +6,38 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `sourceorrery ui`, the interactive vault browser (groundwork)
+
+* `sourceorrery ui [--vault NAME] [--theme dark|light|terminal]` opens a
+  Ratatui browser on one vault: its settings and every live secret with
+  status, short version id, last update, expiry and tags, with keyboard
+  navigation (`↑↓`/`jk`, `PgUp`/`PgDn`, `g`/`G`, `r` to reload, `q` to
+  quit). Metadata only: the browser reaches the vault through
+  `MetadataSource`, which has no operation that returns a value. Stored
+  text goes through the same escaping as the rest of the CLI's output.
+* Themes: `dark` (the default) and `light` are the documentation site's
+  paper palettes, painted over the whole screen, with the nearest xterm
+  256 colours where the terminal has no 24-bit colour; `terminal` keeps
+  the terminal's own colours. `SOURCEORRERY_THEME` sets the default;
+  `NO_COLOR` turns colour off.
+* The vault is unlocked with the usual order and prompt before the screen
+  is taken over; without a terminal, or with `-o json`, `ui` is refused
+  before unlocking. A session records one `vault_open` and one
+  `secret_list` per load; moving and redrawing read nothing.
+* New `ui` cargo feature of `sourceorrery-cli`, on by default; builds
+  without it have no `ui` command.
+
+### Fixed — terminal escape injection in CLI output
+
+* Human-readable output shows control and bidirectional-formatting
+  characters as escapes (`\u{1b}`) in every table cell and in status,
+  note, error and prompt lines. Text read from the vault file (protector
+  labels, keyring accounts, the vault name before unlock, audit rows
+  written before unlock) can be planted by anyone who can write the file,
+  and could otherwise move the cursor, erase lines (hiding audit rows the
+  owner reviews before `audit --acknowledge`) or set the clipboard. JSON
+  output and revealed values are unchanged.
+
 ## [0.1.2] - 2026-10-21
 
 ### Changed

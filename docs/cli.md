@@ -176,6 +176,53 @@ The parent process never prints the values; they exist only in the child's
 environment (which other processes running as you can read — see the threat
 model).
 
+## `ui`
+
+```
+sourceorrery ui [--vault NAME] [--theme dark|light|terminal]
+```
+
+An interactive browser for one vault: its settings and every live secret
+with status, short version id, last update and expiry (in UTC, to the
+minute) and tags. It shows **metadata only**. It cannot read a value: it
+reaches the vault through an interface that has no operation returning
+one, so nothing it draws, and nothing in its memory, is a secret. Stored
+text is escaped as in every other table (see `--output` above), so
+metadata in the file cannot drive the terminal.
+
+| Theme | Env | Look |
+|-------|-----|------|
+| `dark` (default) | `SOURCEORRERY_THEME` | The documentation site's dark palette: warm charcoal, navy ink, callout colours for status and messages. Painted over the whole screen. |
+| `light` | | The site's light "paper" palette, painted the same way. |
+| `terminal` | | The terminal's own background and named colours, as the banner uses. |
+
+`dark` and `light` use 24-bit colour on Windows and wherever `COLORTERM`
+says `truecolor`, and the nearest xterm 256 colours elsewhere (macOS
+Terminal, for one). `NO_COLOR` turns colour off in every theme.
+
+The vault is chosen as for every other command (`--vault`, else the
+manifest) and unlocked **before** the screen is taken over, with the usual
+unlock order and passphrase prompt. `ui` needs a terminal on stdin and
+stdout and has no JSON output; both are checked before unlocking, so a
+refused start prompts for nothing and records nothing.
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` / `k` `j` | Move the selection |
+| `PgUp` `PgDn` | Move by a screenful |
+| `Home` `End` / `g` `G` | First / last secret |
+| `r` | Read the vault again |
+| `q` / `Esc` / `Ctrl-C` | Quit |
+
+What the vault records: unlocking is one `vault_open`, and the list is one
+`secret_list`, read when the browser starts and again on each `r`. Moving,
+redrawing and resizing read nothing. The list is a snapshot: a change made
+from another terminal appears after `r`.
+
+The browser is the `ui` cargo feature of `sourceorrery-cli`, on by default.
+A build without it (`--no-default-features --features os-keyring`) has no
+`ui` command.
+
 ## `completions`
 
 ```

@@ -21,10 +21,13 @@ path = "src/main.rs"
 doc = false
 
 [features]
-default = ["os-keyring"]
+default = ["os-keyring", "ui"]
 # Protect vault keys with the OS credential store. Disable for headless
 # servers that only use passphrase protectors.
 os-keyring = ["sourceorrery-storage/os-keyring"]
+# The interactive vault browser, `sourceorrery ui` (Ratatui). Nothing else
+# in the CLI depends on it; disable for minimal builds.
+ui = ["dep:ratatui"]
 
 [dependencies]
 sourceorrery-core.workspace = true
@@ -41,8 +44,11 @@ toml.workspace = true
 zeroize.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"], optional = true }
 
 [dev-dependencies]
+# Cheap Argon2id parameters for the vaults unit tests create.
+sourceorrery-crypto.workspace = true
 tempfile.workspace = true
 # Tests tamper with a vault file the way an attacker with write access would.
 rusqlite = { version = "0.40", features = ["bundled"] }

@@ -292,6 +292,53 @@ fn completions_generate() {
     assert!(out.contains("sourceorrery"));
 }
 
+/// `ui` needs a terminal and has no JSON output; both are refused before
+/// the vault is unlocked, so nothing is prompted for or audited.
+#[cfg(feature = "ui")]
+#[test]
+fn ui_refuses_without_a_terminal_before_unlocking() {
+    let env = Env::new();
+    env.create_vault("dev");
+    let opens = || {
+        let json = env.ok(&[
+            "audit",
+            "--vault",
+            "dev",
+            "--operation",
+            "vault_open",
+            "-o",
+            "json",
+        ]);
+        serde_json::from_str::<Vec<serde_json::Value>>(&json)
+            .unwrap()
+            .len()
+    };
+    let before = opens();
+
+    let out = env.run(&["ui", "--vault", "dev"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("needs an interactive terminal"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(stdout(&out).is_empty());
+
+    let out = env.run(&["ui", "--vault", "dev", "-o", "json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert_eq!(err["error"]["code"], "cli");
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no JSON output")
+    );
+
+    // Only the second count's own unlock was added.
+    assert_eq!(opens(), before + 1);
+}
+
 #[test]
 fn audit_verify_reports_an_intact_chain() {
     let env = Env::new();

@@ -12,7 +12,9 @@ and `docs/threat-model.md` before changing anything security-relevant.
 - `crates/sourceorrery-crypto` — wrappers over RustCrypto. No algorithms here.
 - `crates/sourceorrery-storage` — encrypted SQLite vault, key protectors,
   OS keyring access, vault registry (paths).
-- `crates/sourceorrery-cli` — the `sourceorrery` binary.
+- `crates/sourceorrery-cli` — the `sourceorrery` binary. `src/ui/` is the
+  Ratatui vault browser (`sourceorrery ui`, cargo feature `ui`, on by
+  default).
 - `crates/sourceorrery` — the read-only client (the Rust SDK): CLI unlock
   order, `Project::load` mirroring `sourceorrery run`, and the actionable
   `hint` every error carries. All SDK logic lives here.
@@ -41,6 +43,11 @@ and `docs/threat-model.md` before changing anything security-relevant.
 - `SecretBytes` has no `Serialize`. Do not add one. The CLI reveals values
   only in `output::print_revealed` and the JSON branch of `secret get --reveal`.
 - The CLI never accepts a secret value as a command-line argument.
+- The `ui` browser sees a vault only through `ui::source::MetadataSource`,
+  which never gains an operation that returns a value: no screen renders,
+  copies or holds one. Metadata writes, when they come, get their own
+  trait. Every metadata read is audited, so the browser reads on start and
+  on an explicit refresh, never on movement or a timer.
 - `SecretError::code()` strings are append-only.
 - New semantics go in core with a conformance test, not in a backend.
 - Tests use passphrase protectors with `Argon2Params::TESTING`; never touch
@@ -66,6 +73,8 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings   # pedantic is on
 cargo test --workspace
 cargo run -p sourceorrery-cli -- --help
+# `ui` design review: every theme and state as HTML in target/ui-snapshots
+cargo test -p sourceorrery-cli ui::snapshot -- --ignored
 ```
 
 For manual testing use an isolated home and a passphrase vault:

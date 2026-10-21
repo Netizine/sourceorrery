@@ -8,6 +8,8 @@ mod commands;
 mod context;
 mod output;
 mod prompt;
+#[cfg(feature = "ui")]
+mod ui;
 
 use std::process::ExitCode;
 
@@ -40,6 +42,8 @@ fn main() -> ExitCode {
         Command::Init(args) => commands::project::init(&ctx, args),
         Command::Check(args) => commands::project::check(&ctx, args),
         Command::Run(args) => return commands::project::run(&ctx, args),
+        #[cfg(feature = "ui")]
+        Command::Ui(args) => ui::run(&ctx, args),
         Command::Completions(args) => commands::completions::run(args),
     };
 
