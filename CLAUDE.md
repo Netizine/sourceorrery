@@ -55,7 +55,9 @@ and `docs/threat-model.md` before changing anything security-relevant.
   vault; `bindings/go/sourceorrery.h` must equal the generated header.
 - `main` is branch-protected and its only required status check is the `CI`
   gate job at the end of `.github/workflows/ci.yml`; a new CI job must be
-  added to that job's `needs:` list or it is not enforced.
+  added to that job's `needs:` list or it is not enforced. Give it
+  `needs: changes` and the same `if:` as the other jobs too: changes that
+  touch only docs (`scripts/ci/classify-changes.sh`) skip every build job.
 
 ## Commands
 

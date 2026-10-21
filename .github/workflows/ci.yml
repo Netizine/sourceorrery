@@ -13,8 +13,36 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # ---------------------------------------------------------------------
+  # Docs-only changes skip the build. This job lists the changed files
+  # (scripts/ci/classify-changes.sh); when every one is documentation
+  # (docs/, site/, Markdown or images outside crates/ and bindings/) it
+  # outputs code=false and every job below is skipped. The CI gate counts
+  # skipped as passed, so a docs-only pull request merges after this job
+  # and the gate alone, and docs.yml builds and link-checks the site.
+  # When the diff cannot be computed, everything runs.
+  # ---------------------------------------------------------------------
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A pull request's merge commit and its first parent, the base.
+          fetch-depth: 2
+      - name: Docs-only or code
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: bash scripts/ci/classify-changes.sh
+
   fmt:
     name: rustfmt
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +53,8 @@ jobs:
 
   clippy:
     name: clippy
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +68,8 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -57,6 +89,8 @@ jobs:
 
   ffi-header:
     name: C ABI header
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +115,8 @@ jobs:
   # napi build them); lint them the same way.
   bindings-lint:
     name: clippy (native extensions)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -109,6 +145,8 @@ jobs:
 
   sdk-rust:
     name: SDK Rust (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -133,6 +171,8 @@ jobs:
 
   sdk-python:
     name: SDK Python (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -161,6 +201,8 @@ jobs:
 
   sdk-node:
     name: SDK Node.js (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -192,6 +234,8 @@ jobs:
 
   sdk-c-cpp:
     name: SDK C and C++ (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -245,6 +289,8 @@ jobs:
 
   sdk-go:
     name: SDK Go (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -281,6 +327,8 @@ jobs:
 
   sdk-java:
     name: SDK Java (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -308,6 +356,8 @@ jobs:
 
   sdk-dotnet:
     name: SDK .NET (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -336,6 +386,8 @@ jobs:
 
   sdk-php:
     name: SDK PHP (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -370,6 +422,8 @@ jobs:
 
   docs:
     name: rustdoc
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       RUSTDOCFLAGS: -D warnings
@@ -381,6 +435,8 @@ jobs:
 
   audit:
     name: cargo audit
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     # rustsec/audit-check reports through a check run (and an issue on push).
     permissions:
@@ -395,15 +451,17 @@ jobs:
 
   # ---------------------------------------------------------------------
   # The one status check branch protection on `main` requires. It passes
-  # when every job above passed or was skipped and fails when any failed
-  # or was cancelled. A job that is not in `needs:` is not enforced, so
-  # every new job must be added here.
+  # when every job above passed or was skipped and fails on any other
+  # result. A job that is not in `needs:` is not enforced, so every new job
+  # must be added here; give it `needs: changes` and the same `if:` as the
+  # others so that docs-only changes skip it too.
   # ---------------------------------------------------------------------
   ci:
     name: CI
     runs-on: ubuntu-latest
     if: always()
     needs:
+      - changes
       - fmt
       - clippy
       - test
