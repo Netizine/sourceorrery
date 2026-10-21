@@ -4,6 +4,7 @@
 //! ([`Request`]) and the event loop does it.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use ratatui::widgets::TableState;
 use sourceorrery_core::{AuditEvent, DeletedSecret, SecretError, SecretProperties, timestamp};
@@ -16,6 +17,7 @@ use crate::output;
 /// The views, in tab order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
+    Overview,
     Secrets,
     Deleted,
     Audit,
@@ -23,10 +25,17 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Secrets, Tab::Deleted, Tab::Audit, Tab::Vaults];
+    pub const ALL: [Tab; 5] = [
+        Tab::Overview,
+        Tab::Secrets,
+        Tab::Deleted,
+        Tab::Audit,
+        Tab::Vaults,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
+            Tab::Overview => "Overview",
             Tab::Secrets => "Secrets",
             Tab::Deleted => "Deleted",
             Tab::Audit => "Audit log",
@@ -62,6 +71,10 @@ pub enum Action {
     Commit,
     /// Read the vault again (audited), or rescan the vaults.
     Refresh,
+    /// Check the audit chain again (not audited).
+    Verify,
+    /// Lock the open vault now: drop it, wiping its key from memory.
+    Lock,
     Help,
     Quit,
 }
@@ -114,7 +127,7 @@ pub struct App {
     pub vaults: Vec<VaultEntry>,
     pub session: Option<Session>,
     pub tab: Tab,
-    lists: [ListState; 4],
+    lists: [ListState; 5],
     /// The secret whose details are shown, on the Secrets or Deleted view.
     pub detail: Option<String>,
     /// Selection in the details' version list.
@@ -125,6 +138,18 @@ pub struct App {
     pub message: Option<Message>,
     request: Option<Request>,
     quit: bool,
+    /// Lock the open vault after this long without a key.
+    lock_after: Option<Duration>,
+    /// The vault that was locked, to unlock again with Enter.
+    pub locked: Option<Locked>,
+}
+
+/// A vault the browser locked: its handle and key are gone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Locked {
+    pub vault: String,
+    /// Locked for being idle, rather than with `L`.
+    pub idle: bool,
 }
 
 impl App {
@@ -142,9 +167,49 @@ impl App {
             message: None,
             request: None,
             quit: false,
+            lock_after: None,
+            locked: None,
         };
         app.clamp();
         app
+    }
+
+    /// Lock the open vault after `after` without a key (`None`: never).
+    #[must_use]
+    pub fn with_lock_after(mut self, after: Option<Duration>) -> Self {
+        self.lock_after = after;
+        self
+    }
+
+    pub fn lock_after(&self) -> Option<Duration> {
+        self.lock_after
+    }
+
+    /// How long until the open vault locks, `idle` after the last key;
+    /// `None` when nothing would lock.
+    pub fn locks_in(&self, idle: Duration) -> Option<Duration> {
+        self.session.as_ref()?;
+        self.lock_after.map(|after| after.saturating_sub(idle))
+    }
+
+    /// Drop the open vault: its handle goes, and with it the vault key,
+    /// which is zeroised as it is dropped. What was read goes too.
+    pub fn lock(&mut self, idle: bool) {
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        let vault = session.vault.name.clone();
+        drop(session);
+        self.lists = Default::default();
+        self.detail = None;
+        self.editing = false;
+        self.help = false;
+        self.message = Some(Message::Info(format!(
+            "locked vault '{vault}': its key is wiped from memory"
+        )));
+        self.locked = Some(Locked { vault, idle });
+        self.tab = Tab::Overview;
+        self.clamp();
     }
 
     /// Show `session`: its secrets, or its audit log when it is blocked.
@@ -155,7 +220,8 @@ impl App {
         self.detail = None;
         self.editing = false;
         self.message = None;
-        self.show(if blocked { Tab::Audit } else { Tab::Secrets });
+        self.locked = None;
+        self.show(if blocked { Tab::Audit } else { Tab::Overview });
     }
 
     /// The event loop's answer to [`Request::Open`].
@@ -254,6 +320,7 @@ impl App {
 
     fn shown_len(&self, tab: Tab) -> usize {
         match tab {
+            Tab::Overview => 0,
             Tab::Secrets => self.shown_secrets().len(),
             Tab::Deleted => self.shown_deleted().len(),
             Tab::Audit => self.shown_events().len(),
@@ -266,6 +333,7 @@ impl App {
         let session = self.session.as_ref();
         let readable = session.filter(|s| !s.is_blocked());
         match tab {
+            Tab::Overview => None,
             Tab::Secrets => readable.map(|s| s.secrets.len()),
             Tab::Deleted => readable.and_then(Session::deleted).map(<[_]>::len),
             Tab::Audit => session.and_then(Session::audit).map(<[_]>::len),
@@ -325,6 +393,8 @@ impl App {
             Action::Show(tab) => self.show(tab),
             Action::Open => self.open(),
             Action::Refresh => self.refresh(),
+            Action::Verify => self.verify(),
+            Action::Lock => self.lock(false),
             Action::Up
             | Action::Down
             | Action::PageUp
@@ -388,6 +458,14 @@ impl App {
             return;
         };
         let loaded = match self.tab {
+            Tab::Overview => session
+                .load_deleted()
+                .and_then(|()| session.load_audit())
+                .and_then(|()| session.load_protectors())
+                .and_then(|()| match session.verification() {
+                    Some(_) => Ok(()),
+                    None => session.verify().map(|_| ()),
+                }),
             Tab::Deleted => session.load_deleted(),
             Tab::Audit => session.load_audit(),
             Tab::Secrets | Tab::Vaults => Ok(()),
@@ -398,6 +476,12 @@ impl App {
     }
 
     fn open(&mut self) {
+        if self.session.is_none() && self.tab != Tab::Vaults {
+            if let Some(locked) = &self.locked {
+                self.request = Some(Request::Open(locked.vault.clone()));
+            }
+            return;
+        }
         match self.tab {
             Tab::Vaults => {
                 let Some(name) = self.selected_vault().map(|v| v.name.clone()) else {
@@ -406,7 +490,7 @@ impl App {
                 let current = self.session.as_ref().map(|s| s.vault.name.as_str());
                 if current == Some(name.as_str()) {
                     let blocked = self.session.as_ref().is_some_and(Session::is_blocked);
-                    self.show(if blocked { Tab::Audit } else { Tab::Secrets });
+                    self.show(if blocked { Tab::Audit } else { Tab::Overview });
                 } else {
                     self.request = Some(Request::Open(name));
                 }
@@ -421,8 +505,27 @@ impl App {
                     self.open_detail(name, false);
                 }
             }
-            Tab::Audit => {}
+            Tab::Overview | Tab::Audit => {}
         }
+    }
+
+    /// Check the audit chain again and say what was found.
+    fn verify(&mut self) {
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        self.message = Some(match session.verify() {
+            Ok(v) if v.result.is_intact() => Message::Info(format!(
+                "audit chain intact: {} rows, {} written before unlock",
+                v.result.rows, v.result.unkeyed
+            )),
+            Ok(_) => Message::Error(
+                "audit chain is not intact: see the overview, and run \
+                 `sourceorrery audit --verify`"
+                    .to_owned(),
+            ),
+            Err(err) => failure("verifying the audit chain failed", &err),
+        });
     }
 
     fn open_detail(&mut self, name: String, live: bool) {
@@ -493,13 +596,22 @@ fn failure(what: &str, err: &SecretError) -> Message {
 #[cfg(test)]
 pub mod tests {
     use std::rc::Rc;
+    use std::time::Duration;
 
     use super::super::fake::Fake;
     use super::*;
 
+    /// A browser on the fake vault, where a user lands: the overview.
     pub fn app_with(fake: &Rc<Fake>) -> App {
         let mut app = App::new(Fake::vault_entries());
         app.set_session(Session::open(Box::new(Rc::clone(fake))).unwrap());
+        app
+    }
+
+    /// The same, moved to the secret list.
+    fn on_secrets(fake: &Rc<Fake>) -> App {
+        let mut app = app_with(fake);
+        app.update(Action::Show(Tab::Secrets));
         app
     }
 
@@ -508,7 +620,7 @@ pub mod tests {
             Tab::Secrets => app.selected_secret().map(|p| p.name.clone()),
             Tab::Deleted => app.selected_deleted().map(|d| d.properties.name.clone()),
             Tab::Vaults => app.selected_vault().map(|v| v.name.clone()),
-            Tab::Audit => None,
+            Tab::Overview | Tab::Audit => None,
         }
     }
 
@@ -528,10 +640,35 @@ pub mod tests {
     }
 
     #[test]
+    fn a_vault_opens_on_the_overview_which_reads_what_it_shows_once() {
+        let fake = Fake::with(&["a", "b"]);
+        fake.deleted_names.borrow_mut().push("old");
+        let mut app = app_with(&fake);
+        assert_eq!(app.tab, Tab::Overview);
+        // secrets and the deleted list (audited), the log and the chain (not)
+        assert_eq!((fake.lists.get(), fake.inspects.get()), (2, 0));
+        assert_eq!((fake.audit_reads.get(), fake.verifies.get()), (1, 1));
+        let session = app.session.as_ref().unwrap();
+        assert!(session.verification().is_some() && session.protectors().is_some());
+
+        for tab in Tab::ALL {
+            app.update(Action::Show(tab));
+        }
+        app.update(Action::Show(Tab::Overview));
+        assert_eq!(
+            (
+                fake.lists.get(),
+                fake.audit_reads.get(),
+                fake.verifies.get()
+            ),
+            (2, 1, 1)
+        );
+    }
+
+    #[test]
     fn movement_stays_inside_the_list() {
         let fake = Fake::with(&["a", "b", "c"]);
-        let mut app = app_with(&fake);
-        assert_eq!(app.tab, Tab::Secrets);
+        let mut app = on_secrets(&fake);
         assert_eq!(selected(&app).as_deref(), Some("a"));
         app.update(Action::Up);
         assert_eq!(selected(&app).as_deref(), Some("a"));
@@ -548,7 +685,7 @@ pub mod tests {
     #[test]
     fn pages_move_by_the_rows_on_screen() {
         let fake = Fake::with(&["a", "b", "c", "d", "e", "f", "g"]);
-        let mut app = app_with(&fake);
+        let mut app = on_secrets(&fake);
         app.list_mut(Tab::Secrets).page = 3;
         app.update(Action::PageDown);
         assert_eq!(selected(&app).as_deref(), Some("d"));
@@ -562,7 +699,7 @@ pub mod tests {
     #[test]
     fn an_empty_vault_selects_nothing() {
         let fake = Fake::with(&[]);
-        let mut app = app_with(&fake);
+        let mut app = on_secrets(&fake);
         for action in [Action::Down, Action::Bottom, Action::PageDown, Action::Open] {
             app.update(action);
             assert_eq!(app.list(Tab::Secrets).table.selected(), None);
@@ -571,30 +708,22 @@ pub mod tests {
     }
 
     #[test]
-    fn views_are_read_the_first_time_they_are_shown() {
+    fn the_deleted_list_is_read_once_whichever_view_reads_it_first() {
         let fake = Fake::with(&["a", "b"]);
         fake.deleted_names.borrow_mut().push("old");
         let mut app = app_with(&fake);
-        assert_eq!((fake.lists.get(), fake.inspects.get()), (1, 0));
-        assert_eq!(app.total(Tab::Deleted), None);
-
-        app.update(Action::NextTab);
-        assert_eq!(app.tab, Tab::Deleted);
-        assert_eq!(fake.lists.get(), 2, "the deleted list is one secret_list");
-        assert_eq!(selected(&app).as_deref(), Some("old"));
-
-        app.update(Action::Show(Tab::Audit));
-        app.update(Action::Show(Tab::Vaults));
         app.update(Action::Show(Tab::Deleted));
+        assert_eq!(selected(&app).as_deref(), Some("old"));
+        assert_eq!(app.total(Tab::Deleted), Some(1));
         app.update(Action::Show(Tab::Secrets));
+        app.update(Action::Show(Tab::Deleted));
         assert_eq!(fake.lists.get(), 2, "nothing is read twice");
-        assert_eq!(fake.audit_reads.get(), 1);
     }
 
     #[test]
     fn details_read_versions_once_per_secret() {
         let fake = Fake::with(&["a", "b"]);
-        let mut app = app_with(&fake);
+        let mut app = on_secrets(&fake);
         app.update(Action::Open);
         assert_eq!(app.detail.as_deref(), Some("a"));
         assert_eq!(fake.inspects.get(), 1);
@@ -634,7 +763,7 @@ pub mod tests {
     #[test]
     fn search_filters_the_current_view_and_esc_clears_it() {
         let fake = Fake::with(&["api-key", "database-password", "db-url"]);
-        let mut app = app_with(&fake);
+        let mut app = on_secrets(&fake);
         type_text(&mut app, "db");
         assert_eq!(app.mode(), Mode::Search);
         assert_eq!(app.shown_secrets().len(), 1, "only db-url contains 'db'");
@@ -652,13 +781,13 @@ pub mod tests {
         assert_eq!(selected(&app).as_deref(), Some("database-password"));
         app.update(Action::Back);
         assert_eq!(app.shown_secrets().len(), 3, "Esc clears the filter");
-        assert_eq!(fake.lists.get(), 1, "searching reads nothing");
+        assert_eq!(fake.lists.get(), 2, "searching reads nothing");
     }
 
     #[test]
     fn each_view_keeps_its_own_filter() {
         let fake = Fake::with(&["api-key", "db-url"]);
-        let mut app = app_with(&fake);
+        let mut app = on_secrets(&fake);
         type_text(&mut app, "api");
         app.update(Action::Commit);
         app.update(Action::Show(Tab::Audit));
@@ -675,7 +804,7 @@ pub mod tests {
         assert_eq!(selected(&app).as_deref(), Some("development"));
         app.update(Action::Open);
         assert_eq!(app.take_request(), None, "it is already open");
-        assert_eq!(app.tab, Tab::Secrets);
+        assert_eq!(app.tab, Tab::Overview);
 
         app.update(Action::Show(Tab::Vaults));
         app.update(Action::Down);
@@ -713,12 +842,16 @@ pub mod tests {
     #[test]
     fn a_refresh_reads_again_and_keeps_open_details() {
         let fake = Fake::with(&["b", "c"]);
-        let mut app = app_with(&fake);
+        let mut app = on_secrets(&fake);
         app.update(Action::Down);
         app.update(Action::Open);
         fake.names.borrow_mut().insert(0, "a");
         app.update(Action::Refresh);
-        assert_eq!(fake.lists.get(), 2);
+        assert_eq!(
+            fake.lists.get(),
+            3,
+            "opening read two lists, the refresh one more"
+        );
         assert_eq!(fake.inspects.get(), 2, "the open details are read again");
         assert_eq!(app.detail.as_deref(), Some("c"));
         assert_eq!(
@@ -745,17 +878,94 @@ pub mod tests {
     }
 
     #[test]
+    fn verifying_checks_the_chain_again_and_says_what_it_found() {
+        let fake = Fake::with(&["a"]);
+        let mut app = app_with(&fake);
+        app.update(Action::Verify);
+        assert_eq!(fake.verifies.get(), 2);
+        assert!(
+            matches!(&app.message, Some(Message::Info(t)) if t.starts_with("audit chain intact")),
+            "{:?}",
+            app.message
+        );
+        fake.broken.set(true);
+        app.update(Action::Verify);
+        assert!(matches!(&app.message, Some(Message::Error(t)) if t.contains("not intact")));
+        let v = app.session.as_ref().unwrap().verification().unwrap();
+        assert_eq!(v.result.first_broken, Some(2));
+        assert_eq!(fake.lists.get(), 2, "verifying is not an audited read");
+    }
+
+    #[test]
+    fn locking_drops_the_vault_and_enter_asks_for_it_again() {
+        let fake = Fake::with(&["a"]);
+        let mut app = app_with(&fake);
+        assert_eq!(Rc::strong_count(&fake), 2, "the session holds the vault");
+        app.update(Action::Show(Tab::Secrets));
+        app.update(Action::Lock);
+        assert_eq!(Rc::strong_count(&fake), 1, "the vault handle is gone");
+        assert!(app.session.is_none());
+        assert_eq!(
+            app.locked,
+            Some(Locked {
+                vault: "development".into(),
+                idle: false
+            })
+        );
+        assert_eq!(app.tab, Tab::Overview);
+        app.update(Action::Open);
+        assert_eq!(
+            app.take_request(),
+            Some(Request::Open("development".into()))
+        );
+        app.opened(
+            "development",
+            Ok(Session::open(Box::new(Rc::clone(&fake))).unwrap()),
+        );
+        assert!(app.locked.is_none() && app.session.is_some());
+    }
+
+    #[test]
+    fn the_idle_lock_counts_from_the_last_key() {
+        let fake = Fake::with(&["a"]);
+        let ten = Duration::from_secs(600);
+        let mut app = App::new(Vec::new()).with_lock_after(Some(ten));
+        assert_eq!(
+            app.locks_in(Duration::ZERO),
+            None,
+            "nothing open, nothing to lock"
+        );
+        app.set_session(Session::open(Box::new(Rc::clone(&fake))).unwrap());
+        assert_eq!(
+            app.locks_in(Duration::from_secs(60)),
+            Some(Duration::from_secs(540))
+        );
+        assert_eq!(app.locks_in(Duration::from_secs(900)), Some(Duration::ZERO));
+        app.lock(true);
+        assert!(app.locked.as_ref().is_some_and(|l| l.idle));
+        assert_eq!(app.locks_in(Duration::ZERO), None);
+
+        let mut never = app_with(&fake);
+        assert_eq!(never.lock_after(), None);
+        assert_eq!(never.locks_in(Duration::from_secs(86_400)), None);
+        never.update(Action::Lock);
+        assert!(never.session.is_none(), "L locks even without an idle lock");
+    }
+
+    #[test]
     fn help_takes_every_key_until_closed() {
         let fake = Fake::with(&["a", "b"]);
-        let mut app = app_with(&fake);
+        let mut app = on_secrets(&fake);
         app.update(Action::Help);
         assert_eq!(app.mode(), Mode::Help);
         app.update(Action::Down);
         app.update(Action::Show(Tab::Audit));
+        app.update(Action::Lock);
         assert_eq!(
             (app.tab, selected(&app).as_deref()),
             (Tab::Secrets, Some("a"))
         );
+        assert!(app.session.is_some());
         app.update(Action::Back);
         assert_eq!(app.mode(), Mode::Normal);
         app.update(Action::Help);

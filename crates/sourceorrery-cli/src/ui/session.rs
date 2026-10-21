@@ -13,8 +13,10 @@
 use std::collections::HashMap;
 
 use sourceorrery_core::{
-    AuditEvent, AuditQuery, DeletedSecret, Result, SecretProperties, VaultDescriptor,
+    AuditEvent, AuditQuery, DeletedSecret, Result, SecretProperties, VaultDescriptor, timestamp,
 };
+use sourceorrery_storage::{AuditVerification, ProtectorInfo};
+use time::OffsetDateTime;
 
 use super::source::MetadataSource;
 
@@ -35,6 +37,15 @@ pub struct Session {
     deleted: Option<Vec<DeletedSecret>>,
     audit: Option<Vec<AuditEvent>>,
     details: HashMap<String, Detail>,
+    protectors: Option<Vec<ProtectorInfo>>,
+    verification: Option<Verification>,
+}
+
+/// The audit chain as last checked.
+#[derive(Debug)]
+pub struct Verification {
+    pub result: AuditVerification,
+    pub at: OffsetDateTime,
 }
 
 /// What a secret's details show beyond its list row.
@@ -64,6 +75,8 @@ impl Session {
             deleted: None,
             audit: None,
             details: HashMap::new(),
+            protectors: None,
+            verification: None,
         })
     }
 
@@ -86,6 +99,8 @@ impl Session {
         self.deleted = None;
         self.audit = None;
         self.details.clear();
+        self.protectors = None;
+        self.verification = None;
         Ok(())
     }
 
@@ -118,6 +133,32 @@ impl Session {
             })?);
         }
         Ok(())
+    }
+
+    pub fn protectors(&self) -> Option<&[ProtectorInfo]> {
+        self.protectors.as_deref()
+    }
+
+    /// Read the key protectors, unless already held. Not audited.
+    pub fn load_protectors(&mut self) -> Result<()> {
+        if self.protectors.is_none() {
+            self.protectors = Some(self.source.protectors()?);
+        }
+        Ok(())
+    }
+
+    pub fn verification(&self) -> Option<&Verification> {
+        self.verification.as_ref()
+    }
+
+    /// Check the audit chain now. Not audited; it reads every row of the
+    /// log, so it runs when the overview is first shown and on `v`.
+    pub fn verify(&mut self) -> Result<&Verification> {
+        let result = self.source.verify()?;
+        Ok(self.verification.insert(Verification {
+            result,
+            at: timestamp::now(),
+        }))
     }
 
     pub fn detail(&self, name: &str) -> Option<&Detail> {

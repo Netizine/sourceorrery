@@ -10,6 +10,8 @@ use sourceorrery_core::{
 };
 use time::Duration;
 
+use sourceorrery_storage::{AuditVerification, ProtectorInfo};
+
 use super::app::VaultEntry;
 use super::source::MetadataSource;
 
@@ -28,6 +30,10 @@ pub struct Fake {
     pub inspects: Cell<usize>,
     /// Audit-log reads (not audited by the vault).
     pub audit_reads: Cell<usize>,
+    /// Chain verifications (not audited).
+    pub verifies: Cell<usize>,
+    /// Report a broken chain.
+    pub broken: Cell<bool>,
 }
 
 impl Fake {
@@ -181,5 +187,28 @@ impl MetadataSource for Fake {
             })
             .take(query.limit.unwrap_or(usize::MAX))
             .collect())
+    }
+
+    fn verify(&self) -> Result<AuditVerification> {
+        self.verifies.set(self.verifies.get() + 1);
+        let rows = 2 + u64::try_from(self.names.borrow().len()).unwrap_or(0);
+        Ok(AuditVerification {
+            rows,
+            keyed: rows - 1,
+            unkeyed: 1,
+            first_broken: self.broken.get().then_some(2),
+            truncations: u64::from(self.blocked.get()),
+            unacknowledged: u64::from(self.blocked.get()),
+            head_valid: true,
+        })
+    }
+
+    fn protectors(&self) -> Result<Vec<ProtectorInfo>> {
+        Ok(vec![ProtectorInfo {
+            id: "0".repeat(32),
+            label: "passphrase".into(),
+            kind: "passphrase".into(),
+            created_on: timestamp::now(),
+        }])
     }
 }

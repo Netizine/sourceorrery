@@ -27,9 +27,11 @@ fn render(app: &mut App, width: u16, height: u16) -> String {
         .join("\n")
 }
 
+/// A browser on the fake vault's secret list.
 fn app(names: &[&'static str]) -> (Rc<Fake>, App) {
     let fake = Fake::with(names);
-    let app = app_with(&fake);
+    let mut app = app_with(&fake);
+    app.update(Action::Show(Tab::Secrets));
     (fake, app)
 }
 
@@ -43,10 +45,10 @@ fn draws_the_vault_its_views_and_its_secrets() {
         screen.contains("recoverable for 90 days  ·  1 protector"),
         "{screen}"
     );
-    assert!(screen.contains("1 Secrets 2"), "{screen}");
+    assert!(screen.contains("2 Secrets 2"), "{screen}");
     assert!(
-        screen.contains("2 Deleted    3 Audit log    4 Vaults 2"),
-        "not read yet, so no count: {screen}"
+        screen.contains("3 Deleted 0    4 Audit log 4    5 Vaults 2"),
+        "the overview read them all: {screen}"
     );
     assert!(screen.contains("SECRETS  2"), "{screen}");
     assert!(screen.contains("▌ api-key"), "{screen}");
@@ -125,11 +127,12 @@ fn details_show_fields_versions_and_activity() {
 
 #[test]
 fn deleted_secrets_show_their_purge_date() {
-    let (fake, mut app) = app(&["a"]);
+    let fake = Fake::with(&["a"]);
     fake.deleted_names.borrow_mut().push("retired-token");
+    let mut app = app_with(&fake);
     app.update(Action::Show(Tab::Deleted));
     let screen = render(&mut app, 120, 16);
-    assert!(screen.contains("2 Deleted 1"), "{screen}");
+    assert!(screen.contains("3 Deleted 1"), "{screen}");
     assert!(screen.contains("▌ retired-token"), "{screen}");
     assert!(
         screen.contains("88 days") || screen.contains("89 days"),
@@ -189,7 +192,7 @@ fn a_blocked_vault_says_why_and_how_to_unblock() {
     assert!(screen.contains("BLOCKED"), "{screen}");
     assert!(screen.contains("event 42: rows removed after"), "{screen}");
     assert!(
-        screen.contains("1 Secrets    2 Deleted"),
+        screen.contains("2 Secrets    3 Deleted"),
         "nothing was read, so no counts: {screen}"
     );
     assert!(
@@ -256,11 +259,92 @@ fn stored_control_characters_are_drawn_escaped() {
     });
     fake.names.borrow_mut().push("api-key");
     let mut app = app_with(&fake);
+    app.update(Action::Show(Tab::Secrets));
     let screen = render(&mut app, 140, 12);
     assert!(screen.contains(r"note=a\u{1b}[2Kb\u{202e}c"), "{screen}");
     assert!(!screen.contains('\u{1b}'), "raw ESC reached the screen");
     assert!(
         !screen.contains('\u{202e}'),
         "raw bidi override reached the screen"
+    );
+}
+
+#[test]
+fn the_overview_shows_status_expiry_chain_activity_and_protectors() {
+    let fake = Fake::with(&["api-key", "database-password"]);
+    fake.deleted_names.borrow_mut().push("old");
+    let mut app = app_with(&fake);
+    let screen = render(&mut app, 130, 30);
+    assert!(screen.contains("1 Overview"), "{screen}");
+    assert!(screen.contains("SECRETS  2 live · 1 deleted"), "{screen}");
+    assert!(screen.contains("enabled     2  █"), "{screen}");
+    assert!(
+        screen.contains("next purge  in 88 days") || screen.contains("next purge  in 89 days"),
+        "{screen}"
+    );
+    assert!(screen.contains("EXPIRY"), "{screen}");
+    assert!(screen.contains("never           2"), "{screen}");
+    assert!(screen.contains("AUDIT CHAIN  intact"), "{screen}");
+    assert!(
+        screen.contains("rows            4 · 1 before unlock"),
+        "{screen}"
+    );
+    assert!(screen.contains("UPCOMING  0"), "{screen}");
+    assert!(
+        screen.contains("Nothing is due to expire or activate."),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("ACTIVITY · 14 DAYS  4 events · 0 denied · 1 failures"),
+        "{screen}"
+    );
+    assert!(screen.contains("last failed unlock"), "{screen}");
+    assert!(
+        screen.contains("protector       passphrase  passphrase"),
+        "{screen}"
+    );
+    assert!(screen.contains("v verify chain"), "{screen}");
+}
+
+#[test]
+fn a_broken_chain_is_not_intact() {
+    let fake = Fake::with(&["a"]);
+    fake.broken.set(true);
+    let mut app = app_with(&fake);
+    let screen = render(&mut app, 130, 30);
+    assert!(screen.contains("AUDIT CHAIN  NOT INTACT"), "{screen}");
+    assert!(screen.contains("first break     event 2"), "{screen}");
+}
+
+#[test]
+fn a_blocked_vaults_overview_says_what_it_did_not_read() {
+    let fake = Fake::with(&["a"]);
+    fake.blocked.set(true);
+    let mut app = app_with(&fake);
+    app.update(Action::Show(Tab::Overview));
+    let screen = render(&mut app, 130, 34);
+    assert!(screen.contains("BLOCKED"), "{screen}");
+    assert!(
+        screen.contains("not read: the vault is blocked"),
+        "{screen}"
+    );
+    assert!(screen.contains("1 · 1 unacknowledged"), "{screen}");
+}
+
+#[test]
+fn a_locked_browser_says_so_and_how_to_unlock() {
+    let (_, mut app) = app(&["a"]);
+    app.update(Action::Lock);
+    let screen = render(&mut app, 120, 14);
+    assert!(screen.contains("vault development  ·  locked"), "{screen}");
+    assert!(
+        screen.contains("Vault 'development' is locked."),
+        "{screen}"
+    );
+    assert!(screen.contains("Enter unlocks it again"), "{screen}");
+    assert!(screen.contains("Enter unlock"), "{screen}");
+    assert!(
+        screen.contains("▌ NOTE  locked vault 'development'"),
+        "{screen}"
     );
 }

@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use sourceorrery_core::{
     AuditEvent, AuditQuery, DeletedSecret, Result, SecretClient, SecretProperties, VaultDescriptor,
 };
-use sourceorrery_storage::SqliteVault;
+use sourceorrery_storage::{AuditVerification, ProtectorInfo, SqliteVault};
 
 /// What the browser may ask of a vault: metadata, never a value.
 ///
@@ -35,6 +35,14 @@ pub trait MetadataSource: Debug {
 
     /// Audit events, newest first. Not audited.
     fn audit(&self, query: AuditQuery) -> Result<Vec<AuditEvent>>;
+
+    /// Check the audit log's hash chain and head record, as
+    /// `audit --verify` does. Not audited.
+    fn verify(&self) -> Result<AuditVerification>;
+
+    /// The key protectors that can unlock the vault: labels, kinds, dates.
+    /// Not audited.
+    fn protectors(&self) -> Result<Vec<ProtectorInfo>>;
 }
 
 impl MetadataSource for SqliteVault {
@@ -61,6 +69,14 @@ impl MetadataSource for SqliteVault {
     fn audit(&self, query: AuditQuery) -> Result<Vec<AuditEvent>> {
         self.audit_events(query)
     }
+
+    fn verify(&self) -> Result<AuditVerification> {
+        self.verify_audit_chain()
+    }
+
+    fn protectors(&self) -> Result<Vec<ProtectorInfo>> {
+        SqliteVault::protectors(self)
+    }
 }
 
 /// Tests keep a handle on the vault they give the browser, to count what
@@ -84,5 +100,11 @@ impl<T: MetadataSource> MetadataSource for std::rc::Rc<T> {
     }
     fn audit(&self, query: AuditQuery) -> Result<Vec<AuditEvent>> {
         (**self).audit(query)
+    }
+    fn verify(&self) -> Result<AuditVerification> {
+        (**self).verify()
+    }
+    fn protectors(&self) -> Result<Vec<ProtectorInfo>> {
+        (**self).protectors()
     }
 }

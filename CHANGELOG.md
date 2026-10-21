@@ -6,12 +6,28 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `sourceorrery ui`: the overview and the idle lock
+
+* A new first view, Overview, where a vault opens: secrets by status (with
+  bars) and by expiry; what expires or activates next; the audit chain's
+  state, verified when the view is first shown and again on `v`; 14 days
+  of audit activity with denials and failures marked, the last value read
+  and the last failed unlock; the vault's file and key protectors. It is
+  drawn from what the browser already holds; the deleted list it shows is
+  read once (one `secret_list`), the rest is not audited.
+* Idle lock: after `--lock-after` minutes without a key (default 10,
+  `SOURCEORRERY_UI_LOCK_AFTER`, `0` for never) the browser drops the open
+  vault, zeroising its key, and forgets what it read; `L` locks at once and
+  `Enter` unlocks again with the ordinary unlock order.
+* Views are now `1` Overview, `2` Secrets, `3` Deleted, `4` Audit log,
+  `5` Vaults.
+
 ### Added — `sourceorrery ui`: the read-only vault browser
 
 * Four views: Secrets, Deleted (with purge date and days left), Audit log
   (the newest 1000 events, denials and failures marked) and Vaults (the
   vault files in the home directory; listing needs no unlock). Switch with
-  `Tab`, `Shift-Tab`, `←` `→` or `1`–`4`.
+  `Tab`, `Shift-Tab`, `←` `→` or the digits.
 * `Enter` on a secret opens its details: every field and the reference,
   every version (newest first) and the secret's recent audit events.
 * `/` searches the current view: words match anywhere; `tag:KEY[=VALUE]`,

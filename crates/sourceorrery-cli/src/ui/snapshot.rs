@@ -398,6 +398,8 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     let mut out = Vec::new();
     let mut app = App::new(vaults.clone());
     app.set_session(Session::open(Box::new(vault)).unwrap());
+    out.push(("overview", draw(&mut app, theme, 32)));
+    app.update(Action::Show(Tab::Secrets));
     app.update(Action::Down);
     out.push(("secrets", draw(&mut app, theme, 18)));
     type_text(&mut app, "tag:env");
@@ -425,6 +427,8 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
             .into(),
     ));
     out.push(("error", draw(&mut app, theme, 18)));
+    app.update(Action::Lock);
+    out.push(("locked", draw(&mut app, theme, 14)));
 
     let mut app = App::new(vaults.clone());
     app.set_session(Session::open(Box::new(staging)).unwrap());
@@ -433,6 +437,8 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     let mut app = App::new(vaults.clone());
     app.set_session(Session::open(Box::new(production)).unwrap());
     out.push(("blocked", draw(&mut app, theme, 22)));
+    app.update(Action::Show(Tab::Overview));
+    out.push(("blocked-overview", draw(&mut app, theme, 36)));
 
     let mut app = App::new(vaults);
     out.push(("no-vault", draw(&mut app, theme, 14)));

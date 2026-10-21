@@ -52,7 +52,7 @@ fn command(code: KeyCode) -> Option<Action> {
         KeyCode::Char('G') => Action::Bottom,
         KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => Action::NextTab,
         KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => Action::PrevTab,
-        KeyCode::Char(c @ '1'..='4') => {
+        KeyCode::Char(c @ '1'..='5') => {
             let index = usize::from(u8::try_from(c).ok()? - b'1');
             Action::Show(Tab::ALL[index])
         }
@@ -60,6 +60,8 @@ fn command(code: KeyCode) -> Option<Action> {
         KeyCode::Esc => Action::Back,
         KeyCode::Char('/') => Action::Search,
         KeyCode::Char('r') => Action::Refresh,
+        KeyCode::Char('v') => Action::Verify,
+        KeyCode::Char('L') => Action::Lock,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('q') => Action::Quit,
         _ => return None,
@@ -101,10 +103,25 @@ mod tests {
 
     #[test]
     fn digits_pick_a_view() {
-        assert_eq!(normal(KeyCode::Char('1')), Some(Action::Show(Tab::Secrets)));
-        assert_eq!(normal(KeyCode::Char('3')), Some(Action::Show(Tab::Audit)));
-        assert_eq!(normal(KeyCode::Char('4')), Some(Action::Show(Tab::Vaults)));
-        assert_eq!(normal(KeyCode::Char('5')), None);
+        assert_eq!(
+            normal(KeyCode::Char('1')),
+            Some(Action::Show(Tab::Overview))
+        );
+        assert_eq!(normal(KeyCode::Char('2')), Some(Action::Show(Tab::Secrets)));
+        assert_eq!(normal(KeyCode::Char('4')), Some(Action::Show(Tab::Audit)));
+        assert_eq!(normal(KeyCode::Char('5')), Some(Action::Show(Tab::Vaults)));
+        assert_eq!(normal(KeyCode::Char('6')), None);
+    }
+
+    #[test]
+    fn verify_and_lock_have_keys_but_lock_needs_shift() {
+        assert_eq!(normal(KeyCode::Char('v')), Some(Action::Verify));
+        assert_eq!(normal(KeyCode::Char('L')), Some(Action::Lock));
+        assert_eq!(normal(KeyCode::Char('l')), Some(Action::NextTab));
+        assert_eq!(
+            press(KeyCode::Char('L'), Mode::Search),
+            Some(Action::Input('L'))
+        );
     }
 
     #[test]

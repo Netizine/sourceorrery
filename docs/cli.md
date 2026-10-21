@@ -181,7 +181,7 @@ model).
 ## `ui`
 
 ```
-sourceorrery ui [--vault NAME] [--theme dark|light|terminal]
+sourceorrery ui [--vault NAME] [--theme dark|light|terminal] [--lock-after MINUTES]
 ```
 
 An interactive browser for the vaults in the home directory. It shows
@@ -193,10 +193,11 @@ the terminal. Times are UTC.
 
 | View | Shows |
 |------|-------|
-| `1` Secrets | Every live secret: status, short version id, last update, expiry, tags. `Enter` opens its details: every field and the `sourceorrery://` reference, every version (newest first), and the secret's recent audit events. |
-| `2` Deleted | Soft-deleted secrets, their purge date and the days left. `Enter` shows the fields and recent activity; a deleted secret's versions cannot be listed until it is recovered. |
-| `3` Audit log | The newest 1000 events, denials and failures marked. |
-| `4` Vaults | The vault files in the home directory with size and modification time. Listing them needs no unlock; `Enter` opens one. |
+| `1` Overview | The vault at a glance, and where a vault opens: secrets by status, by expiry, and what expires or activates next; the audit chain as `audit --verify` would report it (`v` checks it again); 14 days of activity, denials and failures marked, with the last value read and the last failed unlock; the vault's file and key protectors. |
+| `2` Secrets | Every live secret: status, short version id, last update, expiry, tags. `Enter` opens its details: every field and the `sourceorrery://` reference, every version (newest first), and the secret's recent audit events. |
+| `3` Deleted | Soft-deleted secrets, their purge date and the days left. `Enter` shows the fields and recent activity; a deleted secret's versions cannot be listed until it is recovered. |
+| `4` Audit log | The newest 1000 events, denials and failures marked. |
+| `5` Vaults | The vault files in the home directory with size and modification time. Listing them needs no unlock; `Enter` opens one. |
 
 **Opening a vault.** The vault named by `--vault` or the manifest is
 unlocked **before** the screen is taken over, with the usual unlock order
@@ -206,6 +207,12 @@ there suspends the screen for the same unlock (and prompt, if one is
 needed) and comes back to the browser. `ui` needs a terminal on stdin and
 stdout and has no JSON output; both are checked before anything is
 unlocked, so a refused start prompts for nothing and records nothing.
+
+**Locking.** After `--lock-after` minutes without a key (default 10,
+`SOURCEORRERY_UI_LOCK_AFTER`; `0` never locks), and at once on `L`, the
+browser drops the open vault: its handle goes, and with it the vault key,
+which is zeroised; everything read from it goes too. `Enter` unlocks it
+again, with the same unlock order and prompt as opening it.
 
 **A blocked vault.** Vaults are opened for inspection, as `audit` opens
 them. One blocked by an unacknowledged audit-log truncation (see `audit`
@@ -230,11 +237,13 @@ filter; `Esc` clears it.
 | `↑` `↓` / `k` `j` | Move the selection (in details: the versions) |
 | `PgUp` `PgDn` | Move by a screenful |
 | `Home` `End` / `g` `G` | First / last |
-| `Tab` `Shift-Tab` / `←` `→` / `1`–`4` | Switch view |
+| `Tab` `Shift-Tab` / `←` `→` / `1`–`5` | Switch view |
 | `Enter` | Details of the selected secret; open the selected vault |
 | `Esc` | Back: close the help, the search box, the details; clear the filter |
 | `/` | Search |
 | `r` | Read the vault again (on Vaults: list the files again) |
+| `v` | Check the audit chain again |
+| `L` | Lock now: drop the vault and wipe its key |
 | `?` | Keys and search syntax |
 | `q` / `Ctrl-C` | Quit |
 
@@ -245,9 +254,9 @@ kept until `r`.
 |----------------|--------------|
 | Opening a vault | one `vault_open` |
 | The secret list: on opening, and on each `r` | one `secret_list` |
-| The Deleted view: the first time it is shown after opening or `r` | one `secret_list` |
+| The deleted list: the first time the Overview or the Deleted view is shown after opening or `r` | one `secret_list` |
 | A secret's details: the first time they open after opening or `r` | one `secret_inspect` |
-| The audit log, the vault list, searching, moving, redrawing | none |
+| The audit log, verifying the chain, the protectors, the vault list, searching, moving, redrawing, locking | none |
 
 What is shown is a snapshot: a change made from another terminal appears
 after `r`.

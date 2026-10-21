@@ -9,6 +9,7 @@
 //! footer bar.
 
 mod lists;
+mod overview;
 mod secrets;
 
 use ratatui::Frame;
@@ -81,19 +82,19 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Opt
         return Some(lists::vaults(frame, app, theme, area));
     }
     let Some(session) = &app.session else {
-        let lines = vec![
-            Line::from("No vault is open."),
-            Line::from(vec![
-                Span::styled("Pick one in ", theme.muted),
-                Span::styled("4 Vaults", theme.key),
-                Span::styled(", or start with ", theme.muted),
-                Span::styled(" sourceorrery ui --vault NAME ", theme.code),
-            ]),
-        ];
-        frame.render_widget(Paragraph::new(lines), area);
+        frame.render_widget(Paragraph::new(closed_lines(app, theme)), area);
         return None;
     };
     match app.tab {
+        Tab::Overview => {
+            let used = if session.is_blocked() {
+                draw_blocked(frame, session, theme, area) + 1
+            } else {
+                0
+            };
+            overview::draw(frame, session, theme, rows(area, used, area.height));
+            None
+        }
         Tab::Secrets | Tab::Deleted if session.is_blocked() => {
             draw_blocked(frame, session, theme, area);
             None
@@ -116,6 +117,56 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Opt
                 rows(area, used, area.height),
             ))
         }
+    }
+}
+
+/// What the views say with no vault open: locked, or never opened.
+fn closed_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
+    let vaults = vec![
+        Span::styled("5", theme.key),
+        Span::styled(" lists the vaults.", theme.muted),
+    ];
+    match &app.locked {
+        Some(locked) => {
+            let name = output::sanitize(&locked.vault).into_owned();
+            let why = if locked.idle {
+                let minutes = app.lock_after().map_or(0, |d| d.as_secs() / 60);
+                let unit = if minutes == 1 { "minute" } else { "minutes" };
+                format!("Vault '{name}' was locked after {minutes} {unit} without a key.")
+            } else {
+                format!("Vault '{name}' is locked.")
+            };
+            vec![
+                Line::from(why),
+                Line::from(Span::styled(
+                    "Its key and everything read from it are gone from memory.",
+                    theme.muted,
+                )),
+                Line::from(""),
+                Line::from(
+                    [
+                        vec![
+                            Span::styled("Enter", theme.key),
+                            Span::styled(
+                                " unlocks it again (asking for its passphrase if it needs one); ",
+                                theme.muted,
+                            ),
+                        ],
+                        vaults,
+                    ]
+                    .concat(),
+                ),
+            ]
+        }
+        None => vec![
+            Line::from("No vault is open."),
+            Line::from(vec![
+                Span::styled("Pick one in ", theme.muted),
+                Span::styled("5 Vaults", theme.key),
+                Span::styled(", or start with ", theme.muted),
+                Span::styled(" sourceorrery ui --vault NAME ", theme.code),
+            ]),
+        ],
     }
 }
 
@@ -144,7 +195,17 @@ fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
                 theme.muted,
             ));
         }
-        None => spans.push(Span::styled("  no vault open", theme.muted)),
+        None => match &app.locked {
+            Some(locked) => {
+                spans.push(Span::styled("  vault ", theme.muted));
+                spans.push(Span::styled(
+                    output::sanitize(&locked.vault).into_owned(),
+                    theme.vault,
+                ));
+                spans.push(Span::styled("  ·  locked", theme.muted));
+            }
+            None => spans.push(Span::styled("  no vault open", theme.muted)),
+        },
     }
     Paragraph::new(Line::from(spans)).style(theme.bar)
 }
@@ -324,6 +385,13 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
             ("Esc", "clear"),
             ("↑↓", "move"),
         ]
+    } else if app.session.is_none() && app.locked.is_some() && app.tab != Tab::Vaults {
+        &[
+            ("Enter", "unlock"),
+            ("5", "vaults"),
+            ("?", "help"),
+            ("q", "quit"),
+        ]
     } else if app.detail.is_some() {
         &[
             ("↑↓", "versions"),
@@ -334,6 +402,14 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
         ]
     } else {
         match app.tab {
+            Tab::Overview => &[
+                ("v", "verify chain"),
+                ("L", "lock"),
+                ("Tab", "views"),
+                ("r", "reload"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
             Tab::Vaults => &[
                 ("↑↓", "move"),
                 ("Enter", "open"),
@@ -388,15 +464,17 @@ fn draw_footer(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     );
 }
 
-const HELP_KEYS: [(&str, &str); 11] = [
+const HELP_KEYS: [(&str, &str); 13] = [
     ("↑ ↓  k j", "move"),
     ("PgUp PgDn", "move a screenful"),
     ("g G  Home End", "first, last"),
-    ("Tab Shift-Tab ← → 1-4", "switch view"),
+    ("Tab Shift-Tab ← → 1-5", "switch view"),
     ("Enter", "details · open the vault"),
     ("Esc", "back · clear the search"),
     ("/", "search"),
     ("r", "read the vault again"),
+    ("v", "verify the audit chain"),
+    ("L", "lock now: wipe the vault key"),
     ("?", "this help"),
     ("q  Ctrl-C", "quit"),
     ("", ""),
@@ -434,7 +512,9 @@ fn draw_help(frame: &mut Frame<'_>, theme: &Theme) {
     lines.push(Line::from(
         "first time its details open (secret_inspect). Moving,",
     ));
-    lines.push(Line::from("searching and the audit log read nothing."));
+    lines.push(Line::from(
+        "searching, verifying and the audit log read nothing.",
+    ));
     let height = u16::try_from(lines.len()).unwrap_or(0) + 4;
     let [area] = Layout::vertical([Constraint::Length(height)])
         .flex(Flex::Center)

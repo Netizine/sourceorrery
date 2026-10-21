@@ -14,6 +14,10 @@
 //! it happens outside the screen: before the browser starts for the vault
 //! the command names, and with the screen suspended for one picked from
 //! the vault list.
+//!
+//! After `--lock-after` minutes without a key the browser drops the open
+//! vault, which zeroises its key; `L` does the same at once, and `Enter`
+//! unlocks it again.
 
 mod app;
 #[cfg(test)]
@@ -24,14 +28,16 @@ mod session;
 #[cfg(test)]
 mod snapshot;
 mod source;
+mod stats;
 mod theme;
 mod view;
 
 use std::io::{IsTerminal, Write as _};
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -61,7 +67,9 @@ pub fn run(ctx: &Ctx, args: &UiArgs) -> anyhow::Result<()> {
         ));
     }
     let theme = Theme::detect(args.theme);
-    let mut app = App::new(list_vaults(ctx)?);
+    let lock_after =
+        (args.lock_after > 0).then(|| Duration::from_secs(u64::from(args.lock_after) * 60));
+    let mut app = App::new(list_vaults(ctx)?).with_lock_after(lock_after);
     // A vault named by --vault or the manifest is opened before the screen
     // is taken over, and a failure ends the command as it would any other.
     if let Some(name) = ctx.selected_vault()? {
@@ -87,12 +95,25 @@ fn event_loop(
     app: &mut App,
     theme: &Theme,
 ) -> anyhow::Result<()> {
+    let mut last_key = Instant::now();
     while !app.should_quit() {
         terminal.draw(|frame| view::draw(frame, app, theme))?;
-        if let Event::Key(key) = event::read()?
-            && let Some(action) = keys::action(key, app.mode())
-        {
-            app.update(action);
+        // Wait for input, but no longer than the idle lock allows.
+        let input = match app.locks_in(last_key.elapsed()) {
+            Some(left) => event::poll(left)?,
+            None => true,
+        };
+        if !input {
+            app.lock(true);
+            continue;
+        }
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Release {
+                last_key = Instant::now();
+            }
+            if let Some(action) = keys::action(key, app.mode()) {
+                app.update(action);
+            }
         }
         match app.take_request() {
             Some(Request::Open(name)) => {
@@ -100,6 +121,7 @@ fn event_loop(
                 let opened = open(ctx, &name);
                 resume(terminal)?;
                 app.opened(&name, opened);
+                last_key = Instant::now();
             }
             Some(Request::ListVaults) => match list_vaults(ctx) {
                 Ok(vaults) => app.set_vaults(vaults),
@@ -235,12 +257,16 @@ mod tests {
         app.set_session(Session::open(Box::new(Rc::clone(&vault))).unwrap());
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let mut screens = vec![draw(&mut terminal, &mut app)];
+        assert_eq!(app.tab, Tab::Overview);
         assert_eq!(
             reads(&vault, AuditOperation::SecretList),
-            lists + 1,
-            "opening is one secret_list"
+            lists + 2,
+            "opening reads the secret list, and the overview the deleted list"
         );
+        assert!(screens[0].contains("AUDIT CHAIN  intact"), "{}", screens[0]);
 
+        app.update(Action::Verify);
+        app.update(Action::Show(Tab::Secrets));
         for action in [
             Action::Down,
             Action::PageDown,
@@ -253,8 +279,8 @@ mod tests {
         }
         assert_eq!(
             reads(&vault, AuditOperation::SecretList),
-            lists + 1,
-            "moving reads nothing"
+            lists + 2,
+            "moving and verifying read nothing"
         );
 
         app.update(Action::Open);
@@ -275,10 +301,16 @@ mod tests {
         assert_eq!(
             reads(&vault, AuditOperation::SecretList),
             lists + 2,
-            "the deleted list is one more"
+            "the deleted list was read for the overview"
         );
 
-        for tab in [Tab::Audit, Tab::Vaults, Tab::Deleted, Tab::Secrets] {
+        for tab in [
+            Tab::Audit,
+            Tab::Vaults,
+            Tab::Overview,
+            Tab::Deleted,
+            Tab::Secrets,
+        ] {
             app.update(Action::Show(tab));
             screens.push(draw(&mut terminal, &mut app));
         }
@@ -311,6 +343,29 @@ mod tests {
         assert!(
             screens.iter().all(|s| !s.contains(CANARY)),
             "a value reached the screen"
+        );
+    }
+
+    /// Locking drops the real vault handle (and so its key) at once.
+    #[test]
+    fn locking_drops_the_vault_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Rc::new(vault(&dir));
+        let mut app = App::new(Vec::new());
+        app.set_session(Session::open(Box::new(Rc::clone(&vault))).unwrap());
+        assert_eq!(Rc::strong_count(&vault), 2);
+        app.update(Action::Lock);
+        assert_eq!(
+            Rc::strong_count(&vault),
+            1,
+            "the browser holds nothing of the vault"
+        );
+        let mut terminal = Terminal::new(TestBackend::new(120, 20)).unwrap();
+        let screen = draw(&mut terminal, &mut app);
+        assert!(screen.contains("Vault 'dev' is locked."), "{screen}");
+        assert!(
+            !screen.contains("database-password"),
+            "nothing read is kept: {screen}"
         );
     }
 

@@ -384,6 +384,15 @@ pub struct UiArgs {
     /// Colours: the documentation site's dark or light palette, or the terminal's own.
     #[arg(long, value_enum, env = "SOURCEORRERY_THEME", default_value_t = UiTheme::Dark)]
     pub theme: UiTheme,
+    /// Lock the open vault after this many minutes without a key press,
+    /// wiping its key from memory (0: never).
+    #[arg(
+        long,
+        env = "SOURCEORRERY_UI_LOCK_AFTER",
+        default_value_t = 10,
+        value_name = "MINUTES"
+    )]
+    pub lock_after: u32,
 }
 
 #[cfg(feature = "ui")]
