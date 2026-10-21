@@ -693,9 +693,10 @@ jobs:
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
+          # Packagist keeps the tag's spelling in `version`: v0.1.1, not 0.1.1.
           for _ in $(seq 1 20); do
             if curl -fsS https://repo.packagist.org/p2/sourceorrery/sourceorrery.json \
-                | jq -e --arg v "$VERSION" '.packages["sourceorrery/sourceorrery"] | map(.version) | index($v) != null' >/dev/null 2>&1; then
+                | jq -e --arg t "v$VERSION" '.packages["sourceorrery/sourceorrery"] | map(.version) | index($t) != null' >/dev/null 2>&1; then
               echo "sourceorrery/sourceorrery $VERSION is on Packagist"; exit 0
             fi
             sleep 15

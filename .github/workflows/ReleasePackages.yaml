@@ -1,0 +1,460 @@
+# Publishes the packages of an existing GitHub Release to the registries,
+# without building a new release. Use it when a registry comes online after
+# its release ran: add the registry's secret, then run this for that
+# release (by default the latest one).
+#
+# - npm, PyPI and NuGet upload the exact files attached to the release.
+# - crates.io publishes the crates from the release tag's source; Maven
+#   Central builds the jar from the tag with the native libraries taken from
+#   the release's jar (Central needs sources, javadoc and signatures, which
+#   the release does not carry).
+# - Packagist and pkg.go.dev upload nothing: they are told to read the tag.
+#
+# Every registry is checked before anything is uploaded, a version that is
+# already on a registry is skipped rather than failed, and a registry whose
+# secret is missing is skipped. `dry_run` (the default) downloads and checks
+# everything and uploads nothing, with or without secrets. The secrets are
+# the ones release.yml uses; setup per registry is in docs/release.md.
+name: Release packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish, e.g. v0.1.1 (empty: the latest release)"
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: "Download and check everything, upload nothing"
+        required: true
+        type: boolean
+        default: true
+      npm:
+        description: "npm: @sourceorrery/sdk and its six platform packages"
+        type: boolean
+        default: true
+      pypi:
+        description: "PyPI: sourceorrery wheels and sdist"
+        type: boolean
+        default: true
+      nuget:
+        description: "NuGet: SourceOrrery"
+        type: boolean
+        default: true
+      crates:
+        description: "crates.io: the six workspace crates"
+        type: boolean
+        default: true
+      maven:
+        description: "Maven Central: ai.sourceorrery:sourceorrery"
+        type: boolean
+        default: true
+      packagist:
+        description: "Packagist: sourceorrery/sourceorrery"
+        type: boolean
+        default: true
+      go:
+        description: "pkg.go.dev: the Go module tag"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+
+concurrency:
+  group: release-packages
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Which release, which version, which secrets.
+  # ---------------------------------------------------------------------
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      has_crates_io: ${{ steps.secrets.outputs.has_crates_io }}
+      has_pypi: ${{ steps.secrets.outputs.has_pypi }}
+      has_npm: ${{ steps.secrets.outputs.has_npm }}
+      has_nuget: ${{ steps.secrets.outputs.has_nuget }}
+      has_maven: ${{ steps.secrets.outputs.has_maven }}
+      has_packagist: ${{ steps.secrets.outputs.has_packagist }}
+    steps:
+      - name: Resolve the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TAG" ]; then
+            TAG="$(gh release view --repo "$REPO" --json tagName --jq .tagName)"
+          fi
+          if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+            echo "::error::'$TAG' is not a release tag of the form vX.Y.Z"; exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          gh release view "$TAG" --repo "$REPO" --json tagName,name,publishedAt,isDraft,isPrerelease \
+            --jq '"\(.name) (\(.tagName)), published \(.publishedAt), draft=\(.isDraft), prerelease=\(.isPrerelease)"'
+          {
+            echo "### Publishing $TAG ($version)"
+            echo
+            echo "Dry run: ${{ inputs.dry_run }}"
+            echo
+            echo '```'
+            gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Which registry secrets exist
+        id: secrets
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+        run: |
+          has() { if [ -n "$2" ]; then echo "$1=true"; else echo "$1=false"; fi; }
+          {
+            has has_crates_io "$CARGO_REGISTRY_TOKEN"
+            has has_pypi "$PYPI_API_TOKEN"
+            has has_npm "$NPM_TOKEN"
+            has has_nuget "$NUGET_API_KEY"
+            has has_maven "${MAVEN_CENTRAL_USERNAME}${MAVEN_CENTRAL_PASSWORD}${MAVEN_GPG_PRIVATE_KEY}"
+            has has_packagist "${PACKAGIST_USERNAME}${PACKAGIST_API_TOKEN}"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------
+  # npm: the six platform tarballs first, then @sourceorrery/sdk, which
+  # depends on them. The 0.1.0 main tarball has no `index.js` loader and
+  # cannot be required, so a main tarball without it stops the job before
+  # anything is uploaded: npm versions can never be reused.
+  # ---------------------------------------------------------------------
+  npm:
+    name: npm
+    needs: plan
+    if: inputs.npm && (inputs.dry_run || needs.plan.outputs.has_npm == 'true')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Download the npm tarballs
+        run: gh release download "$TAG" --repo "$REPO" --pattern 'sourceorrery-sdk-*.tgz' --dir dist
+      - name: Check every tarball before publishing any
+        run: |
+          set -euo pipefail
+          main="dist/sourceorrery-sdk-$VERSION.tgz"
+          [ -f "$main" ] || { echo "::error::$TAG has no $main"; exit 1; }
+          if ! tar tzf "$main" | grep -qx 'package/index.js'; then
+            echo "::error::$(basename "$main") has no package/index.js, the napi loader @sourceorrery/sdk requires, so it cannot be installed. 0.1.0 shipped like this; publish npm from a release cut after the fix (run the Release workflow) instead."
+            exit 1
+          fi
+          count=0
+          for tgz in dist/*.tgz; do
+            name="$(tar -xOzf "$tgz" package/package.json | jq -r .name)"
+            packed="$(tar -xOzf "$tgz" package/package.json | jq -r .version)"
+            echo "$name@$packed  $(basename "$tgz")"
+            [ "$packed" = "$VERSION" ] || { echo "::error::$tgz carries version $packed, not $VERSION"; exit 1; }
+            count=$((count + 1))
+          done
+          [ "$count" -eq 7 ] || { echo "::error::expected 7 npm tarballs (main + 6 platforms), found $count"; exit 1; }
+      - name: Publish the platform packages, then the main package
+        if: ${{ !inputs.dry_run }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          main="dist/sourceorrery-sdk-$VERSION.tgz"
+          publish() {
+            local name
+            name="$(tar -xOzf "$1" package/package.json | jq -r .name)"
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already on npm; skipped"
+            else
+              npm publish "$1" --access public
+            fi
+          }
+          for tgz in dist/*.tgz; do [ "$tgz" = "$main" ] || publish "$tgz"; done
+          publish "$main"
+
+  # ---------------------------------------------------------------------
+  # PyPI: the abi3 wheels and the sdist, as attached to the release.
+  # ---------------------------------------------------------------------
+  pypi:
+    name: PyPI
+    needs: plan
+    if: inputs.pypi && (inputs.dry_run || needs.plan.outputs.has_pypi == 'true')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - name: Download the wheels and the sdist
+        run: |
+          gh release download "$TAG" --repo "$REPO" --dir dist \
+            --pattern "sourceorrery-$VERSION-*.whl" --pattern "sourceorrery-$VERSION.tar.gz"
+          ls -la dist
+      - name: Check the distributions
+        run: |
+          set -euo pipefail
+          wheels=$(find dist -name '*.whl' | wc -l)
+          [ "$wheels" -ge 6 ] || { echo "::error::expected at least 6 wheels, found $wheels"; exit 1; }
+          tar xzOf "dist/sourceorrery-$VERSION.tar.gz" "sourceorrery-$VERSION/PKG-INFO" | grep -qx "Version: $VERSION" \
+            || { echo "::error::sourceorrery-$VERSION.tar.gz is not the Python sdist for $VERSION"; exit 1; }
+          pipx run twine check --strict dist/*
+      - name: Upload
+        if: ${{ !inputs.dry_run }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist
+          skip-existing: true
+
+  # ---------------------------------------------------------------------
+  # NuGet: the package as attached to the release.
+  # ---------------------------------------------------------------------
+  nuget:
+    name: NuGet
+    needs: plan
+    if: inputs.nuget && (inputs.dry_run || needs.plan.outputs.has_nuget == 'true')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Download the package
+        run: gh release download "$TAG" --repo "$REPO" --pattern "SourceOrrery.$VERSION.nupkg" --dir dist
+      - name: Check it carries the library and every native runtime
+        run: |
+          set -euo pipefail
+          listing="$(unzip -Z1 "dist/SourceOrrery.$VERSION.nupkg")"
+          grep -qx 'lib/net8.0/SourceOrrery.dll' <<< "$listing" || { echo "::error::no lib/net8.0/SourceOrrery.dll"; exit 1; }
+          for rid in win-x64 win-arm64 osx-x64 osx-arm64 linux-x64 linux-arm64; do
+            grep -q "^runtimes/$rid/native/" <<< "$listing" || { echo "::error::no native library for $rid"; exit 1; }
+          done
+          echo "SourceOrrery.$VERSION.nupkg: library and six native runtimes present"
+      - name: Push
+        if: ${{ !inputs.dry_run }}
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push "dist/SourceOrrery.$VERSION.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  # ---------------------------------------------------------------------
+  # crates.io: built from the tag's source, one crate at a time in
+  # dependency order, skipping any version crates.io already has.
+  # ---------------------------------------------------------------------
+  crates:
+    name: crates.io
+    needs: plan
+    if: inputs.crates && (inputs.dry_run || needs.plan.outputs.has_crates_io == 'true')
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+      - name: Stamp the version
+        run: python3 scripts/release/set-version.py "$VERSION"
+      - name: Every crate packages and builds
+        run: cargo publish --workspace --locked --allow-dirty --dry-run
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          for crate in sourceorrery-core sourceorrery-crypto sourceorrery-storage sourceorrery sourceorrery-ffi sourceorrery-cli; do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' -A "sourceorrery-release-packages (https://github.com/${{ github.repository }})" \
+              "https://crates.io/api/v1/crates/$crate/$VERSION")
+            if [ "$status" = 200 ]; then
+              echo "$crate $VERSION is already on crates.io; skipped"
+            else
+              cargo publish -p "$crate" --locked --allow-dirty
+            fi
+          done
+
+  # ---------------------------------------------------------------------
+  # Maven Central: the jar is rebuilt from the tag with the native libraries
+  # out of the release's jar, then signed and deployed with its sources and
+  # javadoc through the `release` profile of bindings/java/pom.xml.
+  # ---------------------------------------------------------------------
+  maven:
+    name: Maven Central
+    needs: plan
+    if: inputs.maven && (inputs.dry_run || needs.plan.outputs.has_maven == 'true')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    defaults:
+      run:
+        working-directory: bindings/java
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.tag }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      - name: Stamp the version
+        run: python3 ../../scripts/release/set-version.py "$VERSION"
+      - name: Take the native libraries from the release's jar
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --pattern "sourceorrery-$VERSION.jar" --dir release
+          jar="release/sourceorrery-$VERSION.jar"
+          # Listed by name: unzip wildcards do not reliably reach into the per-platform folders.
+          mapfile -t libraries < <(unzip -Z1 "$jar" | grep -E '^ai/sourceorrery/native/[^/]+/[^/]+\.(so|dylib|dll)$')
+          printf '%s\n' "${libraries[@]}"
+          [ "${#libraries[@]}" -eq 6 ] || { echo "::error::expected 6 native libraries in $jar, found ${#libraries[@]}"; exit 1; }
+          unzip -o -q "$jar" "${libraries[@]}" -d src/main/resources
+      - name: Already on Maven Central?
+        id: exists
+        run: |
+          if curl -fsSI "https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/$VERSION/sourceorrery-$VERSION.pom" >/dev/null; then
+            echo "ai.sourceorrery:sourceorrery:$VERSION is already on Maven Central; nothing to deploy"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: The jar, sources and javadoc build (unsigned)
+        run: mvn -B --no-transfer-progress -P release -Dgpg.skip -DskipTests verify
+      - name: Sign and deploy (Central Publisher Portal)
+        if: ${{ !inputs.dry_run && steps.exists.outputs.published != 'true' }}
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+        run: mvn -B --no-transfer-progress -P release -DskipTests deploy
+
+  # ---------------------------------------------------------------------
+  # Packagist: nothing is uploaded. Packagist turns every tag that carries
+  # a root composer.json into a version; this asks it to re-read the
+  # repository and waits for the version. Tags before the root manifest
+  # (0.1.0) have no Packagist version.
+  # ---------------------------------------------------------------------
+  packagist:
+    name: Packagist
+    needs: plan
+    if: inputs.packagist && (inputs.dry_run || needs.plan.outputs.has_packagist == 'true')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - name: The tag carries the root composer.json
+        run: |
+          if ! gh api "repos/$REPO/contents/composer.json?ref=$TAG" --jq .name >/dev/null 2>&1; then
+            echo "::error::$TAG has no composer.json at the repository root, so Packagist cannot serve it; the first Packagist version is the first release cut after the root manifest (docs/release.md, 'The PHP package and Packagist')"
+            exit 1
+          fi
+          echo "$TAG carries composer.json"
+      - name: Ask Packagist to re-read the repository
+        if: ${{ !inputs.dry_run }}
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+          REPOSITORY_URL: https://github.com/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          status=$(curl -sS -o response.json -w '%{http_code}' -X POST \
+            "https://packagist.org/api/update-package?username=$PACKAGIST_USERNAME&apiToken=$PACKAGIST_API_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "{\"repository\":{\"url\":\"$REPOSITORY_URL\"}}")
+          cat response.json; echo
+          case "$status" in
+            2??) ;;
+            404) echo "::error::Packagist does not know $REPOSITORY_URL yet: submit it once at https://packagist.org/packages/submit (docs/release.md)"; exit 1 ;;
+            403) echo "::error::Packagist rejected PACKAGIST_USERNAME/PACKAGIST_API_TOKEN"; exit 1 ;;
+            *)   echo "::error::Packagist update-package returned HTTP $status"; exit 1 ;;
+          esac
+      - name: Wait for the version to appear
+        if: ${{ !inputs.dry_run }}
+        run: |
+          # Packagist keeps the tag's spelling in `version` (v0.1.1).
+          for _ in $(seq 1 20); do
+            if curl -fsS https://repo.packagist.org/p2/sourceorrery/sourceorrery.json \
+                | jq -e --arg t "$TAG" '.packages["sourceorrery/sourceorrery"] | map(.version) | index($t) != null' >/dev/null 2>&1; then
+              echo "sourceorrery/sourceorrery $TAG is on Packagist"; exit 0
+            fi
+            sleep 15
+          done
+          echo "::warning::sourceorrery/sourceorrery $TAG is not on Packagist after five minutes; check https://packagist.org/packages/sourceorrery/sourceorrery"
+
+  # ---------------------------------------------------------------------
+  # pkg.go.dev: the module version is the tag bindings/go/vX.Y.Z on the
+  # release's commit. Creates it if the release run did not, then asks the
+  # Go proxy for it, which makes pkg.go.dev index it.
+  # ---------------------------------------------------------------------
+  go:
+    name: pkg.go.dev
+    needs: plan
+    if: inputs.go
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.tag }}
+      - name: The module tag exists
+        run: |
+          set -euo pipefail
+          module_tag="bindings/go/$TAG"
+          if git ls-remote --exit-code --tags origin "refs/tags/$module_tag" >/dev/null; then
+            echo "$module_tag exists"
+          elif [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "$module_tag does not exist; a real run would create it on $(git rev-parse HEAD)"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag "$module_tag" HEAD
+            git push origin "refs/tags/$module_tag"
+          fi
+      - name: Ask the Go proxy for the version
+        if: ${{ !inputs.dry_run }}
+        run: curl -fsS "https://proxy.golang.org/github.com/netizine/sourceorrery/bindings/go/@v/$TAG.info" || echo "::warning::proxy fetch failed; it indexes on first use"
