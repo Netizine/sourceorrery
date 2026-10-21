@@ -138,6 +138,23 @@ bindings never carry their own business logic; they pass the conformance
 suite or they are not SourceOrrery. Read more in
 [docs/architecture.md](docs/architecture.md).
 
+## Install
+
+SourceOrrery 0.1.3 can be installed three ways (step by step in
+[Getting started](https://sourceorrery.ai/getting-started/)):
+
+- **From the package registries.** The CLI: `cargo install sourceorrery-cli`.
+  The SDKs: `pip install sourceorrery`, `npm install @sourceorreryai/sdk`,
+  `cargo add sourceorrery`, `ai.sourceorrery:sourceorrery` on Maven Central,
+  `dotnet add package SourceOrrery`,
+  `go get github.com/netizine/sourceorrery/bindings/go@v0.1.3` and
+  `composer require sourceorrery/sourceorrery`.
+- **From the GitHub release.** The
+  [v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
+  has the CLI for Windows, macOS and Linux (x64 and arm64), the C ABI
+  library with its headers, and every SDK package, with `SHA256SUMS`.
+- **From source**, below.
+
 ## Build from source
 
 Requires Rust 1.88+ and a C compiler (for the bundled SQLite).
