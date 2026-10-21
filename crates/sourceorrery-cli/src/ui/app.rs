@@ -970,7 +970,7 @@ pub mod tests {
         let app = App::new(Fake::vault_entries());
         assert_eq!(app.tab, Tab::Vaults);
         assert_eq!(selected(&app).as_deref(), Some("development"));
-        assert!(app.shown_secrets().is_empty());
+        assert_eq!(app.shown_secrets().len(), 0);
     }
 
     #[test]
@@ -1125,7 +1125,7 @@ pub mod tests {
         type_text(&mut app, "api");
         app.update(Action::Commit);
         app.update(Action::Show(Tab::Audit));
-        assert!(app.list(Tab::Audit).query.is_empty());
+        assert_eq!(app.list(Tab::Audit).query, "");
         app.update(Action::Show(Tab::Secrets));
         assert_eq!(app.list(Tab::Secrets).query, "api");
     }
@@ -1170,7 +1170,7 @@ pub mod tests {
         app.update(Action::Show(Tab::Secrets));
         app.update(Action::Refresh);
         assert_eq!((fake.lists.get(), fake.inspects.get()), (0, 0));
-        assert!(app.shown_secrets().is_empty());
+        assert_eq!(app.shown_secrets().len(), 0);
     }
 
     #[test]
@@ -1433,7 +1433,7 @@ pub mod tests {
         assert!(matches!(&app.dialog, Some(Dialog::Confirm(c)) if c.title == "RECOVER"));
         app.update(Action::Commit);
         assert!(matches!(&writes(&fake)[1..], [Write::Recover(n)] if n == "a"));
-        assert!(app.shown_deleted().is_empty());
+        assert_eq!(app.shown_deleted().len(), 0);
     }
 
     #[test]

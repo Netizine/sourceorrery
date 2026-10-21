@@ -322,7 +322,7 @@ fn ui_refuses_without_a_terminal_before_unlocking() {
         "{}",
         stderr(&out)
     );
-    assert!(stdout(&out).is_empty());
+    assert_eq!(stdout(&out), "");
 
     let out = env.run(&["ui", "--vault", "dev", "-o", "json"]);
     assert_eq!(out.status.code(), Some(1));
