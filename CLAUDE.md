@@ -46,8 +46,10 @@ and `docs/threat-model.md` before changing anything security-relevant.
 - The `ui` browser sees a vault only through `ui::source::MetadataSource`,
   which never gains an operation that returns a value: no screen renders,
   copies or holds one. Metadata writes, when they come, get their own
-  trait. Every metadata read is audited, so the browser reads on start and
-  on an explicit refresh, never on movement or a timer.
+  trait. Every metadata read is audited, so the browser reads each thing
+  once, when it is first shown, and again only on an explicit refresh;
+  never on movement, search or a timer. It never asks a blocked vault
+  for secrets (each refusal is recorded).
 - `SecretError::code()` strings are append-only.
 - New semantics go in core with a conformance test, not in a backend.
 - Tests use passphrase protectors with `Argon2Params::TESTING`; never touch

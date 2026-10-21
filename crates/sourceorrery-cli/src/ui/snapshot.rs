@@ -10,7 +10,7 @@
 //! one page per screen, and `index.html` with all of them.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -20,16 +20,20 @@ use sourceorrery_core::{
     SecretBytes, SecretClient, SetSecretOptions, UpdateSecretProperties, timestamp,
 };
 use sourceorrery_crypto::Argon2Params;
-use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault};
-use time::Duration;
+use sourceorrery_storage::{
+    CreateVaultOptions, OpenOptions, ProtectorSpec, SqliteVault, StaticPassphrase,
+};
+use time::{Duration, OffsetDateTime};
 
-use super::app::{Action, App, Message};
+use super::app::{Action, App, Message, Tab, VaultEntry};
+use super::session::Session;
 use super::theme::Theme;
 use super::view;
 use crate::cli::UiTheme;
 
-const WIDTH: u16 = 112;
-const HEIGHT: u16 = 16;
+const PASSPHRASE: &str = "snapshot-passphrase";
+
+const WIDTH: u16 = 120;
 
 /// A terminal's own colours: what `Reset` and the sixteen named colours
 /// look like there.
@@ -181,17 +185,21 @@ fn page(title: &str, body: &str, background: &str) -> String {
     )
 }
 
-/// A vault with a secret in every state the list shows.
-fn sample_vault(dir: &tempfile::TempDir) -> SqliteVault {
-    let spec = ProtectorSpec::Passphrase {
-        passphrase: SecretBytes::from("snapshot-passphrase"),
+fn spec() -> ProtectorSpec {
+    ProtectorSpec::Passphrase {
+        passphrase: SecretBytes::from(PASSPHRASE),
         params: Argon2Params::TESTING,
-    };
+    }
+}
+
+/// A vault with a secret in every state the views show, a second version,
+/// a deleted secret and a refused read in its audit log.
+fn sample_vault(dir: &Path) -> SqliteVault {
     let vault = SqliteVault::create(
-        &dir.path().join("development.sorvault"),
+        &dir.join("development.sorvault"),
         "development",
         CreateVaultOptions::default(),
-        spec,
+        spec(),
     )
     .unwrap();
     let now = timestamp::now();
@@ -205,6 +213,7 @@ fn sample_vault(dir: &tempfile::TempDir) -> SqliteVault {
         (
             "database-password",
             SetSecretOptions {
+                content_type: Some("text/plain".into()),
                 tags: tags(&[("env", "dev"), ("owner", "platform")]),
                 ..SetSecretOptions::default()
             },
@@ -234,12 +243,24 @@ fn sample_vault(dir: &tempfile::TempDir) -> SqliteVault {
                 ..SetSecretOptions::default()
             },
         ),
+        ("retired-api-key", SetSecretOptions::default()),
     ];
     for (name, options) in secrets {
         vault
             .set_secret(name, SecretBytes::from("snapshot"), options)
             .unwrap();
     }
+    vault
+        .set_secret(
+            "database-password",
+            SecretBytes::from("snapshot"),
+            SetSecretOptions {
+                content_type: Some("text/plain".into()),
+                tags: tags(&[("env", "dev"), ("owner", "platform")]),
+                ..SetSecretOptions::default()
+            },
+        )
+        .unwrap();
     vault
         .update_secret_properties(
             "old-cert",
@@ -250,11 +271,72 @@ fn sample_vault(dir: &tempfile::TempDir) -> SqliteVault {
             },
         )
         .unwrap();
+    vault.delete_secret("retired-api-key").unwrap();
+    // A refused read, so the audit log shows a denied outcome.
+    let _ = vault.get_secret("legacy-token", None);
     vault
 }
 
-fn draw(app: &mut App<'_>, theme: &Theme) -> Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).unwrap();
+/// A vault whose audit log lost its newest rows: blocked until
+/// acknowledged, opened for inspection as the browser opens vaults.
+fn blocked_vault(dir: &Path) -> SqliteVault {
+    let path = dir.join("production.sorvault");
+    {
+        let vault = SqliteVault::create(&path, "production", CreateVaultOptions::default(), spec())
+            .unwrap();
+        for name in ["api-key", "payments-webhook"] {
+            vault
+                .set_secret(
+                    name,
+                    SecretBytes::from("snapshot"),
+                    SetSecretOptions::default(),
+                )
+                .unwrap();
+        }
+    }
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute(
+        "DELETE FROM audit_events WHERE id > (SELECT MAX(id) FROM audit_events) - 1",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    SqliteVault::open_with(
+        &path,
+        &StaticPassphrase::new(PASSPHRASE),
+        OpenOptions {
+            allow_quarantined: true,
+            ..OpenOptions::default()
+        },
+    )
+    .unwrap()
+}
+
+fn entries(dir: &Path) -> Vec<VaultEntry> {
+    let mut entries: Vec<VaultEntry> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|x| x == "sorvault"))
+        .map(|e| {
+            let path = e.path();
+            let meta = std::fs::metadata(&path).ok();
+            VaultEntry {
+                name: path.file_stem().unwrap().to_string_lossy().into_owned(),
+                size: meta.as_ref().map(std::fs::Metadata::len),
+                modified: meta
+                    .and_then(|m| m.modified().ok())
+                    .map(OffsetDateTime::from),
+                path: PathBuf::from("C:/Users/you/AppData/Local/sourceorrery/vaults")
+                    .join(path.file_name().unwrap()),
+            }
+        })
+        .collect();
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    entries
+}
+
+fn draw(app: &mut App, theme: &Theme, height: u16) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, height)).unwrap();
     terminal
         .draw(|frame| view::draw(frame, app, theme))
         .unwrap();
@@ -280,11 +362,6 @@ fn looks() -> Vec<(&'static str, Theme, &'static Palette)> {
             &DARK_TERMINAL,
         ),
         (
-            "light-256",
-            Theme::new(UiTheme::Light, true, false),
-            &LIGHT_TERMINAL,
-        ),
-        (
             "terminal-dark",
             Theme::new(UiTheme::Terminal, true, true),
             &DARK_TERMINAL,
@@ -298,6 +375,70 @@ fn looks() -> Vec<(&'static str, Theme, &'static Palette)> {
     ]
 }
 
+/// Every screen worth reviewing, drawn in one look.
+fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = sample_vault(dir.path());
+    let staging = SqliteVault::create(
+        &dir.path().join("staging.sorvault"),
+        "staging",
+        CreateVaultOptions::default(),
+        spec(),
+    )
+    .unwrap();
+    let production = blocked_vault(dir.path());
+    let vaults = entries(dir.path());
+    let type_text = |app: &mut App, text: &str| {
+        app.update(Action::Search);
+        for c in text.chars() {
+            app.update(Action::Input(c));
+        }
+    };
+
+    let mut out = Vec::new();
+    let mut app = App::new(vaults.clone());
+    app.set_session(Session::open(Box::new(vault)).unwrap());
+    app.update(Action::Down);
+    out.push(("secrets", draw(&mut app, theme, 18)));
+    type_text(&mut app, "tag:env");
+    out.push(("search", draw(&mut app, theme, 18)));
+    app.update(Action::Back);
+    app.update(Action::Top);
+    app.update(Action::Open);
+    out.push(("detail", draw(&mut app, theme, 30)));
+    app.update(Action::Back);
+    app.update(Action::Show(Tab::Deleted));
+    out.push(("deleted", draw(&mut app, theme, 14)));
+    app.update(Action::Show(Tab::Audit));
+    out.push(("audit", draw(&mut app, theme, 30)));
+    app.update(Action::Show(Tab::Vaults));
+    out.push(("vaults", draw(&mut app, theme, 14)));
+    app.update(Action::Show(Tab::Secrets));
+    app.update(Action::Help);
+    out.push(("help", draw(&mut app, theme, 36)));
+    app.update(Action::Help);
+    app.update(Action::Refresh);
+    out.push(("reloaded", draw(&mut app, theme, 18)));
+    app.message = Some(Message::Error(
+        "refresh failed; showing what was read before (crypto): audit chain head stale \
+         (head was event 41)"
+            .into(),
+    ));
+    out.push(("error", draw(&mut app, theme, 18)));
+
+    let mut app = App::new(vaults.clone());
+    app.set_session(Session::open(Box::new(staging)).unwrap());
+    out.push(("empty", draw(&mut app, theme, 14)));
+
+    let mut app = App::new(vaults.clone());
+    app.set_session(Session::open(Box::new(production)).unwrap());
+    out.push(("blocked", draw(&mut app, theme, 22)));
+
+    let mut app = App::new(vaults);
+    out.push(("no-vault", draw(&mut app, theme, 14)));
+    out
+}
+
 #[test]
 #[ignore = "writes design snapshots; run with --ignored"]
 fn write_design_snapshots() {
@@ -306,37 +447,9 @@ fn write_design_snapshots() {
         PathBuf::from,
     );
     std::fs::create_dir_all(&out).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let vault = sample_vault(&dir);
-    let empty = SqliteVault::create(
-        &dir.path().join("staging.sorvault"),
-        "staging",
-        CreateVaultOptions::default(),
-        ProtectorSpec::Passphrase {
-            passphrase: SecretBytes::from("snapshot-passphrase"),
-            params: Argon2Params::TESTING,
-        },
-    )
-    .unwrap();
-
     let mut index = String::new();
     for (look, theme, palette) in looks() {
-        let mut screens = Vec::new();
-        let mut app = App::load(&vault).unwrap();
-        app.update(Action::Down);
-        screens.push(("list", draw(&mut app, &theme)));
-        app.update(Action::Refresh);
-        screens.push(("reloaded", draw(&mut app, &theme)));
-        app.message = Some(Message::Error(
-            "refresh failed (crypto): audit chain head stale (head was event 41); \
-             showing the list from before"
-                .into(),
-        ));
-        screens.push(("error", draw(&mut app, &theme)));
-        let mut app = App::load(&empty).unwrap();
-        screens.push(("empty", draw(&mut app, &theme)));
-
-        for (state, buffer) in screens {
+        for (state, buffer) in screens(&theme) {
             let name = format!("{look}-{state}");
             let html = to_html(&buffer, palette);
             std::fs::write(

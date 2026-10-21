@@ -36,6 +36,8 @@ struct Paper {
     red: Rgb,
     blue_bg: Rgb,
     red_bg: Rgb,
+    taupe: Rgb,
+    panel: Rgb,
 }
 
 /// `:root` in paper.css.
@@ -57,6 +59,8 @@ const DARK: Paper = Paper {
     red: [0xc0, 0x6b, 0x62],
     blue_bg: [0x1f, 0x2a, 0x3b],
     red_bg: [0x35, 0x22, 0x1f],
+    taupe: [0xa7, 0x9a, 0x82],
+    panel: [0x1e, 0x1c, 0x18],
 };
 
 /// `:root[data-theme='light']` in paper.css.
@@ -78,6 +82,8 @@ const LIGHT: Paper = Paper {
     red: [0x9c, 0x4a, 0x42],
     blue_bg: [0xe2, 0xe9, 0xf3],
     red_bg: [0xf1, 0xe1, 0xdc],
+    taupe: [0x9b, 0x8d, 0x75],
+    panel: [0xfa, 0xf8, 0xf3],
 };
 
 /// A message line drawn like the site's callouts: a tinted panel with a
@@ -111,6 +117,12 @@ pub struct Theme {
     pub key: Style,
     /// A command shown inline, like the site's inline code.
     pub code: Style,
+    /// The selected view in the tab bar.
+    pub tab: Style,
+    /// Overlays such as the help: the site's card colour.
+    pub panel: Style,
+    /// Caution: denied audit outcomes (the site's taupe callout).
+    pub caution: Style,
     pub info: Callout,
     pub error: Callout,
     enabled: Style,
@@ -189,6 +201,9 @@ impl Theme {
             marker: fg(p.accent),
             key: fg(p.accent).add_modifier(bold),
             code: fg(p.heading).bg(c(p.code)),
+            tab: fg(p.accent).add_modifier(bold | Modifier::UNDERLINED),
+            panel: Style::new().fg(c(p.text)).bg(c(p.panel)),
+            caution: fg(p.taupe),
             info: callout(p.blue, p.blue_bg),
             error: callout(p.red, p.red_bg),
             enabled: fg(p.green),
@@ -221,6 +236,9 @@ impl Theme {
             marker: Style::new(),
             key: fg(Color::LightBlue),
             code: fg(Color::Cyan),
+            tab: fg(Color::LightBlue).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            panel: Style::new(),
+            caution: fg(Color::Magenta),
             info: callout(Color::Blue),
             error: callout(Color::Red),
             enabled: fg(Color::Green),
@@ -252,6 +270,9 @@ impl Theme {
             marker: Style::new(),
             key: bold,
             code: bold,
+            tab: bold.add_modifier(Modifier::UNDERLINED),
+            panel: Style::new(),
+            caution: bold,
             info: callout,
             error: callout,
             enabled: Style::new(),

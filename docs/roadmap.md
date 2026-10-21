@@ -11,7 +11,7 @@
 - [x] CLI: `vault`, `secret`, `audit`, `init`, `check`, `run`, `completions`
 - [ ] Vault manager `sourceorrery ui` (Ratatui, `ui` feature, on by default)
   - [x] Groundwork: the command, the value-free `MetadataSource` seam, a secret list with keyboard navigation
-  - [ ] Read-only browser: vault picker, search over names/tags/status, secret detail with versions, deleted secrets, audit log, audit-only mode for a vault blocked by a truncation
+  - [x] Read-only browser: vault picker, search over names/tags/status, secret detail with versions, deleted secrets, audit log, audit-only mode for a vault blocked by a truncation
   - [ ] Dashboards (status counts, expiry timeline, audit activity, chain verification), idle auto-lock, switching vaults
   - [ ] Metadata changes behind confirmations (enable/disable, tags, content type, time window, delete/recover; new versions through the hidden prompt), through a separate write-capable interface
 - [x] Value-free manifest `sourceorrery.toml`; `sourceorrery://` references

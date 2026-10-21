@@ -83,7 +83,8 @@ fn print_events(events: &[AuditEvent]) -> anyhow::Result<()> {
 }
 
 /// Say on stderr when the vault is blocked by an unacknowledged truncation:
-/// this command opens such a vault, nothing else does.
+/// besides the `ui` browser's audit view, this command is the only way such
+/// a vault opens.
 fn warn_if_blocked(vault: &SqliteVault) -> anyhow::Result<()> {
     let pending = vault.unacknowledged_truncations()?;
     if pending.is_empty() {

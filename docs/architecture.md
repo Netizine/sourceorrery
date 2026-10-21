@@ -198,8 +198,10 @@ for output, `tracing` for diagnostics. Design rules:
 * Every error carries its stable code in JSON mode.
 * `ui` is an interactive browser built on Ratatui (the `ui` cargo feature,
   on by default). It sees a vault only through `ui::source::MetadataSource`,
-  which has no operation that returns a value, and it reads the vault only
-  when it starts and when asked to, because every metadata read is audited.
+  which has no operation that returns a value, and it reads each thing
+  once, when first shown, because every metadata read is audited. It opens
+  vaults for inspection, as `audit` does, so a blocked vault still shows
+  its audit log.
   Its `dark` and `light` themes are the documentation site's palettes
   (`site/src/styles/paper.css`); keep the two in step.
 
