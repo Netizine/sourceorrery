@@ -1,6 +1,6 @@
 ---
 title: Getting started
-description: Install the SourceOrrery CLI from the 0.1.3 release, create an encrypted vault, store a secret without ever typing it on a command line, and run your application with secrets in its environment.
+description: Install SourceOrrery 0.1.3 from the package registries, the GitHub release or source, create an encrypted vault, store a secret without ever typing it on a command line, and run your application with secrets in its environment.
 ---
 
 import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
@@ -13,12 +13,42 @@ production secret store yet.
 
 ## Install
 
-### From the release
+There are three ways to install 0.1.3: the published packages, the files
+on the GitHub release, or a build from source.
+
+### From the package registries
+
+The CLI is on crates.io, and Cargo builds and installs it in one step. You
+need Rust 1.88 or newer and a C compiler for the bundled SQLite (on Linux
+also `libdbus-1-dev` and `pkg-config` for the Secret Service):
+
+```bash
+cargo install sourceorrery-cli
+```
+
+The SDKs are published as packages for each language:
+
+| Language | Package | Install |
+|----------|---------|---------|
+| Python | [`sourceorrery`](https://pypi.org/project/sourceorrery/) on PyPI | `pip install sourceorrery` |
+| JavaScript / TypeScript | [`@sourceorreryai/sdk`](https://www.npmjs.com/package/@sourceorreryai/sdk) on npm | `npm install @sourceorreryai/sdk` |
+| Rust | [`sourceorrery`](https://crates.io/crates/sourceorrery) on crates.io | `cargo add sourceorrery` |
+| Java | [`ai.sourceorrery:sourceorrery`](https://central.sonatype.com/artifact/ai.sourceorrery/sourceorrery) on Maven Central | `<version>0.1.3</version>` (see [Java](/sdks/java/)) |
+| .NET | [`SourceOrrery`](https://www.nuget.org/packages/SourceOrrery) on NuGet | `dotnet add package SourceOrrery` |
+| Go | [`github.com/netizine/sourceorrery/bindings/go`](https://pkg.go.dev/github.com/netizine/sourceorrery/bindings/go) | `go get github.com/netizine/sourceorrery/bindings/go@v0.1.3` |
+| PHP | [`sourceorrery/sourceorrery`](https://packagist.org/packages/sourceorrery/sourceorrery) on Packagist | `composer require sourceorrery/sourceorrery` |
+
+Go, C, C++ and PHP load the C ABI library from the release (below); each
+[SDK page](/sdks/) has the steps.
+
+### From the GitHub release
 
 The [v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
-ships the CLI for Windows, macOS and Linux on x64 and arm64, with a
-`SHA256SUMS` file to check each download against. Homebrew, WinGet and Scoop
-packages are on the [roadmap](/roadmap/).
+ships the CLI for Windows, macOS and Linux on x64 and arm64, the C ABI
+library with its headers, and every SDK package (wheels, the npm tarballs,
+the jar, the NuGet package), with a `SHA256SUMS` file to check each
+download against. Homebrew, WinGet and Scoop packages are on the
+[roadmap](/roadmap/).
 
 <Tabs syncKey="os">
 <TabItem label="Windows">
@@ -95,15 +125,9 @@ Shell completions are available with
 
 ### From source
 
-You need Rust 1.88 or newer and a C compiler for the bundled SQLite (on
-Linux also `libdbus-1-dev` and `pkg-config` for the Secret Service). The
-CLI is on crates.io, so Cargo can build and install it in one step:
-
-```bash
-cargo install sourceorrery-cli
-```
-
-Or build it from the repository:
+With the same requirements as `cargo install` above (Rust 1.88 or newer, a
+C compiler, and on Linux `libdbus-1-dev` and `pkg-config`), build the
+release tag from the repository:
 
 ```bash
 git clone --branch v0.1.3 https://github.com/Netizine/sourceorrery
