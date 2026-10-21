@@ -4,71 +4,57 @@
 
 ### From the release
 
-The npm packages are on the
-[v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
-as tarballs: `sourceorrery-sdk-0.1.0.tgz` is `@sourceorrery/sdk`, and
-`sourceorrery-sdk-<platform>-0.1.0.tgz` (one each for `win32-x64-msvc`,
-`win32-arm64-msvc`, `darwin-x64`, `darwin-arm64`, `linux-x64-gnu` and
-`linux-arm64-gnu`) carries the native addon for that platform.
-
-**The 0.1.0 main tarball cannot be used as published.** It is missing the
-generated loader (`index.js`) that `@sourceorrery/sdk` requires at load time,
-because the release job packed the package without generating it; the next
-release fixes that. Until then, pack the main package from the tagged source
-(Rust 1.88+ and a C compiler required) and install the platform tarball from
-the release next to it:
+The [v0.1.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1)
+carries the npm packages as tarballs: `sourceorrery-sdk-0.1.1.tgz` is the
+main package, and `sourceorrery-sdk-<platform>-0.1.1.tgz` (one each for
+`win32-x64-msvc`, `win32-arm64-msvc`, `darwin-x64`, `darwin-arm64`,
+`linux-x64-gnu` and `linux-arm64-gnu`) carries the native addon for that
+platform. Install the main tarball and your platform's together:
 
 <!-- tabs: os -->
 
 #### Windows
 
 ```powershell
-git clone --branch v0.1.0 https://github.com/Netizine/sourceorrery
-cd sourceorrery\bindings\node
-npm ci; npm run build; npm pack        # writes sourceorrery-sdk-0.1.0.tgz, loader included
-
-cd <your project>
-npm install <path to>\sourceorrery-sdk-0.1.0.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-sdk-win32-x64-msvc-0.1.0.tgz   # win32-arm64-msvc on Arm
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-0.1.1.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-win32-x64-msvc-0.1.1.tgz   # win32-arm64-msvc on Arm
 ```
 
 #### macOS
 
 ```bash
-git clone --branch v0.1.0 https://github.com/Netizine/sourceorrery
-(cd sourceorrery/bindings/node && npm ci && npm run build && npm pack)   # writes sourceorrery-sdk-0.1.0.tgz, loader included
-
-cd <your project>
-npm install <path to>/sourceorrery-sdk-0.1.0.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-sdk-darwin-arm64-0.1.0.tgz   # darwin-x64 on Intel
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-0.1.1.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-darwin-arm64-0.1.1.tgz   # darwin-x64 on Intel
 ```
 
 #### Linux
 
 ```bash
-git clone --branch v0.1.0 https://github.com/Netizine/sourceorrery
-(cd sourceorrery/bindings/node && npm ci && npm run build && npm pack)   # writes sourceorrery-sdk-0.1.0.tgz, loader included
-
-cd <your project>
-npm install <path to>/sourceorrery-sdk-0.1.0.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/sourceorrery-sdk-linux-x64-gnu-0.1.0.tgz   # linux-arm64-gnu on arm64
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-0.1.1.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-linux-x64-gnu-0.1.1.tgz   # linux-arm64-gnu on arm64
 ```
 
 <!-- /tabs -->
 
+0.1.1 was packed before the move to the `@sourceorreryai` npm scope, so a
+project that installs it this way imports from `'@sourceorrery/sdk'`. The
+examples below use the npm name, `'@sourceorreryai/sdk'`; releases from
+0.1.2 on carry that name in their tarballs too.
+
 ### From npm
 
 ```bash
-npm install @sourceorrery/sdk
+npm install @sourceorreryai/sdk
 ```
 
-This works once the packages are published on npm; 0.1.0 is not there yet.
-The main package then pulls in the platform package as an optional
-dependency and nothing is compiled on install.
+The packages are on npm under the `@sourceorreryai` scope from 0.1.2 on:
+`@sourceorreryai/sdk` and the six `@sourceorreryai/sdk-<platform>`
+packages, which the main package pulls in as optional dependencies, so
+nothing is compiled on install.
 
 A napi-rs native addon for Node.js 20+ with TypeScript types included.
 
 ## Get a secret
 
 ```ts
-import { SecretReader } from '@sourceorrery/sdk';
+import { SecretReader } from '@sourceorreryai/sdk';
 
 using reader = new SecretReader('development');
 using secret = reader.get('database-password');
@@ -80,7 +66,7 @@ connect({ password: secret.value.exposeText() });
 explicit resource management; otherwise call `close()` in a `finally`:
 
 ```js
-const { SecretReader } = require('@sourceorrery/sdk');
+const { SecretReader } = require('@sourceorreryai/sdk');
 
 const reader = new SecretReader('development');
 try {
@@ -131,7 +117,7 @@ Every failure is a `SourceOrreryError` subclass with `code`, `detail`,
 `hint` and `message` (`detail` plus `hint`):
 
 ```ts
-import { SecretReader, SecretNotFoundError, VaultLockedError, SourceOrreryError } from '@sourceorrery/sdk';
+import { SecretReader, SecretNotFoundError, VaultLockedError, SourceOrreryError } from '@sourceorreryai/sdk';
 
 try {
   using reader = new SecretReader('development');
@@ -155,7 +141,7 @@ Classes: `VaultNotFoundError`, `VaultLockedError`, `MigrationRequiredError`,
 ## Load a project
 
 ```ts
-import { Project } from '@sourceorrery/sdk';
+import { Project } from '@sourceorreryai/sdk';
 
 using project = Project.load('sourceorrery.toml');   // or Project.load() to discover it
 for (const secret of project) process.env[secret.env] = secret.value.exposeText();

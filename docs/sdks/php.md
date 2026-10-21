@@ -6,14 +6,14 @@ web SAPIs.
 
 ## Install
 
-Two parts: the native library from the release, and the package itself.
+Two parts: the native library from the release, and the package from Packagist.
 
-### From the release
+### The native library, from the release
 
 The native library (`libsourceorrery_ffi.so` / `.dylib` /
-`sourceorrery_ffi.dll`) is in the `sourceorrery-ffi-0.1.0-<target>` archive
+`sourceorrery_ffi.dll`) is in the `sourceorrery-ffi-0.1.1-<target>` archive
 on the
-[v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0).
+[v0.1.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1).
 Download the one for your platform, unpack it, and name the directory in
 `SOURCEORRERY_NATIVE_DIR`:
 
@@ -22,9 +22,9 @@ Download the one for your platform, unpack it, and name the directory in
 #### Windows
 
 ```powershell
-$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.0"
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.1"
 $dir = "$env:LOCALAPPDATA\sourceorrery-ffi"
-Invoke-WebRequest "$release/sourceorrery-ffi-0.1.0-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
+Invoke-WebRequest "$release/sourceorrery-ffi-0.1.1-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
 Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 [Environment]::SetEnvironmentVariable("SOURCEORRERY_NATIVE_DIR", $dir, "User")
 ```
@@ -32,8 +32,8 @@ Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 #### macOS
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.0
-archive=sourceorrery-ffi-0.1.0-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.1
+archive=sourceorrery-ffi-0.1.1-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
@@ -42,8 +42,8 @@ export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
 #### Linux
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.0
-archive=sourceorrery-ffi-0.1.0-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.1
+archive=sourceorrery-ffi-0.1.1-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
@@ -55,23 +55,18 @@ Verify a download against the release's `SHA256SUMS` before unpacking it.
 Instead of the variable, the library can also sit under `native/<os>-<arch>/`
 next to the SDK's `src/` directory or on the loader's search path.
 
-0.1.0 predates the package's Packagist manifest, so Packagist has no 0.1.0.
-Install the package from the same tag as a Composer path repository:
-
-```bash
-git clone --depth 1 --branch v0.1.0 https://github.com/Netizine/sourceorrery vendor-src/sourceorrery
-composer config repositories.sourceorrery path vendor-src/sourceorrery/bindings/php
-composer require "sourceorrery/sourceorrery:*@dev"
-```
-
-### From Packagist
+### The package, from Packagist
 
 ```bash
 composer require sourceorrery/sourceorrery
 ```
 
-Every release after 0.1.0 is a version on Packagist, named by its tag. The
-package is the repository: Packagist reads `composer.json` at the
+Every release from 0.1.1 on is a version on Packagist, named by its tag.
+0.1.0 predates the package's Packagist manifest; if you need that version,
+install it from its tag as a Composer `path` repository
+(`bindings/php` of a `v0.1.0` checkout).
+
+The package is the repository: Packagist reads `composer.json` at the
 repository root, so what Composer installs into
 `vendor/sourceorrery/sourceorrery` is the tree at that tag, with the SDK
 autoloaded from `bindings/php/src/`. The native library still comes from

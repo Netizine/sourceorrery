@@ -135,7 +135,7 @@ def main(argv: list[str]) -> int:
         data = json.loads(text)
         data["version"] = version
         for name, spec in data.get("optionalDependencies", {}).items():
-            if name.startswith("@sourceorrery/sdk-") and not (check and spec.startswith("file:")):
+            if name.startswith("@sourceorreryai/sdk-") and not (check and spec.startswith("file:")):
                 data["optionalDependencies"][name] = version
         return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 

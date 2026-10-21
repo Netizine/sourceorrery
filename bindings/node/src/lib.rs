@@ -1,4 +1,4 @@
-//! The native part of `@sourceorrery/sdk`: a thin napi-rs layer over the
+//! The native part of `@sourceorreryai/sdk`: a thin napi-rs layer over the
 //! `sourceorrery` client crate.
 //!
 //! Everything that decides anything (unlock order, policy, hints) lives in

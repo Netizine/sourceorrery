@@ -1,5 +1,5 @@
 {
-  "name": "@sourceorrery/sdk",
+  "name": "@sourceorreryai/sdk",
   "version": "0.1.0",
   "description": "Read secrets from a SourceOrrery vault: secrets belong to the runtime, not the repository",
   "license": "(MIT OR Apache-2.0)",
@@ -65,11 +65,11 @@
     "typescript": "^5.6.0"
   },
   "optionalDependencies": {
-    "@sourceorrery/sdk-win32-x64-msvc": "file:npm/win32-x64-msvc",
-    "@sourceorrery/sdk-win32-arm64-msvc": "file:npm/win32-arm64-msvc",
-    "@sourceorrery/sdk-darwin-x64": "file:npm/darwin-x64",
-    "@sourceorrery/sdk-darwin-arm64": "file:npm/darwin-arm64",
-    "@sourceorrery/sdk-linux-x64-gnu": "file:npm/linux-x64-gnu",
-    "@sourceorrery/sdk-linux-arm64-gnu": "file:npm/linux-arm64-gnu"
+    "@sourceorreryai/sdk-win32-x64-msvc": "file:npm/win32-x64-msvc",
+    "@sourceorreryai/sdk-win32-arm64-msvc": "file:npm/win32-arm64-msvc",
+    "@sourceorreryai/sdk-darwin-x64": "file:npm/darwin-x64",
+    "@sourceorreryai/sdk-darwin-arm64": "file:npm/darwin-arm64",
+    "@sourceorreryai/sdk-linux-x64-gnu": "file:npm/linux-x64-gnu",
+    "@sourceorreryai/sdk-linux-arm64-gnu": "file:npm/linux-arm64-gnu"
   }
 }

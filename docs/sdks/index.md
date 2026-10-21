@@ -19,7 +19,7 @@ that cannot write cannot be tricked into writing
 | Language | Package | Technology | Guide |
 |----------|---------|------------|-------|
 | Python | `sourceorrery` on PyPI | PyO3 + maturin, abi3 wheels (3.11+) | [Python](python.md) |
-| JavaScript / TypeScript | `@sourceorrery/sdk` on npm | napi-rs native addon, types included | [JavaScript](javascript.md) |
+| JavaScript / TypeScript | `@sourceorreryai/sdk` on npm | napi-rs native addon, types included | [JavaScript](javascript.md) |
 | Rust | `sourceorrery` on crates.io | the client crate itself | [Rust](rust.md) |
 | Java | `ai.sourceorrery:sourceorrery` on Maven Central | Foreign Function and Memory API (Java 22+) | [Java](java.md) |
 | .NET | `SourceOrrery` on NuGet | `LibraryImport` P/Invoke (.NET 8+) | [.NET](dotnet.md) |
@@ -30,15 +30,15 @@ that cannot write cannot be tricked into writing
 
 Why each technology: [ADR 0006](../adr/0006-binding-technologies.md).
 
-## Installing 0.1.0
+## Installing
 
-None of the registry packages above is published yet: the publish jobs wait
-for their registry tokens. Every package is on the
-[v0.1.0 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+0.1.1 is on PyPI, crates.io, Maven Central, NuGet and Packagist, and the Go
+module on pkg.go.dev. npm starts at 0.1.2, under the `@sourceorreryai`
+scope. Every package is also on the
+[v0.1.1 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1)
 (wheels, the jar, the NuGet package, the npm tarballs, and the C ABI
 archive the Go, C, C++ and PHP bindings load), and each language page opens
-with how to install from it. The Go module is on pkg.go.dev, and Rust takes
-the crate from the `v0.1.0` tag.
+with how to install from it.
 
 ## Setting up
 

@@ -1,6 +1,6 @@
 ---
 title: Getting started
-description: Install the SourceOrrery CLI from the 0.1.0 release, create an encrypted vault, store a secret without ever typing it on a command line, and run your application with secrets in its environment.
+description: Install the SourceOrrery CLI from the 0.1.1 release, create an encrypted vault, store a secret without ever typing it on a command line, and run your application with secrets in its environment.
 ---
 
 import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
@@ -15,10 +15,10 @@ production secret store yet.
 
 ### From the release
 
-The [v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+The [v0.1.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1)
 ships the CLI for Windows, macOS and Linux on x64 and arm64, with a
-`SHA256SUMS` file to check each download against. Package managers (Homebrew,
-WinGet, Scoop, `cargo install`) are on the [roadmap](/roadmap/).
+`SHA256SUMS` file to check each download against. Homebrew, WinGet and Scoop
+packages are on the [roadmap](/roadmap/).
 
 <Tabs syncKey="os">
 <TabItem label="Windows">
@@ -27,8 +27,8 @@ In PowerShell. On Windows on Arm, use `aarch64-pc-windows-msvc` in the
 archive name instead of `x86_64-pc-windows-msvc`.
 
 ```powershell
-$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.0"
-$archive = "sourceorrery-0.1.0-x86_64-pc-windows-msvc.zip"
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.1"
+$archive = "sourceorrery-0.1.1-x86_64-pc-windows-msvc.zip"
 $dir = "$env:LOCALAPPDATA\Programs\sourceorrery"
 
 Invoke-WebRequest "$release/$archive" -OutFile $archive
@@ -48,8 +48,8 @@ Apple silicon shown. On an Intel Mac, use `x86_64-apple-darwin` in the
 archive name instead of `aarch64-apple-darwin`.
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.0
-archive=sourceorrery-0.1.0-aarch64-apple-darwin
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.1
+archive=sourceorrery-0.1.1-aarch64-apple-darwin
 
 curl -LO "$release/$archive.tar.gz"
 curl -LO "$release/SHA256SUMS" && shasum -a 256 -c --ignore-missing SHA256SUMS
@@ -72,8 +72,8 @@ instead of `x86_64-unknown-linux-gnu`. The builds are for glibc-based
 distributions.
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.0
-archive=sourceorrery-0.1.0-x86_64-unknown-linux-gnu
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.1
+archive=sourceorrery-0.1.1-x86_64-unknown-linux-gnu
 
 curl -LO "$release/$archive.tar.gz"
 curl -LO "$release/SHA256SUMS" && sha256sum -c --ignore-missing SHA256SUMS
@@ -95,10 +95,18 @@ Shell completions are available with
 
 ### From source
 
-You need Rust 1.88 or newer and a C compiler for the bundled SQLite.
+You need Rust 1.88 or newer and a C compiler for the bundled SQLite (on
+Linux also `libdbus-1-dev` and `pkg-config` for the Secret Service). The
+CLI is on crates.io, so Cargo can build and install it in one step:
 
 ```bash
-git clone --branch v0.1.0 https://github.com/Netizine/sourceorrery
+cargo install sourceorrery-cli
+```
+
+Or build it from the repository:
+
+```bash
+git clone --branch v0.1.1 https://github.com/Netizine/sourceorrery
 cd sourceorrery
 cargo build --release
 ./target/release/sourceorrery --help

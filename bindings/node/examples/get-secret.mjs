@@ -1,9 +1,9 @@
 // Read one secret and report its size, never its value.
 //
-//   npm install @sourceorrery/sdk
+//   npm install @sourceorreryai/sdk
 //   export SOURCEORRERY_PASSPHRASE=...   # or rely on the OS credential store
 //   node get-secret.mjs development database-password
-import { SecretReader, SourceOrreryError } from '@sourceorrery/sdk';
+import { SecretReader, SourceOrreryError } from '@sourceorreryai/sdk';
 
 const [vault = 'development', name = 'database-password'] = process.argv.slice(2);
 

@@ -10,7 +10,7 @@ not any binding generator. User guides live in [`docs/sdks/`](../docs/sdks/index
 |----------|-----------|------------|---------|
 | Rust | `crates/sourceorrery` | the client crate itself, over `sourceorrery-storage` | crates.io `sourceorrery` |
 | Python | `bindings/python` | PyO3 + maturin, abi3 (3.11+) | PyPI `sourceorrery` |
-| JavaScript / TypeScript | `bindings/node` | napi-rs 3, platform packages | npm `@sourceorrery/sdk` |
+| JavaScript / TypeScript | `bindings/node` | napi-rs 3, platform packages | npm `@sourceorreryai/sdk` |
 | Java | `bindings/java` | Foreign Function and Memory API (22+) over the C ABI | Maven Central `ai.sourceorrery:sourceorrery` |
 | .NET | `bindings/dotnet` | `LibraryImport` P/Invoke (net8.0) over the C ABI | NuGet `SourceOrrery` |
 | Go | `bindings/go` | cgo over the C ABI (header vendored) | `github.com/netizine/sourceorrery/bindings/go` |

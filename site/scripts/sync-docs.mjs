@@ -54,7 +54,7 @@ const PAGES = {
 	'docs/roadmap.md': {
 		dest: 'roadmap.md',
 		description:
-			'Milestones from the local CLI and read-only SDKs shipped in 0.1.0 to the authenticated local broker, enterprise providers and community SDKs.',
+			'Milestones from the local CLI and read-only SDKs shipped in 0.1 to the authenticated local broker, enterprise providers and community SDKs.',
 	},
 	'docs/release.md': {
 		dest: 'reference/release.md',
@@ -69,47 +69,47 @@ const PAGES = {
 	'docs/sdks/python.md': {
 		dest: 'sdks/python.md',
 		description:
-			'The read-only Python SDK: install the 0.1.0 wheel from the release, open a vault, get a secret, handle typed errors with hints, load a project.',
+			'The read-only Python SDK: install the wheel from PyPI or the release, open a vault, get a secret, handle typed errors with hints, load a project.',
 	},
 	'docs/sdks/javascript.md': {
 		dest: 'sdks/javascript.md',
 		description:
-			'The read-only JavaScript and TypeScript SDK: install 0.1.0, open a vault, get a secret, handle typed errors with hints, load a project.',
+			'The read-only JavaScript and TypeScript SDK (@sourceorreryai/sdk): install it, open a vault, get a secret, handle typed errors with hints, load a project.',
 	},
 	'docs/sdks/rust.md': {
 		dest: 'sdks/rust.md',
 		description:
-			'The read-only Rust client crate every SDK is built on: install 0.1.0 from the tag, open a vault, get a secret, handle errors by kind, load a project.',
+			'The read-only Rust client crate every SDK is built on: install it from crates.io or the tag, open a vault, get a secret, handle errors by kind, load a project.',
 	},
 	'docs/sdks/java.md': {
 		dest: 'sdks/java.md',
 		description:
-			'The read-only Java SDK (Foreign Function and Memory API): install the 0.1.0 jar from the release, open a vault, get a secret, handle typed exceptions, load a project.',
+			'The read-only Java SDK (Foreign Function and Memory API): install it from Maven Central or the release, open a vault, get a secret, handle typed exceptions, load a project.',
 	},
 	'docs/sdks/dotnet.md': {
 		dest: 'sdks/dotnet.md',
 		description:
-			'The read-only .NET SDK: install the 0.1.0 package from the release, open a vault, get a secret, handle typed exceptions, load a project.',
+			'The read-only .NET SDK: install it from NuGet or the release, open a vault, get a secret, handle typed exceptions, load a project.',
 	},
 	'docs/sdks/go.md': {
 		dest: 'sdks/go.md',
 		description:
-			'The read-only Go SDK (cgo over the C ABI): install 0.1.0 and the native library from the release, open a vault, get a secret, match errors by sentinel, load a project.',
+			'The read-only Go SDK (cgo over the C ABI): install the module and the native library from the release, open a vault, get a secret, match errors by sentinel, load a project.',
 	},
 	'docs/sdks/c.md': {
 		dest: 'sdks/c.md',
 		description:
-			'The read-only C ABI: install the 0.1.0 archive from the release, open a vault, get a secret, read the per-thread error state, load a project.',
+			'The read-only C ABI: install the archive from the release, open a vault, get a secret, read the per-thread error state, load a project.',
 	},
 	'docs/sdks/cpp.md': {
 		dest: 'sdks/cpp.md',
 		description:
-			'The header-only C++17 wrapper: install the 0.1.0 archive from the release, open a vault, get a secret, catch typed errors, load a project.',
+			'The header-only C++17 wrapper: install the archive from the release, open a vault, get a secret, catch typed errors, load a project.',
 	},
 	'docs/sdks/php.md': {
 		dest: 'sdks/php.md',
 		description:
-			'The read-only PHP SDK (FFI): install the native library from the 0.1.0 release and the package from the tag, open a vault, get a secret, handle typed exceptions, load a project.',
+			'The read-only PHP SDK (FFI): install the native library from the release and the package from Packagist, open a vault, get a secret, handle typed exceptions, load a project.',
 	},
 };
 

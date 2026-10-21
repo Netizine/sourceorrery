@@ -1,5 +1,5 @@
 {
-  "name": "@sourceorrery/sdk-darwin-arm64",
+  "name": "@sourceorreryai/sdk-darwin-arm64",
   "version": "0.1.0",
   "cpu": [
     "arm64"

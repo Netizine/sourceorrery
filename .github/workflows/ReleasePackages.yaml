@@ -31,7 +31,7 @@ on:
         type: boolean
         default: true
       npm:
-        description: "npm: @sourceorrery/sdk and its six platform packages"
+        description: "npm: @sourceorreryai/sdk and its six platform packages"
         type: boolean
         default: true
       pypi:
@@ -120,7 +120,9 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # npm uses trusted publishing (no token); this repository variable
+          # switches it on once each package has its trusted publishers.
+          NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
           NUGET_USER: ${{ secrets.NUGET_USER }}
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
@@ -132,23 +134,31 @@ jobs:
           {
             has has_crates_io "$CARGO_REGISTRY_TOKEN"
             has has_pypi "$PYPI_API_TOKEN"
-            has has_npm "$NPM_TOKEN"
+            if [ "$NPM_TRUSTED_PUBLISHING" = true ]; then echo "has_npm=true"; else echo "has_npm=false"; fi
             has has_nuget "$NUGET_USER"
             has has_maven "${MAVEN_CENTRAL_USERNAME}${MAVEN_CENTRAL_PASSWORD}${MAVEN_GPG_PRIVATE_KEY}"
             has has_packagist "${PACKAGIST_USERNAME}${PACKAGIST_API_TOKEN}"
           } | tee -a "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------
-  # npm: the six platform tarballs first, then @sourceorrery/sdk, which
-  # depends on them. The 0.1.0 main tarball has no `index.js` loader and
-  # cannot be required, so a main tarball without it stops the job before
-  # anything is uploaded: npm versions can never be reused.
+  # npm: the six platform tarballs first, then @sourceorreryai/sdk, which
+  # depends on them, with trusted publishing: npm (11.5.1 or later) trades
+  # this job's GitHub OIDC token for a short-lived credential, granted only
+  # if each package lists this repository and ReleasePackages.yaml as a
+  # trusted publisher. Releases before 0.1.2 carry the old @sourceorrery
+  # scope, and the 0.1.0 main tarball has no `index.js` loader; both stop
+  # the job before anything is uploaded, since npm versions can never be
+  # reused. No `registry-url` on setup-node: it would write an .npmrc with
+  # a placeholder token.
   # ---------------------------------------------------------------------
   npm:
     name: npm
     needs: plan
     if: inputs.npm && (inputs.dry_run || needs.plan.outputs.has_npm == 'true')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -157,17 +167,20 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+          node-version: 24
+      - name: npm with trusted publishing support
+        run: npm install -g npm@11 && npm --version
       - name: Download the npm tarballs
-        run: gh release download "$TAG" --repo "$REPO" --pattern 'sourceorrery-sdk-*.tgz' --dir dist
+        run: |
+          gh release download "$TAG" --repo "$REPO" --pattern 'sourceorreryai-sdk-*.tgz' --dir dist \
+            || { echo "::error::$TAG has no @sourceorreryai npm tarballs; releases before 0.1.2 were packed under the old @sourceorrery scope and cannot be published"; exit 1; }
       - name: Check every tarball before publishing any
         run: |
           set -euo pipefail
-          main="dist/sourceorrery-sdk-$VERSION.tgz"
+          main="dist/sourceorreryai-sdk-$VERSION.tgz"
           [ -f "$main" ] || { echo "::error::$TAG has no $main"; exit 1; }
           if ! tar tzf "$main" | grep -qx 'package/index.js'; then
-            echo "::error::$(basename "$main") has no package/index.js, the napi loader @sourceorrery/sdk requires, so it cannot be installed. 0.1.0 shipped like this; publish npm from a release cut after the fix (run the Release workflow) instead."
+            echo "::error::$(basename "$main") has no package/index.js, the napi loader @sourceorreryai/sdk requires, so it cannot be installed. 0.1.0 shipped like this; publish npm from a release cut after the fix (run the Release workflow) instead."
             exit 1
           fi
           count=0
@@ -176,23 +189,22 @@ jobs:
             packed="$(tar -xOzf "$tgz" package/package.json | jq -r .version)"
             echo "$name@$packed  $(basename "$tgz")"
             [ "$packed" = "$VERSION" ] || { echo "::error::$tgz carries version $packed, not $VERSION"; exit 1; }
+            [[ "$name" == @sourceorreryai/* ]] || { echo "::error::$tgz is $name, not in the @sourceorreryai scope"; exit 1; }
             count=$((count + 1))
           done
           [ "$count" -eq 7 ] || { echo "::error::expected 7 npm tarballs (main + 6 platforms), found $count"; exit 1; }
       - name: Publish the platform packages, then the main package
         if: ${{ !inputs.dry_run }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          main="dist/sourceorrery-sdk-$VERSION.tgz"
+          main="dist/sourceorreryai-sdk-$VERSION.tgz"
           publish() {
             local name
             name="$(tar -xOzf "$1" package/package.json | jq -r .name)"
             if npm view "$name@$VERSION" version >/dev/null 2>&1; then
               echo "$name@$VERSION is already on npm; skipped"
             else
-              npm publish "$1" --access public
+              npm publish "$1" --access public --provenance
             fi
           }
           for tgz in dist/*.tgz; do [ "$tgz" = "$main" ] || publish "$tgz"; done

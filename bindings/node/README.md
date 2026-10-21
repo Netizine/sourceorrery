@@ -1,11 +1,11 @@
-# @sourceorrery/sdk
+# @sourceorreryai/sdk
 
 Read secrets from a [SourceOrrery](https://sourceorrery.ai) vault from
 Node.js, with TypeScript types included. Secrets belong to the runtime, not
 the repository.
 
 ```ts
-import { SecretReader } from '@sourceorrery/sdk';
+import { SecretReader } from '@sourceorreryai/sdk';
 
 using reader = new SecretReader('development');
 using secret = reader.get('database-password');

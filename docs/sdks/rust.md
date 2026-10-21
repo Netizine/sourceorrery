@@ -2,15 +2,15 @@
 
 ## Install
 
-### From the v0.1.0 tag
+### From the v0.1.1 tag
 
-The crate is not on crates.io yet, so depend on the tag the
-[v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+Depend on the tag the
+[v0.1.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1)
 was cut from:
 
 ```toml
 [dependencies]
-sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.1.0" }
+sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.1.1" }
 ```
 
 ### From crates.io
@@ -20,7 +20,8 @@ sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.1.0
 sourceorrery = "0.1"
 ```
 
-This works once the crate is published on crates.io; 0.1.0 is not there yet.
+Every release from 0.1.1 on is on crates.io, as are the crates it depends
+on.
 
 The `sourceorrery` crate is the read-only client every other SDK is built
 on. It depends on `sourceorrery-storage` directly (no C ABI in between)

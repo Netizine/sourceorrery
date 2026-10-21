@@ -1,5 +1,5 @@
 {
-  "name": "@sourceorrery/sdk-win32-arm64-msvc",
+  "name": "@sourceorreryai/sdk-win32-arm64-msvc",
   "version": "0.1.0",
   "cpu": [
     "arm64"

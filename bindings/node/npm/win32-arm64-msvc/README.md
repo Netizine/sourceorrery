@@ -1,3 +1,3 @@
-# `@sourceorrery/sdk-win32-arm64-msvc`
+# `@sourceorreryai/sdk-win32-arm64-msvc`
 
-This is the **aarch64-pc-windows-msvc** binary for `@sourceorrery/sdk`
+This is the **aarch64-pc-windows-msvc** binary for `@sourceorreryai/sdk`
