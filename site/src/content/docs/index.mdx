@@ -22,6 +22,23 @@ hero:
 ---
 
 import { Aside, Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import architecture from '../../assets/sourceorrery-architecture.png';
+
+<figure class="so-figure">
+	<Image
+		src={architecture}
+		alt="SourceOrrery architecture, top to bottom: applications and AI coding workflows; clients and SDKs for Python, JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP; the SourceOrrery client surface (native SDKs, FFI, local IPC); the Rust core with identity and policy, secret lifecycle, audit and versioning, crypto and storage; and platform storage in the macOS Keychain, Windows Credential Store and Linux Secret Service."
+		widths={[752, 1152, 1448]}
+		sizes="(min-width: 76rem) 72rem, calc(100vw - 2rem)"
+		loading="eager"
+	/>
+	<figcaption>
+		The architecture SourceOrrery is building towards. The Rust core, the encrypted vault, the CLI
+		and the SDKs ship today; local IPC through the authenticated broker, identity-based access
+		control and rotation are later milestones on the <a href="/roadmap/">roadmap</a>.
+	</figcaption>
+</figure>
 
 <Aside type="caution" title="Status: milestone 2">
 Core, encrypted vault, CLI and read-only [SDKs](/sdks/) for Python,

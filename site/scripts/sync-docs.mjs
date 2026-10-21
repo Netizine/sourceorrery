@@ -7,8 +7,9 @@
 //   - takes the title from the first H1 and removes that H1 from the body,
 //   - derives a description from the first paragraph (or a configured one),
 //   - rewrites relative links between docs to site URLs,
-//   - turns `<!-- tabs -->` blocks into Starlight <Tabs> (see convertTabs),
-//   - adds an edit link that points at the source file in docs/, not here.
+//   - turns `<!-- tabs -->` blocks into Starlight <Tabs> (see convertTabs).
+//
+// Pages carry no `editUrl`: the site has no "Edit page" link.
 //
 // It also generates two pages from other sources of truth:
 //   - reference/error-codes from `SecretError::code` in sourceorrery-core,
@@ -23,7 +24,6 @@ const outDir = path.join(siteRoot, 'src', 'content', 'docs');
 
 const REPO_URL = 'https://github.com/Netizine/sourceorrery';
 const BLOB_URL = `${REPO_URL}/blob/main/`;
-const EDIT_URL = `${REPO_URL}/edit/main/`;
 
 /**
  * Pages copied from docs/. Keys are repository-relative source paths; `dest`
@@ -188,7 +188,6 @@ async function syncPage(source, page) {
 	const frontmatter = {
 		title,
 		description,
-		editUrl: `${EDIT_URL}${source}`,
 	};
 	let adr;
 	if (page.adr) {
@@ -370,7 +369,6 @@ async function writeDecisionsIndex(adrs) {
 			title: 'Architecture decision records',
 			description:
 				'The decisions made so far, each with its context, the decision itself and its consequences.',
-			editUrl: `${BLOB_URL}${ADR_SOURCE_DIR}`,
 			sidebar: { label: 'Overview', order: 0 },
 		}),
 		'---',
@@ -454,7 +452,6 @@ async function writeErrorCodes() {
 			title: 'Error codes',
 			description:
 				'The stable, append-only error codes every SourceOrrery backend, SDK and the CLI report, generated from the SecretError type in sourceorrery-core.',
-			editUrl: `${EDIT_URL}${source}`,
 		}),
 		'---',
 		`<!-- Generated from ${source} by site/scripts/sync-docs.mjs. Edit the Rust source, not this copy. -->`,
