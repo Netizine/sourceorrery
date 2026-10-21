@@ -17,7 +17,8 @@
 - [ ] Listing cost: `list` and `list-deleted` still verify every version row and every checkpoint row of every secret, one query per secret, because which version is newest can only be judged against the complete set. A bulk checkpoint read and pagination on `list_*` are open; pagination is an API change and goes through core with a conformance test
 - [ ] `backup` / `restore` (encrypted export of a vault or a secret)
 - [x] Pre-built CLI archives for six targets on the GitHub release, with `SHA256SUMS`
-- [ ] Package managers: Homebrew, WinGet, Scoop, `cargo install`; signed releases
+- [x] `cargo install sourceorrery-cli` (from 0.1.1)
+- [ ] Package managers: Homebrew, WinGet, Scoop; signed releases
 - [x] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`, deployed by Azure Static Web Apps
 
 ## Milestone 2 — first-class language bindings *(shipped in 0.1.0)*
@@ -28,8 +29,9 @@
 - [x] Manual release workflow: GitHub Release with checksums, registry publish jobs skipped until their secrets exist, dry-run mode
 - [x] Scoped value accessors (`with` / `using` / `try-with-resources` / `defer` / RAII / `Use(span)`) in every SDK
 - [x] Cross-language conformance harness: `tests/conformance/sdk/scenarios.json` + `harness.py` drive a runner per SDK through the same scenarios in every SDK CI job
-- [ ] Registry publication: PyPI, npm, crates.io, Maven Central, NuGet and Packagist wait for their tokens; 0.1.0 installs from the GitHub release
-- [ ] The npm main tarball on the release page must carry the generated loader (`index.js`); 0.1.0's does not, so it cannot be installed
+- [x] Registry publication: PyPI, crates.io, Maven Central, NuGet (trusted publishing) and Packagist from 0.1.1
+- [ ] npm: `@sourceorreryai/sdk` from 0.1.2, first published by hand, then by trusted publishing
+- [x] The npm main tarball on the release page carries the generated loader (`index.js`) from 0.1.1; 0.1.0's does not
 - [ ] ABI compatibility tests and semantic versioning policy
 - [ ] Package signing and provenance (Sigstore for npm and PyPI, cosign for the archives)
 

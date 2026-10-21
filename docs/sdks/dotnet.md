@@ -4,8 +4,8 @@
 
 ### From the release
 
-`SourceOrrery.0.1.0.nupkg` on the
-[v0.1.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0)
+`SourceOrrery.0.1.1.nupkg` on the
+[v0.1.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1)
 carries the native library for `win-x64`, `win-arm64`, `osx-x64`,
 `osx-arm64`, `linux-x64` and `linux-arm64` under `runtimes/<rid>/native`, so
 one package serves every platform. Put it in a folder, register that folder
@@ -17,30 +17,30 @@ as a package source in the repository's `nuget.config`, and add the package:
 
 ```powershell
 New-Item -ItemType Directory -Force packages | Out-Null
-Invoke-WebRequest https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/SourceOrrery.0.1.0.nupkg -OutFile packages\SourceOrrery.0.1.0.nupkg
+Invoke-WebRequest https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/SourceOrrery.0.1.1.nupkg -OutFile packages\SourceOrrery.0.1.1.nupkg
 dotnet new nugetconfig                        # once per repository, if it has no nuget.config yet
 dotnet nuget add source .\packages --name sourceorrery-release --configfile nuget.config
-dotnet add package SourceOrrery --version 0.1.0
+dotnet add package SourceOrrery --version 0.1.1
 ```
 
 #### macOS
 
 ```bash
 mkdir -p packages
-curl -L -o packages/SourceOrrery.0.1.0.nupkg https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/SourceOrrery.0.1.0.nupkg
+curl -L -o packages/SourceOrrery.0.1.1.nupkg https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/SourceOrrery.0.1.1.nupkg
 dotnet new nugetconfig                        # once per repository, if it has no nuget.config yet
 dotnet nuget add source ./packages --name sourceorrery-release --configfile nuget.config
-dotnet add package SourceOrrery --version 0.1.0
+dotnet add package SourceOrrery --version 0.1.1
 ```
 
 #### Linux
 
 ```bash
 mkdir -p packages
-curl -L -o packages/SourceOrrery.0.1.0.nupkg https://github.com/Netizine/sourceorrery/releases/download/v0.1.0/SourceOrrery.0.1.0.nupkg
+curl -L -o packages/SourceOrrery.0.1.1.nupkg https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/SourceOrrery.0.1.1.nupkg
 dotnet new nugetconfig                        # once per repository, if it has no nuget.config yet
 dotnet nuget add source ./packages --name sourceorrery-release --configfile nuget.config
-dotnet add package SourceOrrery --version 0.1.0
+dotnet add package SourceOrrery --version 0.1.1
 ```
 
 <!-- /tabs -->
@@ -51,7 +51,7 @@ dotnet add package SourceOrrery --version 0.1.0
 dotnet add package SourceOrrery
 ```
 
-This works once the package is published on NuGet; 0.1.0 is not there yet.
+Every release from 0.1.1 on is on NuGet.
 
 Targets .NET 8 and later. P/Invoke is source-generated with
 `LibraryImport`, so the package is trimming- and AOT-compatible. Set
