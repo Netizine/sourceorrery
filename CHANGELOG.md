@@ -6,8 +6,23 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+* **Release packages** workflow (`.github/workflows/ReleasePackages.yaml`):
+  publishes an existing GitHub Release's packages to npm, PyPI, NuGet,
+  crates.io, Maven Central, Packagist and pkg.go.dev, for a registry whose
+  secret was added after the release ran. It checks every registry's files
+  before uploading, skips versions already published and registries without
+  a secret, and refuses an npm main tarball without its loader (0.1.0's).
+  `docs/release.md` now has setup steps per registry.
+
 ### Changed
 
+* Release workflows: NuGet publishes with trusted publishing instead of a
+  stored API key. `NuGet/login` trades the job's GitHub OIDC token for a
+  one-hour key that nuget.org grants only to the workflows its policy
+  names; the repository secret is now `NUGET_USER` (the nuget.org profile
+  name) and `NUGET_API_KEY` is no longer read (`docs/release.md`).
 * PHP: the Composer manifest is now `composer.json` at the repository
   root, the only place Packagist and Composer `vcs` repositories read it,
   so `composer require sourceorrery/sourceorrery` resolves every release
@@ -24,6 +39,9 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+* Release workflow: `publish-packagist` waited for `0.1.1` while Packagist
+  lists a tag's version as `v0.1.1`, so it always timed out after five
+  minutes with a warning; it now matches the tag.
 * Release workflow: the `@sourceorrery/sdk` npm tarball now contains the
   loader (`index.js`) and the types (`index.d.ts`) that `napi build`
   generates. The 0.1.0 tarball shipped without them, so

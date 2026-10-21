@@ -64,21 +64,146 @@ run `npm ci` before they stamp.
 
 Each publish job runs only when the run is not a dry run **and** its
 secret is set in the repository (*Settings → Secrets and variables →
-Actions*). A job whose secret is absent is skipped, not failed, so the
-registries can be brought online one at a time.
+Actions → New repository secret*). A job whose secret is absent is
+skipped, not failed, so the registries can be brought online one at a
+time. The **Release packages** workflow
+([below](#publishing-an-existing-release)) uses the same secrets.
 
-| Registry | Job | Secrets | Where to get them |
-|----------|-----|---------|-------------------|
-| crates.io | `publish-crates` | `CARGO_REGISTRY_TOKEN` | crates.io → Account settings → API tokens (scope `publish-new` + `publish-update`). Publishes `sourceorrery-core`, `sourceorrery-crypto`, `sourceorrery-storage`, `sourceorrery`, `sourceorrery-ffi`, `sourceorrery-cli` in dependency order. |
-| PyPI | `publish-pypi` | `PYPI_API_TOKEN` | pypi.org → Account settings → API tokens. The first upload needs a token scoped to the account; after that, scope it to the `sourceorrery` project. |
-| npm | `publish-npm` | `NPM_TOKEN` | npmjs.com → Access tokens → Granular token with publish rights on the `@sourceorrery` scope (create the organisation first). |
-| NuGet | `publish-nuget` | `NUGET_API_KEY` | nuget.org → API keys, glob `SourceOrrery*`, push new packages and versions. |
-| Maven Central | `publish-maven` | `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`, `MAVEN_GPG_PASSPHRASE` | central.sonatype.com → verify the `ai.sourceorrery` namespace (DNS TXT record), then *View account → Generate user token* for the two credentials; an ASCII-armoured GPG private key whose public key is on `keys.openpgp.org` and its passphrase. |
-| pkg.go.dev | `publish-go` | none (uses `GITHUB_TOKEN`) | Pushes the tag `bindings/go/vX.Y.Z` and fetches the version through `proxy.golang.org`, which indexes it. |
-| Packagist | `publish-packagist` | `PACKAGIST_USERNAME`, `PACKAGIST_API_TOKEN` | The Packagist account name and its API token (*Profile → Show API Token*; the *safe* token, which can only trigger updates, is enough), after the one-time submission described under [The PHP package and Packagist](#the-php-package-and-packagist). The job asks Packagist to re-read the repository, fails with that pointer if the repository was never submitted, and waits for the version to appear. |
+| Registry | Release job | Secrets |
+|----------|-------------|---------|
+| npm | `publish-npm` | `NPM_TOKEN` |
+| PyPI | `publish-pypi` | `PYPI_API_TOKEN` |
+| NuGet | `publish-nuget` | `NUGET_USER` (trusted publishing; no API key) |
+| crates.io | `publish-crates` | `CARGO_REGISTRY_TOKEN` |
+| Maven Central | `publish-maven` | `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`, `MAVEN_GPG_PASSPHRASE` |
+| Packagist | `publish-packagist` | `PACKAGIST_USERNAME`, `PACKAGIST_API_TOKEN` |
+| pkg.go.dev | `publish-go` | none (uses `GITHUB_TOKEN`) |
 
 No secret is needed for the GitHub Release itself (`GITHUB_TOKEN` with
 `contents: write`).
+
+### Setting up each registry
+
+**npm** (`@sourceorrery/sdk` and six `@sourceorrery/sdk-<platform>`
+packages):
+
+1. An npmjs.com account with two-factor authentication, and the
+   organisation `sourceorrery`, which owns the `@sourceorrery` scope.
+2. *Access Tokens → Generate New Token → Granular Access Token*. Packages
+   and scopes: **Read and write**, limited to the `@sourceorrery` scope
+   (the packages do not exist yet, so pick the scope, not packages).
+   Organisations: no access. If the account requires two-factor
+   authentication for writes, tick *Bypass two-factor authentication*, or
+   CI cannot publish. Write tokens expire after at most 90 days: note the
+   date and replace the secret before it.
+3. Save it as `NPM_TOKEN`.
+
+npm intends (target January 2027) to stop tokens that bypass two-factor
+authentication from publishing directly. The replacement is trusted
+publishing: once the packages exist, configure each on npmjs.com
+(*package → Settings → Trusted publisher → GitHub Actions*, repository
+`Netizine/sourceorrery`, workflow `release.yml` and
+`ReleasePackages.yaml`) and give the publish jobs `id-token: write`; no
+token is needed then.
+
+**PyPI** (`sourceorrery`):
+
+1. A pypi.org account (two-factor authentication is mandatory).
+2. *Account settings → API tokens → Add API token*, scope **Entire
+   account**: a token scoped to the project can only be made once the
+   project exists. Save it as `PYPI_API_TOKEN` (it starts with `pypi-`).
+3. After the first upload, replace it with a token scoped to the
+   `sourceorrery` project.
+
+**NuGet** (`SourceOrrery`), with trusted publishing, so no API key is
+stored anywhere. The publish jobs trade the job's GitHub identity token
+for a NuGet key that lives one hour, through `NuGet/login`; nuget.org
+grants it only to the workflows its policy names.
+
+1. Sign in to nuget.org, click your user name, then *Trusted Publishing*.
+2. Add a policy, owned by your account (or the organisation that will own
+   the package): Repository Owner `Netizine`, Repository `sourceorrery`,
+   Workflow File `release.yml` (the file name only), Environment empty.
+   Allow publishing new packages and new versions, glob `SourceOrrery`.
+   The policy works before the package exists; the first push creates it.
+3. Add a second, identical policy with Workflow File
+   `ReleasePackages.yaml`, so the **Release packages** workflow can push
+   too.
+4. Save your nuget.org profile name (the user name, not the e-mail
+   address) as the repository secret `NUGET_USER`.
+
+A new policy can show as *temporarily active* for 7 days, mostly for
+private repositories, until a first publish locks it to the repository; if
+nothing publishes in that window it turns inactive and can be restarted
+from the same page.
+
+**crates.io** (`sourceorrery-core`, `sourceorrery-crypto`,
+`sourceorrery-storage`, `sourceorrery`, `sourceorrery-ffi`,
+`sourceorrery-cli`, published in that order):
+
+1. Log in to crates.io with GitHub and verify an email address under
+   *Account Settings*; crates.io refuses publishes without one.
+2. *Account Settings → API Tokens → New Token*: scopes `publish-new` and
+   `publish-update`, crates `sourceorrery*`, an expiry. Save it as
+   `CARGO_REGISTRY_TOKEN`. The first publish claims the six names.
+
+**Maven Central** (`ai.sourceorrery:sourceorrery`):
+
+1. An account at central.sonatype.com.
+2. *Namespaces → Add namespace* `ai.sourceorrery`. Central shows a
+   verification key; add it as a DNS TXT record on `sourceorrery.ai`, then
+   press *Verify*.
+3. *Account → Generate User Token*. Its username is
+   `MAVEN_CENTRAL_USERNAME`, its password `MAVEN_CENTRAL_PASSWORD` (not the
+   account's login).
+4. A signing key, published where Central looks for it:
+
+   ```bash
+   gpg --full-generate-key                                  # RSA 4096, with a passphrase
+   gpg --keyserver keys.openpgp.org --send-keys <KEY-ID>    # then confirm the e-mail it sends
+   gpg --keyserver keyserver.ubuntu.com --send-keys <KEY-ID>
+   gpg --armor --export-secret-keys <KEY-ID>                # the whole block is MAVEN_GPG_PRIVATE_KEY
+   ```
+
+   The passphrase is `MAVEN_GPG_PASSPHRASE`.
+
+**Packagist** (`sourceorrery/sourceorrery`): the one-time submission
+under [The PHP package and Packagist](#the-php-package-and-packagist),
+then the account name as `PACKAGIST_USERNAME` and its *safe* API token
+(*Profile → Show API Token*) as `PACKAGIST_API_TOKEN`. The release job
+asks Packagist to re-read the repository, fails with that pointer if the
+repository was never submitted, and waits for the version to appear.
+
+**pkg.go.dev**: nothing to set up. The release job pushes the tag
+`bindings/go/vX.Y.Z` and fetches the version through `proxy.golang.org`,
+which indexes it.
+
+## Publishing an existing release
+
+`.github/workflows/ReleasePackages.yaml` (*Actions → Release packages →
+Run workflow*) publishes the packages of a release that already exists,
+for a registry whose secret was added after the release ran. It builds no
+new release:
+
+- npm, PyPI and NuGet upload the exact files attached to the release.
+- crates.io publishes from the release tag's source.
+- Maven Central rebuilds the jar from the tag with the native libraries
+  out of the release's jar, because Central needs sources, javadoc and
+  signatures, which the release does not carry.
+- Packagist and pkg.go.dev upload nothing; they are pointed at the tag.
+
+Inputs: the tag (empty means the latest release), **dry_run** (on by
+default) and one tick box per registry. Every registry's files are
+checked before anything is uploaded, a version a registry already has is
+skipped, and a registry without its secret is skipped. A dry run checks
+every ticked registry, with or without secrets, and uploads nothing.
+
+What 0.1.0 can publish this way: PyPI, NuGet, crates.io and Maven
+Central. Not npm: its `@sourceorrery/sdk` tarball lacks the `index.js`
+loader and cannot be installed, and the job stops before uploading
+anything, since an npm version can never be reused; npm starts with the
+first release cut after the fix. Not Packagist: the 0.1.0 tag has no root
+`composer.json`. Its Go module is already on pkg.go.dev.
 
 ## The PHP package and Packagist
 
