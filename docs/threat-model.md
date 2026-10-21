@@ -68,6 +68,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | Resource ceilings before authentication | Argon2 parameters from the file are capped (1 GiB, 64 passes, 16 lanes); at most 8 passphrase protectors are tried |
 | Keyring entries deleted only when provably this vault's | Account must match the vault's own identity and no sibling vault may reference it; `--keep-os-key` opts out |
 | No secret echoes in diagnostics | Manifest parse errors report a category and position, never the offending text |
+| Terminal output sanitised | Text read from the vault file can be planted by a tamperer: protector labels and keyring accounts are not authenticated at all, and the vault name is not until unlock. Audit rows written before unlock can be forged too. So table output, status lines, notes, errors and prompts show control characters (C0 including ESC, TAB, CR and LF; DEL; C1) and bidi formatting characters as `\u{..}` escapes. Planted text cannot move the cursor to hide audit rows, write the clipboard (OSC 52) or reorder what is shown. Multi-line messages keep their own line breaks. JSON is left to serde, and revealed values stay byte-exact (`cli::output::sanitize`) |
 | Child environment hygiene | `run` removes `SOURCEORRERY_PASSPHRASE` and `SOURCEORRERY_PASSPHRASE_FILE` from the child; manifests cannot deliver under `SOURCEORRERY_*` names |
 
 ## Known gaps (milestone 1)

@@ -12,7 +12,7 @@ use sourceorrery_storage::{AuditVerification, SqliteVault};
 
 use crate::cli::AuditArgs;
 use crate::context::Ctx;
-use crate::output::{self, Table};
+use crate::output::{self, Cell, Table};
 use crate::prompt;
 
 pub fn run(ctx: &Ctx, args: &AuditArgs) -> anyhow::Result<()> {
@@ -65,16 +65,18 @@ fn print_events(events: &[AuditEvent]) -> anyhow::Result<()> {
         "OUTCOME",
         "DETAIL",
     ]);
+    // Actor, secret, version and detail are text from the file; rows written
+    // before unlock can be forged outright. The table escapes them.
     for e in events {
         table.row([
-            e.id.to_string(),
-            output::fmt_time(e.occurred_on),
-            e.actor.to_string(),
-            e.operation.as_str().to_owned(),
-            e.secret_name.clone().unwrap_or_else(|| "-".into()),
-            e.version.clone().unwrap_or_else(|| "-".into()),
-            output::fmt_outcome(e.outcome),
-            e.detail.clone().unwrap_or_default(),
+            Cell::from(e.id.to_string()),
+            output::fmt_time(e.occurred_on).into(),
+            e.actor.to_string().into(),
+            e.operation.as_str().to_owned().into(),
+            e.secret_name.clone().unwrap_or_else(|| "-".into()).into(),
+            e.version.clone().unwrap_or_else(|| "-".into()).into(),
+            output::outcome_cell(e.outcome),
+            e.detail.clone().unwrap_or_default().into(),
         ]);
     }
     table.print()
@@ -104,7 +106,7 @@ fn describe_truncations(events: &[AuditEvent]) -> String {
             format!(
                 "event {}: {}",
                 e.id,
-                e.detail.as_deref().unwrap_or("no detail")
+                output::sanitize(e.detail.as_deref().unwrap_or("no detail"))
             )
         })
         .collect::<Vec<_>>()

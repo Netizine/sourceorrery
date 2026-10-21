@@ -8,7 +8,7 @@ sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--passphrase-file FILE
 |---------------|-----|---------|
 | `--vault NAME` | `SOURCEORRERY_VAULT` | Vault to use. Default: `[project].vault` from the nearest `sourceorrery.toml`. |
 | `--home DIR` | `SOURCEORRERY_HOME` | Directory holding vault files. |
-| `-o, --output table\|json` | | Output format. Errors in JSON mode are `{"error":{"code","message"}}` on stderr. |
+| `-o, --output table\|json` | | Output format. Errors in JSON mode are `{"error":{"code","message"}}` on stderr. In table mode, control and bidi formatting characters in stored text (labels, audit actors and details) are shown as `\u{..}` escapes. |
 | `--passphrase-file FILE` | `SOURCEORRERY_PASSPHRASE_FILE` | Read the vault passphrase from a file (automation). |
 | | `SOURCEORRERY_PASSPHRASE` | Passphrase from the environment. CI only; environment variables are visible to process inspection. |
 | `-v` | `SOURCEORRERY_LOG` | Diagnostics on stderr. Never prints values. |
