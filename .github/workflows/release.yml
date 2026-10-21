@@ -610,7 +610,8 @@ jobs:
             if npm view "$name@$VERSION" version >/dev/null 2>&1; then
               echo "$name@$VERSION is already on npm; skipped"
             else
-              npm publish "$1" --access public --provenance
+              # ./ makes npm read a file; it reads dist/<file> as GitHub shorthand.
+              npm publish "./$1" --access public --provenance
             fi
           }
           for tgz in *.tgz; do [ "$tgz" = "$main" ] || publish "$tgz"; done
