@@ -235,11 +235,15 @@ fn destroy(ctx: &Ctx, args: &VaultDestroyArgs) -> anyhow::Result<()> {
         return output::json(&serde_json::json!({ "destroyed": args.name, "keyring": report }));
     }
     output::success(&format!("Vault '{}' destroyed", args.name));
+    // Account names come from the file's protector records, unverified.
     for account in &report.removed_keys {
-        eprintln!("  removed OS-keyring entry {account}");
+        eprintln!("  removed OS-keyring entry {}", output::sanitize(account));
     }
     for (account, reason) in &report.kept_keys {
-        output::note(&format!("kept OS-keyring entry {account}: {reason}"));
+        output::note(&format!(
+            "kept OS-keyring entry {}: {reason}",
+            output::sanitize(account)
+        ));
     }
     Ok(())
 }

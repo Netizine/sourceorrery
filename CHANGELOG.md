@@ -6,6 +6,94 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-21
+
+### Added — `sourceorrery ui`: changing secrets
+
+* In the Secrets and Deleted views: `space` enables or disables a
+  version, `e` changes its metadata (enabled, content type, tags, not
+  before, expires), `n` stores a new version, `a` a new secret, `d`
+  deletes and `u` recovers. Each change is checked with the vault's own
+  rules first, so a refused one is never sent, then confirmed; deleting
+  for good in a purgeable vault means typing the name.
+* New values are never typed into the browser: confirming `n` or `a`
+  suspends the screen and asks twice at the same hidden prompt as
+  `secret set`, then stores the value and returns.
+* Changes go through a separate write interface, `ui::editor::MetadataEditor`,
+  that the views cannot reach. Purge, protectors, destroy, migrate and
+  acknowledging a truncation stay CLI-only; a blocked vault cannot be
+  changed. `--read-only` refuses every change and marks the header.
+
+### Added — `sourceorrery ui`: the overview and the idle lock
+
+* A new first view, Overview, where a vault opens: secrets by status (with
+  bars) and by expiry; what expires or activates next; the audit chain's
+  state, verified when the view is first shown and again on `v`; 14 days
+  of audit activity with denials and failures marked, the last value read
+  and the last failed unlock; the vault's file and key protectors. It is
+  drawn from what the browser already holds; the deleted list it shows is
+  read once (one `secret_list`), the rest is not audited.
+* Idle lock: after `--lock-after` minutes without a key (default 10,
+  `SOURCEORRERY_UI_LOCK_AFTER`, `0` for never) the browser drops the open
+  vault, zeroising its key, and forgets what it read; `L` locks at once and
+  `Enter` unlocks again with the ordinary unlock order.
+* Views are now `1` Overview, `2` Secrets, `3` Deleted, `4` Audit log,
+  `5` Vaults.
+
+### Added — `sourceorrery ui`: the read-only vault browser
+
+* Four views: Secrets, Deleted (with purge date and days left), Audit log
+  (the newest 1000 events, denials and failures marked) and Vaults (the
+  vault files in the home directory; listing needs no unlock). Switch with
+  `Tab`, `Shift-Tab`, `←` `→` or the digits.
+* `Enter` on a secret opens its details: every field and the reference,
+  every version (newest first) and the secret's recent audit events.
+* `/` searches the current view: words match anywhere; `tag:KEY[=VALUE]`,
+  `status:`, `type:` and `expires:<30d` narrow secrets, `op:`, `outcome:`,
+  `secret:` and `actor:` the audit log. Searching reads nothing.
+* With no vault named, `ui` starts on Vaults; opening one suspends the
+  screen for the usual unlock and prompt. Vaults are opened for inspection,
+  as `audit` opens them: a blocked vault shows its audit log and a callout
+  naming the truncation, and is never asked for secrets.
+* Each thing is read once, when first shown, and kept until `r`: the
+  secret list and the deleted list are one `secret_list` each, a secret's
+  details one `secret_inspect`; the audit log, the vault list, moving and
+  searching record nothing. `?` shows the keys, the search syntax and this.
+* Keys: `Esc` now goes back (help, search, details, filter) and no longer
+  quits; `q` and `Ctrl-C` quit.
+
+### Added — `sourceorrery ui`, the interactive vault browser (groundwork)
+
+* `sourceorrery ui [--vault NAME] [--theme dark|light|terminal]` opens a
+  Ratatui browser on one vault: its settings and every live secret with
+  status, short version id, last update, expiry and tags, with keyboard
+  navigation (`↑↓`/`jk`, `PgUp`/`PgDn`, `g`/`G`, `r` to reload, `q` to
+  quit). Metadata only: the browser reaches the vault through
+  `MetadataSource`, which has no operation that returns a value. Stored
+  text goes through the same escaping as the rest of the CLI's output.
+* Themes: `dark` (the default) and `light` are the documentation site's
+  paper palettes, painted over the whole screen, with the nearest xterm
+  256 colours where the terminal has no 24-bit colour; `terminal` keeps
+  the terminal's own colours. `SOURCEORRERY_THEME` sets the default;
+  `NO_COLOR` turns colour off.
+* The vault is unlocked with the usual order and prompt before the screen
+  is taken over; without a terminal, or with `-o json`, `ui` is refused
+  before unlocking. A session records one `vault_open` and one
+  `secret_list` per load; moving and redrawing read nothing.
+* New `ui` cargo feature of `sourceorrery-cli`, on by default; builds
+  without it have no `ui` command.
+
+### Fixed — terminal escape injection in CLI output
+
+* Human-readable output shows control and bidirectional-formatting
+  characters as escapes (`\u{1b}`) in every table cell and in status,
+  note, error and prompt lines. Text read from the vault file (protector
+  labels, keyring accounts, the vault name before unlock, audit rows
+  written before unlock) can be planted by anyone who can write the file,
+  and could otherwise move the cursor, erase lines (hiding audit rows the
+  owner reviews before `audit --acknowledge`) or set the clipboard. JSON
+  output and revealed values are unchanged.
+
 ## [0.1.2] - 2026-10-21
 
 ### Changed
@@ -320,7 +408,8 @@ uses [Semantic Versioning](https://semver.org/).
   `unsafe`; every block states its invariant. Covered by Rust smoke tests
   that call the exported functions and by a C example compiled in CI.
 
-[Unreleased]: https://github.com/Netizine/sourceorrery/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Netizine/sourceorrery/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/Netizine/sourceorrery/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Netizine/sourceorrery/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Netizine/sourceorrery/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.0

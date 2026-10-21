@@ -6,11 +6,14 @@ use anyhow::{Context as _, anyhow};
 use sourceorrery_core::SecretBytes;
 
 use crate::cli::SecretSetArgs;
+use crate::output;
 
-/// Prompt on stderr and read a line without echo.
+/// Prompt on stderr and read a line without echo. The prompt may name the
+/// vault as its file reports it, before anything in the file is verified,
+/// so it is sanitised like every other line of output.
 pub fn read_hidden(prompt: &str) -> anyhow::Result<SecretBytes> {
     let mut stderr = std::io::stderr();
-    stderr.write_all(prompt.as_bytes())?;
+    stderr.write_all(output::sanitize(prompt).as_bytes())?;
     stderr.flush()?;
     let text = rpassword::read_password().context("failed to read hidden input")?;
     Ok(SecretBytes::from_string(text))
@@ -22,7 +25,7 @@ pub fn confirm(question: &str) -> anyhow::Result<bool> {
         return Ok(false);
     }
     let mut stderr = std::io::stderr();
-    write!(stderr, "{question} [y/N] ")?;
+    write!(stderr, "{} [y/N] ", output::sanitize(question))?;
     stderr.flush()?;
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer)?;

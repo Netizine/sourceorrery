@@ -8,7 +8,7 @@ sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--passphrase-file FILE
 |---------------|-----|---------|
 | `--vault NAME` | `SOURCEORRERY_VAULT` | Vault to use. Default: `[project].vault` from the nearest `sourceorrery.toml`. |
 | `--home DIR` | `SOURCEORRERY_HOME` | Directory holding vault files. |
-| `-o, --output table\|json` | | Output format. Errors in JSON mode are `{"error":{"code","message"}}` on stderr. |
+| `-o, --output table\|json` | | Output format. Errors in JSON mode are `{"error":{"code","message"}}` on stderr. In table mode, control and bidi formatting characters in stored text (labels, audit actors and details) are shown as `\u{..}` escapes. |
 | `--passphrase-file FILE` | `SOURCEORRERY_PASSPHRASE_FILE` | Read the vault passphrase from a file (automation). |
 | | `SOURCEORRERY_PASSPHRASE` | Passphrase from the environment. CI only; environment variables are visible to process inspection. |
 | `-v` | `SOURCEORRERY_LOG` | Diagnostics on stderr. Never prints values. |
@@ -115,8 +115,10 @@ inspection: `audit` lists the log (and warns on stderr that the vault is
 blocked), `audit --verify` reports the chain, and `audit --acknowledge`
 lifts the block. Such an unlock writes `vault_open` / `success` with detail
 `inspection (truncation unacknowledged)`, skips the retention purge, and
-still refuses every secret and protector operation; nothing else opens
-the vault. `vault migrate` is no way round it either.
+still refuses every secret and protector operation. `ui` opens vaults
+the same way so that its audit log view works on a blocked vault; it
+shows nothing else there and cannot acknowledge. Nothing else opens the
+vault, and `vault migrate` is no way round it either.
 
 Treat a truncation as evidence that the file was edited. Whatever the
 missing events recorded — a change of policy, a deletion, a new version
@@ -175,6 +177,129 @@ start with `SOURCEORRERY_`.
 The parent process never prints the values; they exist only in the child's
 environment (which other processes running as you can read — see the threat
 model).
+
+## `ui`
+
+```
+sourceorrery ui [--vault NAME] [--theme dark|light|terminal] [--lock-after MINUTES] [--read-only]
+```
+
+An interactive browser for the vaults in the home directory, which can
+also change their metadata. It shows **metadata only**. It cannot read a
+value: it reaches a vault through an interface that has no operation
+returning one, so nothing it draws, and nothing in its memory, is a
+secret. Stored text is escaped as in every
+other table (see `--output` above), so metadata in the file cannot drive
+the terminal. Times are UTC.
+
+| View | Shows |
+|------|-------|
+| `1` Overview | The vault at a glance, and where a vault opens: secrets by status, by expiry, and what expires or activates next; the audit chain as `audit --verify` would report it (`v` checks it again); 14 days of activity, denials and failures marked, with the last value read and the last failed unlock; the vault's file and key protectors. |
+| `2` Secrets | Every live secret: status, short version id, last update, expiry, tags. `Enter` opens its details: every field and the `sourceorrery://` reference, every version (newest first), and the secret's recent audit events. |
+| `3` Deleted | Soft-deleted secrets, their purge date and the days left. `Enter` shows the fields and recent activity; a deleted secret's versions cannot be listed until it is recovered. |
+| `4` Audit log | The newest 1000 events, denials and failures marked. |
+| `5` Vaults | The vault files in the home directory with size and modification time. Listing them needs no unlock; `Enter` opens one. |
+
+**Opening a vault.** The vault named by `--vault` or the manifest is
+unlocked **before** the screen is taken over, with the usual unlock order
+and passphrase prompt; if that fails, the command fails as any other
+would. With no vault named, `ui` starts on Vaults. Opening a vault from
+there suspends the screen for the same unlock (and prompt, if one is
+needed) and comes back to the browser. `ui` needs a terminal on stdin and
+stdout and has no JSON output; both are checked before anything is
+unlocked, so a refused start prompts for nothing and records nothing.
+
+**Locking.** After `--lock-after` minutes without a key (default 10,
+`SOURCEORRERY_UI_LOCK_AFTER`; `0` never locks), and at once on `L`, the
+browser drops the open vault: its handle goes, and with it the vault key,
+which is zeroised; everything read from it goes too. `Enter` unlocks it
+again, with the same unlock order and prompt as opening it.
+
+**Changing secrets.** In the Secrets and Deleted views (and their
+details), unless `--read-only` is given:
+
+| Key | Change | The vault records |
+|-----|--------|-------------------|
+| `space` | Enable or disable the selected version (in details: the version selected there; in the list: the newest) | `secret_update` |
+| `e` | Change that version's metadata: enabled, content type, tags, not before, expires | `secret_update` |
+| `n` | A new version of the secret, starting from the newest version's content type and tags | `secret_set` |
+| `a` | A new secret (a new version, if a live secret has the name) | `secret_set` |
+| `d` | Delete the secret: soft in a recoverable vault, for good in a purgeable one | `secret_delete` |
+| `u` | Recover a deleted secret (Deleted view) | `secret_recover` |
+
+Every change is checked first with the vault's own rules (names, tags,
+time windows), so one the vault would refuse is never sent, and then
+shown for confirmation; `Enter` makes it, `Esc` drops it. Deleting for
+good must be confirmed by typing the secret's name. Afterwards the
+browser reads the vault again (one `secret_list`, and a `secret_inspect`
+if details are open). A value is never typed into the browser: for `n`
+and `a`, confirming leaves the screen and asks for it twice at the same
+hidden prompt as `secret set`, then stores it and comes back; an empty
+value, or two that differ, store nothing. Purging, protectors,
+destroying, migrating and acknowledging a truncation are not available
+in the browser; nothing can be changed in a blocked vault.
+
+**A blocked vault.** Vaults are opened for inspection, as `audit` opens
+them. One blocked by an unacknowledged audit-log truncation (see `audit`
+above) shows its audit log and a callout naming the truncation, and
+nothing else: the browser never asks it for secrets, since each refusal
+would be recorded. Acknowledge with `sourceorrery audit --acknowledge`.
+
+**Search.** `/` filters the current view; each view keeps its own filter.
+Words match anywhere in a row (all of them, in any order, case ignored).
+Qualifiers narrow by one field; several of one kind mean any of them:
+
+| View | Qualifiers |
+|------|------------|
+| Secrets, Deleted | `tag:KEY`, `tag:KEY=VALUE`, `status:enabled\|disabled\|pending\|expired`, `type:TEXT` (content type), `expires:<30d` (expires within that many days, or has expired) |
+| Audit log | `op:TEXT`, `outcome:success\|denied\|failure`, `secret:TEXT`, `actor:TEXT` |
+
+A qualifier for the other kind of view matches nothing. `Enter` keeps the
+filter; `Esc` clears it.
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` / `k` `j` | Move the selection (in details: the versions) |
+| `PgUp` `PgDn` | Move by a screenful |
+| `Home` `End` / `g` `G` | First / last |
+| `Tab` `Shift-Tab` / `←` `→` / `1`–`5` | Switch view |
+| `Enter` | Details of the selected secret; open the selected vault |
+| `Esc` | Back: close the help, the search box, the details; clear the filter |
+| `/` | Search |
+| `r` | Read the vault again (on Vaults: list the files again) |
+| `v` | Check the audit chain again |
+| `L` | Lock now: drop the vault and wipe its key |
+| `space` `e` `n` `a` `d` `u` | Changes (see above) |
+| `?` | Keys and search syntax |
+| `q` / `Ctrl-C` | Quit |
+
+What the vault records: everything is read once, when first shown, and
+kept until `r`.
+
+| Browser action | Audit events |
+|----------------|--------------|
+| Opening a vault | one `vault_open` |
+| The secret list: on opening, and on each `r` | one `secret_list` |
+| The deleted list: the first time the Overview or the Deleted view is shown after opening or `r` | one `secret_list` |
+| A secret's details: the first time they open after opening or `r` | one `secret_inspect` |
+| The audit log, verifying the chain, the protectors, the vault list, searching, moving, redrawing, locking | none |
+
+What is shown is a snapshot: a change made from another terminal appears
+after `r`.
+
+| Theme | Env | Look |
+|-------|-----|------|
+| `dark` (default) | `SOURCEORRERY_THEME` | The documentation site's dark palette: warm charcoal, navy ink, callout colours for status and messages. Painted over the whole screen. |
+| `light` | | The site's light "paper" palette, painted the same way. |
+| `terminal` | | The terminal's own background and named colours, as the banner uses. |
+
+`dark` and `light` use 24-bit colour on Windows and wherever `COLORTERM`
+says `truecolor`, and the nearest xterm 256 colours elsewhere (macOS
+Terminal, for one). `NO_COLOR` turns colour off in every theme.
+
+The browser is the `ui` cargo feature of `sourceorrery-cli`, on by default.
+A build without it (`--no-default-features --features os-keyring`) has no
+`ui` command.
 
 ## `completions`
 

@@ -292,6 +292,53 @@ fn completions_generate() {
     assert!(out.contains("sourceorrery"));
 }
 
+/// `ui` needs a terminal and has no JSON output; both are refused before
+/// the vault is unlocked, so nothing is prompted for or audited.
+#[cfg(feature = "ui")]
+#[test]
+fn ui_refuses_without_a_terminal_before_unlocking() {
+    let env = Env::new();
+    env.create_vault("dev");
+    let opens = || {
+        let json = env.ok(&[
+            "audit",
+            "--vault",
+            "dev",
+            "--operation",
+            "vault_open",
+            "-o",
+            "json",
+        ]);
+        serde_json::from_str::<Vec<serde_json::Value>>(&json)
+            .unwrap()
+            .len()
+    };
+    let before = opens();
+
+    let out = env.run(&["ui", "--vault", "dev"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("needs an interactive terminal"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(stdout(&out), "");
+
+    let out = env.run(&["ui", "--vault", "dev", "-o", "json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert_eq!(err["error"]["code"], "cli");
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no JSON output")
+    );
+
+    // Only the second count's own unlock was added.
+    assert_eq!(opens(), before + 1);
+}
+
 #[test]
 fn audit_verify_reports_an_intact_chain() {
     let env = Env::new();
@@ -420,6 +467,108 @@ fn truncated_audit_log_blocks_the_vault_until_acknowledged() {
     assert_eq!(
         env.run(&["audit", "--yes", "--vault", "dev"]).status.code(),
         Some(2)
+    );
+}
+
+/// Text a tamperer plants in a free-form field: cursor up and erase line
+/// (hides the row above), an OSC 52 clipboard write, a right-to-left
+/// override and an 8-bit CSI.
+const PLANTED: &str = "planted\x1b[1A\x1b[2K\x1b]52;c;ZXZpbA==\x07\u{202e}\u{9b}2J";
+
+fn open_vault_file(home: &Path, vault: &str) -> rusqlite::Connection {
+    rusqlite::Connection::open(home.join("vaults").join(format!("{vault}.sorvault"))).unwrap()
+}
+
+/// Output fit for a terminal: no control or bidi character left raw, and
+/// the planted text visible in escaped form.
+fn assert_escaped(output: &str) {
+    let raw = output
+        .chars()
+        .find(|c| (c.is_control() && *c != '\n') || ('\u{202a}'..='\u{202e}').contains(c));
+    assert!(
+        raw.is_none(),
+        "raw {raw:?} reached the terminal: {output:?}"
+    );
+    assert!(
+        output.contains("planted\\u{1b}[1A\\u{1b}[2K\\u{1b}]52;c;ZXZpbA==\\u{7}\\u{202e}\\u{9b}2J"),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn tampered_protector_labels_are_shown_escaped() {
+    let env = Env::new();
+    env.create_vault("dev");
+    // A label is not part of the key wrapping: the vault still unlocks.
+    open_vault_file(env.home.path(), "dev")
+        .execute("UPDATE key_protectors SET label = ?1", [PLANTED])
+        .unwrap();
+
+    assert_escaped(&env.ok(&["vault", "info", "--vault", "dev"]));
+    assert_escaped(&env.ok(&["vault", "protector", "list", "--vault", "dev"]));
+
+    // JSON is left alone: serde escapes the controls, the value round-trips.
+    let json = env.ok(&["vault", "protector", "list", "--vault", "dev", "-o", "json"]);
+    assert!(!json.contains('\x1b'));
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed[0]["label"], PLANTED);
+
+    // Before unlock: a protector the CLI refuses to try is named, by its
+    // unverified label, in the error.
+    open_vault_file(env.home.path(), "dev")
+        .execute(
+            "UPDATE key_protectors SET kind_json = json_set(kind_json, '$.params.iterations', 1000)",
+            [],
+        )
+        .unwrap();
+    let out = env.run(&["vault", "info", "--vault", "dev"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("exceed the supported limits"),
+        "{}",
+        stderr(&out)
+    );
+    assert_escaped(&stderr(&out));
+}
+
+#[test]
+fn forged_audit_rows_are_shown_escaped() {
+    let env = Env::new();
+    env.create_vault("dev");
+    // A failed unlock writes rows chained without the vault key, which a
+    // tamperer can rewrite; a later unlock puts keyed rows after them.
+    let out = env
+        .cmd(&["secret", "list", "--vault", "dev"])
+        .env("SOURCEORRERY_PASSPHRASE", "wrong")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    env.ok(&["secret", "list", "--vault", "dev"]);
+    let forged = open_vault_file(env.home.path(), "dev")
+        .execute(
+            "UPDATE audit_events SET actor = ?1, secret_name = ?1, version = ?1, detail = ?1 \
+             WHERE keyed = 0",
+            [PLANTED],
+        )
+        .unwrap();
+    assert!(forged > 0, "no unkeyed rows to forge");
+
+    let listed = env.ok(&["audit", "--vault", "dev"]);
+    assert_escaped(&listed);
+    // Every field of the row is escaped, not just the last.
+    let row = listed.lines().find(|l| l.contains("planted")).unwrap();
+    assert!(row.contains("vault_open"), "{row}");
+    assert_eq!(row.matches("planted\\u{1b}").count(), 4, "{row}");
+
+    let json = env.ok(&["audit", "--vault", "dev", "-o", "json"]);
+    assert!(!json.contains('\x1b'));
+    let events: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(
+        events
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["detail"] == PLANTED)
     );
 }
 

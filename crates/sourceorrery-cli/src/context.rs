@@ -48,17 +48,25 @@ impl Ctx {
     /// The vault a command should act on: `--vault`, else the manifest found
     /// upwards from the current directory.
     pub fn vault_name(&self) -> anyhow::Result<String> {
+        self.selected_vault()?.ok_or_else(|| {
+            anyhow!(
+                "no vault specified: pass --vault <name>, set SOURCEORRERY_VAULT, or run `sourceorrery init`"
+            )
+        })
+    }
+
+    /// [`Ctx::vault_name`], with `None` when neither `--vault` nor a
+    /// manifest names one. A manifest that cannot be read is still an error.
+    pub fn selected_vault(&self) -> anyhow::Result<Option<String>> {
         if let Some(name) = &self.vault_flag {
-            return Ok(name.clone());
+            return Ok(Some(name.clone()));
         }
         let cwd = std::env::current_dir().context("cannot determine current directory")?;
         if let Some(path) = Manifest::discover(&cwd) {
             let manifest = Manifest::load(&path)?;
-            return Ok(manifest.project.vault);
+            return Ok(Some(manifest.project.vault));
         }
-        Err(anyhow!(
-            "no vault specified: pass --vault <name>, set SOURCEORRERY_VAULT, or run `sourceorrery init`"
-        ))
+        Ok(None)
     }
 
     /// Open and unlock a vault by name.
@@ -80,8 +88,16 @@ impl Ctx {
     /// Only the `audit` command uses this.
     pub fn inspect_default(&self) -> anyhow::Result<SqliteVault> {
         let name = self.vault_name()?;
+        self.inspect(&name)
+    }
+
+    /// [`Ctx::inspect_default`] for a vault named explicitly. Besides
+    /// `audit`, the `ui` browser opens vaults this way, so that a blocked
+    /// vault can still show its audit log there; the vault itself refuses
+    /// every secret operation until the truncation is acknowledged.
+    pub fn inspect(&self, name: &str) -> anyhow::Result<SqliteVault> {
         let unlocker = self.unlocker();
-        Ok(self.registry.open_for_inspection(&name, &unlocker)?)
+        Ok(self.registry.open_for_inspection(name, &unlocker)?)
     }
 
     pub fn unlocker(&self) -> Unlocker {

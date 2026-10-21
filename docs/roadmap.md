@@ -9,6 +9,11 @@
 - [x] Versions, soft delete, recovery, purge, retention with automatic purge
 - [x] Metadata-only audit log, including failed unlocks
 - [x] CLI: `vault`, `secret`, `audit`, `init`, `check`, `run`, `completions`
+- [ ] Vault manager `sourceorrery ui` (Ratatui, `ui` feature, on by default)
+  - [x] Groundwork: the command, the value-free `MetadataSource` seam, a secret list with keyboard navigation
+  - [x] Read-only browser: vault picker, search over names/tags/status, secret detail with versions, deleted secrets, audit log, audit-only mode for a vault blocked by a truncation
+  - [x] Dashboards (status counts, expiry timeline, audit activity, chain verification), idle auto-lock, switching vaults
+  - [x] Metadata changes behind confirmations (enable/disable, tags, content type, time window, delete/recover; new versions through the hidden prompt), through a separate write-capable interface
 - [x] Value-free manifest `sourceorrery.toml`; `sourceorrery://` references
 - [x] Conformance + security suites; CI on Ubuntu/Windows/macOS; release workflow
 - [ ] Manual validation of the OS-keyring path on macOS and a Linux desktop
