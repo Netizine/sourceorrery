@@ -35,10 +35,9 @@ export default defineConfig({
 				},
 			],
 			social: [{ icon: 'github', label: 'GitHub', href: GITHUB_URL }],
-			editLink: {
-				// Pages synced from docs/ override this with their source file.
-				baseUrl: `${GITHUB_URL}/edit/main/site/`,
-			},
+			// No "Edit page" link: without `editLink` here and with no `editUrl`
+			// in any page's frontmatter (scripts/sync-docs.mjs writes none),
+			// Starlight renders none.
 			customCss: [
 				// Self-hosted type: serif for text, a sans for interface labels, a mono for code.
 				'@fontsource-variable/source-serif-4/opsz.css',
@@ -49,9 +48,8 @@ export default defineConfig({
 			],
 			components: {
 				Hero: './src/components/Hero.astro',
-				// Starlight's own versions, with external links opening in a new tab.
+				// Starlight's own version, with the GitHub link opening in a new tab.
 				SocialIcons: './src/components/SocialIcons.astro',
-				EditLink: './src/components/EditLink.astro',
 			},
 			expressiveCode: {
 				themes: ['github-light', 'github-dark-dimmed'],

@@ -23,8 +23,15 @@ directly.
 Every link that leaves the site opens in a new tab: the Sätteri plugin in
 `plugins/external-links.mjs` (passed to `markdown.processor` in
 `astro.config.mjs`) handles Markdown and MDX content, and
-`src/components/SocialIcons.astro`, `EditLink.astro` and `Hero.astro`
-handle the page chrome.
+`src/components/SocialIcons.astro` and `Hero.astro` handle the page chrome.
+
+There is no "Edit page" link: `astro.config.mjs` sets no `editLink` and
+`scripts/sync-docs.mjs` writes no `editUrl`. Keep it that way; a page that
+sets `editUrl` in its frontmatter would bring the link back for that page.
+
+The landing page's architecture diagram is
+`src/assets/sourceorrery-architecture.png`, rendered through Astro's
+`<Image>` (WebP at three widths); replace the file to update it.
 
 ## Commands
 
