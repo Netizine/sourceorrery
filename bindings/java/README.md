@@ -24,7 +24,7 @@ use; set `SOURCEORRERY_NATIVE_DIR` to use a library from elsewhere.
 <dependency>
   <groupId>ai.sourceorrery</groupId>
   <artifactId>sourceorrery</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 

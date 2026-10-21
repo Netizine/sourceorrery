@@ -207,12 +207,6 @@ checked before anything is uploaded, a version a registry already has is
 skipped, and a registry without its secret is skipped. A dry run checks
 every ticked registry, with or without secrets, and uploads nothing.
 
-npm cannot be published this way for releases before 0.1.2: they were
-packed under the earlier `@sourceorrery` scope (and the 0.1.0 main tarball
-also lacks its `index.js` loader), so the npm job stops before uploading
-anything, since an npm version can never be reused. Packagist cannot serve
-0.1.0, whose tag has no root `composer.json`.
-
 ## The PHP package and Packagist
 
 Packagist and Composer `vcs` repositories read one file, `composer.json`
@@ -244,10 +238,6 @@ release tags themselves, so it is what the repository does. Consequences:
   it (it only shapes `composer archive`, which Packagist never runs), and
   `.gitattributes export-ignore` would also strip the *Source code* archives
   GitHub attaches to every release, so neither is used.
-- A tag that predates the root manifest has no Packagist version: 0.1.0 is
-  installed from its tag as a `path` repository
-  ([docs/sdks/php.md](sdks/php.md)). The first Packagist version is the
-  first release after it.
 - `scripts/ci/php-package-install.sh` copies the checkout into a scratch
   repository, tags it, and proves `composer require` of that version and
   Composer's autoloading of every class. The `sdk-php` CI job runs it on

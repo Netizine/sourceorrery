@@ -4,9 +4,9 @@
 
 ### From the release
 
-The [v0.1.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1)
-carries the npm packages as tarballs: `sourceorrery-sdk-0.1.1.tgz` is the
-main package, and `sourceorrery-sdk-<platform>-0.1.1.tgz` (one each for
+The [v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
+carries the npm packages as tarballs: `sourceorreryai-sdk-0.1.3.tgz` is the
+main package, and `sourceorreryai-sdk-<platform>-0.1.3.tgz` (one each for
 `win32-x64-msvc`, `win32-arm64-msvc`, `darwin-x64`, `darwin-arm64`,
 `linux-x64-gnu` and `linux-arm64-gnu`) carries the native addon for that
 platform. Install the main tarball and your platform's together:
@@ -16,27 +16,22 @@ platform. Install the main tarball and your platform's together:
 #### Windows
 
 ```powershell
-npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-0.1.1.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-win32-x64-msvc-0.1.1.tgz   # win32-arm64-msvc on Arm
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-0.1.3.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-win32-x64-msvc-0.1.3.tgz   # win32-arm64-msvc on Arm
 ```
 
 #### macOS
 
 ```bash
-npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-0.1.1.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-darwin-arm64-0.1.1.tgz   # darwin-x64 on Intel
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-0.1.3.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-darwin-arm64-0.1.3.tgz   # darwin-x64 on Intel
 ```
 
 #### Linux
 
 ```bash
-npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-0.1.1.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.1/sourceorrery-sdk-linux-x64-gnu-0.1.1.tgz   # linux-arm64-gnu on arm64
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-0.1.3.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-linux-x64-gnu-0.1.3.tgz   # linux-arm64-gnu on arm64
 ```
 
 <!-- /tabs -->
-
-0.1.1 was packed before the move to the `@sourceorreryai` npm scope, so a
-project that installs it this way imports from `'@sourceorrery/sdk'`. The
-examples below use the npm name, `'@sourceorreryai/sdk'`; releases from
-0.1.2 on carry that name in their tarballs too.
 
 ### From npm
 
@@ -44,7 +39,7 @@ examples below use the npm name, `'@sourceorreryai/sdk'`; releases from
 npm install @sourceorreryai/sdk
 ```
 
-The packages are on npm under the `@sourceorreryai` scope from 0.1.2 on:
+The packages are on npm under the `@sourceorreryai` scope:
 `@sourceorreryai/sdk` and the six `@sourceorreryai/sdk-<platform>`
 packages, which the main package pulls in as optional dependencies, so
 nothing is compiled on install.

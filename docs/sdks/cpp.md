@@ -5,8 +5,8 @@ A header-only C++17 wrapper, `sourceorrery.hpp`, over the C ABI.
 ## Install
 
 `sourceorrery.hpp` ships next to `sourceorrery.h` in the `include/`
-directory of the `sourceorrery-ffi-0.1.1-<target>` archive on the
-[v0.1.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1),
+directory of the `sourceorrery-ffi-0.1.3-<target>` archive on the
+[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3),
 together with the shared and static libraries. Download the one for your
 platform, unpack it, and compile against it exactly as for [C](c.md#install);
 the example below is `get_secret.cpp` from the next section.
@@ -16,9 +16,9 @@ the example below is `get_secret.cpp` from the next section.
 #### Windows
 
 ```powershell
-$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.1"
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.3"
 $dir = "$env:LOCALAPPDATA\sourceorrery-ffi"
-Invoke-WebRequest "$release/sourceorrery-ffi-0.1.1-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
+Invoke-WebRequest "$release/sourceorrery-ffi-0.1.3-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
 Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 
 cl /std:c++17 /EHsc /I "$dir\include" get_secret.cpp /link "$dir\sourceorrery_ffi.dll.lib"
@@ -29,8 +29,8 @@ $env:Path = "$dir;$env:Path"          # sourceorrery_ffi.dll must be on PATH at 
 #### macOS
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.1
-archive=sourceorrery-ffi-0.1.1-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.3
+archive=sourceorrery-ffi-0.1.3-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 
@@ -41,8 +41,8 @@ DYLD_LIBRARY_PATH=/opt/sourceorrery ./get_secret
 #### Linux
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.1
-archive=sourceorrery-ffi-0.1.1-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.3
+archive=sourceorrery-ffi-0.1.3-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 

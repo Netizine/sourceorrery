@@ -32,10 +32,10 @@ Why each technology: [ADR 0006](../adr/0006-binding-technologies.md).
 
 ## Installing
 
-0.1.1 is on PyPI, crates.io, Maven Central, NuGet and Packagist, and the Go
-module on pkg.go.dev. npm starts at 0.1.2, under the `@sourceorreryai`
-scope. Every package is also on the
-[v0.1.1 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.1)
+0.1.3 is on PyPI, crates.io, Maven Central, NuGet, Packagist and npm
+(under the `@sourceorreryai` scope), and the Go module on pkg.go.dev.
+Every package is also on the
+[v0.1.3 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
 (wheels, the jar, the NuGet package, the npm tarballs, and the C ABI
 archive the Go, C, C++ and PHP bindings load), and each language page opens
 with how to install from it.
