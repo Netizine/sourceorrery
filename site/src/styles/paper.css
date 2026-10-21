@@ -529,38 +529,20 @@ footer .kudos {
 }
 
 /*
- * The architecture diagram under the cover breaks out of the measure, up
- * to 72rem wide, and keeps a 2rem gutter to the viewport on narrower
- * screens (on a phone it stays at the text width). Its navy lettering is
- * drawn for paper, so on the dark theme it sits on a light paper panel.
+ * The architecture diagram under the cover (components/ArchitectureDiagram.astro)
+ * breaks out of the measure, up to 72rem wide, and keeps a 2rem gutter to
+ * the viewport on narrower screens (on a phone it stays at the text width).
+ * The SVG brings its own light and dark palettes.
  */
 .so-figure {
 	margin-inline: min(0px, max(calc(50% - 36rem), calc(50% - 50vw + 2rem)));
 	margin-block: 0 2.5rem;
 }
 
-.so-figure img {
+.so-figure svg {
 	display: block;
 	width: 100%;
 	height: auto;
-}
-
-:root[data-theme='dark'] .so-figure img {
-	background: #f5f2ec;
-	border-radius: 2px;
-	padding: 1rem;
-	box-sizing: border-box;
-}
-
-.so-figure figcaption {
-	/* Starlight widens the splash page's text column; keep the caption to a short measure. */
-	max-width: 44rem;
-	margin: 0.75rem auto 0;
-	font-family: var(--so-font-ui);
-	font-size: 0.85rem;
-	line-height: 1.5;
-	text-align: center;
-	color: var(--sl-color-gray-3);
 }
 
 /*
