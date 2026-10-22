@@ -3,19 +3,31 @@
 SourceOrrery makes three different promises and keeps them separate. Users,
 documentation and marketing must never blur them.
 
-This page describes what ships today: the CLI with its vault manager
+This page describes the 0.1.4 build: the CLI with its vault manager
 (`sourceorrery ui`), the encrypted vault, and the read-only SDKs for ten
 languages over the C ABI and the Rust client (milestones 1 and 2 of the
 [roadmap](roadmap.md)). How the packages themselves are built, published
 and checked is in [Supply chain](supply-chain.md).
 
+> [!WARNING]
+> SourceOrrery has not been independently audited. The local vault does not
+> isolate secrets from code that can use your OS credential store or obtain
+> your passphrase. Use development credentials and read the limits below
+> before choosing it for a workload.
+
 ## The three guarantees
 
 | # | Guarantee | Meaning | Today |
 |---|-----------|---------|-------|
-| 1 | **At-rest protection** | No plaintext secret on disk, in the repository, in shell history, in agent context windows, in logs or in audit records. | **Provided.** |
+| 1 | **At-rest protection** | Values stored by SourceOrrery are encrypted. Its metadata commands, errors and audit records omit values. | **Provided within that boundary.** Input files, exposed copies, child processes and application logs remain the caller's responsibility. |
 | 2 | **Access control** | Only authorised identities can retrieve a given secret; access is per secret, revocable and audited. | **Local only.** Whoever can unlock the vault is its administrator. Per-secret policy against verified identities arrives with the broker. |
 | 3 | **Agent isolation** | An untrusted agent or process running as the *same OS user* cannot impersonate an authorised application or modify it to disclose secrets. | **Not provided.** Requires an independently authenticated broker plus OS-level isolation (milestone 3). SourceOrrery will never claim this without an external boundary. |
+
+> [!IMPORTANT]
+> Replacing `.env` prevents the vault from creating another plaintext copy;
+> it does not remove existing files or revoke credentials. `import` leaves
+> the input file intact. Secret names, comments, tags and manifest `purpose`
+> fields are plain text, so never put a value in them.
 
 ## Assets
 
@@ -43,7 +55,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | **Careless operator / agent reading output** | Sees stdout/stderr of CLI commands, logs, JSON | Metadata commands never show values; `--reveal` is explicit; prompts never echo; `-v` never prints values; the `ui` browser cannot read a value at all; SDK values print as `[REDACTED]` and no SDK error, message or hint contains one. |
 | **Compromised dependency inside an application** | Runs inside a process that uses an SDK | Reads every secret the application can read: the same process, the same unlock. Cannot write through the SDK: no binding has a set, update, delete, recover, purge, protector or audit operation ([ADR 0005](adr/0005-read-only-sdks.md)), so it cannot plant a value or disable a version through the library. Read-only is a smaller surface, not a boundary: the write-capable `so_vault_*` functions are in the same C ABI library for tooling, and code that can load them or run the CLI is the same-user process below. Every read it makes is audited. |
 | **Supply-chain attacker** | Alters a dependency, the build, or a package between the repository and you | Locked dependencies, `cargo audit` in CI, one workflow that builds every package from one commit, trusted publishing for npm, PyPI, crates.io and NuGet, with provenance on npm and PyPI, signed artefacts on Maven Central, `SHA256SUMS` on every release. The archives on the GitHub release are not signed; see [Supply chain](supply-chain.md). |
-| **Same-user malicious process or agent** | Runs code as you, reads your memory, calls the CLI, reads the OS credential store under your login | **Not defended.** Can call `secret get --reveal` exactly as you can. This is the honest boundary of a local-first tool and the reason the broker exists. |
+| **Same-user malicious process or agent** | Runs code as you, reads your memory, calls the CLI, reads the OS credential store under your login | **Not defended.** Can call `secret get --reveal` with the same available unlock credentials. This is the boundary of the local vault and the reason the broker is planned. |
 | **Root / kernel / debugger** | Everything | Out of scope. Memory hygiene (zeroisation, short-lived plaintext) reduces residue; it does not resist a privileged attacker. |
 
 ## Controls
@@ -176,5 +188,7 @@ The broker will therefore:
   test credentials, limited lifetime, every access audited;
 * evaluate policy on the broker side, never trust the manifest's claims.
 
-Until then, SourceOrrery's claim is precise: **your secrets are not in your
-repository, not in plaintext on disk, and every access is on the record.**
+Until then, SourceOrrery encrypts the values it stores, supports manifests
+containing references instead of values, and audits vault operations. These
+controls reduce accidental exposure; they do not control what an application
+or a process with the same credentials does with a value after reading it.

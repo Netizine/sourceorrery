@@ -1,8 +1,13 @@
 # AI coding agents
 
+> [!NOTE]
+> This guide targets **0.1.4**. Install that CLI version before using
+> `import` or `init --integration`; `sourceorrery --version` confirms the
+> installed version. See the [release roadmap](roadmap.md#release-014).
+
 SourceOrrery ships two skills that let an AI coding agent install and use
-it, and move a project off `.env` files, without a secret value ever
-entering the agent's context:
+it, and move a project off `.env` files, while instructing the agent to keep
+secret values out of its context:
 
 - **`sourceorrery`**: install the CLI, create a vault, store and check
   secrets, start a program with them, read them from code with an
@@ -98,11 +103,17 @@ Cursor, Cline and Kiro, `$sourceorrery-migrate-env` in Codex,
 `sourceorrery-env-migrator` subagent runs a whole migration in its own
 context.
 
-A migration ends with `sourceorrery check` passing, the program and its
+A completed migration should leave `sourceorrery check` passing, the program and its
 tests working through the SDK or `sourceorrery run`, the `.env` files
 deleted (after the agent asks) and ignored, and a report of the keys
 migrated and skipped, the files changed, and what is left for you: for
 example rotating credentials that were once committed.
+
+> [!IMPORTANT]
+> `sourceorrery import` leaves the original `.env` file in place and reports
+> skipped or failed entries. Review that report and test the application
+> before approving deletion. Removing a file does not revoke credentials
+> or remove copies from Git history, logs or backups.
 
 ## What keeps the values away from the agent
 
@@ -117,8 +128,10 @@ example rotating credentials that were once committed.
   and make the agent ask before deleting files, importing production
   values, creating passphrase-protected vaults or rewriting history.
 
-The skills are instructions, not a boundary. An agent runs as your user
-and could unlock the same vault; isolating agents from secrets needs the
-authenticated broker on the [roadmap](roadmap.md), and the
-[threat model](threat-model.md) says so plainly. What the skills and
-`import` do is take away every reason for the agent to see a value.
+> [!WARNING]
+> Skills are instructions, not an access-control boundary. An agent running
+> as your user can use the same OS credential store or a passphrase
+> available to it. Isolating agents from secrets needs the authenticated
+> broker and OS isolation on the [roadmap](roadmap.md). The workflow avoids
+> exposing values during a cooperative migration; it cannot enforce an
+> agent's compliance. See the [threat model](threat-model.md).

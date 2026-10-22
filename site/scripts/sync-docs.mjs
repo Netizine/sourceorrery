@@ -69,7 +69,7 @@ const PAGES = {
 	'docs/roadmap.md': {
 		dest: 'roadmap.md',
 		description:
-			'Where SourceOrrery stands and where it is going: the local CLI and read-only SDKs shipped in 0.1.3, supply-chain work, then the authenticated local broker, enterprise providers and community SDKs.',
+			'Where SourceOrrery stands in 0.1.4: the local CLI, read-only SDKs, agent skills and supply-chain work, followed by the authenticated local broker and remote providers.',
 	},
 	'docs/release.md': {
 		dest: 'reference/release.md',
@@ -203,6 +203,7 @@ async function syncPage(source, page) {
 	const frontmatter = {
 		title,
 		description,
+		sourceFile: source,
 	};
 	let adr;
 	if (page.adr) {
@@ -382,6 +383,7 @@ async function writeDecisionsIndex(adrs) {
 		'---',
 		yaml({
 			title: 'Architecture decision records',
+			sourceFile: ADR_SOURCE_DIR,
 			description:
 				'The decisions made so far, each with its context, the decision itself and its consequences.',
 			sidebar: { label: 'Overview', order: 0 },
@@ -465,6 +467,7 @@ async function writeErrorCodes() {
 		'---',
 		yaml({
 			title: 'Error codes',
+			sourceFile: source,
 			description:
 				'The stable, append-only error codes every SourceOrrery backend, SDK and the CLI report, generated from the SecretError type in sourceorrery-core.',
 		}),

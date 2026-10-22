@@ -1,5 +1,10 @@
 # CLI reference
 
+> [!NOTE]
+> This reference targets **0.1.4**, including `import` and
+> `init --integration`. Check your installed version with
+> `sourceorrery --version`.
+
 ```
 sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--passphrase-file FILE] [-v] <command>
 ```
@@ -26,13 +31,24 @@ forces a style.
 
 ## Unlocking
 
-A vault is unlocked, in order, by: its OS-keyring protector (Windows
-Credential Manager, macOS Keychain, Secret Service — no prompt), then
-`SOURCEORRERY_PASSPHRASE`, then `--passphrase-file`, then an interactive
-prompt on stderr (up to three attempts) when stdin is a terminal. Failed
-attempts are audited.
+The CLI tries OS-keyring protectors first (Windows Credential Manager,
+macOS Keychain or Secret Service, without prompting). For passphrase
+protectors it selects the non-empty `SOURCEORRERY_PASSPHRASE` variable,
+otherwise `--passphrase-file` / `SOURCEORRERY_PASSPHRASE_FILE`. If needed,
+it prompts on stderr when stdin is a terminal, up to the three-attempt
+limit. Failed attempts are audited.
+
+> [!TIP]
+> The CLI does not fall back from an incorrect environment passphrase to a
+> configured file. Unset `SOURCEORRERY_PASSPHRASE` when using a file. SDKs
+> try their configured passphrase candidates in sequence and never prompt.
 
 ## `vault`
+
+> [!WARNING]
+> `vault destroy` removes the vault permanently. A purgeable vault also
+> makes `secret delete` immediate and irreversible. Use the default
+> recoverable vault unless you deliberately need permanent deletion.
 
 | Command | Description |
 |---------|-------------|
@@ -176,14 +192,20 @@ start with `SOURCEORRERY_`.
 | `check [--manifest FILE]` | Verify every entry resolves to an accessible version. Reads **metadata only**; writes no `secret_get` audit rows. Fails if a required secret is missing. |
 | `run [--manifest FILE] -- COMMAND [ARGS...]` | Resolve every entry and start `COMMAND` with the values in its environment (plus `SOURCEORRERY_PROJECT`). Missing required secrets abort before the child starts; an optional secret whose vault does not exist is skipped. The child never inherits `SOURCEORRERY_PASSPHRASE` or `SOURCEORRERY_PASSPHRASE_FILE`. `--vault` overrides the manifest's default vault. |
 
-The parent process never prints the values; they exist only in the child's
-environment (which other processes running as you can read — see the threat
-model).
+The parent resolves values in memory without printing them, then passes
+them to the child through its environment. Processes with permission to
+inspect the child can read that environment; the child and its dependencies
+can also log or copy values. See the [threat model](threat-model.md).
 
 ### `import`: moving a `.env` file into a vault
 
+> [!NOTE]
+> Create the destination vault first. `--dry-run` stores no
+> secret values and does not edit the manifest, but opening an existing
+> vault and inspecting metadata still appends audit events.
+
 ```bash
-sourceorrery import .env --dry-run      # key names and what would happen; changes nothing
+sourceorrery import .env --dry-run      # preview key names and planned changes
 sourceorrery import .env                # store the values, declare the keys
 sourceorrery --vault test import .env.test
 sourceorrery import .env.example --manifest-only
@@ -210,6 +232,14 @@ would become invalid stops the command before anything is stored.
 `--manifest-only` declares the keys without opening a vault, for
 `.env.example` files.
 
+> [!IMPORTANT]
+> The input file is never deleted or rewritten. Inspect the per-key report,
+> run `sourceorrery check`, and test the application before removing the
+> plaintext file. Imports are not one transaction across the vault and the
+> manifest: a later storage or file-write failure can leave earlier secrets
+> imported. Correct the reported problem and rerun; existing secrets are
+> preserved unless you explicitly use `--overwrite`.
+
 The syntax is what python-dotenv, dotenv for Node and godotenv share:
 `KEY=value` with optional `export`, `#` comments, single quotes and
 backticks literal, double quotes with `\n`, `\r`, `\t`, `\"` and `\\`
@@ -217,6 +247,10 @@ escapes, multi-line quoted values. Nothing is expanded: a value containing
 `${...}` is stored as written and noted.
 
 ### `init --integration`: skills for AI coding agents
+
+> [!NOTE]
+> These skills guide an agent's workflow; they do not prevent
+> a process running with your credentials from opening the vault.
 
 ```bash
 sourceorrery init --integration claude
@@ -242,10 +276,11 @@ sourceorrery ui [--vault NAME] [--theme dark|light|terminal] [--lock-after MINUT
 ```
 
 An interactive browser for the vaults in the home directory, which can
-also change their metadata. It shows **metadata only**. It cannot read a
-value: it reaches a vault through an interface that has no operation
-returning one, so nothing it draws, and nothing in its memory, is a
-secret. Stored text is escaped as in every
+also change their metadata. It shows **metadata only**. Its browsing
+interface has no operation returning a stored value, so screen buffers
+and metadata snapshots do not contain secret values. The process still
+holds the unlocked vault key and temporarily handles new values entered
+at the hidden prompt. Stored text is escaped as in every
 other table (see `--output` above), so metadata in the file cannot drive
 the terminal. Times are UTC.
 

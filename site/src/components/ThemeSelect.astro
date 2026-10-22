@@ -1,0 +1,11 @@
+---
+// The native select and theme provider still own persistence and system-theme changes.
+import Default from '@astrojs/starlight/components/ThemeSelect.astro';
+import FAIcon from './FAIcon.astro';
+---
+
+<div class="so-theme-picker">
+	<Default />
+	<FAIcon name="circle-half-stroke" class="so-theme-picker__icon" />
+	<FAIcon name="chevron-down" class="so-theme-picker__caret" />
+</div>

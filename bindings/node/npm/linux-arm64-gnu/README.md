@@ -31,7 +31,7 @@ workflow and published with provenance.
 The SDK only reads secrets. Vaults are created, and secrets stored, with
 the `sourceorrery` command-line tool, which npm does not install: get it
 from the [GitHub release](https://github.com/Netizine/sourceorrery/releases/latest)
-or with `cargo install --locked sourceorrery-cli`
+or with `cargo install --locked sourceorrery-cli --version 0.1.4`
 ([Getting started](https://sourceorrery.ai/getting-started/)). It does not
 have to be installed where your application runs.
 

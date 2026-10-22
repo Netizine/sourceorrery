@@ -32,6 +32,9 @@ jobs:
         working-directory: site
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Dates on generated pages come from their source files' Git history.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -40,6 +43,10 @@ jobs:
           cache-dependency-path: site/package-lock.json
 
       - run: npm ci
+        env:
+          FONTAWESOME_NPM_AUTH_TOKEN: ${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
+
+      - run: npm test
 
       # prebuild syncs docs/ into the content collection and generates the
       # error-code reference; postbuild fails on any broken internal link.

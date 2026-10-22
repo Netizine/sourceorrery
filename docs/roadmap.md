@@ -1,15 +1,17 @@
 # Roadmap
 
-Where the project stands: milestones 1 and 2 shipped in 0.1.3, the
-current release, with the unticked items below still open. The next
-release, 0.1.4, adds a `.env` import and skills for AI coding agents,
-refuses a vault file filed under another vault's name, and moves PyPI and
-crates.io to trusted publishing ([below](#next-release-014)). Milestone 3,
-the authenticated local broker, comes after it; until it exists
-SourceOrrery makes no agent-isolation claim
-([threat model](threat-model.md)).
+This documentation targets **0.1.4**: the encrypted local vault, CLI,
+read-only SDKs, `.env` import and skills for AI coding agents. The build
+also refuses a vault file filed under another vault's name and uses trusted
+publishing for PyPI and crates.io ([release scope](#release-014)). Checked
+items below are implemented; unchecked items remain planned.
 
-## Milestone 1 — core and local CLI *(shipped in 0.1.3)*
+> [!IMPORTANT]
+> The authenticated local broker is milestone 3, after 0.1.4. SourceOrrery
+> does not yet isolate secrets from processes running with the same user's
+> credentials. See the [threat model](threat-model.md).
+
+## Milestone 1 — core and local CLI
 
 - [x] Secret contracts (`SecretClient`), stable error codes, naming rules
 - [x] Enforced policy: enabled, `not_before`, `expires_on`; latest-accessible selection
@@ -31,11 +33,11 @@ SourceOrrery makes no agent-isolation claim
 - [ ] Listing cost: `list` and `list-deleted` still verify every version row and every checkpoint row of every secret, one query per secret, because which version is newest can only be judged against the complete set. A bulk checkpoint read and pagination on `list_*` are open; pagination is an API change and goes through core with a conformance test
 - [ ] `backup` / `restore` (encrypted export of a vault or a secret)
 - [x] Pre-built CLI archives for six targets on the GitHub release, with `SHA256SUMS`
-- [x] `cargo install --locked sourceorrery-cli`
+- [x] `cargo install --locked sourceorrery-cli --version 0.1.4`
 - [ ] Package managers: Homebrew, WinGet, Scoop
 - [x] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`, deployed by Azure Static Web Apps
 
-## Milestone 2 — first-class language bindings *(shipped in 0.1.3)*
+## Milestone 2 — first-class language bindings
 
 - [x] `sourceorrery-ffi`: stable C ABI (`cbindgen`), versioned `CONTRACT_VERSION`
 - [x] Read-only `so_reader_*` / `so_project_*` ABI and the `sourceorrery` client crate (unlock order, manifest loading, error hints)
@@ -60,10 +62,9 @@ How each package is published and how to check it: [Supply chain](supply-chain.m
 - [ ] Third-party GitHub Actions pinned to commits; automated dependency updates
 - [ ] Software bill of materials for each release
 
-## Next release: 0.1.4
+## Release: 0.1.4
 
-Done and waiting for the release; until then 0.1.3 is what the registries
-and the GitHub release serve.
+The 0.1.4 build includes these changes alongside milestones 1 and 2:
 
 - [x] `sourceorrery import <file>`: a `.env` file into a vault and its keys into `sourceorrery.toml`, printing key names and line numbers only, never a value ([CLI reference](cli.md#import-moving-a-env-file-into-a-vault))
 - [x] Skills for AI coding agents (`sourceorrery`, `sourceorrery-migrate-env`) that install SourceOrrery, import the `.env` files and convert the code that reads them without the agent seeing a value; `sourceorrery init --integration <agent>` writes them from the binary, with no download, for twelve agents; `integrations/` and a Claude Code plugin marketplace carry the same files ([AI coding agents](ai-agents.md))

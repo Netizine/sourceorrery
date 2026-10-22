@@ -1,0 +1,23 @@
+---
+import FAIcon from './FAIcon.astro';
+
+interface Props {
+	title: string;
+	description: string;
+	href: string;
+	icon?: string;
+	family?: 'duotone' | 'brands' | 'kit';
+}
+
+const { title, description, href, icon = 'book-open', family = 'duotone' } = Astro.props;
+const external = /^https?:\/\//.test(href);
+---
+
+<a class="so-link-card not-content" {href} target={external ? '_blank' : undefined} rel={external ? 'noopener noreferrer' : undefined}>
+	<FAIcon name={icon} {family} class="so-card-icon" />
+	<span class="so-link-card__copy">
+		<span class="so-link-card__title">{title}</span>
+		<span class="so-link-card__description">{description}</span>
+	</span>
+	<FAIcon name={external ? 'arrow-up-right' : 'arrow-right'} class="so-link-card__arrow" />
+</a>

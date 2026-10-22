@@ -19,9 +19,9 @@ with provenance, which `npm audit signatures` checks
 
 ### From the GitHub release
 
-The [v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
-carries the same packages as tarballs: `sourceorreryai-sdk-0.1.3.tgz` is
-the main package, and `sourceorreryai-sdk-<platform>-0.1.3.tgz` (one each
+The [v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4)
+carries the same packages as tarballs: `sourceorreryai-sdk-0.1.4.tgz` is
+the main package, and `sourceorreryai-sdk-<platform>-0.1.4.tgz` (one each
 for `win32-x64-msvc`, `win32-arm64-msvc`, `darwin-x64`, `darwin-arm64`,
 `linux-x64-gnu` and `linux-arm64-gnu`) carries the native addon for that
 platform. Install the main tarball and your platform's together:
@@ -31,19 +31,19 @@ platform. Install the main tarball and your platform's together:
 #### Windows
 
 ```powershell
-npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-0.1.3.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-win32-x64-msvc-0.1.3.tgz   # win32-arm64-msvc on Arm
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.4/sourceorreryai-sdk-0.1.4.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.4/sourceorreryai-sdk-win32-x64-msvc-0.1.4.tgz   # win32-arm64-msvc on Arm
 ```
 
 #### macOS
 
 ```bash
-npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-0.1.3.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-darwin-arm64-0.1.3.tgz   # darwin-x64 on Intel
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.4/sourceorreryai-sdk-0.1.4.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.4/sourceorreryai-sdk-darwin-arm64-0.1.4.tgz   # darwin-x64 on Intel
 ```
 
 #### Linux
 
 ```bash
-npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-0.1.3.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorreryai-sdk-linux-x64-gnu-0.1.3.tgz   # linux-arm64-gnu on arm64
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.1.4/sourceorreryai-sdk-0.1.4.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.1.4/sourceorreryai-sdk-linux-x64-gnu-0.1.4.tgz   # linux-arm64-gnu on arm64
 ```
 
 <!-- /tabs -->
@@ -164,7 +164,7 @@ Get the code and build the addon for this machine:
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.1.3              # or stay on main for the newest changes
+git checkout v0.1.4              # or stay on main for the newest changes
 cd bindings/node
 npm ci                           # the napi-rs CLI and TypeScript
 npm run build                    # napi build --platform --release

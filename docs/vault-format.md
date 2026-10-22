@@ -9,6 +9,12 @@ Default home: `%LOCALAPPDATA%\sourceorrery` (Windows),
 `$XDG_DATA_HOME/sourceorrery` or `~/.local/share/sourceorrery` (Linux);
 override with `SOURCEORRERY_HOME` or `--home`.
 
+> [!WARNING]
+> This is a format reference, not a guide to editing a vault with SQL.
+> Values, policy metadata and audit checkpoints are authenticated; changing
+> rows outside the CLI or storage API can make the vault refuse access.
+> Keep backups and use the supported commands for changes.
+
 ## Tables
 
 ### `vault_meta (key, value)`

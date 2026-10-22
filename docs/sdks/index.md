@@ -5,7 +5,7 @@ same five things and nothing more:
 
 | | |
 |---|---|
-| **Open a vault** | by name, unlocked the way the CLI unlocks it: the OS credential store first, then `SOURCEORRERY_PASSPHRASE`, then `SOURCEORRERY_PASSPHRASE_FILE`; never an interactive prompt. `SOURCEORRERY_HOME` says where vaults live. |
+| **Open a vault** | by name: OS credential store first, then an explicit passphrase, `SOURCEORRERY_PASSPHRASE`, and a configured passphrase file; never an interactive prompt. `SOURCEORRERY_HOME` says where vaults live. |
 | **Get a secret** | the newest *accessible* version (enabled, inside its time window) or an explicit version. |
 | **Read properties** | metadata of a version, without policy, so disabled and expired versions can be inspected. |
 | **Resolve a reference** | `sourceorrery://vault/name[/version]`, the form the manifest and the CLI use. |
@@ -15,6 +15,12 @@ There is no `set`, `update`, `delete`, `recover` or `purge`, no protector
 and no audit management in any SDK. Writing is the CLI's job; a library
 that cannot write cannot be tricked into writing
 ([ADR 0005](../adr/0005-read-only-sdks.md)).
+
+> [!IMPORTANT]
+> Read-only describes the SDK's public secret-management API. Reads still
+> append audit events, so the vault directory must be writable. The SDK
+> does not isolate a compromised dependency from the rest of your process
+> or prevent same-user code from invoking the CLI.
 
 | Language | Package | Technology | Guide |
 |----------|---------|------------|-------|
@@ -32,10 +38,10 @@ Why each technology: [ADR 0006](../adr/0006-binding-technologies.md).
 
 ## Installing
 
-Each language page opens with its package registry: 0.1.3 is on PyPI,
+Each language page opens with its package registry: 0.1.4 is on PyPI,
 npm (under the `@sourceorreryai` scope), crates.io, Maven Central, NuGet
 and Packagist, and the Go module on pkg.go.dev. Next comes the
-[v0.1.3 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3),
+[v0.1.4 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4),
 which carries the same packages (wheels, npm tarballs, the jar, the NuGet
 package) and the C ABI archive that the Go, C, C++ and PHP SDKs load. Each
 page ends with building that SDK from source;
@@ -44,6 +50,11 @@ How the packages are published and how to check them:
 [Supply chain](../supply-chain.md).
 
 ## Setting up
+
+> [!NOTE]
+> Installing an SDK does not install the CLI or create a vault. Provision
+> the vault with the CLI first. The SDK then opens the vault file directly;
+> it does not need a CLI process running alongside your application.
 
 Every SDK reads a vault that already exists, so the first steps are the
 CLI's:
@@ -58,12 +69,15 @@ the vault a passphrase protector and hand the passphrase to the process.
 
 ```bash
 sourceorrery vault protector add --kind passphrase --vault development
-export SOURCEORRERY_PASSPHRASE=...            # or SOURCEORRERY_PASSPHRASE_FILE=/run/secrets/vault
+export SOURCEORRERY_PASSPHRASE_FILE=/run/secrets/vault
 ```
 
-Each SDK also accepts a passphrase, a passphrase file and a home directory
-in code, for tests and unusual layouts. Prefer the environment or a file in
-production: process arguments and source code are visible to more people.
+Provision that file through your environment's secret-management mechanism
+and restrict it to the account running the application. Each SDK also
+accepts a passphrase, a passphrase file and a home directory in code, for
+tests and unusual layouts. Avoid putting a passphrase in source code or
+process arguments; an environment variable containing one can also be
+inspected by other processes with sufficient privileges.
 
 ## Errors
 
@@ -76,7 +90,7 @@ core, so every language says the same thing.
 | `vault_not_found` | `VaultNotFound…` | how to create the vault with the CLI, and which home directory was searched |
 | `locked` | `VaultLocked…` | which passphrase sources were tried (option, `SOURCEORRERY_PASSPHRASE`, `SOURCEORRERY_PASSPHRASE_FILE`) and how to add a protector |
 | `migration_required` | `MigrationRequired…` | run `sourceorrery vault migrate <name>`; SDKs never migrate |
-| `vault_mismatch` | `VaultMismatch…` | the file found for the vault holds another vault (renamed, copied or swapped in): move it back or restore the vault from a backup, and treat an unexplained swap as tampering |
+| `vault_mismatch` (0.1.4) | `VaultMismatch…` | the file found for the vault holds another vault (renamed, copied or swapped in): move it back or restore the vault from a backup, and treat an unexplained swap as tampering |
 | `not_found` | `SecretNotFound…` | how to store the secret (`sourceorrery secret set`) |
 | `version_not_found` | `VersionNotFound…` (a `SecretNotFound…`) | list versions, or omit the version |
 | `disabled`, `not_yet_valid`, `expired` | `SecretDisabled…`, `SecretNotYetValid…`, `SecretExpired…` (all `Policy…`) | the policy decision and the `secret update` that changes it; `not_yet_valid` is marked transient |
@@ -100,6 +114,12 @@ through an explicit call (`expose()`, `Text()`, `ExposeText()`). Once an
 application copies the bytes out, keeping them safe is the application's
 job: a Python `str`, a Java `String` or a JavaScript string cannot be
 wiped, so keep such copies short-lived.
+
+> [!TIP]
+> Use the language's context manager, `using`, RAII or explicit `close()`
+> around the smallest scope that needs a value. Closing the SDK buffer does
+> not erase a string already passed to a client library, an environment
+> variable or a log.
 
 ## How the SDKs are tested
 

@@ -33,6 +33,12 @@ source code.
 * **Local-first.** No mandatory cloud account, SaaS subscription or remote
   server to get started.
 
+> [!NOTE]
+> In 0.1.4, retrieval uses the local vault and the caller's available unlock
+> credentials. The broker, verified workload identity, per-identity access
+> controls and remote vault providers describe the planned architecture,
+> not capabilities already enforced by the local SDKs.
+
 One important qualification: removing `.env` files eliminates a major
 accidental-exposure route, but it does not protect against an AI agent or
 malicious process operating with the same permissions as the application.
@@ -312,7 +318,8 @@ until a keyring-capable CI matrix exists.
 * **Agent-aware access profiles** (milestone 3): a coding-agent session starts
   with no production-secret privileges.
 * **Secret references instead of values**: shipped.
-* **No-secret project manifests**: shipped.
+* **Reference-based project manifests**: inline `value` fields are rejected;
+  comments and metadata still require care.
 * **Policy-aware runtime resolution**: time windows and enabled state shipped;
   identity-based policy with the broker.
 * **Provider-agnostic contract**: start local, move to enterprise storage

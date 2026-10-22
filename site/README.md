@@ -1,92 +1,136 @@
 # sourceorrery.ai
 
-The public documentation site for SourceOrrery, built with
-[Astro Starlight](https://starlight.astro.build/).
+Documentation for the **SourceOrrery 0.1.4** build, using Astro 7 and Starlight.
+The public site is deployed separately; local changes do not publish it.
 
-`../docs/` is the source of truth. Nothing under `src/content/docs/` that is
-listed in `src/content/docs/.gitignore` is edited by hand: `scripts/sync-docs.mjs`
-regenerates those pages before every `dev` and `build` from
+## Work on the documentation
 
-- `docs/*.md` and `docs/adr/*.md` (title from the H1, links rewritten), and
-- `crates/sourceorrery-core/src/error.rs` (the error-code table).
-
-Hand-written pages: `src/content/docs/index.mdx` (landing),
-`getting-started.mdx` and `guides/headless.md`.
-
-Platform tabs: in a `docs/` page, headings between `<!-- tabs: os -->` and
-`<!-- /tabs -->` become Starlight `<Tabs>` (one `<TabItem>` per heading, the
-key after the colon is the `syncKey`, so the platform chosen on one page is
-selected on every page); on GitHub they read as plain headings. Such a page
-is emitted as `.mdx`. Hand-written MDX pages use `<Tabs syncKey="os">`
-directly.
-
-Every link that leaves the site opens in a new tab: the Sätteri plugin in
-`plugins/external-links.mjs` (passed to `markdown.processor` in
-`astro.config.mjs`) handles Markdown and MDX content, and
-`src/components/SocialIcons.astro` and `Hero.astro` handle the page chrome.
-
-There is no "Edit page" link: `astro.config.mjs` sets no `editLink` and
-`scripts/sync-docs.mjs` writes no `editUrl`. Keep it that way; a page that
-sets `editUrl` in its frontmatter would bring the link back for that page.
-
-The privacy note at the bottom of the landing page lives in
-`src/components/Footer.astro`, which wraps Starlight's footer and adds the
-note on the homepage only. It promises no cookies, no tracking and no
-phoning home; keep the site and the CLI that way or change the note.
-
-The landing page's architecture diagram is
-`src/assets/sourceorrery-architecture.svg`, inlined verbatim by
-`src/components/ArchitectureDiagram.astro` so that it follows the site's
-theme toggle (the component copies `data-theme` from `<html>` onto the
-SVG, which carries its own light and dark palettes and embedded fonts).
-Replace the file to update the diagram; keep its root `id`
-(`soa-architecture`) and `data-theme` handling.
-
-## Commands
+Use Node **22.19+** (or Node 24 LTS). Set `FONTAWESOME_NPM_AUTH_TOKEN` in your
+process environment using your secret manager before installing dependencies.
+The checked-in `.npmrc` contains registry scopes and an environment-variable
+placeholder only. Never replace it with a real token or commit credentials.
 
 ```bash
-npm ci              # Node 22.12+
-npm run dev         # sync docs, then serve at http://localhost:4321
-npm run build       # sync docs, build to dist/, then check every internal link
-npm run sync        # regenerate the synced pages only
-npm run favicon     # regenerate public/favicon.png from public/favicon.svg
+npm ci
+npm test
+npm run build
+npm run dev -- --background
 ```
 
-The emblem is the animated SVG orrery from the repository root, in three
-tunings: `src/assets/sourceorrery-light.svg` and `sourceorrery-dark.svg` are
-the header logo and the landing-page illustration on the matching theme
-(`logo: { light, dark }` in `astro.config.mjs`; the hero swaps them the same
-way), and `public/favicon.svg` is the untuned original, which sits on either
-tab-strip colour. `public/favicon.png` is rendered from it for browsers that
-do not load SVG favicons. The site name is rendered as text beside the emblem
-rather than as part of the logo.
+`npm run build` syncs documentation, produces the static site, indexes search,
+and checks every internal page, asset and fragment link. The focused tests
+cover Git metadata, reading estimates, callouts and external links in Markdown
+and MDX. Manage the background dev server with `npx astro dev status`,
+`npx astro dev logs` and `npx astro dev stop`.
 
-## Dependency overrides
+Stop the dev server before building: dev and build share Expressive Code's
+cache. Use `npm run preview` after a build to verify production search; search
+is not indexed in the development server.
 
-`package.json` pins `postcss-selector-parser` to `^7.1.6` through `overrides`
-(advisory GHSA-rj75-hqrm-r3gf). It is reached only via Starlight's
-expressive-code → postcss-nested 6, which still declares the vulnerable 6.x
-line; the 7.x API is unchanged for that use. Drop the override once
-`@expressive-code/core` depends on postcss-nested 7 or later.
+## Content sources
 
-## Theme
+`../docs/` is the source of truth for reference pages, guides, SDKs and ADRs.
+`scripts/sync-docs.mjs` regenerates their counterparts in `src/content/docs/`
+and the error-code table from `crates/sourceorrery-core/src/error.rs` before
+every dev/build. Files listed in the content directory's `.gitignore` are
+generated: edit the original source instead.
 
-`src/styles/paper.css` holds the whole look: warm paper palette (light and
-dark), Source Serif 4 for text, Inter for interface labels, JetBrains Mono for
-code, booktabs-style tables and left-bar callouts. The landing page uses the
-cover-style hero in `src/components/Hero.astro`. Fonts are self-hosted from
-the `@fontsource-variable/*` packages.
+The homepage (`index.mdx`), `getting-started.mdx` and `guides/headless.md` are
+hand-written in `src/content/docs/`. Keep instructions and release links on
+0.1.4. The authenticated broker and agent isolation remain future work.
 
-Build with the dev server stopped: `astro dev` and `astro build` share the
-Expressive Code cache, and building while `npm run dev` is running can leave
-pages pointing at stylesheet hashes that the build did not emit (the link
-check then fails).
+Platform headings between `<!-- tabs: os -->` and `<!-- /tabs -->` in source
+Markdown become Starlight tabs. `syncKey="os"` remembers the selected platform
+across pages. They remain ordinary readable headings on GitHub.
+
+Mark important information with GitHub alerts, which render as accessible,
+themed callouts on the website:
+
+```markdown
+> [!NOTE]
+> Useful context for the next step.
+
+> [!WARNING]
+> A consequence the reader needs to understand before continuing.
+```
+
+`NOTE`, `TIP`, `IMPORTANT`, `WARNING` and `CAUTION` are supported. Native
+`:::note`, `:::tip`, `:::caution` and `:::danger` work too. In authored MDX,
+import `src/components/Aside.astro` for the same appearance and local icons.
+
+## Page metadata and links
+
+`src/lib/docs-loader.mjs` wraps Starlight's content loader. Each generated
+page records `sourceFile`, so its update date comes from **the original
+source file's Git history**, not the generated copy or the build clock.
+Authored pages use their own history. Cached content is refreshed after new
+commits. When history is unavailable, the date is omitted. CI checkouts use
+`fetch-depth: 0`; source archives can still build without Git.
+
+Reading estimates count prose and code at 200 words per minute. They are
+labelled as reading estimates, not time to finish a tutorial. Page descriptions,
+reading estimates and dates appear above the article.
+
+External HTTP(S) links open in a new tab with `noopener noreferrer`, a local
+SVG indicator and an accessible notice. Internal links and `mailto:` links
+keep their normal behaviour. There is intentionally no "Edit page" link.
+
+## Design and local assets
+
+`src/styles/paper.css` defines the light/dark palettes, readable content width,
+navigation, tables, callouts, cards and responsive layout. Google Fonts are
+self-hosted through Fontsource: **Open Sans** for body text, **Inter** for UI
+and headings, and **Google Sans Code** for code. Expressive Code provides
+Shiki highlighting, filenames, terminal frames and copy buttons.
+
+Font Awesome Kit **515c69ad68**, revision **4** (`@awesome.me/kit-515c69ad68`
+1.0.4), is installed as a build dependency. That revision contains **duotone
+thin**, brands and the custom `sourceorrery` mark. `src/lib/font-awesome.mjs`
+resolves definitions; `FAIcon.astro` and the Markdown plugins emit SVG paths
+into the built HTML. Only icons used on each page are delivered. There is no
+hosted Kit script, icon font download or browser request to Font Awesome.
+Use `FAIcon` with `family="duotone"`, `"brands"` or `"kit"`. Missing icons fail
+the build. The two SVG layers use theme colours and contrast-aware opacity.
+See `.font-awesome.md` for the integration details.
+
+To refresh the kit after editing it, authenticate through the environment,
+run `npm update @awesome.me/kit-515c69ad68`, review the new revision and run the
+tests/build again. Do not commit `node_modules` or credentials.
+
+The website uses no analytics, tracking cookies or third-party asset requests.
+Theme and platform-tab preferences stay in browser storage. Keep the original
+homepage privacy promise intact. External websites are visited only when the
+reader follows a link.
+
+Native cross-document view transitions provide a short fade in supporting
+browsers and respect reduced-motion preferences. Standard navigation remains
+the fallback; no client router replaces Starlight's search, tabs or controls.
+Starlight already styles rendered Markdown, so Tailwind Typography is not an
+additional dependency. The existing architecture diagram is a single local,
+theme-aware SVG; dynamic image discovery would add no benefit for it.
+
+The architecture diagram remains in `src/assets/sourceorrery-architecture.svg`.
+`ArchitectureDiagram.astro` synchronises its theme. The tab favicon is local;
+`npm run favicon` regenerates its PNG fallback.
+
+Design references: [CocoIndex documentation](https://cocoindex.io/docs/getting_started/installation/),
+[Astro view transitions](https://docs.astro.build/en/guides/view-transitions/),
+[syntax highlighting](https://docs.astro.build/en/guides/syntax-highlighting/),
+[Git modified dates](https://docs.astro.build/en/recipes/modified-time/),
+[reading time](https://docs.astro.build/en/recipes/reading-time/) and
+[fonts](https://docs.astro.build/en/guides/fonts/).
 
 ## Deployment
 
-Azure Static Web Apps, through the Azure-generated workflow
-`.github/workflows/azure-static-web-apps-*.yml` (app location `/site`, no API,
-output `dist`). Every push to `main` builds and publishes the site; pull
-requests get preview environments. `.github/workflows/docs.yml` remains as the
-build-and-link-check gate. The custom domain `sourceorrery.ai` is configured in
-the Azure portal under the static web app's *Custom domains*.
+`.github/workflows/docs.yml` runs the documentation checks. The Azure Static
+Web Apps workflow builds `/site` and deploys `dist/` on pushes to `main`, with
+PR previews. Both installation jobs read the repository Actions secret
+`FONTAWESOME_NPM_AUTH_TOKEN`; configure it before publishing these changes.
+The token is needed only at dependency installation, never in the browser or
+built site. Fork PRs do not receive repository secrets and cannot freshly
+install this private package; use a trusted maintainer build to validate them.
+Do not expose the token to untrusted PR code.
+
+`sourceorrery.ai` is configured under the static web app's Custom domains.
+The `postcss-selector-parser` override remains until Expressive Code's
+transitive dependency no longer requires the vulnerable version.

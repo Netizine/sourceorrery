@@ -75,7 +75,7 @@ Each SDK needs its own toolchain on top:
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.1.3          # the release; stay on main for the newest changes
+git checkout v0.1.4          # the release; stay on main for the newest changes
 ```
 
 A build from source carries the version committed in the repository, not
@@ -84,7 +84,7 @@ as it builds. To give your build the release's version, stamp it the same
 way before building:
 
 ```bash
-python scripts/release/set-version.py 0.1.3
+python scripts/release/set-version.py 0.1.4
 ```
 
 It edits the manifests in your checkout (`git checkout .` undoes it). For

@@ -14,13 +14,19 @@ file with an encrypted local vault, an Azure Key Vault–style lifecycle API
 (versions, soft delete, recovery, time windows, audit) and a manifest that
 declares *which* secrets a project needs without ever holding their values.
 
-> **Status: 0.1.3 — core, encrypted vault, CLI with an interactive vault
+> [!WARNING]
+> **Version 0.1.4 — core, encrypted vault, CLI with an interactive vault
 > manager, and read-only SDKs (milestones 1 and 2).**
 > Local-first and usable today on Windows, macOS and Linux, from Python,
 > JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP
 > ([docs/sdks](docs/sdks/index.md)). The authenticated local broker and
 > remote providers are on the [roadmap](docs/roadmap.md). Not yet audited;
 > do not treat it as a production secret store.
+
+> [!NOTE]
+> This documentation targets **0.1.4**, including `.env` import, agent skills
+> installed by `init --integration`, and the `vault_mismatch` check. See the
+> [release roadmap](docs/roadmap.md#release-014).
 
 ## Why
 
@@ -53,6 +59,10 @@ SourceOrrery takes a different line:
 
 ## Quick start
 
+Install the [CLI](https://sourceorrery.ai/getting-started/) first, then run
+these commands from your application's directory. Replace `npm start` with
+the command you normally use to start it.
+
 ```bash
 # 1. Create a vault (key protected by the OS credential store when available)
 sourceorrery vault create development
@@ -77,15 +87,17 @@ vault and unlock with `--passphrase-file` or `SOURCEORRERY_PASSPHRASE`:
 sourceorrery vault protector add --kind passphrase --vault development
 ```
 
-Already have a `.env` file? `sourceorrery import .env` stores every value in
-the vault and declares each key in `sourceorrery.toml`, printing key names
-only. See [docs/cli.md](docs/cli.md) for every command.
+`sourceorrery import .env` imports supported
+entries into the vault and declares them in `sourceorrery.toml`, printing
+key names only. It leaves the original file in place; existing secrets and
+empty values are skipped by default. See [docs/cli.md](docs/cli.md) for every
+command.
 
 ## AI coding agents
 
 `sourceorrery init --integration <agent>` installs two skills that let an
 AI coding agent set SourceOrrery up and migrate a project off `.env` files,
-code included, without a value ever entering its context. They are compiled
+code included, with instructions to keep values out of its context. They are compiled
 into the CLI (it makes no network requests) and written where each agent
 looks:
 
@@ -108,7 +120,8 @@ only ever *read* ([why](docs/adr/0005-read-only-sdks.md)):
 from sourceorrery import SecretReader            # pip install sourceorrery
 
 with SecretReader("development") as reader, reader.get("database-password") as secret:
-    connect(password=secret.value.expose_text())  # zeroised when the block ends
+    connect(password=secret.value.expose_text())
+# The SDK's native buffer is zeroised; Python strings copied from it are not.
 ```
 
 The same calls exist in every language, each with typed errors whose hint
@@ -142,7 +155,7 @@ Three different guarantees, kept separate on purpose
 
 | Guarantee | Today |
 |-----------|-------|
-| **At-rest protection** — no plaintext secrets on disk, in the repo or in agent context | Yes |
+| **At-rest protection** — values stored by SourceOrrery are encrypted; metadata output omits them | Yes; input files, application output and copies are outside this boundary |
 | **Access control** — which identities may retrieve which secret | Local only: whoever can unlock the vault |
 | **Agent isolation** — an untrusted agent running as *your* user cannot impersonate your application | **No.** Requires the authenticated broker and OS isolation (milestone 3) |
 
@@ -183,17 +196,17 @@ they are not SourceOrrery. Read more in
 
 ## Install
 
-SourceOrrery 0.1.3 can be installed three ways (step by step in
+SourceOrrery 0.1.4 can be installed three ways (step by step in
 [Getting started](https://sourceorrery.ai/getting-started/)):
 
-- **From the package registries.** The CLI: `cargo install --locked sourceorrery-cli`.
+- **From the package registries.** The CLI: `cargo install --locked sourceorrery-cli --version 0.1.4`.
   The SDKs: `pip install sourceorrery`, `npm install @sourceorreryai/sdk`,
   `cargo add sourceorrery`, `ai.sourceorrery:sourceorrery` on Maven Central,
   `dotnet add package SourceOrrery`,
-  `go get github.com/netizine/sourceorrery/bindings/go@v0.1.3` and
+  `go get github.com/netizine/sourceorrery/bindings/go@v0.1.4` and
   `composer require sourceorrery/sourceorrery`.
 - **From the GitHub release.** The
-  [v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
+  [v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4)
   has the CLI for Windows, macOS and Linux (x64 and arm64), the C ABI
   library with its headers, and every SDK package, with `SHA256SUMS`.
 - **From source**, below.
@@ -204,7 +217,8 @@ the registry supports it) and how to check what you installed:
 
 ## Build from source
 
-Requires Git, Rust 1.88+ installed with rustup, a C compiler for the
+Requires Git, Python 3 for version stamping, Rust 1.88+ installed with rustup,
+a C compiler for the
 bundled SQLite (the Visual Studio Build Tools on Windows, the Xcode
 Command Line Tools on macOS, gcc or clang on Linux) and, on Linux,
 `pkg-config` and `libdbus-1-dev` for the Secret Service.
@@ -212,6 +226,8 @@ Command Line Tools on macOS, gcc or clang on Linux) and, on Linux,
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
+git checkout v0.1.4
+python scripts/release/set-version.py 0.1.4                      # Python 3; stamps this local build
 cargo build --release -p sourceorrery-cli -p sourceorrery-ffi   # the CLI and the C ABI, in target/release
 cargo test --workspace
 cargo install --locked --path crates/sourceorrery-cli           # the CLI into ~/.cargo/bin
@@ -226,8 +242,8 @@ SDK test vault and the conformance harness:
 
 1. **Core and local CLI** — shipped.
 2. **Read-only SDKs** for Python, JavaScript/TypeScript, Rust, Java, .NET,
-   Go, C, C++ and PHP, and a release pipeline — shipped, published by
-   trusted publishing wherever the registry offers it. Supply-chain
+   Go, C, C++ and PHP, and a release pipeline — included in 0.1.4, with
+   trusted publishing for PyPI and crates.io. Supply-chain
    hardening continues: signed archives, notarised binaries.
 3. Authenticated local broker, capability tokens, agent-aware profiles.
 4. Enterprise: remote providers, workload identity, rotation, RBAC.

@@ -32,7 +32,7 @@ This package only reads. Vaults are created, and secrets stored, with the
 once on the machine where you manage secrets, from the
 [GitHub release](https://github.com/Netizine/sourceorrery/releases/latest)
 (Windows, macOS and Linux, x64 and arm64) or with
-`cargo install --locked sourceorrery-cli`
+`cargo install --locked sourceorrery-cli --version 0.1.4`
 ([step by step](https://sourceorrery.ai/getting-started/#install)), then:
 
 ```bash

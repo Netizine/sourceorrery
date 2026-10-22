@@ -25,15 +25,15 @@ credential store; for headless servers that only use passphrases, turn it
 off with `cargo add sourceorrery --no-default-features`, which also drops
 the D-Bus requirement.
 
-### From the v0.1.3 tag
+### From the v0.1.4 tag
 
 Depend on the tag the
-[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
+[v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4)
 was cut from:
 
 ```toml
 [dependencies]
-sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.1.3" }
+sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.1.4" }
 ```
 
 ### From source
@@ -119,7 +119,7 @@ each platform.
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.1.3              # or stay on main for the newest changes
+git checkout v0.1.4              # or stay on main for the newest changes
 cargo build --release -p sourceorrery
 ```
 

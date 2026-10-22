@@ -1,0 +1,10 @@
+---
+// Keep Starlight's search dialog, keyboard shortcuts, and Pagefind integration intact.
+import Default from '@astrojs/starlight/components/Search.astro';
+import FAIcon from './FAIcon.astro';
+---
+
+<div class="so-search-shell">
+	<Default />
+	<FAIcon name="magnifying-glass" class="so-search-glyph" />
+</div>

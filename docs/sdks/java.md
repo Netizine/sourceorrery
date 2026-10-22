@@ -8,12 +8,12 @@
 <dependency>
   <groupId>ai.sourceorrery</groupId>
   <artifactId>sourceorrery</artifactId>
-  <version>0.1.3</version>
+  <version>0.1.4</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("ai.sourceorrery:sourceorrery:0.1.3")   // Gradle
+implementation("ai.sourceorrery:sourceorrery:0.1.4")   // Gradle
 ```
 
 [`ai.sourceorrery:sourceorrery` on Maven Central](https://central.sonatype.com/artifact/ai.sourceorrery/sourceorrery)
@@ -31,8 +31,8 @@ silence the restricted-method warning.
 
 ### From the GitHub release
 
-The same jar, `sourceorrery-0.1.3.jar`, is attached to the
-[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3).
+The same jar, `sourceorrery-0.1.4.jar`, is attached to the
+[v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4).
 Install it into your local Maven repository, then depend on it with the
 coordinates above (in Gradle, with `mavenLocal()` among the repositories):
 
@@ -41,29 +41,29 @@ coordinates above (in Gradle, with `mavenLocal()` among the repositories):
 #### Windows
 
 ```powershell
-Invoke-WebRequest https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorrery-0.1.3.jar -OutFile sourceorrery-0.1.3.jar
-mvn install:install-file "-Dfile=sourceorrery-0.1.3.jar" "-DgroupId=ai.sourceorrery" "-DartifactId=sourceorrery" "-Dversion=0.1.3" "-Dpackaging=jar"
+Invoke-WebRequest https://github.com/Netizine/sourceorrery/releases/download/v0.1.4/sourceorrery-0.1.4.jar -OutFile sourceorrery-0.1.4.jar
+mvn install:install-file "-Dfile=sourceorrery-0.1.4.jar" "-DgroupId=ai.sourceorrery" "-DartifactId=sourceorrery" "-Dversion=0.1.4" "-Dpackaging=jar"
 ```
 
 #### macOS
 
 ```bash
-curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorrery-0.1.3.jar
-mvn install:install-file -Dfile=sourceorrery-0.1.3.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.3 -Dpackaging=jar
+curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.4/sourceorrery-0.1.4.jar
+mvn install:install-file -Dfile=sourceorrery-0.1.4.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.4 -Dpackaging=jar
 ```
 
 #### Linux
 
 ```bash
-curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.3/sourceorrery-0.1.3.jar
-mvn install:install-file -Dfile=sourceorrery-0.1.3.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.3 -Dpackaging=jar
+curl -LO https://github.com/Netizine/sourceorrery/releases/download/v0.1.4/sourceorrery-0.1.4.jar
+mvn install:install-file -Dfile=sourceorrery-0.1.4.jar -DgroupId=ai.sourceorrery -DartifactId=sourceorrery -Dversion=0.1.4 -Dpackaging=jar
 ```
 
 <!-- /tabs -->
 
 Without a local repository, put the jar on the classpath directly:
-`implementation(files("libs/sourceorrery-0.1.3.jar"))` in Gradle, or
-`--class-path sourceorrery-0.1.3.jar` on the `java` command line.
+`implementation(files("libs/sourceorrery-0.1.4.jar"))` in Gradle, or
+`--class-path sourceorrery-0.1.4.jar` on the `java` command line.
 
 ### From source
 
@@ -166,7 +166,7 @@ Get the code and build the native library the jar calls:
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.1.3              # or stay on main for the newest changes
+git checkout v0.1.4              # or stay on main for the newest changes
 cargo build --release -p sourceorrery-ffi
 ```
 

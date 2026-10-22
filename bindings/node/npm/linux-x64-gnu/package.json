@@ -1,6 +1,6 @@
 {
   "name": "@sourceorreryai/sdk-linux-x64-gnu",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "cpu": [
     "x64"
   ],

@@ -1364,7 +1364,7 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 
 [[package]]
 name = "sourceorrery"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "sourceorrery-core",
  "sourceorrery-storage",
@@ -1374,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-core"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-crypto"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-node"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "napi",
  "napi-build",
@@ -1414,7 +1414,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-storage"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "apple-native-keyring-store",
  "directories",

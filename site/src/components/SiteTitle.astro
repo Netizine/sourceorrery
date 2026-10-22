@@ -1,0 +1,11 @@
+---
+import FAIcon from './FAIcon.astro';
+
+const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
+---
+
+<a href={siteTitleHref} class="site-title sl-flex">
+	<FAIcon name="sourceorrery" family="kit" class="so-site-emblem" />
+	<span translate="no">{siteTitle}</span>
+	<span class="so-site-label">0.1.4</span>
+</a>

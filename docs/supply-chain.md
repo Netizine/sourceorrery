@@ -7,13 +7,19 @@ someone altering them on the way, how to check what you installed, and
 what is not done yet. The [threat model](threat-model.md) covers the vault
 itself.
 
+> [!NOTE]
+> This page describes the **0.1.4** release workflow. Verify the actual
+> package's version, workflow run and available attestations when installing;
+> a configured publishing method is not itself proof about a downloaded file.
+
 ## From commit to package
 
-* **Every change through CI.** Changes reach `main` through pull requests,
-  and a pull request merges only when the `CI` gate passes: formatting,
-  Clippy with warnings as errors, every test on Ubuntu, Windows and macOS,
-  every SDK's tests and the cross-language conformance harness against a
-  real vault, and `cargo audit` against the RustSec advisory database.
+* **Checks matched to the change.** Code changes trigger formatting,
+  Clippy with warnings as errors, tests on Ubuntu, Windows and macOS,
+  SDK tests and the cross-language conformance harness against a real
+  vault, and `cargo audit` against the RustSec advisory database. The `CI`
+  gate aggregates those jobs. Documentation-only changes may skip the
+  native builds; the documentation workflow builds and link-checks the site.
 * **One workflow, one commit, every package.** A release is cut by
   dispatching `.github/workflows/release.yml` by hand, never by pushing a
   tag. One run builds the CLI and the C ABI for six targets and every SDK
@@ -35,10 +41,9 @@ itself.
 With trusted publishing, a registry is told once which repository and
 which workflow file may publish a package. At release time the publishing
 job presents an identity token that GitHub signs for that one workflow run
-(OpenID Connect), and the registry exchanges it for a credential that
-expires within the hour, for that package only. No long-lived token
-exists, so there is none to leak from a CI log, steal from a maintainer's
-laptop or reuse elsewhere. npm and PyPI also record a **provenance**
+(OpenID Connect), and the registry exchanges it for a short-lived publishing
+credential under the configured trust policy. The workflow does not need a
+stored long-lived token for those registries. npm and PyPI also record a **provenance**
 statement, signed through Sigstore, that ties each published file to the
 commit and the workflow run that built it.
 
@@ -59,9 +64,10 @@ way, from `release.yml` or `ReleasePackages.yaml` in
 
 The wheels and sdist on PyPI, the npm tarballs and the jar on Maven
 Central are byte for byte the files attached to the GitHub Release, so
-their SHA-256 hashes appear in its `SHA256SUMS`. The two copies are
-published through different accounts, so comparing them is a real check:
-someone would have to compromise both to change a package unnoticed. The
+their SHA-256 hashes appear in its `SHA256SUMS`. Comparing the copies can
+detect a mismatch between the registry and release, but both originate in
+the same build workflow: a compromised workflow could publish matching
+malicious files to both. Check provenance as well as hashes. The
 `.nupkg` on nuget.org differs from the release's only by the repository
 signature nuget.org adds.
 
@@ -83,7 +89,7 @@ provenance, with links to the commit and the workflow run.
 ### NuGet
 
 ```bash
-dotnet nuget verify --all ~/.nuget/packages/sourceorrery/0.1.3/sourceorrery.0.1.3.nupkg
+dotnet nuget verify --all ~/.nuget/packages/sourceorrery/0.1.4/sourceorrery.0.1.4.nupkg
 ```
 
 Expect `Signature type: Repository` with the subject
@@ -99,9 +105,9 @@ F14C 928F CC55 C651 7F1A  E1E7 DAFA E59A 4372 DBC2
 
 ```bash
 gpg --keyserver keyserver.ubuntu.com --recv-keys F14C928FCC55C6517F1AE1E7DAFAE59A4372DBC2
-curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.1.3/sourceorrery-0.1.3.jar
-curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.1.3/sourceorrery-0.1.3.jar.asc
-gpg --verify sourceorrery-0.1.3.jar.asc sourceorrery-0.1.3.jar    # Good signature from "SourceOrrery Releases ..."
+curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.1.4/sourceorrery-0.1.4.jar
+curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.1.4/sourceorrery-0.1.4.jar.asc
+gpg --verify sourceorrery-0.1.4.jar.asc sourceorrery-0.1.4.jar    # Good signature from "SourceOrrery Releases ..."
 ```
 
 ### PyPI
@@ -122,7 +128,7 @@ check that the two agree, then require them:
 
 ```text
 # requirements.txt
-sourceorrery==0.1.3 \
+sourceorrery==0.1.4 \
     --hash=sha256:<hash of the wheel for each platform you deploy to>
 ```
 
@@ -139,7 +145,7 @@ pip install --require-hashes -r requirements.txt
 every build. Install the CLI with `--locked`:
 
 ```bash
-cargo install --locked sourceorrery-cli
+cargo install --locked sourceorrery-cli --version 0.1.4
 ```
 
 The crate ships the lock file the release was built and tested with;
@@ -158,7 +164,7 @@ Packagist serves the repository at the release tag, and `composer.lock`
 records the commit it installed. Compare it with the tag:
 
 ```bash
-git ls-remote https://github.com/Netizine/sourceorrery refs/tags/v0.1.3
+git ls-remote https://github.com/Netizine/sourceorrery refs/tags/v0.1.4
 ```
 
 ### Release archives
@@ -172,9 +178,10 @@ a registry, compare with the registry's hash as above.
 ## What SourceOrrery changes in your own supply chain
 
 A malicious dependency, a poisoned install script or a misled coding agent
-looks first for credentials in plain files: `.env`, configuration files,
-shell history. With SourceOrrery there are none to find. What it does not
-change yet:
+may look for credentials in plain files: `.env`, configuration files or
+shell history. Replacing plaintext configuration with vault references
+reduces that exposure after the original files and copies are removed.
+It does not change these limits:
 
 * **Code running as you can open the vault as you.** An install script or
   an agent runs with your user's rights, so it can run the CLI and unlock
@@ -188,7 +195,7 @@ change yet:
 * **Code inside your application reads what your application reads.** A
   compromised dependency can read every secret the application can. What
   it cannot do through an SDK is write: no SDK can set, disable, delete or
-  purge a secret, change a protector or touch the audit log
+  purge a secret, change a protector or manage the audit log
   ([ADR 0005](adr/0005-read-only-sdks.md)), so it cannot plant a value for
   the next deployment through the library. Every read is recorded in the
   vault's audit log, which `sourceorrery audit` shows.
@@ -198,6 +205,11 @@ change yet:
   closed.
 
 ## Not done yet
+
+> [!WARNING]
+> Checksums and provenance do not establish that code is safe. The release
+> archives are not signed, the binaries are not notarised or
+> Authenticode-signed, and no reproducible-build claim is made.
 
 * Maven Central is published with a stored user token, because Central
   offers no trusted publishing; its files are GPG-signed instead.

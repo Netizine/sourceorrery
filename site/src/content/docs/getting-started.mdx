@@ -1,20 +1,38 @@
 ---
 title: Getting started
-description: Install SourceOrrery 0.1.3 from the package registries, the GitHub release or source, create an encrypted vault, store a secret without ever typing it on a command line, and run your application with secrets in its environment.
+description: Install SourceOrrery 0.1.4 from the package registries, the GitHub release or source, create an encrypted vault, store a secret without ever typing it on a command line, and run your application with secrets in its environment.
 ---
 
-import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
+import Aside from '../../components/Aside.astro';
 
-SourceOrrery 0.1.3 is an encrypted local vault with an Azure Key
+SourceOrrery 0.1.4 is an encrypted local vault with an Azure Key
 Vault–style lifecycle, a CLI with an interactive vault manager, and
 read-only [SDKs](/sdks/) for Python, JavaScript/TypeScript, Rust, Java,
-.NET, Go, C, C++ and PHP. It works today on Windows, macOS and Linux. It
-has not been audited; do not treat it as a production secret store yet.
+.NET, Go, C, C++ and PHP. It works on Windows, macOS and Linux.
+
+<Aside type="caution" title="Use development credentials">
+SourceOrrery has not been independently audited. Do not treat it as a
+production secret store. Code that can unlock your vault can read its
+secrets; the planned broker is not part of this release.
+</Aside>
+
+<Aside type="note" title="Documentation for 0.1.4">
+This walkthrough targets **0.1.4**, including `.env` import and
+`init --integration`. Check `sourceorrery --version` before following it.
+The authenticated broker and remote providers remain on the [roadmap](/roadmap/).
+</Aside>
 
 ## Install
 
-There are three ways to install 0.1.3: the published packages, the files
+There are three ways to install 0.1.4: the published packages, the files
 on the GitHub release, or a build from source.
+
+| Your starting point | Recommended route |
+|---------------------|-------------------|
+| Rust and a C compiler are already installed | [Install with Cargo](#from-the-package-registries) |
+| You want a ready-to-run CLI without a compiler | [Download the release](#from-the-github-release) |
+| You want to inspect or contribute to the implementation | [Build from source](#from-source) |
 
 ### From the package registries
 
@@ -25,7 +43,7 @@ also `libdbus-1-dev` and `pkg-config` for the Secret Service);
 the commands to install them on each platform.
 
 ```bash
-cargo install --locked sourceorrery-cli
+cargo install --locked sourceorrery-cli --version 0.1.4
 ```
 
 `--locked` builds with the exact dependency versions the release was
@@ -39,9 +57,9 @@ The SDKs are published as packages for each language:
 | Python | [`sourceorrery`](https://pypi.org/project/sourceorrery/) on PyPI | `pip install sourceorrery` |
 | JavaScript / TypeScript | [`@sourceorreryai/sdk`](https://www.npmjs.com/package/@sourceorreryai/sdk) on npm | `npm install @sourceorreryai/sdk` |
 | Rust | [`sourceorrery`](https://crates.io/crates/sourceorrery) on crates.io | `cargo add sourceorrery` |
-| Java | [`ai.sourceorrery:sourceorrery`](https://central.sonatype.com/artifact/ai.sourceorrery/sourceorrery) on Maven Central | `<version>0.1.3</version>` (see [Java](/sdks/java/)) |
+| Java | [`ai.sourceorrery:sourceorrery`](https://central.sonatype.com/artifact/ai.sourceorrery/sourceorrery) on Maven Central | `<version>0.1.4</version>` (see [Java](/sdks/java/)) |
 | .NET | [`SourceOrrery`](https://www.nuget.org/packages/SourceOrrery) on NuGet | `dotnet add package SourceOrrery` |
-| Go | [`github.com/netizine/sourceorrery/bindings/go`](https://pkg.go.dev/github.com/netizine/sourceorrery/bindings/go) | `go get github.com/netizine/sourceorrery/bindings/go@v0.1.3` |
+| Go | [`github.com/netizine/sourceorrery/bindings/go`](https://pkg.go.dev/github.com/netizine/sourceorrery/bindings/go) | `go get github.com/netizine/sourceorrery/bindings/go@v0.1.4` |
 | PHP | [`sourceorrery/sourceorrery`](https://packagist.org/packages/sourceorrery/sourceorrery) on Packagist | `composer require sourceorrery/sourceorrery` |
 
 Go, C, C++ and PHP load the C ABI library from the release (below); each
@@ -51,7 +69,7 @@ to check that what you installed is what was released, is in
 
 ### From the GitHub release
 
-The [v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
+The [v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4)
 ships the CLI for Windows, macOS and Linux on x64 and arm64, the C ABI
 library with its headers, and every SDK package (wheels, the npm tarballs,
 the jar, the NuGet package), with a `SHA256SUMS` file to check each
@@ -65,13 +83,20 @@ In PowerShell. On Windows on Arm, use `aarch64-pc-windows-msvc` in the
 archive name instead of `x86_64-pc-windows-msvc`.
 
 ```powershell
-$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.3"
-$archive = "sourceorrery-0.1.3-x86_64-pc-windows-msvc.zip"
+$ErrorActionPreference = "Stop"
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.4"
+$archive = "sourceorrery-0.1.4-x86_64-pc-windows-msvc.zip"
 $dir = "$env:LOCALAPPDATA\Programs\sourceorrery"
 
 Invoke-WebRequest "$release/$archive" -OutFile $archive
 Invoke-WebRequest "$release/SHA256SUMS" -OutFile SHA256SUMS
-Select-String (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower() SHA256SUMS   # prints the matching line, or nothing
+$pattern = '^[a-fA-F0-9]{64}\s+\*?' + [regex]::Escape($archive) + '$'
+$entry = @(Get-Content SHA256SUMS | Where-Object { $_ -match $pattern })
+if ($entry.Count -ne 1) { throw "Missing or ambiguous checksum for $archive" }
+$expected = ($entry[0] -split '\s+')[0]
+if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $expected) {
+    throw "Checksum mismatch; do not extract this download"
+}
 
 Expand-Archive $archive -DestinationPath $dir -Force
 [Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", "User")
@@ -86,21 +111,25 @@ Apple silicon shown. On an Intel Mac, use `x86_64-apple-darwin` in the
 archive name instead of `aarch64-apple-darwin`.
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.3
-archive=sourceorrery-0.1.3-aarch64-apple-darwin
+set -eu
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.4
+archive=sourceorrery-0.1.4-aarch64-apple-darwin
 
-curl -LO "$release/$archive.tar.gz"
-curl -LO "$release/SHA256SUMS" && shasum -a 256 -c --ignore-missing SHA256SUMS
+curl -fLO "$release/$archive.tar.gz"
+curl -fLO "$release/SHA256SUMS"
+awk -v file="$archive.tar.gz" '$2 == file { print }' SHA256SUMS > "$archive.sha256"
+test -s "$archive.sha256"
+shasum -a 256 -c "$archive.sha256"
 
 tar xzf "$archive.tar.gz"
+sudo mkdir -p /usr/local/bin
 sudo install "$archive/sourceorrery" /usr/local/bin/
 sourceorrery --help
 ```
 
-The binaries are not signed or notarised yet (that is on the roadmap). A
-file downloaded with a browser rather than `curl` carries the quarantine
-attribute; clear it with `xattr -d com.apple.quarantine <file>` before
-unpacking.
+The binaries are not signed or notarised yet, so macOS may block a
+browser-downloaded binary. Verify the source and checksum before deciding
+whether to allow it in your system's security settings.
 
 </TabItem>
 <TabItem label="Linux">
@@ -110,11 +139,15 @@ instead of `x86_64-unknown-linux-gnu`. The builds are for glibc-based
 distributions.
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.3
-archive=sourceorrery-0.1.3-x86_64-unknown-linux-gnu
+set -eu
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.4
+archive=sourceorrery-0.1.4-x86_64-unknown-linux-gnu
 
-curl -LO "$release/$archive.tar.gz"
-curl -LO "$release/SHA256SUMS" && sha256sum -c --ignore-missing SHA256SUMS
+curl -fLO "$release/$archive.tar.gz"
+curl -fLO "$release/SHA256SUMS"
+awk -v file="$archive.tar.gz" '$2 == file { print }' SHA256SUMS > "$archive.sha256"
+test -s "$archive.sha256"
+sha256sum -c "$archive.sha256"
 
 tar xzf "$archive.tar.gz"
 sudo install "$archive/sourceorrery" /usr/local/bin/
@@ -128,20 +161,28 @@ or in a container there is none: use a passphrase protector, as described in
 </TabItem>
 </Tabs>
 
+<Aside type="note" title="What a checksum verifies">
+These commands stop before extraction if the selected download fails its
+checksum. `SHA256SUMS` detects corruption; a checksum hosted beside an
+archive does not independently prove who published it. See
+[Supply chain](/security/supply-chain/#release-archives) for the remaining gaps.
+</Aside>
+
 Shell completions are available with
 `sourceorrery completions bash|zsh|fish|powershell|elvish`.
 
 ### From source
 
-With the same requirements as `cargo install` above (Git, Rust 1.88 or
-newer, a C compiler, and on Linux `libdbus-1-dev` and `pkg-config`), build
+With Git, Python 3 for version stamping, Rust 1.88 or newer, a C compiler,
+and on Linux `libdbus-1-dev` and `pkg-config`, build
 the release tag from the repository and install the CLI into
 `~/.cargo/bin`, which rustup put on your `PATH`:
 
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.1.3
+git checkout v0.1.4
+python scripts/release/set-version.py 0.1.4
 cargo install --locked --path crates/sourceorrery-cli
 sourceorrery --help
 ```
@@ -160,9 +201,14 @@ cargo build --release -p sourceorrery-cli --no-default-features
 ```
 
 See [Headless: WSL, Docker, CI](/guides/headless/).
+This minimal build also omits the interactive `ui` command; add
+`--features ui` if you need it without OS-keyring support.
 </Aside>
 
 ## First vault to first run
+
+Run these steps from the directory containing your application. Use a
+development credential for the walkthrough.
 
 <Steps>
 
@@ -181,8 +227,8 @@ See [Headless: WSL, Docker, CI](/guides/headless/).
    By default the vault key is protected by the OS credential store (Windows
    Credential Manager, macOS Keychain, Secret Service), so there is nothing
    to type later. Where no store is available, or with
-   `--protector passphrase`, you are asked for a passphrase twice and the key
-   is derived from it with Argon2id.
+   `--protector passphrase`, you are asked for a passphrase twice. Argon2id
+   derives a key that wraps the randomly generated vault key.
 
 2. **Store a secret.**
 
@@ -241,19 +287,29 @@ See [Headless: WSL, Docker, CI](/guides/headless/).
    purpose = "Database authentication"   # documentation only
    ```
 
-   A `value = ...` key, or any other unknown key, is a parse error. Commit
-   the manifest; it holds nothing to protect. Then confirm every entry
-   resolves without reading a single value:
+   If the project already has a manifest, edit its entries instead of
+   running `init --force`, which would replace it.
+
+   A `value = ...` key, or any other unknown key, is a parse error. Keep
+   actual credentials out of names, comments and `purpose` fields too:
+   these remain plain text. Commit the reviewed manifest, then confirm
+   every entry resolves without reading a secret value:
 
    ```bash
    sourceorrery check
    ```
+
+   The `database-password` row should show `ok`. A missing or inaccessible
+   required secret makes the command fail. Metadata checks are audited.
 
 5. **Run your application with its secrets.**
 
    ```bash
    sourceorrery run -- npm start
    ```
+
+   Replace `npm start` with your application's normal start command. For
+   a Python program, for example, use `sourceorrery run -- python app.py`.
 
    Each declared secret is resolved and placed in the child's environment,
    `database-password` as `DATABASE_PASSWORD` (set `env = "..."` in the
@@ -263,13 +319,12 @@ See [Headless: WSL, Docker, CI](/guides/headless/).
 </Steps>
 
 <Aside type="caution" title="What this does not protect against">
-Environment variables are visible to any process that can read the child
-process's environment, and anything already running as your OS user can
-unlock the same vault and call `get --reveal` exactly as you can. SourceOrrery
-removes plaintext from disk and from the repository and puts every access on
-the record; it does not isolate your secrets from code running with your
-privileges. The [threat model](/security/threat-model/) keeps those three
-guarantees separate.
+Environment variables are visible to processes with permission to inspect
+the child. Code running as your OS user can use the same OS credential
+store or a passphrase available to it. SourceOrrery encrypts the values it
+stores and audits vault operations, but cannot prevent your application
+from logging a value or an agent from reading an existing `.env` file.
+The [threat model](/security/threat-model/) explains this boundary.
 </Aside>
 
 ## Where to next
@@ -277,12 +332,6 @@ guarantees separate.
 - `sourceorrery ui` opens the interactive vault manager: dashboards,
   secrets and their versions, deleted secrets and the audit log, all
   without ever showing a value ([CLI reference](/reference/cli/#ui)).
-- Already have a `.env` file? `sourceorrery import .env` moves every value
-  into the vault and declares it in `sourceorrery.toml` without printing
-  one ([CLI reference](/reference/cli/#import-moving-a-env-file-into-a-vault)).
-- [AI coding agents](/guides/ai-agents/): `sourceorrery init --integration claude`
-  (or `cursor`, `codex`, `copilot`, `gemini` and seven more) gives the
-  agent skills to set SourceOrrery up and migrate the project for you.
 - [SDKs](/sdks/) to read the same secrets from Python, JavaScript/TypeScript,
   Rust, Java, .NET, Go, C, C++ or PHP.
 - [CLI reference](/reference/cli/) for every command and option, including
@@ -291,3 +340,12 @@ guarantees separate.
   credential store or no terminal.
 - [Vault format](/reference/vault-format/) if you want to know exactly what is
   on disk.
+
+### Bring an existing project
+
+- [Import a `.env` file](/reference/cli/#import-moving-a-env-file-into-a-vault)
+  with `sourceorrery import .env`, then check the results before removing
+  the original plaintext file. The command does not delete it.
+- [Install skills for AI coding agents](/guides/ai-agents/) with
+  `sourceorrery init --integration claude`, `cursor`, `codex` or another
+  supported agent. These are workflow instructions, not a security boundary.

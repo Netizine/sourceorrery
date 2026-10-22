@@ -3,6 +3,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { satteri } from '@astrojs/markdown-satteri';
 import { externalLinks } from './plugins/external-links.mjs';
+import { githubAlerts, calloutIcons } from './plugins/github-alerts.mjs';
 
 const SITE_URL = 'https://sourceorrery.ai';
 const GITHUB_URL = 'https://github.com/Netizine/sourceorrery';
@@ -14,7 +15,10 @@ export default defineConfig({
 		// Every link that leaves the site opens in a new tab. Links in page
 		// chrome (the GitHub icon, "Edit page", the hero) get the same
 		// attributes in the component overrides below.
-		processor: satteri({ hastPlugins: [externalLinks({ site: SITE_URL })] }),
+		processor: satteri({
+			mdastPlugins: [githubAlerts()],
+			hastPlugins: [calloutIcons(), externalLinks({ site: SITE_URL })],
+		}),
 	},
 	integrations: [
 		starlight({
@@ -28,7 +32,7 @@ export default defineConfig({
 			},
 			favicon: '/favicon.svg',
 			head: [
-				// Safari does not load SVG favicons; it takes this PNG (see scripts/make-favicon.mjs).
+				// PNG fallback for browsers that do not load SVG favicons.
 				{
 					tag: 'link',
 					attrs: { rel: 'icon', href: '/favicon.png', type: 'image/png', sizes: '128x128' },
@@ -39,14 +43,21 @@ export default defineConfig({
 			// in any page's frontmatter (scripts/sync-docs.mjs writes none),
 			// Starlight renders none.
 			customCss: [
-				// Self-hosted type: serif for text, a sans for interface labels, a mono for code.
-				'@fontsource-variable/source-serif-4/opsz.css',
-				'@fontsource-variable/source-serif-4/opsz-italic.css',
+				// Google Fonts, served locally: prose, interface and code.
+				'@fontsource-variable/open-sans',
+				'@fontsource-variable/open-sans/wght-italic.css',
 				'@fontsource-variable/inter',
-				'@fontsource-variable/jetbrains-mono',
+				'@fontsource-variable/google-sans-code',
+				'@fontsource-variable/google-sans-code/wght-italic.css',
 				'./src/styles/paper.css',
 			],
 			components: {
+				SiteTitle: './src/components/SiteTitle.astro',
+				PageTitle: './src/components/PageTitle.astro',
+				Search: './src/components/Search.astro',
+				ThemeSelect: './src/components/ThemeSelect.astro',
+				MobileMenuToggle: './src/components/MobileMenuToggle.astro',
+				Pagination: './src/components/Pagination.astro',
 				Hero: './src/components/Hero.astro',
 				// Starlight's own version, with the GitHub link opening in a new tab.
 				SocialIcons: './src/components/SocialIcons.astro',
@@ -57,24 +68,24 @@ export default defineConfig({
 				themes: ['github-light', 'github-dark-dimmed'],
 				useStarlightUiThemeColors: true,
 				styleOverrides: {
-					borderRadius: '2px',
+					borderRadius: '10px',
 					borderWidth: '1px',
-					codeFontFamily: "'JetBrains Mono Variable', ui-monospace, Consolas, monospace",
-					codeFontSize: '0.9rem',
+					codeFontFamily: "'Google Sans Code Variable', ui-monospace, Consolas, monospace",
+					codeFontSize: '0.85rem',
 					codeLineHeight: '1.6',
 					codePaddingBlock: '1rem',
 					codePaddingInline: '1.25rem',
-					// Paper-toned code backgrounds instead of the themes' own.
-					codeBackground: ({ theme }) => (theme.type === 'dark' ? '#1e1c18' : '#edeae1'),
+					codeBackground: ({ theme }) => (theme.type === 'dark' ? '#121d2d' : '#f4f7fb'),
 					frames: {
 						shadowColor: 'transparent',
-						editorTabBarBackground: ({ theme }) => (theme.type === 'dark' ? '#1a1916' : '#e6e2d8'),
-						terminalTitlebarBackground: ({ theme }) => (theme.type === 'dark' ? '#1a1916' : '#e6e2d8'),
-						terminalBackground: ({ theme }) => (theme.type === 'dark' ? '#1e1c18' : '#edeae1'),
+						editorTabBarBackground: ({ theme }) => (theme.type === 'dark' ? '#0e1725' : '#ecf1f7'),
+						terminalTitlebarBackground: ({ theme }) => (theme.type === 'dark' ? '#0e1725' : '#ecf1f7'),
+						terminalBackground: ({ theme }) => (theme.type === 'dark' ? '#121d2d' : '#f4f7fb'),
 					},
 				},
 			},
-			lastUpdated: true,
+			// The page title shows Git-based dates for the original source document.
+			lastUpdated: false,
 			credits: false,
 			sidebar: [
 				{ label: 'Getting started', slug: 'getting-started' },
