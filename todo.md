@@ -2,10 +2,12 @@
 
 Status of `docs/roadmap.md` at 0.1.4: nine items are unchecked across
 milestone 1, milestone 2 and the supply-chain section. Everything else
-before milestone 3 is done. This plan closes those nine, one PR each
-unless noted, and ends with the roadmap re-targeted at the release that
-carries them (0.2.0: pagination changes the core API, which pre-1.0 is a
-minor bump). Milestone 3 and 4 items are deliberately not here.
+before milestone 3 is done. This plan closes eight of them, one PR each
+unless noted, defers one (code signing, item 8, until the project has
+adoption that justifies the Apple and Windows signing costs) and ends with
+the roadmap re-targeted at the release that carries them (0.2.0:
+pagination changes the core API, which pre-1.0 is a minor bump).
+Milestone 3 and 4 items are deliberately not here.
 
 | # | Item | Needs from you | Size |
 |---|------|----------------|------|
@@ -16,13 +18,14 @@ minor bump). Milestone 3 and 4 items are deliberately not here.
 | 5 | Software bill of materials per release | nothing | S |
 | 6 | `backup` / `restore` | format decisions (below) | L |
 | 7 | Manual validation of the OS-keyring path (macOS, Linux desktop) | a Mac and a Linux desktop session | S |
-| 8 | Signed and notarised macOS binaries; Authenticode Windows binaries | Apple Developer ID; a Windows signing provider | M |
+| 8 | Signed and notarised macOS binaries; Authenticode Windows binaries | **Deferred** until adoption justifies the cost | — |
 | 9 | Package managers: Homebrew, WinGet, Scoop | two small repos; one PAT | M |
 
 Order: 1 first (it touches every workflow the later items edit), then
-2–6 in any order (pure engineering, no accounts), then 7–9 which wait
-on things only you can supply. 9 does not depend on 8, but WinGet and
-Scoop installs are friendlier once 8 ships (SmartScreen).
+2–6 in any order (pure engineering, no accounts), then 7 and 9 which wait
+on things only you can supply. 8 is deferred; nothing depends on it. The
+only effect is that Windows users of the WinGet and Scoop packages see a
+SmartScreen prompt on first run, which item 9's docs explain.
 
 Every PR: `cargo fmt --all`, `cargo clippy --workspace --all-targets --
 -D warnings`, `cargo test --workspace`; new CI jobs get `needs: changes`,
@@ -417,7 +420,29 @@ Windows is done.
 
 ---
 
-## 8. Signed and notarised macOS binaries; Authenticode Windows binaries
+## 8. Deferred: signed and notarised macOS binaries; Authenticode Windows binaries
+
+**Deferred** until the project has enough adoption to justify the cost.
+Apple has no free path (Developer Program, USD 99 a year). Windows has one
+free option for open source, SignPath Foundation (application and review),
+and a cheap one, Azure Trusted Signing (about USD 10 a month, publisher
+identity validation). Nothing else in this plan depends on signing.
+
+While it stays deferred:
+
+- The roadmap box stays unchecked and the warning in
+  `docs/supply-chain.md` *Not done yet* keeps its signing clause.
+- Items 4 and 5 give users something to check instead: the attestation
+  (`gh attestation verify`) proves which workflow run built an archive,
+  which is stronger evidence of origin than a code-signing certificate,
+  just not something Gatekeeper or SmartScreen read.
+- Item 9's install docs say what the unsigned-binary prompt looks like on
+  Windows (SmartScreen: *More info → Run anyway*) and on macOS for a
+  browser download (Gatekeeper; `curl`, Homebrew, Scoop and WinGet do
+  not set the quarantine attribute, so scripted installs are not
+  affected).
+
+Revisit when adoption warrants it; the steps below are what it takes.
 
 **What you need to obtain first.**
 
@@ -461,6 +486,9 @@ Windows is done.
       commands and the signer identity to expect; remove the *Not done
       yet* bullet and the warning's clause; tick the box.
 
+Until then, the "signed binaries" bullet in *Not done yet* stays and the
+roadmap keeps the box open.
+
 ---
 
 ## 9. Package managers: Homebrew, WinGet, Scoop
@@ -498,7 +526,10 @@ releases are updates.
       `scoop install` from the local manifest on Windows. Dry run renders
       and audits, uploads nothing.
 - [ ] Docs: `site/src/content/docs/getting-started.mdx` gains the three
-      one-liners above the archive tabs and drops the roadmap sentence;
+      one-liners above the archive tabs and drops the roadmap sentence,
+      plus one line on the SmartScreen prompt Windows users see while the
+      binaries are unsigned (item 8 deferred) and how to check the
+      download instead (`SHA256SUMS`, `gh attestation verify`);
       `docs/release.md` secrets table, procedure and the
       *Publishing an existing release* list; `docs/supply-chain.md` table
       rows for the three (what each verifies: the formula's and the
@@ -509,10 +540,12 @@ releases are updates.
 
 ## Closing out
 
-- [ ] `docs/roadmap.md`: all nine boxes ticked, header re-targeted at
-      0.2.0 and the "release scope" section rewritten for it.
+- [ ] `docs/roadmap.md`: eight boxes ticked, the signing item kept open
+      with a one-line note that it waits on adoption, header re-targeted
+      at 0.2.0 and the "release scope" section rewritten for it.
 - [ ] `docs/supply-chain.md`: *Not done yet* reduced to Maven Central's
-      stored token and the absence of a reproducible-build claim.
+      stored token, unsigned binaries, and the absence of a
+      reproducible-build claim.
 - [ ] `docs/threat-model.md` item 10 rewritten (item 7 above).
 - [ ] `CHANGELOG.md` `[Unreleased]` → `[0.2.0]`; release per
       `docs/release.md`, dry run first; then the install links in
