@@ -42,3 +42,6 @@ cargo build --release -p sourceorrery-ffi -p sourceorrery-cli
 eval "$(bash scripts/ci/fixture-vault.sh)"
 cd bindings/go && CGO_LDFLAGS="-L$SOURCEORRERY_NATIVE_DIR" LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" go test ./...
 ```
+
+Every step, with the prerequisites for each platform:
+<https://sourceorrery.ai/sdks/go/#building-from-source>.

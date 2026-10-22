@@ -20,15 +20,22 @@ Documentation: <https://sourceorrery.ai/sdks/python/>. Source:
 
 ## Building from source
 
-```bash
-pip install maturin
-cd bindings/python
-maturin develop --release        # into the active virtualenv
-```
-
-Tests read the vault created by `scripts/ci/fixture-vault.sh`:
+From a clone of the repository, with Rust 1.88+, a C compiler and Python
+3.11+, in a virtual environment:
 
 ```bash
-eval "$(bash ../../scripts/ci/fixture-vault.sh)"
-python -m pytest
+pip install ./bindings/python    # pip fetches maturin and compiles the extension
 ```
+
+The tests read a vault that the CLI creates; from the repository root, in
+Bash (Git Bash on Windows):
+
+```bash
+cargo build --release -p sourceorrery-cli
+eval "$(bash scripts/ci/fixture-vault.sh)"
+pip install pytest
+python -m pytest bindings/python/tests
+```
+
+Every step, with the prerequisites for each platform:
+<https://sourceorrery.ai/sdks/python/#building-from-source>.

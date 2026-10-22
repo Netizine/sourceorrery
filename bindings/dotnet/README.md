@@ -26,9 +26,16 @@ Documentation: <https://sourceorrery.ai/sdks/dotnet/>. Source:
 
 ## Building from source
 
+From a clone of the repository, with Rust 1.88+, a C compiler and the .NET
+10 SDK. The tests read a vault that the CLI creates; the fixture script
+also points `SOURCEORRERY_NATIVE_DIR` at the library just built. In Bash
+(Git Bash on Windows):
+
 ```bash
-cargo build --release -p sourceorrery-ffi
-export SOURCEORRERY_NATIVE_DIR=$PWD/target/release
+cargo build --release -p sourceorrery-cli -p sourceorrery-ffi
 eval "$(bash scripts/ci/fixture-vault.sh)"
 dotnet test bindings/dotnet/SourceOrrery.sln
 ```
+
+Every step, with the prerequisites for each platform:
+<https://sourceorrery.ai/sdks/dotnet/#building-from-source>.

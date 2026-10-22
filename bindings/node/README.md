@@ -23,13 +23,21 @@ Documentation: <https://sourceorrery.ai/sdks/javascript/>. Source:
 
 ## Building from source
 
+From a clone of the repository, with Rust 1.88+, a C compiler and Node.js
+20+. The tests read a vault that the CLI creates, so build that too; in
+Bash (Git Bash on Windows):
+
 ```bash
+cargo build --release -p sourceorrery-cli
+eval "$(bash scripts/ci/fixture-vault.sh)"
 cd bindings/node
 npm ci
 npm run build            # napi build --platform --release
-eval "$(bash ../../scripts/ci/fixture-vault.sh)"
 npm test
 ```
+
+Every step, with the prerequisites for each platform:
+<https://sourceorrery.ai/sdks/javascript/#building-from-source>.
 
 `npm run build` generates `index.js` (the loader) and `index.d.ts` next to
 the addon; both are in `.gitignore` and both ship in the package. The

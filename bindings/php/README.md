@@ -41,3 +41,6 @@ cargo build --release -p sourceorrery-ffi -p sourceorrery-cli
 eval "$(bash scripts/ci/fixture-vault.sh)"
 php bindings/php/tests/run.php
 ```
+
+Every step, with the prerequisites for each platform:
+<https://sourceorrery.ai/sdks/php/#building-from-source>.
