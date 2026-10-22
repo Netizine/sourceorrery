@@ -230,21 +230,21 @@ carry nothing that proves which workflow run built them.
 
 **Steps.**
 
-- [ ] In the `release` job of `release.yml`, after *Flatten and checksum*
+- [x] In the `release` job of `release.yml`, after *Flatten and checksum*
       and only when `publish == 'true'`: `actions/attest-build-provenance`
       over `release/*` (every archive, wheel, sdist, npm tarball, jar,
       nupkg and `SHA256SUMS` itself). Job permissions gain
       `id-token: write` and `attestations: write`. Attestations are keyed
       by digest and published to the repository's attestation store and
       the Sigstore log, so a dry run must not create them.
-- [ ] Verification as the user sees it:
+- [x] Verification as the user sees it:
       `gh attestation verify sourceorrery-X.Y.Z-<target>.tar.gz --repo Netizine/sourceorrery`
       (or `--owner Netizine`). Add it to `docs/supply-chain.md` *Release
       archives*, to *Verifying a release* in `docs/release.md`, and to the
       release notes table in `release.yml`.
-- [ ] `ReleasePackages.yaml` uploads files the release already has; no
+- [x] `ReleasePackages.yaml` uploads files the release already has; no
       change, but say so in `docs/release.md`.
-- [ ] State the claim precisely: provenance ties a file to a commit and a
+- [x] State the claim precisely: provenance ties a file to a commit and a
       workflow run on a GitHub-hosted runner. No reproducible-build claim.
       Update the *Not done yet* warning accordingly and tick the box.
 

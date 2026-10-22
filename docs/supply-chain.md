@@ -69,7 +69,7 @@ way, from `release.yml` or `ReleasePackages.yaml` in
 | Maven Central | `ai.sourceorrery:sourceorrery` | A Central user token (Central has no trusted publishing); every file signed with the release key | The `.asc` signature next to each file |
 | Go module proxy | `github.com/netizine/sourceorrery/bindings/go` | Nothing uploaded: the tag `bindings/go/vX.Y.Z` | The Go checksum database |
 | Packagist | `sourceorrery/sourceorrery` | Nothing uploaded: the tag `vX.Y.Z` | The commit recorded in `composer.lock` |
-| GitHub Release | CLI and C ABI archives, wheels, jar, `.nupkg`, npm tarballs | The release workflow | `SHA256SUMS` and the workflow run linked from the release |
+| GitHub Release | CLI and C ABI archives, wheels, jar, `.nupkg`, npm tarballs, `SHA256SUMS` | The release workflow | A build provenance attestation per file (`gh attestation verify`), `SHA256SUMS`, and the workflow run linked from the release |
 | Homebrew tap | `sourceorrery` in `Netizine/homebrew-sourceorrery` | Nothing uploaded: the release workflow commits a formula naming the release archive for each platform and its SHA-256 | Homebrew checks the hash before installing; the formula is a readable file in the tap |
 | Scoop bucket | `sourceorrery` in `Netizine/scoop-sourceorrery` | Nothing uploaded: the release workflow commits a manifest naming the release archives and their SHA-256 | Scoop checks the hash before installing |
 | WinGet | `Netizine.SourceOrrery` | A pull request on `microsoft/winget-pkgs` with manifests naming the release archives and their SHA-256, validated there | WinGet checks `InstallerSha256` before installing |
@@ -181,11 +181,27 @@ git ls-remote https://github.com/Netizine/sourceorrery refs/tags/v0.1.4
 
 ### Release archives
 
-Check every download against `SHA256SUMS`, as
-[Getting started](https://sourceorrery.ai/getting-started/) shows for the
-CLI. The file sits next to the archives, so it proves the download is
-intact, not that the release is authentic; for the files that are also on
-a registry, compare with the registry's hash as above.
+Every file on a GitHub Release, `SHA256SUMS` included, carries a **build
+provenance attestation**: a statement signed through Sigstore in the
+release workflow run, stored with the repository, naming the file's
+SHA-256, the commit and the workflow that built it. Check a download
+against it with the GitHub CLI (signed in, or `--owner` for a public
+repository without signing in):
+
+```bash
+gh attestation verify sourceorrery-0.1.4-x86_64-unknown-linux-gnu.tar.gz --repo Netizine/sourceorrery
+```
+
+The command fails for a file that was altered after the build or that did
+not come out of `release.yml` in `Netizine/sourceorrery`. It proves origin
+on a GitHub-hosted runner; it does not make the code safe, and no
+reproducible-build claim is made. The attestations are listed under
+*Attestations* on the repository's *Actions* tab as well.
+
+`SHA256SUMS` next to the archives proves a download is intact without the
+GitHub CLI, as [Getting started](https://sourceorrery.ai/getting-started/)
+shows; for the files that are also on a registry, compare with the
+registry's hash as above.
 
 ## What SourceOrrery changes in your own supply chain
 
@@ -219,14 +235,12 @@ It does not change these limits:
 ## Not done yet
 
 > [!WARNING]
-> Checksums and provenance do not establish that code is safe. The release
-> archives are not signed, the binaries are not notarised or
-> Authenticode-signed, and no reproducible-build claim is made.
+> Checksums and provenance do not establish that code is safe. The
+> binaries are not notarised or Authenticode-signed, and no
+> reproducible-build claim is made.
 
 * Maven Central is published with a stored user token, because Central
   offers no trusted publishing; its files are GPG-signed instead.
-* The release archives have checksums but no signature or build
-  attestation.
 * macOS binaries are not signed or notarised; Windows binaries are not
   Authenticode-signed.
 * There is no software bill of materials and no claim of reproducible

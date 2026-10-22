@@ -8,6 +8,10 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* Every file on a GitHub Release, `SHA256SUMS` included, carries a build
+  provenance attestation signed in the release workflow run, so
+  `gh attestation verify <file> --repo Netizine/sourceorrery` proves which
+  commit and workflow built a download.
 * ADR 0007 fixes what a version number promises for every surface (CLI,
   Rust API, C ABI, contract, SDKs, vault file, error codes) and how it is
   checked: `scripts/ci/abi-check.py` fails CI when a declaration of the

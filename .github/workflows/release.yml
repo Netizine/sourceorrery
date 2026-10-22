@@ -529,6 +529,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Build provenance for every file on the release (actions/attest-*).
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -589,10 +592,21 @@ jobs:
             echo "| \`SourceOrrery.$VERSION.nupkg\` | the .NET SDK, native libraries included |"
             echo "| \`SHA256SUMS\` | checksums: \`sha256sum -c --ignore-missing SHA256SUMS\` |"
             echo
+            echo "Every file above carries a build provenance attestation naming the commit and the workflow run that built it: \`gh attestation verify <file> --repo ${{ github.repository }}\`."
+            echo
             echo "Install the CLI with a package manager: \`brew install Netizine/sourceorrery/sourceorrery\` (macOS and Linux), \`winget install Netizine.SourceOrrery\` or \`scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery && scoop install sourceorrery\` (Windows). Each installs the archive above and checks its hash."
             echo
             echo "Targets: \`x86_64-pc-windows-msvc\`, \`aarch64-pc-windows-msvc\`, \`x86_64-apple-darwin\`, \`aarch64-apple-darwin\`, \`x86_64-unknown-linux-gnu\`, \`aarch64-unknown-linux-gnu\`. How each package is published and how to check it: [Supply chain](https://sourceorrery.ai/security/supply-chain/)."
           } > notes.md
+      # Provenance ties each file's digest to this commit and this workflow
+      # run, signed through Sigstore and stored with the repository, so a
+      # user runs `gh attestation verify <file> --repo Netizine/sourceorrery`.
+      # Not in a dry run: an attestation is public and permanent.
+      - name: Attest the build provenance of every release file
+        if: needs.preflight.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/*
       - name: "Dry run: keep everything as one artifact"
         if: needs.preflight.outputs.publish != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

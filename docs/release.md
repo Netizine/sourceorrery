@@ -52,7 +52,7 @@ the next patch version.
 | `dotnet` | `SourceOrrery.X.Y.Z.nupkg` with `runtimes/<rid>/native`. |
 | `crates` | a `cargo publish --workspace --dry-run` proving every crate packages in dependency order. |
 | `php` | `composer validate --strict` on the root `composer.json` and a Composer install of the version from a local tag (`scripts/ci/php-package-install.sh`); nothing is uploaded, the package Packagist serves is the git tag itself. |
-| `release` | the GitHub Release (or the dry-run artifact) with `SHA256SUMS`. |
+| `release` | the GitHub Release (or the dry-run artifact) with `SHA256SUMS`, and a build provenance attestation for every file in a real release. |
 | `package-managers` | the Homebrew formula, the Scoop manifest and the three WinGet manifests, rendered from `SHA256SUMS` by `scripts/release/package-managers.py` (artifact `package-managers`); every URL is a release archive and every hash comes from the release. |
 
 Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
@@ -360,9 +360,15 @@ What the Packagist submission needs, once and by hand:
 curl -LO https://github.com/Netizine/sourceorrery/releases/download/vX.Y.Z/SHA256SUMS
 curl -LO https://github.com/Netizine/sourceorrery/releases/download/vX.Y.Z/sourceorrery-X.Y.Z-x86_64-unknown-linux-gnu.tar.gz
 sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify sourceorrery-X.Y.Z-x86_64-unknown-linux-gnu.tar.gz --repo Netizine/sourceorrery
 ```
 
+The `release` job attests the build provenance of every file it attaches
+(`actions/attest-build-provenance`, with `id-token` and `attestations`
+permissions on that job only), in real releases only: an attestation is
+public and permanent, so a dry run makes none. **Release packages**
+re-uploads files the release already carries and attests nothing new.
 What each registry adds on top (npm provenance, the Maven Central
 signatures, nuget.org's repository signature) and how a user checks it is
-in [Supply chain](supply-chain.md); signing the archives themselves is on
+in [Supply chain](supply-chain.md); signing the binaries themselves is on
 the [roadmap](roadmap.md#supply-chain).

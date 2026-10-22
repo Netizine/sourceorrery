@@ -57,7 +57,7 @@ How each package is published and how to check it: [Supply chain](supply-chain.m
 - [x] npm by trusted publishing, with Sigstore provenance on every package
 - [x] NuGet by trusted publishing
 - [x] Maven Central artefacts signed with the release key
-- [ ] Signatures or build attestations for the release archives
+- [x] Build attestations for every file on the GitHub Release (`gh attestation verify`)
 - [ ] Signed and notarised macOS binaries; Authenticode-signed Windows binaries
 - [x] Third-party GitHub Actions pinned to commits; automated dependency updates
 - [ ] Software bill of materials for each release
