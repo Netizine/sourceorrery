@@ -25,7 +25,8 @@ and MDX. Manage the background dev server with `npx astro dev status`,
 
 Stop the dev server before building: dev and build share Expressive Code's
 cache. Use `npm run preview` after a build to verify production search; search
-is not indexed in the development server.
+is not indexed in the development server. After changing code-theme settings,
+use `npm run build -- --force` to rebuild cached content and its stylesheet links.
 
 ## Content sources
 
@@ -77,10 +78,11 @@ keep their normal behaviour. There is intentionally no "Edit page" link.
 
 ## Design and local assets
 
-`src/styles/paper.css` defines the light/dark palettes, readable content width,
-navigation, tables, callouts, cards and responsive layout. Google Fonts are
-self-hosted through Fontsource: **Open Sans** for body text, **Inter** for UI
-and headings, and **Google Sans Code** for code. Expressive Code provides
+`src/styles/paper.css` preserves the original paper theme: warm cream and navy
+in light mode, warm charcoal in dark mode, serif text, fine borders and square
+panels. Keep this visual identity when adding documentation features. Fonts are
+self-hosted through Fontsource: **Source Serif 4** for prose and headings,
+**Inter** for UI, and **Google Sans Code** for code. Expressive Code provides
 Shiki highlighting, filenames, terminal frames and copy buttons.
 
 Font Awesome Kit **515c69ad68**, revision **4** (`@awesome.me/kit-515c69ad68`

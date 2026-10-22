@@ -6,17 +6,18 @@ const isHome = Astro.locals.starlightRoute.id === '';
 ---
 
 <footer class="so-page-footer"><Pagination /></footer>
-<div class="so-footer-note">
-	<p class="so-footer-note__brand"><FAIcon name="sourceorrery" family="kit" /> SourceOrrery <span>Open source. Local first.</span></p>
-	{isHome && (
-		<p class="so-footer-privacy">
-			<FAIcon name="cookie-bite" /> SourceOrrery has no cookie banner because I’m not interested in
+{isHome && (
+	<div class="so-privacy">
+		<p>
+			<FAIcon name="cookie-bite" class="so-privacy__icon" /> SourceOrrery has no cookie banner because I’m not interested in
 			stalking you around the internet. SourceOrrery takes privacy so seriously that I even refused
 			to build an auto-updater because phoning home once was already one call too many.
 		</p>
-	)}
-	<p>
-		Fonts and icons are served by this site. No analytics, tracking cookies or
-		third-party asset requests. Your theme preference stays in your browser.
-	</p>
-</div>
+		<p>Fonts and icons are served by this site. No analytics, tracking cookies or third-party asset requests.</p>
+	</div>
+)}
+
+<style>
+	.so-privacy { max-width: 44rem; margin: 2.5rem auto 1rem; padding-top: 1.25rem; border-top: 1px solid var(--sl-color-hairline); font-family: var(--so-font-ui); font-size: 0.8rem; line-height: 1.6; text-align: center; color: var(--sl-color-gray-3); }
+	.so-privacy :global(.so-privacy__icon) { margin-inline-end: 0.35em; }
+</style>

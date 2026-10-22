@@ -43,9 +43,9 @@ export default defineConfig({
 			// in any page's frontmatter (scripts/sync-docs.mjs writes none),
 			// Starlight renders none.
 			customCss: [
-				// Google Fonts, served locally: prose, interface and code.
-				'@fontsource-variable/open-sans',
-				'@fontsource-variable/open-sans/wght-italic.css',
+				// Preserve the site's paper typography; every font is served locally.
+				'@fontsource-variable/source-serif-4/opsz.css',
+				'@fontsource-variable/source-serif-4/opsz-italic.css',
 				'@fontsource-variable/inter',
 				'@fontsource-variable/google-sans-code',
 				'@fontsource-variable/google-sans-code/wght-italic.css',
@@ -68,19 +68,19 @@ export default defineConfig({
 				themes: ['github-light', 'github-dark-dimmed'],
 				useStarlightUiThemeColors: true,
 				styleOverrides: {
-					borderRadius: '10px',
+					borderRadius: '2px',
 					borderWidth: '1px',
 					codeFontFamily: "'Google Sans Code Variable', ui-monospace, Consolas, monospace",
 					codeFontSize: '0.85rem',
 					codeLineHeight: '1.6',
 					codePaddingBlock: '1rem',
 					codePaddingInline: '1.25rem',
-					codeBackground: ({ theme }) => (theme.type === 'dark' ? '#121d2d' : '#f4f7fb'),
+					codeBackground: ({ theme }) => (theme.type === 'dark' ? '#1e1c18' : '#edeae1'),
 					frames: {
 						shadowColor: 'transparent',
-						editorTabBarBackground: ({ theme }) => (theme.type === 'dark' ? '#0e1725' : '#ecf1f7'),
-						terminalTitlebarBackground: ({ theme }) => (theme.type === 'dark' ? '#0e1725' : '#ecf1f7'),
-						terminalBackground: ({ theme }) => (theme.type === 'dark' ? '#121d2d' : '#f4f7fb'),
+						editorTabBarBackground: ({ theme }) => (theme.type === 'dark' ? '#1a1916' : '#e6e2d8'),
+						terminalTitlebarBackground: ({ theme }) => (theme.type === 'dark' ? '#1a1916' : '#e6e2d8'),
+						terminalBackground: ({ theme }) => (theme.type === 'dark' ? '#1e1c18' : '#edeae1'),
 					},
 				},
 			},

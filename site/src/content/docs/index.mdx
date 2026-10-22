@@ -3,8 +3,12 @@ title: Secrets belong to the runtime, not the repository
 description: Keep development credentials in an encrypted local vault. Share references with your code and coding agents, then read secrets only when your application needs them.
 template: splash
 hero:
-  title: 'Secrets belong to the runtime.<br /><em>Keep them out of your repo.</em>'
+  title: 'Secrets belong to the runtime,<br /><em>not the repository.</em>'
   tagline: Store development credentials in an encrypted local vault. Commit references, give your application the values it needs, and leave plaintext <code>.env</code> files behind.
+  image:
+    light: ../../assets/sourceorrery-light.svg
+    dark: ../../assets/sourceorrery-dark.svg
+    alt: The SourceOrrery emblem, an orrery between angle brackets
   actions:
     - text: Get started
       link: /getting-started/
@@ -20,6 +24,11 @@ import ArchitectureDiagram from '../../components/ArchitectureDiagram.astro';
 import FeatureCard from '../../components/FeatureCard.astro';
 import LinkCard from '../../components/LinkCard.astro';
 import SdkGrid from '../../components/SdkGrid.astro';
+
+<figure class="so-figure">
+  <ArchitectureDiagram />
+  <figcaption>The local vault and runtime workflow. Explore the <a href="/architecture/">architecture</a> for implementation details and future boundaries.</figcaption>
+</figure>
 
 <Aside type="note" title="SourceOrrery 0.1.4">
 An encrypted local vault, CLI, interactive vault manager and read-only SDKs
@@ -119,11 +128,6 @@ application memory, logs, process environments or other files.
 The CLI and SDKs use the same Rust implementation. A manifest stores
 references, the local vault stores encrypted values, and the application
 chooses when to resolve a secret.
-
-<figure class="so-figure">
-  <ArchitectureDiagram />
-  <figcaption>The local vault and runtime workflow. Explore the <a href="/architecture/">architecture</a> for implementation details and future boundaries.</figcaption>
-</figure>
 
 ## Find your next step
 
