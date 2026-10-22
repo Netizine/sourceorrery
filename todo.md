@@ -90,15 +90,15 @@ secrets, each checkpoint row authenticated several times.
 
 *Bulk read (storage only, no API change).*
 
-- [ ] `audit::vault_checkpoints(conn, key, vault_id) -> BTreeMap<String,
+- [x] `audit::vault_checkpoints(conn, key, vault_id) -> BTreeMap<String,
       SecretCheckpoints>`: one query over every keyed checkpoint row
       ordered by id, each row authenticated once, folded per name with
       the same rules as `secret_checkpoints` (an `Absent` state clears the
       versions). `checkpointed_names` becomes a view over it.
-- [ ] One query for every `secrets` row and one for every
+- [x] One query for every `secrets` row and one for every
       `secret_versions` row (`query_raw_versions` without the name
       filter), grouped by name.
-- [ ] `load_secret_row` / `load_versions` take the checkpoints as a
+- [x] `load_secret_row` / `load_versions` take the checkpoints as a
       parameter (or get `_with(&SecretCheckpoints)` siblings) so the
       listing paths use the maps while the single-secret paths keep
       their per-name queries. Refusal semantics stay identical: every
@@ -109,7 +109,7 @@ secrets, each checkpoint row authenticated several times.
       `version_row_removed_out_of_band_is_rejected`,
       `forged_checkpoint_rows_do_not_count`, the replay set) already cover
       this and must stay green unchanged.
-- [ ] A benchmark-shaped test in `tests/conformance/tests/lifecycle.rs`:
+- [x] A benchmark-shaped test in `tests/conformance/tests/lifecycle.rs`:
       a vault with 200 secrets × 5 versions lists in a bounded number of
       SQL statements (count via `rusqlite` trace hook, or assert on a
       `SqliteVault` statement counter behind `cfg(test)`), so the
@@ -117,7 +117,7 @@ secrets, each checkpoint row authenticated several times.
 
 *Pagination (core API change, conformance test).*
 
-- [ ] In `sourceorrery-core`: `ListOptions { max_results: Option<usize>,
+- [x] In `sourceorrery-core`: `ListOptions { max_results: Option<usize>,
       continuation: Option<ContinuationToken> }` and
       `Page<T> { items: Vec<T>, continuation: Option<ContinuationToken> }`.
       `ContinuationToken` is an opaque string: the last name on the page
@@ -125,7 +125,7 @@ secrets, each checkpoint row authenticated several times.
       concurrent writes (no duplicates, no skips of names outside the
       window; a name created or deleted during paging appears or not
       according to where its name sorts, which the docs say).
-- [ ] Add `list_properties_of_secrets_page(&self, ListOptions) ->
+- [x] Add `list_properties_of_secrets_page(&self, ListOptions) ->
       Result<Page<SecretProperties>>` and `list_deleted_secrets_page` to
       `SecretClient` with default implementations that call the full list
       and slice, so every implementor keeps compiling; the SQLite backend
@@ -134,13 +134,13 @@ secrets, each checkpoint row authenticated several times.
       checkpoint map filtered the same way). Versions of one secret are
       not paginated: which version is newest is only decidable against
       the complete set.
-- [ ] Audit: one `secret_list` event per page call, documented in
+- [x] Audit: one `secret_list` event per page call, documented in
       `docs/architecture.md` and `docs/vault-format.md`.
-- [ ] Conformance tests: paging with `max_results` 1, 7 and `None` yields
+- [x] Conformance tests: paging with `max_results` 1, 7 and `None` yields
       exactly the full list in order with no duplicates and ends with
       `continuation == None`; a tampered row on page 3 is refused when
       page 3 is read; an invalid token is `invalid_argument`.
-- [ ] Surfaces: `secret list` and `secret list --deleted` gain
+- [x] Surfaces: `secret list` and `secret list --deleted` gain
       `--limit N` and `--after NAME` (JSON output carries
       `continuation`); the `ui` keeps one full read on first show (the
       browser's read-once rule) but `MetadataSource::secrets` may switch to
@@ -149,7 +149,7 @@ secrets, each checkpoint row authenticated several times.
       are untouched (ADR 0005). `so_secret_list` / `so_secret_list_deleted`
       (tooling ABI) are unchanged; add `so_secret_list_page` only if a
       tool needs it (not required to tick the box).
-- [ ] Docs: `docs/cli.md` secret table, `docs/architecture.md` listing
+- [x] Docs: `docs/cli.md` secret table, `docs/architecture.md` listing
       semantics, `docs/vault-format.md` note on listing cost, remove the
       roadmap paragraph and tick the box.
 

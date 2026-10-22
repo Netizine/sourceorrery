@@ -6,8 +6,8 @@ use std::sync::{Arc, Barrier};
 
 use sourceorrery_conformance::{FIXTURE_PASSPHRASE, Fixture};
 use sourceorrery_core::{
-    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, Manifest, SecretBytes, SecretClient,
-    SetSecretOptions, UpdateSecretProperties, timestamp,
+    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ListOptions, Manifest,
+    SecretBytes, SecretClient, SetSecretOptions, UpdateSecretProperties, timestamp,
 };
 use sourceorrery_crypto::{Argon2Params, SymmetricKey, aead, envelope, kdf, random};
 use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase};
@@ -1557,6 +1557,50 @@ fn secret_row_removed_out_of_band_is_rejected_not_not_found() {
     assert_eq!(
         vault.list_properties_of_secrets().unwrap_err().code(),
         "crypto"
+    );
+}
+
+#[test]
+fn a_tampered_row_refuses_the_page_that_holds_it_and_no_other() {
+    let fx = Fixture::new();
+    let vault = tampered(
+        &fx,
+        |v| {
+            for name in ["a", "b", "c", "d", "e"] {
+                set_with(v, name, CANARY, SetSecretOptions::default());
+            }
+        },
+        "PRAGMA foreign_keys = ON; DELETE FROM secrets WHERE name = 'd';",
+    );
+    // The chain still records `d`, so every window that includes `d` is
+    // refused, and no other window is.
+    let first = vault
+        .list_properties_of_secrets_page(ListOptions::first(2))
+        .unwrap();
+    let names: Vec<&str> = first.items.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["a", "b"]);
+    let second = vault.list_properties_of_secrets_page(ListOptions {
+        max_results: Some(2),
+        continuation: first.continuation.clone(),
+    });
+    assert_eq!(second.unwrap_err().code(), "crypto");
+    let after = vault
+        .list_properties_of_secrets_page(ListOptions {
+            max_results: Some(2),
+            continuation: Some(ContinuationToken::new("d")),
+        })
+        .unwrap();
+    let names: Vec<&str> = after.items.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["e"]);
+    assert_eq!(after.continuation, None);
+    assert_eq!(
+        vault.list_properties_of_secrets().unwrap_err().code(),
+        "crypto"
+    );
+    assert_eq!(
+        vault.list_deleted_secrets().unwrap_err().code(),
+        "crypto",
+        "a deleted listing judges the same rows"
     );
 }
 

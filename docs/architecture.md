@@ -109,11 +109,13 @@ pub trait SecretClient {
     fn get_secret(&self, name: &str, version: Option<&str>) -> Result<Secret>;
     fn get_secret_properties(&self, name: &str, version: Option<&str>) -> Result<SecretProperties>;
     fn list_properties_of_secrets(&self) -> Result<Vec<SecretProperties>>;
+    fn list_properties_of_secrets_page(&self, options: ListOptions) -> Result<Page<SecretProperties>>; // provided
     fn list_properties_of_secret_versions(&self, name: &str) -> Result<Vec<SecretProperties>>;
     fn update_secret_properties(&self, name: &str, version: Option<&str>, update: UpdateSecretProperties) -> Result<SecretProperties>;
     fn delete_secret(&self, name: &str) -> Result<DeletedSecret>;
     fn get_deleted_secret(&self, name: &str) -> Result<DeletedSecret>;
     fn list_deleted_secrets(&self) -> Result<Vec<DeletedSecret>>;
+    fn list_deleted_secrets_page(&self, options: ListOptions) -> Result<Page<DeletedSecret>>; // provided
     fn recover_deleted_secret(&self, name: &str) -> Result<SecretProperties>;
     fn purge_deleted_secret(&self, name: &str) -> Result<()>;
     fn audit_events(&self, query: AuditQuery) -> Result<Vec<AuditEvent>>;
@@ -129,7 +131,8 @@ Semantics every implementation must honour:
 | `get_secret(name, None)` | Returns the **newest accessible** version: enabled and inside its time window. If none is accessible, the error explains why the newest was rejected. |
 | `get_secret(name, Some(v))` | Exactly that version, or a policy error (`disabled`, `not_yet_valid`, `expired`). |
 | `get_secret_properties` | Metadata only, policy not applied — disabled/expired versions can be inspected. |
-| `list_*` | Metadata only. |
+| `list_*` | Metadata only, in name order. |
+| `list_*_page` | A window of the same order: up to `max_results` items whose names sort after the continuation token, and a token of their own, the name of the last item, while names remain after it (`None` on the last page). A token is a name, so a secret created or removed between pages shows up or not by where it sorts, and nothing is returned twice. The names after a token may all belong to the other listing (deleted versus live), so the final page can hold fewer items than `max_results`, even none: page until the token is `None`. `max_results: Some(0)` or a token that is not a secret name is `invalid_argument`. The defaults cut the page out of the full listing; the SQLite backend reads only the window. |
 | `update_secret_properties` | Metadata only, never the value, never a new version. |
 | `delete_secret` | Soft-deletes **all versions** in a recoverable vault; immediate in a purgeable vault. |
 | `recover_deleted_secret` | Restores all versions. |

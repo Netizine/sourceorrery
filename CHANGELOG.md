@@ -8,6 +8,12 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* Paged listings: `SecretClient::list_properties_of_secrets_page` and
+  `list_deleted_secrets_page` take `ListOptions` (`max_results`, a
+  `ContinuationToken`) and return a `Page` whose token is the last name
+  returned, so a listing can be read in name windows without duplicates or
+  skips while the vault changes. `secret list` gains `--limit N` and
+  `--after NAME`; with either, `-o json` prints `{"items", "continuation"}`.
 * The CLI installs from a Homebrew tap (`brew install
   Netizine/sourceorrery/sourceorrery`, macOS and Linux), a Scoop bucket
   (`Netizine/scoop-sourceorrery`) and WinGet (`Netizine.SourceOrrery`).
@@ -18,6 +24,12 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+* Listing a vault no longer costs one audit-chain scan and two queries per
+  secret: the SQLite backend reads the checkpoints of every secret in one
+  statement and the names, `secrets` rows and version rows of the listing
+  window in three more, verifying each row exactly as before (a row the
+  chain records but the table lacks, or whose tag is not the newest
+  checkpoint, still refuses the listing).
 * Every third-party GitHub Action in the workflows is pinned to the commit
   of its release, with the version as a comment, and Dependabot updates
   the pins and the Rust, npm, Python, NuGet and Maven dependencies weekly

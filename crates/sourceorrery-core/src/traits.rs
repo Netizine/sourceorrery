@@ -2,6 +2,7 @@
 
 use crate::audit::{AuditEvent, AuditQuery};
 use crate::error::{Result, SecretError};
+use crate::listing::{ListOptions, Page};
 use crate::secret::{
     DeletedSecret, Secret, SecretBytes, SecretProperties, SecretReference, SetSecretOptions,
     UpdateSecretProperties,
@@ -17,7 +18,16 @@ use crate::secret::{
 /// * `get_secret` without a version returns the **newest accessible**
 ///   version (enabled, inside its time window). With a version it returns
 ///   exactly that version or a policy error.
-/// * `list_*` methods return **metadata only**.
+/// * `list_*` methods return **metadata only**, ordered by name. The
+///   `_page` variants return a window of that order: up to `max_results`
+///   items whose names sort after the continuation token, and a token of
+///   their own, the name of the last item, while names remain after it.
+///   Because the token marks a position in the name order and some of the
+///   names after it may belong to the other listing (deleted secrets in a
+///   live listing and the reverse), the final page can hold fewer items
+///   than `max_results`, even none; a caller pages until the token is
+///   `None`, not until a page is empty (see [`Page`]). Each page is one
+///   listing operation in the audit log.
 /// * `update_secret_properties` changes metadata, never the value.
 /// * `delete_secret` soft-deletes **all versions** when the vault is
 ///   recoverable; `recover_deleted_secret` restores them; `purge_deleted_secret`
@@ -51,8 +61,19 @@ pub trait SecretClient {
     /// and expired versions can be inspected without exposing a value.
     fn get_secret_properties(&self, name: &str, version: Option<&str>) -> Result<SecretProperties>;
 
-    /// Metadata of the newest version of every live secret.
+    /// Metadata of the newest version of every live secret, by name.
     fn list_properties_of_secrets(&self) -> Result<Vec<SecretProperties>>;
+
+    /// One page of [`Self::list_properties_of_secrets`].
+    ///
+    /// The default cuts the page out of the complete listing; a backend
+    /// overrides it to read only the names in the window.
+    fn list_properties_of_secrets_page(
+        &self,
+        options: ListOptions,
+    ) -> Result<Page<SecretProperties>> {
+        Page::from_sorted(self.list_properties_of_secrets()?, &options, |p| &p.name)
+    }
 
     /// Metadata of every version of `name`, newest first.
     fn list_properties_of_secret_versions(&self, name: &str) -> Result<Vec<SecretProperties>>;
@@ -74,8 +95,16 @@ pub trait SecretClient {
     /// Inspect a soft-deleted secret.
     fn get_deleted_secret(&self, name: &str) -> Result<DeletedSecret>;
 
-    /// All soft-deleted secrets.
+    /// All soft-deleted secrets, by name.
     fn list_deleted_secrets(&self) -> Result<Vec<DeletedSecret>>;
+
+    /// One page of [`Self::list_deleted_secrets`]; see
+    /// [`Self::list_properties_of_secrets_page`].
+    fn list_deleted_secrets_page(&self, options: ListOptions) -> Result<Page<DeletedSecret>> {
+        Page::from_sorted(self.list_deleted_secrets()?, &options, |d| {
+            &d.properties.name
+        })
+    }
 
     /// Undo a soft delete.
     fn recover_deleted_secret(&self, name: &str) -> Result<SecretProperties>;

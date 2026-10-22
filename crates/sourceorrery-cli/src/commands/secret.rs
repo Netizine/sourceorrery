@@ -1,7 +1,10 @@
 //! `sourceorrery secret ...`
 
 use anyhow::anyhow;
-use sourceorrery_core::{SecretClient, SetSecretOptions, UpdateSecretProperties, timestamp};
+use sourceorrery_core::{
+    ContinuationToken, ListOptions, SecretClient, SetSecretOptions, UpdateSecretProperties,
+    timestamp,
+};
 
 use crate::cli::{
     SecretCommand, SecretGetArgs, SecretListArgs, SecretNameArgs, SecretPurgeArgs, SecretSetArgs,
@@ -90,53 +93,95 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 fn list(ctx: &Ctx, args: &SecretListArgs) -> anyhow::Result<()> {
     let vault = ctx.open_default()?;
+    // Without --limit or --after the whole listing is one call and, in JSON,
+    // one array, as before; with either, one page and its continuation.
+    let paged = args.limit.is_some() || args.after.is_some();
+    let options = ListOptions {
+        max_results: args.limit,
+        continuation: args.after.clone().map(ContinuationToken::new),
+    };
     if args.deleted {
-        let deleted = vault.list_deleted_secrets()?;
+        let page = vault.list_deleted_secrets_page(options)?;
         if ctx.json() {
-            return output::json(&deleted);
+            return if paged {
+                output::json(&page)
+            } else {
+                output::json(&page.items)
+            };
         }
-        if deleted.is_empty() {
-            eprintln!("no deleted secrets in vault '{}'", vault.vault_name());
+        if page.items.is_empty() && page.continuation.is_none() {
+            if paged {
+                eprintln!("no more deleted secrets in vault '{}'", vault.vault_name());
+            } else {
+                eprintln!("no deleted secrets in vault '{}'", vault.vault_name());
+            }
             return Ok(());
         }
-        let mut table = Table::new(["NAME", "DELETED", "PURGE AFTER", "VERSION"]);
-        for d in deleted {
-            table.row([
-                d.properties.name.clone(),
-                output::fmt_time(d.deleted_on),
-                output::fmt_opt_time(d.scheduled_purge_on),
-                d.properties.version.clone(),
-            ]);
+        if !page.items.is_empty() {
+            let mut table = Table::new(["NAME", "DELETED", "PURGE AFTER", "VERSION"]);
+            for d in &page.items {
+                table.row([
+                    d.properties.name.clone(),
+                    output::fmt_time(d.deleted_on),
+                    output::fmt_opt_time(d.scheduled_purge_on),
+                    d.properties.version.clone(),
+                ]);
+            }
+            table.print()?;
         }
-        return table.print();
-    }
-
-    let secrets = vault.list_properties_of_secrets()?;
-    if ctx.json() {
-        return output::json(&secrets);
-    }
-    if secrets.is_empty() {
-        eprintln!(
-            "no secrets in vault '{}'\nadd one with: sourceorrery secret set <name> --vault {}",
-            vault.vault_name(),
-            vault.vault_name()
-        );
+        continuation_hint(page.continuation.as_ref(), args.limit, "--deleted ");
         return Ok(());
     }
-    let now = timestamp::now();
-    let mut table = Table::new(["NAME", "STATUS", "VERSION", "UPDATED", "EXPIRES"]);
-    for p in secrets {
-        table.row([
-            p.name.clone(),
-            output::status(&p, now).to_owned(),
-            p.version.clone(),
-            output::fmt_time(p.updated_on),
-            output::fmt_opt_time(p.expires_on),
-        ]);
+
+    let page = vault.list_properties_of_secrets_page(options)?;
+    if ctx.json() {
+        return if paged {
+            output::json(&page)
+        } else {
+            output::json(&page.items)
+        };
     }
-    table.print()
+    if page.items.is_empty() && page.continuation.is_none() {
+        if paged {
+            eprintln!("no more secrets in vault '{}'", vault.vault_name());
+        } else {
+            eprintln!(
+                "no secrets in vault '{}'\nadd one with: sourceorrery secret set <name> --vault {}",
+                vault.vault_name(),
+                vault.vault_name()
+            );
+        }
+        return Ok(());
+    }
+    if !page.items.is_empty() {
+        let now = timestamp::now();
+        let mut table = Table::new(["NAME", "STATUS", "VERSION", "UPDATED", "EXPIRES"]);
+        for p in &page.items {
+            table.row([
+                p.name.clone(),
+                output::status(p, now).to_owned(),
+                p.version.clone(),
+                output::fmt_time(p.updated_on),
+                output::fmt_opt_time(p.expires_on),
+            ]);
+        }
+        table.print()?;
+    }
+    continuation_hint(page.continuation.as_ref(), args.limit, "");
+    Ok(())
 }
 
+/// After a page that is not the last, say how to get the next one. (A page
+/// can be empty and still have a token: the names after it may all belong
+/// to the other listing.)
+fn continuation_hint(token: Option<&ContinuationToken>, limit: Option<usize>, flags: &str) {
+    if let Some(token) = token {
+        let limit = limit.map(|n| format!("--limit {n} ")).unwrap_or_default();
+        output::note(&format!(
+            "more secrets follow; continue with: sourceorrery secret list {flags}{limit}--after {token}"
+        ));
+    }
+}
 fn versions(ctx: &Ctx, args: &SecretNameArgs) -> anyhow::Result<()> {
     let vault = ctx.open_default()?;
     let versions = vault.list_properties_of_secret_versions(&args.name)?;

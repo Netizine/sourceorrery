@@ -263,6 +263,12 @@ pub struct SecretListArgs {
     /// List soft-deleted secrets instead of live ones.
     #[arg(long)]
     pub deleted: bool,
+    /// Show at most N secrets, then how to continue (names are listed in order).
+    #[arg(long, value_name = "N")]
+    pub limit: Option<usize>,
+    /// Continue after this name, as printed by the previous page.
+    #[arg(long, value_name = "NAME")]
+    pub after: Option<String>,
 }
 
 #[derive(Debug, Args)]

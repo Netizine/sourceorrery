@@ -67,7 +67,7 @@ limit. Failed attempts are audited.
 |---------|-------------|
 | `secret set NAME [--stdin \| --from-file FILE] [--confirm] [--allow-empty] [--keep-trailing-newline] [--content-type T] [--tag K=V]... [--not-before T] [--expires T] [--disabled]` | Store a **new version**. Value source: `--from-file`, else stdin when piped (`--stdin` to force), else a hidden prompt. One trailing newline from stdin is stripped. There is no `--value` option. |
 | `secret get NAME [--version ID] [--reveal] [--raw]` | Metadata (default). `--reveal` prints the value + newline; `--raw` omits the newline. `-o json --reveal` adds `value` (or `value_hex` for non-UTF-8). Without `--version`, the newest *accessible* version is used. |
-| `secret list [--deleted]` | Live secrets (newest version each), or soft-deleted ones. Metadata only. |
+| `secret list [--deleted] [--limit N] [--after NAME]` | Live secrets (newest version each), or soft-deleted ones, in name order. Metadata only. `--limit N` shows one page of up to N and, while names follow, the `--after NAME` that continues it (the last page can be empty when the names left were deleted ones, or live ones under `--deleted`); `-o json` then prints `{"items": [...], "continuation": "NAME"}` instead of the plain array. Each page is one `secret_list` audit event. |
 | `secret versions NAME` | Every version, newest first, with status. |
 | `secret update NAME [--version ID] [--enable\|--disable] [--content-type T\|--clear-content-type] [--tag K=V...\|--clear-tags] [--not-before T\|--clear-not-before] [--expires T\|--clear-expires]` | Change metadata of one version. Never the value. |
 | `secret delete NAME` | Soft-delete all versions (recoverable until retention ends). Immediate in a purgeable vault. |

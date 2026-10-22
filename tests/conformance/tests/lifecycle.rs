@@ -8,11 +8,12 @@ use std::collections::BTreeMap;
 
 use sourceorrery_conformance::{FIXTURE_PASSPHRASE, Fixture};
 use sourceorrery_core::{
-    AuditOperation, AuditOutcome, AuditQuery, RecoveryLevel, SecretBytes, SecretClient,
-    SecretReference, SetSecretOptions, UpdateSecretProperties, timestamp,
+    AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ListOptions, RecoveryLevel,
+    SecretBytes, SecretClient, SecretReference, SetSecretOptions, UpdateSecretProperties,
+    timestamp,
 };
 use sourceorrery_crypto::Argon2Params;
-use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, StaticPassphrase};
+use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase};
 use time::Duration;
 
 fn set(vault: &impl SecretClient, name: &str, value: &str) -> sourceorrery_core::SecretProperties {
@@ -215,6 +216,212 @@ fn list_returns_metadata_for_live_secrets_only() {
     for value in ["\"1\"", "\"2\"", "\"3\""] {
         assert!(!json.contains(value), "metadata must not carry values");
     }
+}
+
+/// A vault with 23 live secrets created out of name order and five deleted
+/// ones interleaved, with both name lists sorted. Keep the whole struct
+/// alive while the vault is used: `fx` owns the vault's directory.
+struct PagedFixture {
+    _fx: Fixture,
+    vault: SqliteVault,
+    live: Vec<String>,
+    gone: Vec<String>,
+}
+
+fn paged_fixture() -> PagedFixture {
+    let fx = Fixture::new();
+    let vault = fx.create_vault("dev");
+    let mut live: Vec<String> = (0..23)
+        .map(|i| format!("live-{:02}", (i * 7) % 23))
+        .collect();
+    let mut gone = Vec::new();
+    for (i, name) in live.iter().enumerate() {
+        set(&vault, name, "v");
+        if i % 5 == 0 {
+            let name = format!("gone-{i:02}");
+            set(&vault, &name, "x");
+            vault.delete_secret(&name).unwrap();
+            gone.push(name);
+        }
+    }
+    live.sort();
+    gone.sort();
+    PagedFixture {
+        _fx: fx,
+        vault,
+        live,
+        gone,
+    }
+}
+
+/// Walk a paged listing to the end, returning every name in the order seen
+/// and the number of pages it took. Every page with a token is full; the
+/// page after the last token may hold fewer items, even none, when the
+/// names that remained belonged to the other listing.
+fn walk_pages(vault: &impl SecretClient, size: usize, deleted: bool) -> (Vec<String>, usize) {
+    let mut options = ListOptions::first(size);
+    let mut seen = Vec::new();
+    let mut pages = 0;
+    loop {
+        let (names, continuation) = if deleted {
+            let page = vault.list_deleted_secrets_page(options.clone()).unwrap();
+            let names: Vec<String> = page
+                .items
+                .iter()
+                .map(|d| d.properties.name.clone())
+                .collect();
+            (names, page.continuation)
+        } else {
+            let page = vault
+                .list_properties_of_secrets_page(options.clone())
+                .unwrap();
+            let names: Vec<String> = page.items.iter().map(|p| p.name.clone()).collect();
+            (names, page.continuation)
+        };
+        pages += 1;
+        if let Some(token) = continuation {
+            assert_eq!(names.len(), size, "a page with a token is full");
+            assert_eq!(
+                Some(token.as_str()),
+                names.last().map(String::as_str),
+                "the token is the name of the page's last item"
+            );
+            seen.extend(names);
+            options.continuation = Some(token);
+        } else {
+            assert!(
+                names.len() <= size,
+                "{} items for a limit of {size}",
+                names.len()
+            );
+            seen.extend(names);
+            break;
+        }
+    }
+    (seen, pages)
+}
+
+#[test]
+fn listings_are_paged_by_name_without_gaps_or_repeats() {
+    let fixture = paged_fixture();
+    let (vault, live, gone) = (&fixture.vault, &fixture.live, &fixture.gone);
+
+    let full: Vec<String> = vault
+        .list_properties_of_secrets()
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    assert_eq!(&full, live, "the full listing is in name order");
+
+    for size in [1, 7, 23, 100] {
+        let (seen, pages) = walk_pages(vault, size, false);
+        assert_eq!(&seen, live, "pages of {size}");
+        // Nothing sorts after the last live name, so no extra final page.
+        assert_eq!(pages, live.len().div_ceil(size), "pages of {size}");
+        let (seen, pages) = walk_pages(vault, size, true);
+        assert_eq!(&seen, gone, "deleted pages of {size}");
+        // Live names sort after the last deleted one, so when a page ends
+        // exactly on it one more, empty, final page follows.
+        let full_pages = gone.len().div_ceil(size);
+        assert!(
+            pages == full_pages || pages == full_pages + 1,
+            "deleted pages of {size}: {pages}"
+        );
+    }
+
+    // No limit after a token: everything that sorts after it, in one page.
+    let rest = vault
+        .list_properties_of_secrets_page(ListOptions {
+            max_results: None,
+            continuation: Some(ContinuationToken::new("live-19")),
+        })
+        .unwrap();
+    let names: Vec<&str> = rest.items.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["live-20", "live-21", "live-22"]);
+    assert_eq!(rest.continuation, None);
+
+    // A full page that happens to be the last carries no token.
+    let exact = vault
+        .list_properties_of_secrets_page(ListOptions {
+            max_results: Some(3),
+            continuation: Some(ContinuationToken::new("live-19")),
+        })
+        .unwrap();
+    assert_eq!(exact.items.len(), 3);
+    assert_eq!(exact.continuation, None);
+}
+
+#[test]
+fn pages_follow_the_name_order_through_changes_and_are_audited() {
+    let fixture = paged_fixture();
+    let vault = &fixture.vault;
+
+    // The listing is ordered by name, so a change between pages shows up
+    // only where its name sorts: a new name before the token is not
+    // returned by later pages, a new name after it is.
+    let first = vault
+        .list_properties_of_secrets_page(ListOptions::first(10))
+        .unwrap();
+    let token = first.continuation.clone().unwrap();
+    assert_eq!(token.as_str(), "live-09");
+    set(vault, "live-00-added", "v");
+    set(vault, "zz-added", "v");
+    vault.delete_secret("live-15").unwrap();
+    let mut options = ListOptions::first(10);
+    options.continuation = Some(token);
+    let mut later = Vec::new();
+    loop {
+        let page = vault
+            .list_properties_of_secrets_page(options.clone())
+            .unwrap();
+        later.extend(page.items.into_iter().map(|p| p.name));
+        match page.continuation {
+            Some(token) => options.continuation = Some(token),
+            None => break,
+        }
+    }
+    assert!(!later.contains(&"live-00-added".to_owned()));
+    assert!(!later.contains(&"live-15".to_owned()));
+    assert_eq!(later.last().map(String::as_str), Some("zz-added"));
+    assert_eq!(later.len(), 23 - 10 - 1 + 1);
+
+    // Every page is one `secret_list` event, successes and failures alike,
+    // and a rejected request is recorded before anything is read.
+    let count = |outcome: AuditOutcome| {
+        vault
+            .audit_events(AuditQuery::default())
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.operation == AuditOperation::SecretList && e.outcome == outcome)
+            .count()
+    };
+    let successes = count(AuditOutcome::Success);
+    let failures = count(AuditOutcome::Failure);
+    let (_, pages) = walk_pages(vault, 7, false);
+    assert_eq!(count(AuditOutcome::Success), successes + pages);
+    assert_eq!(
+        vault
+            .list_properties_of_secrets_page(ListOptions::first(0))
+            .unwrap_err()
+            .code(),
+        "invalid_argument"
+    );
+    assert_eq!(
+        vault
+            .list_deleted_secrets_page(ListOptions {
+                max_results: Some(5),
+                continuation: Some(ContinuationToken::new("not a secret name")),
+            })
+            .unwrap_err()
+            .code(),
+        "invalid_argument"
+    );
+    assert_eq!(count(AuditOutcome::Failure), failures + 2);
+
+    let json = serde_json::to_string(&first).unwrap();
+    assert!(json.contains("\"continuation\":\"live-09\""));
+    assert!(!json.contains("\"v\""), "a page must not carry values");
 }
 
 #[test]

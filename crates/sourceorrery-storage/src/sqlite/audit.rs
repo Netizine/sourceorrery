@@ -580,6 +580,35 @@ fn decode_checkpoint(blob: Option<&[u8]>, name: &str, id: i64) -> Result<Option<
     .transpose()
 }
 
+impl SecretCheckpoints {
+    /// True when the newest state checkpoint says the `secrets` row exists.
+    pub(super) fn is_present(&self) -> bool {
+        matches!(self.state, Some(Checkpoint::Present(_)))
+    }
+
+    /// Apply one authenticated checkpoint row, in chain order.
+    fn fold(&mut self, row: &ChainRow, name: &str) -> Result<()> {
+        let id = row.row.0;
+        if let Some(state) = decode_checkpoint(row.state_tag.as_deref(), name, id)? {
+            if state == Checkpoint::Absent {
+                // The secret was removed: whatever versions it had are gone
+                // with it, and a later secret of the same name starts afresh.
+                self.versions.clear();
+            }
+            self.state = Some(state);
+        }
+        if let Some(version) = decode_checkpoint(row.version_tag.as_deref(), name, id)? {
+            let Some(version_id) = row.row.5.clone() else {
+                return Err(SecretError::Crypto(format!(
+                    "audit checkpoint for {name} names no version (event {id})"
+                )));
+            };
+            self.versions.insert(version_id, version);
+        }
+        Ok(())
+    }
+}
+
 /// The chain's current state for `name`. See [`SecretCheckpoints`].
 pub(super) fn secret_checkpoints(
     conn: &Connection,
@@ -589,39 +618,28 @@ pub(super) fn secret_checkpoints(
 ) -> Result<SecretCheckpoints> {
     let mut out = SecretCheckpoints::default();
     for row in read_checkpoints(conn, key, vault_id, name)? {
-        let id = row.row.0;
-        if let Some(state) = decode_checkpoint(row.state_tag.as_deref(), name, id)? {
-            if state == Checkpoint::Absent {
-                // The secret was removed: whatever versions it had are gone
-                // with it, and a later secret of the same name starts afresh.
-                out.versions.clear();
-            }
-            out.state = Some(state);
-        }
-        if let Some(version) = decode_checkpoint(row.version_tag.as_deref(), name, id)? {
-            let Some(version_id) = row.row.5.clone() else {
-                return Err(SecretError::Crypto(format!(
-                    "audit checkpoint for {name} names no version (event {id})"
-                )));
-            };
-            out.versions.insert(version_id, version);
-        }
+        out.fold(&row, name)?;
     }
     Ok(out)
 }
 
-/// Names whose newest keyed state checkpoint says the secret exists, so a
-/// `secrets` row removed out of band is still looked for. Checkpoint rows
-/// are authenticated as in [`secret_checkpoints`].
-pub(super) fn checkpointed_names(
+/// The chain's current state for every secret it records, from one scan of
+/// the checkpoint rows: each row is authenticated once and folded into its
+/// name's [`SecretCheckpoints`] under the rules of [`secret_checkpoints`].
+/// Listings use this so that their cost does not grow with one chain scan
+/// per secret; a name whose newest state checkpoint says the row exists is
+/// in the map even when the `secrets` table no longer has the row, so a
+/// row removed out of band is still looked for and refused.
+pub(super) fn vault_checkpoints(
     conn: &Connection,
     key: &SymmetricKey,
     vault_id: &str,
-) -> Result<Vec<String>> {
+) -> Result<BTreeMap<String, SecretCheckpoints>> {
     let mut stmt = conn
         .prepare(&format!(
             "SELECT {CHAIN_COLUMNS} FROM audit_events
-             WHERE secret_name IS NOT NULL AND keyed = 1 AND state_tag IS NOT NULL
+             WHERE secret_name IS NOT NULL AND keyed = 1
+               AND (state_tag IS NOT NULL OR version_tag IS NOT NULL)
              ORDER BY id"
         ))
         .map_err(db)?;
@@ -630,7 +648,7 @@ pub(super) fn checkpointed_names(
         .map_err(db)?
         .collect::<rusqlite::Result<_>>()
         .map_err(db)?;
-    let mut newest: BTreeMap<String, bool> = BTreeMap::new();
+    let mut out: BTreeMap<String, SecretCheckpoints> = BTreeMap::new();
     for row in rows {
         let name = row.row.4.clone().unwrap_or_default();
         if !row.authentic(key, vault_id) {
@@ -639,13 +657,9 @@ pub(super) fn checkpointed_names(
                 row.row.0
             )));
         }
-        let present = !row.state_tag.as_deref().is_some_and(<[u8]>::is_empty);
-        newest.insert(name, present);
+        out.entry(name.clone()).or_default().fold(&row, &name)?;
     }
-    Ok(newest
-        .into_iter()
-        .filter_map(|(name, present)| present.then_some(name))
-        .collect())
+    Ok(out)
 }
 
 impl SqliteVault {

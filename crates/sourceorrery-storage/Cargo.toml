@@ -48,6 +48,8 @@ zbus-secret-service-keyring-store = { version = "1", optional = true, features =
 
 [dev-dependencies]
 tempfile.workspace = true
+# `trace` lets the listing-cost test count the statements a listing runs.
+rusqlite = { version = "0.40", features = ["bundled", "trace"] }
 
 [lints]
 workspace = true

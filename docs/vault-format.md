@@ -167,6 +167,19 @@ absent must be present, so removing the newest version does not make an
 older value current. Listings visit every name the chain records, not only
 the rows left in the table.
 
+A listing reads every keyed checkpoint row once per page (authenticated
+once, folded per name) and then each window of names in three statements
+whatever it holds: the names in `secrets` after the cursor, and the
+`secrets` and `secret_versions` rows of those names. A page walks windows
+until it has `max_results` items, skipping the names the other listing
+owns (deleted names in a live listing and the reverse), so its token is
+the name of its last item. The token is present while candidate names
+remain; whether any of them is an item is not decided ahead (that would
+verify rows beyond the page), so the page after the last item can be empty.
+Pages cut the set of *names*; a secret's versions are always judged
+together, since which one is newest can only be decided against the
+complete set.
+
 Because the newest checkpoint is what matters, every operation first checks
 that the chain head still names the newest keyed row; a shortened chain is
 not consulted (see *Audit chain*).

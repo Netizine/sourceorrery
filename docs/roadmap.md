@@ -30,7 +30,7 @@ items below are implemented; unchecked items remain planned.
 - [ ] Manual validation of the OS-keyring path on macOS and a Linux desktop
 - [x] Metadata and audit-log integrity (MAC over mutable metadata)
 - [x] Reads load only the value they return (metadata projection for every version query; one ciphertext row per `get`)
-- [ ] Listing cost: `list` and `list-deleted` still verify every version row and every checkpoint row of every secret, one query per secret, because which version is newest can only be judged against the complete set. A bulk checkpoint read and pagination on `list_*` are open; pagination is an API change and goes through core with a conformance test
+- [x] Listing cost: one scan of the checkpoint rows and one statement each over the names, rows and versions of a listing window, and `list_*_page` with a name-based continuation token in core, with conformance tests (`secret list --limit N --after NAME`)
 - [ ] `backup` / `restore` (encrypted export of a vault or a secret)
 - [x] Pre-built CLI archives for six targets on the GitHub release, with `SHA256SUMS`
 - [x] `cargo install --locked sourceorrery-cli --version 0.1.4`

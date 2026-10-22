@@ -125,6 +125,98 @@ impl RawVersion {
     }
 }
 
+/// A `secrets` row as stored, with its tag, before verification.
+pub(super) type StoredSecretRow = (SecretRow, Option<Vec<u8>>);
+
+const SECRET_COLUMNS: &str = "created_on, deleted_on, scheduled_purge_on, recovery_id, tag";
+
+fn stored_secret_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSecretRow> {
+    Ok((
+        SecretRow {
+            created_on: row.get(0)?,
+            deleted_on: row.get(1)?,
+            scheduled_purge_on: row.get(2)?,
+            recovery_id: row.get(3)?,
+        },
+        row.get(4)?,
+    ))
+}
+
+/// The stored `secrets` row for `name`, unverified.
+pub(super) fn query_secret_row(conn: &Connection, name: &str) -> Result<Option<StoredSecretRow>> {
+    conn.query_row(
+        &format!("SELECT {SECRET_COLUMNS} FROM secrets WHERE name = ?1"),
+        params![name],
+        stored_secret_row,
+    )
+    .optional()
+    .map_err(db)
+}
+
+/// Every name in `secrets` that sorts after `after`, in order.
+pub(super) fn query_secret_names(conn: &Connection, after: Option<&str>) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare("SELECT name FROM secrets WHERE ?1 IS NULL OR name > ?1 ORDER BY name")
+        .map_err(db)?;
+    let names = stmt
+        .query_map(params![after], |row| row.get(0))
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)?;
+    Ok(names)
+}
+
+/// The stored `secrets` rows whose names sort after `after` and up to
+/// `through` (inclusive), unverified, by name. `None` leaves that end open.
+pub(super) fn query_secret_rows(
+    conn: &Connection,
+    after: Option<&str>,
+    through: Option<&str>,
+) -> Result<BTreeMap<String, StoredSecretRow>> {
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT name, {SECRET_COLUMNS} FROM secrets
+             WHERE (?1 IS NULL OR name > ?1) AND (?2 IS NULL OR name <= ?2)"
+        ))
+        .map_err(db)?;
+    let rows = stmt
+        .query_map(params![after, through], |row| {
+            let name: String = row.get(0)?;
+            let (secret, tag) = (
+                SecretRow {
+                    created_on: row.get(1)?,
+                    deleted_on: row.get(2)?,
+                    scheduled_purge_on: row.get(3)?,
+                    recovery_id: row.get(4)?,
+                },
+                row.get(5)?,
+            );
+            Ok((name, (secret, tag)))
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)?;
+    Ok(rows)
+}
+
+const VERSION_COLUMNS: &str = "version, seq, content_type, tags_json, enabled,
+                    not_before, expires_on, created_on, updated_on, tag";
+
+fn raw_version(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<RawVersion> {
+    Ok(RawVersion {
+        version: row.get(offset)?,
+        seq: row.get(offset + 1)?,
+        content_type: row.get(offset + 2)?,
+        tags_json: row.get(offset + 3)?,
+        enabled: row.get::<_, i64>(offset + 4)? != 0,
+        not_before: row.get(offset + 5)?,
+        expires_on: row.get(offset + 6)?,
+        created_on: row.get(offset + 7)?,
+        updated_on: row.get(offset + 8)?,
+        tag: row.get(offset + 9)?,
+    })
+}
+
 /// The unverified metadata of every version of `name`, newest first.
 ///
 /// This is the metadata projection only; see [`RawVersion`]. Callers other
@@ -133,31 +225,45 @@ impl RawVersion {
 /// checkpoint rules.
 pub(super) fn query_raw_versions(conn: &Connection, name: &str) -> Result<Vec<RawVersion>> {
     let mut stmt = conn
-        .prepare(
-            "SELECT version, seq, content_type, tags_json, enabled,
-                    not_before, expires_on, created_on, updated_on, tag
-             FROM secret_versions WHERE name = ?1 ORDER BY seq DESC",
-        )
+        .prepare(&format!(
+            "SELECT {VERSION_COLUMNS} FROM secret_versions WHERE name = ?1 ORDER BY seq DESC"
+        ))
         .map_err(db)?;
     let raw = stmt
-        .query_map(params![name], |row| {
-            Ok(RawVersion {
-                version: row.get(0)?,
-                seq: row.get(1)?,
-                content_type: row.get(2)?,
-                tags_json: row.get(3)?,
-                enabled: row.get::<_, i64>(4)? != 0,
-                not_before: row.get(5)?,
-                expires_on: row.get(6)?,
-                created_on: row.get(7)?,
-                updated_on: row.get(8)?,
-                tag: row.get(9)?,
-            })
-        })
+        .query_map(params![name], |row| raw_version(row, 0))
         .map_err(db)?
         .collect::<rusqlite::Result<_>>()
         .map_err(db)?;
     Ok(raw)
+}
+
+/// The unverified version metadata of every secret whose name sorts after
+/// `after` and up to `through` (inclusive), newest first per name. Same
+/// projection as [`query_raw_versions`], one statement for a whole listing
+/// window; the result goes through [`SqliteVault::verify_versions`].
+pub(super) fn query_raw_versions_in(
+    conn: &Connection,
+    after: Option<&str>,
+    through: Option<&str>,
+) -> Result<BTreeMap<String, Vec<RawVersion>>> {
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT name, {VERSION_COLUMNS} FROM secret_versions
+             WHERE (?1 IS NULL OR name > ?1) AND (?2 IS NULL OR name <= ?2)
+             ORDER BY name, seq DESC"
+        ))
+        .map_err(db)?;
+    let mut out: BTreeMap<String, Vec<RawVersion>> = BTreeMap::new();
+    let rows = stmt
+        .query_map(params![after, through], |row| {
+            Ok((row.get::<_, String>(0)?, raw_version(row, 1)?))
+        })
+        .map_err(db)?;
+    for row in rows {
+        let (name, raw) = row.map_err(db)?;
+        out.entry(name).or_default().push(raw);
+    }
+    Ok(out)
 }
 
 /// The stored nonce and ciphertext of exactly one version.
@@ -237,26 +343,20 @@ impl SqliteVault {
         conn: &Connection,
         name: &str,
     ) -> Result<Option<SecretRow>> {
-        let found: Option<(SecretRow, Option<Vec<u8>>)> = conn
-            .query_row(
-                "SELECT created_on, deleted_on, scheduled_purge_on, recovery_id, tag
-                 FROM secrets WHERE name = ?1",
-                params![name],
-                |row| {
-                    Ok((
-                        SecretRow {
-                            created_on: row.get(0)?,
-                            deleted_on: row.get(1)?,
-                            scheduled_purge_on: row.get(2)?,
-                            recovery_id: row.get(3)?,
-                        },
-                        row.get(4)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(db)?;
+        let found = query_secret_row(conn, name)?;
         let checkpoint = self.checkpoints(conn, name)?.state;
+        self.verify_secret_row(name, found, checkpoint)
+    }
+
+    /// The rule behind [`Self::load_secret_row`], applied to a row and the
+    /// newest state checkpoint the chain holds for its name, both already
+    /// read. Listings call it with rows from one statement.
+    pub(super) fn verify_secret_row(
+        &self,
+        name: &str,
+        found: Option<StoredSecretRow>,
+        checkpoint: Option<Checkpoint>,
+    ) -> Result<Option<SecretRow>> {
         match (found, checkpoint) {
             (None, None | Some(Checkpoint::Absent)) => Ok(None),
             (None, Some(Checkpoint::Present(_))) => Err(integrity_error_because(
@@ -321,6 +421,18 @@ impl SqliteVault {
     pub(super) fn load_versions(&self, conn: &Connection, name: &str) -> Result<Vec<VersionRow>> {
         let raw = query_raw_versions(conn, name)?;
         let checkpoints = self.checkpoints(conn, name)?.versions;
+        self.verify_versions(name, raw, &checkpoints)
+    }
+
+    /// The rule behind [`Self::load_versions`], applied to the stored rows
+    /// of `name` and the version checkpoints the chain holds for it, both
+    /// already read.
+    pub(super) fn verify_versions(
+        &self,
+        name: &str,
+        raw: Vec<RawVersion>,
+        checkpoints: &BTreeMap<String, Checkpoint>,
+    ) -> Result<Vec<VersionRow>> {
         for version in checkpoints.keys() {
             if !raw.iter().any(|r| &r.version == version) {
                 return Err(integrity_error_because(
@@ -370,11 +482,23 @@ impl SqliteVault {
         name: &str,
         row: &SecretRow,
     ) -> Result<DeletedSecret> {
+        let properties = self.newest_props(conn, name)?;
+        self.deleted_from_parts(name, row, properties)
+    }
+
+    /// [`Self::deleted_from_row`] with the newest version's properties
+    /// already verified.
+    pub(super) fn deleted_from_parts(
+        &self,
+        name: &str,
+        row: &SecretRow,
+        properties: SecretProperties,
+    ) -> Result<DeletedSecret> {
         let deleted_on = row.deleted_on.ok_or_else(|| SecretError::NotDeleted {
             name: name.to_owned(),
         })?;
         Ok(DeletedSecret {
-            properties: self.newest_props(conn, name)?,
+            properties,
             deleted_on: from_nanos(deleted_on)?,
             scheduled_purge_on: opt_from_nanos(row.scheduled_purge_on)?,
             recovery_id: row
@@ -485,24 +609,5 @@ impl SqliteVault {
         conn.execute("DELETE FROM secrets WHERE name = ?1", params![name])
             .map_err(db)?;
         Ok(())
-    }
-
-    /// Every name the vault may hold: the rows in `secrets` plus the names
-    /// the audit chain records as present, so that a row removed out of
-    /// band is still visited (and refused) by a listing.
-    pub(super) fn candidate_names(&self, conn: &Connection) -> Result<Vec<String>> {
-        let mut names: std::collections::BTreeSet<String> = {
-            let mut stmt = conn.prepare("SELECT name FROM secrets").map_err(db)?;
-            stmt.query_map([], |row| row.get(0))
-                .map_err(db)?
-                .collect::<rusqlite::Result<_>>()
-                .map_err(db)?
-        };
-        names.extend(super::audit::checkpointed_names(
-            conn,
-            &self.metadata_key,
-            &self.meta.id,
-        )?);
-        Ok(names.into_iter().collect())
     }
 }

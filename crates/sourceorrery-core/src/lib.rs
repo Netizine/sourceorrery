@@ -25,6 +25,7 @@
 pub mod audit;
 pub mod error;
 pub mod identity;
+pub mod listing;
 pub mod manifest;
 pub mod policy;
 pub mod secret;
@@ -35,6 +36,7 @@ pub mod vault;
 pub use audit::{AuditEvent, AuditOperation, AuditOutcome, AuditQuery};
 pub use error::{Result, SecretError};
 pub use identity::{Principal, PrincipalKind};
+pub use listing::{ContinuationToken, ListOptions, Page};
 pub use manifest::{MANIFEST_FILE_NAME, Manifest, ProjectSection, SecretRequirement};
 pub use policy::{AccessPolicy, AllowAll, Decision, SoftDeletePolicy};
 pub use secret::{
