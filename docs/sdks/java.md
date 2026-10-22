@@ -2,13 +2,39 @@
 
 ## Install
 
-### From the release
+### From Maven Central
 
-`sourceorrery-0.1.3.jar` on the
-[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
-embeds the native library for Windows, macOS and Linux (x64 and arm64), so
-one jar serves every platform. Install it into your local Maven repository,
-then depend on it as usual:
+```xml
+<dependency>
+  <groupId>ai.sourceorrery</groupId>
+  <artifactId>sourceorrery</artifactId>
+  <version>0.1.3</version>
+</dependency>
+```
+
+```kotlin
+implementation("ai.sourceorrery:sourceorrery:0.1.3")   // Gradle
+```
+
+[`ai.sourceorrery:sourceorrery` on Maven Central](https://central.sonatype.com/artifact/ai.sourceorrery/sourceorrery)
+is one jar that embeds the native library for Windows, macOS and Linux
+(x64 and arm64), so the same dependency serves every platform. Every file
+is signed with the release key; [Supply chain](../supply-chain.md#maven-central)
+shows how to check it.
+
+Requires Java 22 or newer: the binding uses the Foreign Function and
+Memory API (`java.lang.foreign`) over the C ABI, with no JNI code and no
+third-party dependency. The jar extracts the native library on first use;
+set `SOURCEORRERY_NATIVE_DIR` to use a library from elsewhere. Run with
+`--enable-native-access=ALL-UNNAMED` (or grant it to your module) to
+silence the restricted-method warning.
+
+### From the GitHub release
+
+The same jar, `sourceorrery-0.1.3.jar`, is attached to the
+[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3).
+Install it into your local Maven repository, then depend on it with the
+coordinates above (in Gradle, with `mavenLocal()` among the repositories):
 
 <!-- tabs: os -->
 
@@ -35,33 +61,13 @@ mvn install:install-file -Dfile=sourceorrery-0.1.3.jar -DgroupId=ai.sourceorrery
 
 <!-- /tabs -->
 
-```xml
-<dependency>
-  <groupId>ai.sourceorrery</groupId>
-  <artifactId>sourceorrery</artifactId>
-  <version>0.1.3</version>
-</dependency>
-```
-
-```kotlin
-implementation("ai.sourceorrery:sourceorrery:0.1.3")   // Gradle, with mavenLocal() among the repositories
-```
-
 Without a local repository, put the jar on the classpath directly:
 `implementation(files("libs/sourceorrery-0.1.3.jar"))` in Gradle, or
 `--class-path sourceorrery-0.1.3.jar` on the `java` command line.
 
-### From Maven Central
+### From source
 
-The same coordinates resolve from Maven Central; no local install is
-needed then.
-
-Requires Java 22 or newer: the binding uses the Foreign Function and
-Memory API (`java.lang.foreign`) over the C ABI, with no JNI code and no
-third-party dependency. The jar extracts the native library on first use;
-set `SOURCEORRERY_NATIVE_DIR` to use a library from elsewhere. Run with
-`--enable-native-access=ALL-UNNAMED` (or grant it to your module) to
-silence the restricted-method warning.
+See [Building from source](#building-from-source) below.
 
 ## Get a secret
 
@@ -148,11 +154,55 @@ A `SecretReader` may be shared between platform or virtual threads.
 
 ## Building from source
 
+You need Git, Rust 1.88 or newer installed with rustup, and a C compiler
+(on Linux also `pkg-config` and `libdbus-1-dev`);
+[Building from source](../building.md#what-you-need) has the commands for
+each platform. For this SDK, also a JDK, 22 or newer (CI uses Temurin 25),
+and Maven.
+
+Get the code and build the native library the jar calls:
+
 ```bash
+git clone https://github.com/Netizine/sourceorrery
+cd sourceorrery
+git checkout v0.1.3              # or stay on main for the newest changes
 cargo build --release -p sourceorrery-ffi
-export SOURCEORRERY_NATIVE_DIR=$PWD/target/release
-eval "$(bash scripts/ci/fixture-vault.sh)"
-cd bindings/java && mvn test
 ```
 
+Build the jar and install it into your local Maven repository
+(`~/.m2`), where your project's build finds it:
+
+```bash
+cd bindings/java
+mvn install -DskipTests          # ai.sourceorrery:sourceorrery:<version>, jar in target/
+```
+
+The version is the one committed in the repository, not the release's;
+[Get the code](../building.md#get-the-code) shows how to stamp the release
+version first. A jar built this way carries no native library (the release
+workflow embeds one per platform), so tell it where yours is when your
+application runs:
+
+```bash
+export SOURCEORRERY_NATIVE_DIR=/path/to/sourceorrery/target/release
+# PowerShell: $env:SOURCEORRERY_NATIVE_DIR = "C:\path\to\sourceorrery\target\release"
+```
+
+To run the tests, the example and the conformance harness, build the CLI
+too, which creates the test vault, and run the rest in Bash (Git Bash on
+Windows) from the repository root:
+
+```bash
+cargo build --release -p sourceorrery-cli -p sourceorrery-ffi
+eval "$(bash scripts/ci/fixture-vault.sh)"       # a throwaway vault, the variables the tests read, SOURCEORRERY_NATIVE_DIR
+cd bindings/java
+mvn test
+java --enable-native-access=ALL-UNNAMED -cp target/classes examples/GetSecret.java "$SOURCEORRERY_TEST_VAULT" database-password
+cd ../..
+python tests/conformance/sdk/harness.py --runner java
+```
+
+Without the fixture's variables, `mvn test` skips the tests that read a
+vault. What the fixture script creates:
+[The SDK test vault](../building.md#the-sdk-test-vault).
 Source: [`bindings/java`](../../bindings/java/README.md).

@@ -14,7 +14,8 @@ file with an encrypted local vault, an Azure Key Vault–style lifecycle API
 (versions, soft delete, recovery, time windows, audit) and a manifest that
 declares *which* secrets a project needs without ever holding their values.
 
-> **Status: milestone 2 — core, encrypted vault, CLI and read-only SDKs.**
+> **Status: 0.1.3 — core, encrypted vault, CLI with an interactive vault
+> manager, and read-only SDKs (milestones 1 and 2).**
 > Local-first and usable today on Windows, macOS and Linux, from Python,
 > JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP
 > ([docs/sdks](docs/sdks/index.md)). The authenticated local broker and
@@ -97,8 +98,8 @@ See [docs/sdks](docs/sdks/index.md).
 Three different guarantees, kept separate on purpose
 ([threat model](docs/threat-model.md)):
 
-| Guarantee | Milestone 1 |
-|-----------|-------------|
+| Guarantee | Today |
+|-----------|-------|
 | **At-rest protection** — no plaintext secrets on disk, in the repo or in agent context | Yes |
 | **Access control** — which identities may retrieve which secret | Local only: whoever can unlock the vault |
 | **Agent isolation** — an untrusted agent running as *your* user cannot impersonate your application | **No.** Requires the authenticated broker and OS isolation (milestone 3) |
@@ -133,9 +134,9 @@ tests/conformance        the semantics every backend and SDK must pass
 docs/                    architecture, threat model, vault format, SDK guides, roadmap
 ```
 
-The Rust core owns every semantic. Storage backends and (future) language
-bindings never carry their own business logic; they pass the conformance
-suite or they are not SourceOrrery. Read more in
+The Rust core owns every semantic. Storage backends and language bindings
+never carry their own business logic; they pass the conformance suite or
+they are not SourceOrrery. Read more in
 [docs/architecture.md](docs/architecture.md).
 
 ## Install
@@ -143,7 +144,7 @@ suite or they are not SourceOrrery. Read more in
 SourceOrrery 0.1.3 can be installed three ways (step by step in
 [Getting started](https://sourceorrery.ai/getting-started/)):
 
-- **From the package registries.** The CLI: `cargo install sourceorrery-cli`.
+- **From the package registries.** The CLI: `cargo install --locked sourceorrery-cli`.
   The SDKs: `pip install sourceorrery`, `npm install @sourceorreryai/sdk`,
   `cargo add sourceorrery`, `ai.sourceorrery:sourceorrery` on Maven Central,
   `dotnet add package SourceOrrery`,
@@ -155,25 +156,37 @@ SourceOrrery 0.1.3 can be installed three ways (step by step in
   library with its headers, and every SDK package, with `SHA256SUMS`.
 - **From source**, below.
 
+How each package is published (trusted publishing and provenance where
+the registry supports it) and how to check what you installed:
+[docs/supply-chain.md](docs/supply-chain.md).
+
 ## Build from source
 
-Requires Rust 1.88+ and a C compiler (for the bundled SQLite).
+Requires Git, Rust 1.88+ installed with rustup, a C compiler for the
+bundled SQLite (the Visual Studio Build Tools on Windows, the Xcode
+Command Line Tools on macOS, gcc or clang on Linux) and, on Linux,
+`pkg-config` and `libdbus-1-dev` for the Secret Service.
 
 ```bash
-cargo build --release
+git clone https://github.com/Netizine/sourceorrery
+cd sourceorrery
+cargo build --release -p sourceorrery-cli -p sourceorrery-ffi   # the CLI and the C ABI, in target/release
 cargo test --workspace
-./target/release/sourceorrery --help
+cargo install --locked --path crates/sourceorrery-cli           # the CLI into ~/.cargo/bin
 ```
 
-Headless servers without a credential store can build with
-`--no-default-features` on `sourceorrery-storage` and use passphrase
-protectors only.
+Headless servers without a credential store can build the CLI with
+`--no-default-features` and use passphrase protectors only. Every SDK, the
+SDK test vault and the conformance harness:
+[docs/building.md](docs/building.md).
 
 ## Roadmap
 
 1. **Core and local CLI** — shipped.
 2. **Read-only SDKs** for Python, JavaScript/TypeScript, Rust, Java, .NET,
-   Go, C, C++ and PHP, and a release pipeline — this release.
+   Go, C, C++ and PHP, and a release pipeline — shipped. Supply-chain
+   hardening continues: trusted publishing for PyPI and crates.io, signed
+   archives.
 3. Authenticated local broker, capability tokens, agent-aware profiles.
 4. Enterprise: remote providers, workload identity, rotation, RBAC.
 5. Community SDKs via the published C ABI and conformance harness.

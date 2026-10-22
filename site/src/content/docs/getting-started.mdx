@@ -5,11 +5,11 @@ description: Install SourceOrrery 0.1.3 from the package registries, the GitHub 
 
 import { Aside, Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 
-SourceOrrery is at **milestone 2**: an encrypted local vault with an Azure Key
-Vault–style lifecycle, a CLI, and read-only [SDKs](/sdks/) for Python,
-JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP. It works today on
-Windows, macOS and Linux. It has not been audited; do not treat it as a
-production secret store yet.
+SourceOrrery 0.1.3 is an encrypted local vault with an Azure Key
+Vault–style lifecycle, a CLI with an interactive vault manager, and
+read-only [SDKs](/sdks/) for Python, JavaScript/TypeScript, Rust, Java,
+.NET, Go, C, C++ and PHP. It works today on Windows, macOS and Linux. It
+has not been audited; do not treat it as a production secret store yet.
 
 ## Install
 
@@ -20,11 +20,17 @@ on the GitHub release, or a build from source.
 
 The CLI is on crates.io, and Cargo builds and installs it in one step. You
 need Rust 1.88 or newer and a C compiler for the bundled SQLite (on Linux
-also `libdbus-1-dev` and `pkg-config` for the Secret Service):
+also `libdbus-1-dev` and `pkg-config` for the Secret Service);
+[Building from source](/guides/building-from-source/#what-you-need) has
+the commands to install them on each platform.
 
 ```bash
-cargo install sourceorrery-cli
+cargo install --locked sourceorrery-cli
 ```
+
+`--locked` builds with the exact dependency versions the release was
+tested with, from the lock file inside the crate; without it, Cargo picks
+the newest compatible version of every dependency at install time.
 
 The SDKs are published as packages for each language:
 
@@ -39,7 +45,9 @@ The SDKs are published as packages for each language:
 | PHP | [`sourceorrery/sourceorrery`](https://packagist.org/packages/sourceorrery/sourceorrery) on Packagist | `composer require sourceorrery/sourceorrery` |
 
 Go, C, C++ and PHP load the C ABI library from the release (below); each
-[SDK page](/sdks/) has the steps.
+[SDK page](/sdks/) has the steps. How every package is published, and how
+to check that what you installed is what was released, is in
+[Supply chain](/security/supply-chain/).
 
 ### From the GitHub release
 
@@ -125,19 +133,23 @@ Shell completions are available with
 
 ### From source
 
-With the same requirements as `cargo install` above (Rust 1.88 or newer, a
-C compiler, and on Linux `libdbus-1-dev` and `pkg-config`), build the
-release tag from the repository:
+With the same requirements as `cargo install` above (Git, Rust 1.88 or
+newer, a C compiler, and on Linux `libdbus-1-dev` and `pkg-config`), build
+the release tag from the repository and install the CLI into
+`~/.cargo/bin`, which rustup put on your `PATH`:
 
 ```bash
-git clone --branch v0.1.3 https://github.com/Netizine/sourceorrery
+git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-cargo build --release
-./target/release/sourceorrery --help
+git checkout v0.1.3
+cargo install --locked --path crates/sourceorrery-cli
+sourceorrery --help
 ```
 
-Put `target/release/sourceorrery` (`sourceorrery.exe` on Windows) on your
-`PATH`.
+Or build without installing: `cargo build --release -p sourceorrery-cli`
+leaves the binary at `target/release/sourceorrery` (`sourceorrery.exe` on
+Windows). [Building from source](/guides/building-from-source/) covers the
+C ABI, every SDK and the test suites.
 
 <Aside>
 Headless servers without a credential store can build without OS-keyring
@@ -262,6 +274,9 @@ guarantees separate.
 
 ## Where to next
 
+- `sourceorrery ui` opens the interactive vault manager: dashboards,
+  secrets and their versions, deleted secrets and the audit log, all
+  without ever showing a value ([CLI reference](/reference/cli/#ui)).
 - [SDKs](/sdks/) to read the same secrets from Python, JavaScript/TypeScript,
   Rust, Java, .NET, Go, C, C++ or PHP.
 - [CLI reference](/reference/cli/) for every command and option, including

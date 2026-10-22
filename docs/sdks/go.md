@@ -2,18 +2,28 @@
 
 ## Install
 
+Two parts: the Go module, from the module proxy, and the native library it
+links, from the release (or [built from source](#building-from-source)).
+
+### The module
+
 ```bash
 go get github.com/netizine/sourceorrery/bindings/go@v0.1.3
 ```
 
-The module is published on pkg.go.dev from the `bindings/go/v0.1.3` tag. It
-is a cgo binding over the C ABI: the header is vendored in the module, and
-the shared library comes from the `sourceorrery-ffi-0.1.3-<target>` archive
-on the
+[The module on pkg.go.dev](https://pkg.go.dev/github.com/netizine/sourceorrery/bindings/go)
+is served by the Go module proxy from the `bindings/go/v0.1.3` tag, and
+`go` checks it against the Go checksum database. It is a cgo binding over
+the C ABI with the header vendored in the module, so a C toolchain is
+required: gcc or clang, or MinGW-w64 gcc on Windows.
+
+### The native library, from the release
+
+The shared library comes from the `sourceorrery-ffi-0.1.3-<target>`
+archive on the
 [v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3).
-A C toolchain is required (gcc or clang; MinGW-w64 on Windows). Download the
-archive for your platform, unpack it, and tell the linker and the loader
-where it is:
+Download the archive for your platform, unpack it, and tell the linker and
+the loader where it is:
 
 <!-- tabs: os -->
 
@@ -162,10 +172,48 @@ its OS thread while it reads the C ABI's per-thread error state.
 
 ## Building from source
 
+You need Git, Rust 1.88 or newer installed with rustup, and a C compiler
+(on Linux also `pkg-config` and `libdbus-1-dev`);
+[Building from source](../building.md#what-you-need) has the commands for
+each platform. For this SDK, also Go 1.24 or newer, with cgo's C compiler
+on `PATH` (MinGW-w64 gcc on Windows).
+
+The Go code needs no build of its own; what you build is the native
+library it links:
+
 ```bash
-cargo build --release -p sourceorrery-ffi -p sourceorrery-cli
-eval "$(bash scripts/ci/fixture-vault.sh)"
-cd bindings/go && CGO_LDFLAGS="-L$SOURCEORRERY_NATIVE_DIR" LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" go test ./...
+git clone https://github.com/Netizine/sourceorrery
+cd sourceorrery
+git checkout v0.1.3              # or stay on main for the newest changes
+cargo build --release -p sourceorrery-ffi
 ```
 
+The library lands in `target/release`; use that directory wherever the
+install steps above use the unpacked archive (`CGO_LDFLAGS`, and the
+loader path at run time). To build your module against this checkout's Go
+code instead of the published module, point `go.mod` at it:
+
+```bash
+go mod edit -replace github.com/netizine/sourceorrery/bindings/go=/path/to/sourceorrery/bindings/go
+```
+
+To run the tests, the example and the conformance harness, build the CLI
+too, which creates the test vault, and run the rest in Bash (Git Bash on
+Windows) from the repository root:
+
+```bash
+cargo build --release -p sourceorrery-cli -p sourceorrery-ffi
+eval "$(bash scripts/ci/fixture-vault.sh)"       # a throwaway vault, the variables the tests read, SOURCEORRERY_NATIVE_DIR
+cd bindings/go
+export CGO_LDFLAGS="-L$SOURCEORRERY_NATIVE_DIR"
+export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" DYLD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR"
+# Git Bash on Windows: the DLL must be on PATH instead
+#   export PATH="$(cygpath -u "$SOURCEORRERY_NATIVE_DIR"):$PATH"
+go test ./...
+go run ./examples/get-secret "$SOURCEORRERY_TEST_VAULT" database-password
+go build -o conformance-go ./conformance          # conformance-go.exe on Windows
+python ../../tests/conformance/sdk/harness.py --runner go
+```
+
+What the fixture script creates: [The SDK test vault](../building.md#the-sdk-test-vault).
 Source: [`bindings/go`](../../bindings/go/README.md).

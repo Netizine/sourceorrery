@@ -2,6 +2,8 @@
 # Edit the sources, not these files.
 /architecture.md
 /security/threat-model.md
+/security/supply-chain.md
+/guides/building-from-source.mdx
 /reference/cli.md
 /reference/vault-format.md
 /roadmap.md

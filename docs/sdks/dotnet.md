@@ -2,14 +2,35 @@
 
 ## Install
 
-### From the release
+### From NuGet
 
-`SourceOrrery.0.1.3.nupkg` on the
-[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
+```bash
+dotnet add package SourceOrrery
+```
+
+or, in the project file:
+
+```xml
+<PackageReference Include="SourceOrrery" Version="0.1.3" />
+```
+
+[`SourceOrrery` on NuGet](https://www.nuget.org/packages/SourceOrrery)
 carries the native library for `win-x64`, `win-arm64`, `osx-x64`,
-`osx-arm64`, `linux-x64` and `linux-arm64` under `runtimes/<rid>/native`, so
-one package serves every platform. Put it in a folder, register that folder
-as a package source in the repository's `nuget.config`, and add the package:
+`osx-arm64`, `linux-x64` and `linux-arm64` under `runtimes/<rid>/native`,
+so one package serves every platform. It is published by trusted
+publishing and carries nuget.org's repository signature
+([Supply chain](../supply-chain.md#nuget)).
+
+Targets .NET 8 and later. P/Invoke is source-generated with
+`LibraryImport`, so the package is trimming- and AOT-compatible. Set
+`SOURCEORRERY_NATIVE_DIR` to use a native library from elsewhere.
+
+### From the GitHub release
+
+The same package, `SourceOrrery.0.1.3.nupkg`, is attached to the
+[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3).
+Put it in a folder, register that folder as a package source in the
+repository's `nuget.config`, and add the package:
 
 <!-- tabs: os -->
 
@@ -45,17 +66,9 @@ dotnet add package SourceOrrery --version 0.1.3
 
 <!-- /tabs -->
 
-### From NuGet
+### From source
 
-```bash
-dotnet add package SourceOrrery
-```
-
-Every release is on NuGet.
-
-Targets .NET 8 and later. P/Invoke is source-generated with
-`LibraryImport`, so the package is trimming- and AOT-compatible. Set
-`SOURCEORRERY_NATIVE_DIR` to use a native library from elsewhere.
+See [Building from source](#building-from-source) below.
 
 ## Get a secret
 
@@ -140,11 +153,46 @@ A `SecretReader` may be shared between threads.
 
 ## Building from source
 
+You need Git, Rust 1.88 or newer installed with rustup, and a C compiler
+(on Linux also `pkg-config` and `libdbus-1-dev`);
+[Building from source](../building.md#what-you-need) has the commands for
+each platform. For this SDK, also the .NET SDK: 8 or newer builds the
+library, and the tests and the example need .NET 10, which they target.
+
+Get the code, build the native library, and pack the library into a
+NuGet package:
+
 ```bash
+git clone https://github.com/Netizine/sourceorrery
+cd sourceorrery
+git checkout v0.1.3              # or stay on main for the newest changes
 cargo build --release -p sourceorrery-ffi
-export SOURCEORRERY_NATIVE_DIR=$PWD/target/release
-eval "$(bash scripts/ci/fixture-vault.sh)"
-dotnet test bindings/dotnet/SourceOrrery.sln
+dotnet pack bindings/dotnet/SourceOrrery/SourceOrrery.csproj -c Release -o dist/nuget
 ```
 
+`dist/nuget/SourceOrrery.<version>.nupkg` installs like the release's
+package (register `dist/nuget` as a package source, as above). The version
+is the one committed in the repository, not the release's;
+[Get the code](../building.md#get-the-code) shows how to stamp the release
+version first. A package built this way carries no native library (the
+release workflow adds one per platform under `runtimes/`), so give your
+application the one you built: copy `sourceorrery_ffi.dll`,
+`libsourceorrery_ffi.so` or `libsourceorrery_ffi.dylib` from
+`target/release` next to it, or name that directory in
+`SOURCEORRERY_NATIVE_DIR`.
+
+To run the tests, the example and the conformance harness, build the CLI
+too, which creates the test vault, and run the rest in Bash (Git Bash on
+Windows) from the repository root:
+
+```bash
+cargo build --release -p sourceorrery-cli -p sourceorrery-ffi
+eval "$(bash scripts/ci/fixture-vault.sh)"       # a throwaway vault, the variables the tests read, SOURCEORRERY_NATIVE_DIR
+dotnet test bindings/dotnet/SourceOrrery.sln
+dotnet run --project bindings/dotnet/examples/GetSecret -- "$SOURCEORRERY_TEST_VAULT" database-password
+dotnet build bindings/dotnet/conformance -c Release
+python tests/conformance/sdk/harness.py --runner dotnet
+```
+
+What the fixture script creates: [The SDK test vault](../building.md#the-sdk-test-vault).
 Source: [`bindings/dotnet`](../../bindings/dotnet/README.md).

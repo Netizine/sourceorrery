@@ -39,7 +39,17 @@ const PAGES = {
 	'docs/threat-model.md': {
 		dest: 'security/threat-model.md',
 		description:
-			'The three guarantees SourceOrrery keeps separate — at-rest protection, access control and agent isolation — with the adversaries, controls and known gaps of milestone 1.',
+			'The three guarantees SourceOrrery keeps separate — at-rest protection, access control and agent isolation — with the adversaries, controls and known gaps of the CLI, the vault and the read-only SDKs.',
+	},
+	'docs/supply-chain.md': {
+		dest: 'security/supply-chain.md',
+		description:
+			'How SourceOrrery is built and published: one release workflow, locked dependencies, trusted publishing and provenance, how to check what you installed, and what is not done yet.',
+	},
+	'docs/building.md': {
+		dest: 'guides/building-from-source.md',
+		description:
+			'Build SourceOrrery from source: the tools to install on Windows, macOS and Linux, cloning, the CLI and the C ABI, the SDK test vault, each SDK and the conformance harness.',
 	},
 	'docs/cli.md': {
 		dest: 'reference/cli.md',
@@ -49,12 +59,12 @@ const PAGES = {
 	'docs/vault-format.md': {
 		dest: 'reference/vault-format.md',
 		description:
-			'Schema version 1 of the encrypted SQLite vault file: tables, key hierarchy, what is and is not encrypted, and compatibility rules.',
+			'Schema version 3 of the encrypted SQLite vault file: tables, key hierarchy, integrity tags, the audit chain, what is and is not encrypted, and compatibility rules.',
 	},
 	'docs/roadmap.md': {
 		dest: 'roadmap.md',
 		description:
-			'Milestones from the local CLI and read-only SDKs shipped in 0.1 to the authenticated local broker, enterprise providers and community SDKs.',
+			'Where SourceOrrery stands and where it is going: the local CLI and read-only SDKs shipped in 0.1.3, supply-chain work, then the authenticated local broker, enterprise providers and community SDKs.',
 	},
 	'docs/release.md': {
 		dest: 'reference/release.md',
@@ -69,47 +79,47 @@ const PAGES = {
 	'docs/sdks/python.md': {
 		dest: 'sdks/python.md',
 		description:
-			'The read-only Python SDK: install the wheel from PyPI or the release, open a vault, get a secret, handle typed errors with hints, load a project.',
+			'The read-only Python SDK: install it from PyPI, the release or source, open a vault, get a secret, handle typed errors with hints, load a project.',
 	},
 	'docs/sdks/javascript.md': {
 		dest: 'sdks/javascript.md',
 		description:
-			'The read-only JavaScript and TypeScript SDK (@sourceorreryai/sdk): install it, open a vault, get a secret, handle typed errors with hints, load a project.',
+			'The read-only JavaScript and TypeScript SDK (@sourceorreryai/sdk): install it from npm, the release or source, open a vault, get a secret, handle typed errors with hints, load a project.',
 	},
 	'docs/sdks/rust.md': {
 		dest: 'sdks/rust.md',
 		description:
-			'The read-only Rust client crate every SDK is built on: install it from crates.io or the tag, open a vault, get a secret, handle errors by kind, load a project.',
+			'The read-only Rust client crate every SDK is built on: install it from crates.io, the tag or source, open a vault, get a secret, handle errors by kind, load a project.',
 	},
 	'docs/sdks/java.md': {
 		dest: 'sdks/java.md',
 		description:
-			'The read-only Java SDK (Foreign Function and Memory API): install it from Maven Central or the release, open a vault, get a secret, handle typed exceptions, load a project.',
+			'The read-only Java SDK (Foreign Function and Memory API): install it from Maven Central, the release or source, open a vault, get a secret, handle typed exceptions, load a project.',
 	},
 	'docs/sdks/dotnet.md': {
 		dest: 'sdks/dotnet.md',
 		description:
-			'The read-only .NET SDK: install it from NuGet or the release, open a vault, get a secret, handle typed exceptions, load a project.',
+			'The read-only .NET SDK: install it from NuGet, the release or source, open a vault, get a secret, handle typed exceptions, load a project.',
 	},
 	'docs/sdks/go.md': {
 		dest: 'sdks/go.md',
 		description:
-			'The read-only Go SDK (cgo over the C ABI): install the module and the native library from the release, open a vault, get a secret, match errors by sentinel, load a project.',
+			'The read-only Go SDK (cgo over the C ABI): install the module and the native library, or build from source, open a vault, get a secret, match errors by sentinel, load a project.',
 	},
 	'docs/sdks/c.md': {
 		dest: 'sdks/c.md',
 		description:
-			'The read-only C ABI: install the archive from the release, open a vault, get a secret, read the per-thread error state, load a project.',
+			'The read-only C ABI: install the archive from the release or build it from source, open a vault, get a secret, read the per-thread error state, load a project.',
 	},
 	'docs/sdks/cpp.md': {
 		dest: 'sdks/cpp.md',
 		description:
-			'The header-only C++17 wrapper: install the archive from the release, open a vault, get a secret, catch typed errors, load a project.',
+			'The header-only C++17 wrapper: install the archive from the release or build from source, open a vault, get a secret, catch typed errors, load a project.',
 	},
 	'docs/sdks/php.md': {
 		dest: 'sdks/php.md',
 		description:
-			'The read-only PHP SDK (FFI): install the native library from the release and the package from Packagist, open a vault, get a secret, handle typed exceptions, load a project.',
+			'The read-only PHP SDK (FFI): install the package from Packagist and the native library from the release or source, open a vault, get a secret, handle typed exceptions, load a project.',
 	},
 };
 

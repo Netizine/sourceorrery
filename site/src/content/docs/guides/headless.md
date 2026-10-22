@@ -85,7 +85,7 @@ vault file, and the passphrase as a file.
 FROM rust:1.88 AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release -p sourceorrery-cli --no-default-features
+RUN cargo build --release --locked -p sourceorrery-cli --no-default-features
 
 FROM debian:bookworm-slim
 COPY --from=build /src/target/release/sourceorrery /usr/local/bin/sourceorrery
@@ -133,8 +133,8 @@ safe to run on every pipeline. `run` resolves every entry and starts the
 command with the values in its environment; a missing required secret aborts
 before the command starts.
 
-The vault file itself has to reach the runner. Milestone 1 vaults are local
-files and `*.sorvault` is gitignored on purpose; do not commit one. Use a
+The vault file itself has to reach the runner. Vaults are local files and
+`*.sorvault` is gitignored on purpose; do not commit one. Use a
 self-hosted runner with a persistent home directory, or a container image or
 volume provisioned with the vault, and provide the passphrase separately.
 Encrypted `backup` / `restore` and remote providers are on the
@@ -144,7 +144,7 @@ Encrypted `backup` / `restore` and remote providers are on the
 
 Whoever holds the passphrase, or runs as the user that can read the passphrase
 file, can unlock the vault and reveal any secret in it. That is the
-[access-control guarantee](/security/threat-model/#the-three-guarantees) of
-milestone 1: local only. Headless setups make it easier to forget, so keep the
+[access-control guarantee](/security/threat-model/#the-three-guarantees) as
+it stands today: local only. Headless setups make it easier to forget, so keep the
 passphrase file out of images, out of logs and out of the repository, and
 treat a CI runner that holds it as able to read every secret in that vault.

@@ -32,13 +32,16 @@ Why each technology: [ADR 0006](../adr/0006-binding-technologies.md).
 
 ## Installing
 
-0.1.3 is on PyPI, crates.io, Maven Central, NuGet, Packagist and npm
-(under the `@sourceorreryai` scope), and the Go module on pkg.go.dev.
-Every package is also on the
-[v0.1.3 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
-(wheels, the jar, the NuGet package, the npm tarballs, and the C ABI
-archive the Go, C, C++ and PHP bindings load), and each language page opens
-with how to install from it.
+Each language page opens with its package registry: 0.1.3 is on PyPI,
+npm (under the `@sourceorreryai` scope), crates.io, Maven Central, NuGet
+and Packagist, and the Go module on pkg.go.dev. Next comes the
+[v0.1.3 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3),
+which carries the same packages (wheels, npm tarballs, the jar, the NuGet
+package) and the C ABI archive that the Go, C, C++ and PHP SDKs load. Each
+page ends with building that SDK from source;
+[Building from source](../building.md) covers the tools every build needs.
+How the packages are published and how to check them:
+[Supply chain](../supply-chain.md).
 
 ## Setting up
 
@@ -115,7 +118,9 @@ a runner through all of them and judges the observations. CI runs it in
 every SDK job; the protocol and how to add a scenario are in
 [`tests/conformance/sdk/README.md`](../../tests/conformance/sdk/README.md).
 
-To run them locally:
+To run them locally, from a clone of the repository with the tools in
+[Building from source](../building.md#what-you-need), in Bash (Git Bash on
+Windows):
 
 ```bash
 cargo build --release -p sourceorrery-cli -p sourceorrery-ffi

@@ -28,11 +28,12 @@ import ArchitectureDiagram from '../../components/ArchitectureDiagram.astro';
 	<ArchitectureDiagram />
 </figure>
 
-<Aside type="caution" title="Status: milestone 2">
-Core, encrypted vault, CLI and read-only [SDKs](/sdks/) for Python,
-JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP. Local-first and
-usable today on Windows, macOS and Linux. 0.1.3 is on PyPI, crates.io,
-Maven Central, NuGet, Packagist, npm and pkg.go.dev, and on the
+<Aside type="caution" title="Status: 0.1.3, milestones 1 and 2">
+Core, encrypted vault, CLI with an interactive vault manager, and read-only
+[SDKs](/sdks/) for Python, JavaScript/TypeScript, Rust, Java, .NET, Go, C,
+C++ and PHP. Local-first and usable today on Windows, macOS and Linux.
+0.1.3 is on PyPI, npm, crates.io, Maven Central, NuGet, Packagist and
+pkg.go.dev, and on the
 [GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3).
 The authenticated local broker and remote providers are on the
 [roadmap](/roadmap/). **Not yet audited; do not treat it as a production
@@ -123,6 +124,8 @@ starting with installing the release.
 	<LinkCard title="Headless: WSL, Docker, CI" description="Unlock a vault where there is no OS credential store or no terminal." href="/guides/headless/" />
 	<LinkCard title="CLI reference" description="Every command, option and environment variable." href="/reference/cli/" />
 	<LinkCard title="Threat model" description="The three guarantees, the adversaries, the controls and the known gaps." href="/security/threat-model/" />
+	<LinkCard title="Supply chain" description="How every package is built and published, trusted publishing, and how to check what you installed." href="/security/supply-chain/" />
+	<LinkCard title="Building from source" description="The tools to install, then the CLI, the C ABI, each SDK and the test suites." href="/guides/building-from-source/" />
 	<LinkCard title="Architecture" description="Crates, domain model, cryptography, storage and the integration surface." href="/architecture/" />
 	<LinkCard title="Roadmap" description="From the local CLI to SDKs, the broker and enterprise providers." href="/roadmap/" />
 </CardGrid>

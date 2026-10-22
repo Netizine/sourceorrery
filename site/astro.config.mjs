@@ -80,7 +80,10 @@ export default defineConfig({
 				{ label: 'Getting started', slug: 'getting-started' },
 				{
 					label: 'Guides',
-					items: [{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' }],
+					items: [
+						{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' },
+						{ label: 'Building from source', slug: 'guides/building-from-source' },
+					],
 				},
 				{
 					label: 'SDKs',
@@ -108,7 +111,10 @@ export default defineConfig({
 				},
 				{
 					label: 'Security',
-					items: [{ label: 'Threat model', slug: 'security/threat-model' }],
+					items: [
+						{ label: 'Threat model', slug: 'security/threat-model' },
+						{ label: 'Supply chain', slug: 'security/supply-chain' },
+					],
 				},
 				{ label: 'Architecture', slug: 'architecture' },
 				{ label: 'Roadmap', slug: 'roadmap' },

@@ -1,5 +1,10 @@
 # Roadmap
 
+Where the project stands: milestones 1 and 2 shipped in 0.1.3, the
+current release, with the unticked items below still open. Milestone 3,
+the authenticated local broker, is next; until it exists SourceOrrery
+makes no agent-isolation claim ([threat model](threat-model.md)).
+
 ## Milestone 1 — core and local CLI *(shipped in 0.1.3)*
 
 - [x] Secret contracts (`SecretClient`), stable error codes, naming rules
@@ -9,7 +14,7 @@
 - [x] Versions, soft delete, recovery, purge, retention with automatic purge
 - [x] Metadata-only audit log, including failed unlocks
 - [x] CLI: `vault`, `secret`, `audit`, `init`, `check`, `run`, `completions`
-- [ ] Vault manager `sourceorrery ui` (Ratatui, `ui` feature, on by default)
+- [x] Vault manager `sourceorrery ui` (Ratatui, `ui` feature, on by default)
   - [x] Groundwork: the command, the value-free `MetadataSource` seam, a secret list with keyboard navigation
   - [x] Read-only browser: vault picker, search over names/tags/status, secret detail with versions, deleted secrets, audit log, audit-only mode for a vault blocked by a truncation
   - [x] Dashboards (status counts, expiry timeline, audit activity, chain verification), idle auto-lock, switching vaults
@@ -22,8 +27,8 @@
 - [ ] Listing cost: `list` and `list-deleted` still verify every version row and every checkpoint row of every secret, one query per secret, because which version is newest can only be judged against the complete set. A bulk checkpoint read and pagination on `list_*` are open; pagination is an API change and goes through core with a conformance test
 - [ ] `backup` / `restore` (encrypted export of a vault or a secret)
 - [x] Pre-built CLI archives for six targets on the GitHub release, with `SHA256SUMS`
-- [x] `cargo install sourceorrery-cli`
-- [ ] Package managers: Homebrew, WinGet, Scoop; signed releases
+- [x] `cargo install --locked sourceorrery-cli`
+- [ ] Package managers: Homebrew, WinGet, Scoop
 - [x] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`, deployed by Azure Static Web Apps
 
 ## Milestone 2 — first-class language bindings *(shipped in 0.1.3)*
@@ -34,11 +39,23 @@
 - [x] Manual release workflow: GitHub Release with checksums, registry publish jobs skipped until their secrets exist, dry-run mode
 - [x] Scoped value accessors (`with` / `using` / `try-with-resources` / `defer` / RAII / `Use(span)`) in every SDK
 - [x] Cross-language conformance harness: `tests/conformance/sdk/scenarios.json` + `harness.py` drive a runner per SDK through the same scenarios in every SDK CI job
-- [x] Registry publication: PyPI, crates.io, Maven Central, NuGet (trusted publishing) and Packagist
-- [ ] npm: `@sourceorreryai/sdk`, first published by hand, then by trusted publishing
+- [x] Registry publication: PyPI, npm (`@sourceorreryai`), crates.io, Maven Central, NuGet, Packagist and pkg.go.dev
 - [x] The npm main tarball on the release page carries the generated loader (`index.js`)
 - [ ] ABI compatibility tests and semantic versioning policy
-- [ ] Package signing and provenance (Sigstore for npm and PyPI, cosign for the archives)
+
+### Supply chain
+
+How each package is published and how to check it: [Supply chain](supply-chain.md).
+
+- [x] One manual release workflow builds every package from one commit; locked dependencies; `cargo audit` in the CI gate; `SHA256SUMS` on every release
+- [x] npm by trusted publishing, with Sigstore provenance on every package
+- [x] NuGet by trusted publishing
+- [x] Maven Central artefacts signed with the release key
+- [ ] PyPI and crates.io by trusted publishing, with PyPI attestations
+- [ ] Signatures or build attestations for the release archives
+- [ ] Signed and notarised macOS binaries; Authenticode-signed Windows binaries
+- [ ] Third-party GitHub Actions pinned to commits; automated dependency updates
+- [ ] Software bill of materials for each release
 
 ## Milestone 3 — local broker and agent isolation
 

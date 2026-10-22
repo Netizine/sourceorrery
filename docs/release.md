@@ -26,8 +26,9 @@ exists.
    the manifests itself from the version you typed; the committed version
    does not have to match).
 5. Point the install instructions at the new release: the download links
-   in `site/src/content/docs/getting-started.mdx` and `docs/sdks/*.md` name
-   the version in every file name and tag.
+   in `site/src/content/docs/getting-started.mdx` and `docs/sdks/*.md`, and
+   the examples in `docs/building.md` and `docs/supply-chain.md`, name the
+   version in every file name and tag.
 
 The workflow refuses a version that is not semver and, outside a dry run,
 a tag that already exists. Releases are immutable: a mistake is fixed by
@@ -268,6 +269,7 @@ curl -LO https://github.com/Netizine/sourceorrery/releases/download/vX.Y.Z/sourc
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
-Package signing (Sigstore for npm and PyPI provenance, cosign for the
-archives) is on the roadmap; until then the checksums and the workflow run
-linked from the release are the provenance.
+What each registry adds on top (npm provenance, the Maven Central
+signatures, nuget.org's repository signature) and how a user checks it is
+in [Supply chain](supply-chain.md); signing the archives themselves is on
+the [roadmap](roadmap.md#supply-chain).
