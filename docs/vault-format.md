@@ -335,6 +335,14 @@ at once exactly one owns the file; the others fail with `vault_exists` and
 never touch it. Only the owner removes the file again if the rest of
 creation (for example installing an OS-keyring protector) fails.
 
+## Backups
+
+A vault file can be copied as it is: it is encrypted, and it unlocks
+wherever one of its protectors is available, which for an OS-keyring
+protector means the same machine and user. `sourceorrery backup` writes a
+portable alternative, every secret and version sealed under a passphrase
+of its own, in the format described in [Backup file format](backup-format.md).
+
 ## Deleting a vault
 
 `sourceorrery vault destroy <name>` reads the protector table (no unlock

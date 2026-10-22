@@ -91,7 +91,9 @@ Newest first, with each event's id. Operations: `vault_create`,
 `vault_open`, `vault_migrate`, `secret_inspect` (metadata reads: properties,
 versions, deleted-secret details), `protector_add`, `protector_remove`,
 `secret_set`, `secret_get`, `secret_list`, `secret_update`,
-`secret_delete`, `secret_recover`, `secret_purge`, `audit_verify`
+`secret_delete`, `secret_recover`, `secret_purge`, `vault_backup` (one
+per secret exported, with the version count), `secret_restore` (one per
+version written from a backup), `audit_verify`
 (a detected truncation with outcome `failure`, its acknowledgement with
 outcome `success`). Outcomes: `success`, `denied` (policy), `failure`.
 Detail holds the error code or a short note — never a value.
@@ -140,7 +142,8 @@ Treat a truncation as evidence that the file was edited. Whatever the
 missing events recorded — a change of policy, a deletion, a new version
 — is gone, and an attacker who removed them may also have put back older
 copies of the rows they covered, which the surviving history can no longer
-tell from the truth. Compare the log and the secrets with a backup, then:
+tell from the truth. Compare the log and the secrets with a backup
+([`backup` and `restore`](#backup-and-restore)), then:
 
 ```
 sourceorrery audit --acknowledge --vault development
@@ -268,6 +271,46 @@ else; neither writes a manifest. Running it again updates the files
 SourceOrrery wrote and leaves alone a skill of the same name that it did
 not. Paths per agent, the Claude Code plugin and what the skills do:
 [AI coding agents](ai-agents.md).
+
+## `backup` and `restore`
+
+```
+sourceorrery backup --out FILE [--secret NAME]... [--include-deleted] [--force]
+sourceorrery restore FILE [--only NAME]... [--overwrite] [--keep-deleted] [--dry-run]
+```
+
+`backup` writes every live secret of the selected vault, every version with
+its value (disabled and expired ones included), into one file sealed under
+a passphrase of its own, asked twice, or taken from
+`SOURCEORRERY_BACKUP_PASSPHRASE` for scripts; it is never a command-line
+argument. `--secret` limits the backup to named secrets, `--include-deleted`
+adds the soft-deleted ones with their deleted state, and an existing file
+is replaced only with `--force`. The file is written readable by the
+current user alone, and it is as sensitive as the vault: whoever has it
+and the passphrase has the values. The command prints names and counts,
+never a value; the export is recorded as one `vault_backup` audit event
+per secret. The format is in [Backup file format](backup-format.md).
+
+`restore` reads a backup into the selected vault (`--vault`, which may be
+any vault, not only the one the backup came from): every version becomes
+a new version of the target secret, oldest first, with its metadata kept
+and two tags added, `sourceorrery.restored-from` (the original version id)
+and `sourceorrery.restored-created-on`. A secret that already exists is
+skipped unless `--overwrite` adds the versions on top; one the vault holds
+soft-deleted is always skipped. A secret the backup holds as deleted comes
+back live, or is soft-deleted again with `--keep-deleted`. `--only` limits
+the restore to named secrets and `--dry-run` prints what would happen by
+name. Each written version is one `secret_restore` audit event; restoring
+is safe to repeat. A wrong passphrase is `backup_passphrase`, an altered
+file `crypto`, a file from a newer release `backup_format`.
+
+```
+sourceorrery backup --out development-2026-10-22.sobackup --vault development
+sourceorrery restore development-2026-10-22.sobackup --vault development-copy --dry-run
+```
+
+With `-o json`, both print `{"vault", "file", ...}` with the secrets'
+names, version counts and outcomes only.
 
 ## `ui`
 

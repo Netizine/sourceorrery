@@ -45,6 +45,8 @@ fn main() -> ExitCode {
         Command::Import(args) => commands::import::run(&ctx, args),
         Command::Check(args) => commands::project::check(&ctx, args),
         Command::Run(args) => return commands::project::run(&ctx, args),
+        Command::Backup(args) => commands::backup::backup(&ctx, args),
+        Command::Restore(args) => commands::backup::restore(&ctx, args),
         #[cfg(feature = "ui")]
         Command::Ui(args) => ui::run(&ctx, args),
         Command::Completions(args) => commands::completions::run(args),

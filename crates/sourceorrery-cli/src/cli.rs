@@ -76,6 +76,10 @@ pub enum Command {
     Check(CheckArgs),
     /// Run a command with the manifest's secrets injected as environment variables.
     Run(RunArgs),
+    /// Write an encrypted backup of the vault's secrets (every version, values included).
+    Backup(BackupArgs),
+    /// Restore the secrets of an encrypted backup into the vault as new versions.
+    Restore(RestoreArgs),
     /// Browse a vault interactively (metadata only; values are never shown).
     #[cfg(feature = "ui")]
     Ui(UiArgs),
@@ -456,6 +460,41 @@ pub struct ImportArgs {
     /// Do not create or change sourceorrery.toml.
     #[arg(long, conflicts_with = "manifest_only")]
     pub no_manifest: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct BackupArgs {
+    /// File to write (conventionally *.sobackup). Readable by the current user only.
+    #[arg(long, value_name = "FILE")]
+    pub out: PathBuf,
+    /// Back up only this secret (repeatable; default: every live secret).
+    #[arg(long = "secret", value_name = "NAME")]
+    pub secret: Vec<String>,
+    /// Include soft-deleted secrets, with their deleted state.
+    #[arg(long)]
+    pub include_deleted: bool,
+    /// Replace an existing file.
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RestoreArgs {
+    /// The backup file to restore from.
+    pub file: PathBuf,
+    /// Restore only this secret (repeatable; default: every secret in the backup).
+    #[arg(long = "only", value_name = "NAME")]
+    pub only: Vec<String>,
+    /// Add the backup's versions to a secret that already exists
+    /// (by default an existing secret is skipped).
+    #[arg(long)]
+    pub overwrite: bool,
+    /// Soft-delete again a secret the backup holds as deleted (by default it comes back live).
+    #[arg(long)]
+    pub keep_deleted: bool,
+    /// Show what would happen, by name, and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]

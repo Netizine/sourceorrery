@@ -145,6 +145,17 @@ are **enforced** on retrieval, not advisory.
 Rotation is intentionally not an operation yet. A new value is not a rotated
 credential; real rotation needs the external issuer (milestone 4).
 
+A second, smaller contract, `VaultBackup`, covers backups: `export` takes
+a `Snapshot` of the secrets with every version's value (disabled and
+expired ones included, which is why it is a separate, privileged read,
+recorded as `vault_backup` per secret), and `restore` writes a snapshot's
+versions through the ordinary checkpointed write path as new versions
+(`secret_restore` per version), skipping names the target already has
+unless asked to add to them. The snapshot holds values as `SecretBytes`
+and has no `Serialize`; sealing it into a file is the storage crate's
+([backup format](backup-format.md)). Only the CLI uses it: SDKs stay
+read-only (ADR 0005).
+
 ## 4. Cryptography (`sourceorrery-crypto`)
 
 No algorithms are implemented in this repository.

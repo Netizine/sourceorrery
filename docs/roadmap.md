@@ -31,7 +31,7 @@ items below are implemented; unchecked items remain planned.
 - [x] Metadata and audit-log integrity (MAC over mutable metadata)
 - [x] Reads load only the value they return (metadata projection for every version query; one ciphertext row per `get`)
 - [x] Listing cost: one scan of the checkpoint rows and one statement each over the names, rows and versions of a listing window, and `list_*_page` with a name-based continuation token in core, with conformance tests (`secret list --limit N --after NAME`)
-- [ ] `backup` / `restore` (encrypted export of a vault or a secret)
+- [x] `backup` / `restore`: an encrypted export of a vault or of named secrets, every version with its value, restored as new versions through the audited write path ([format](backup-format.md))
 - [x] Pre-built CLI archives for six targets on the GitHub release, with `SHA256SUMS`
 - [x] `cargo install --locked sourceorrery-cli --version 0.1.4`
 - [x] Package managers: Homebrew, WinGet, Scoop

@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* `sourceorrery backup --out FILE` writes every live secret of a vault,
+  every version with its value, into one file sealed under a passphrase of
+  its own (Argon2id, XChaCha20-Poly1305; `SOURCEORRERY_BACKUP_PASSPHRASE`
+  for scripts), optionally only named secrets or including deleted ones;
+  `sourceorrery restore FILE` writes it into a vault as new versions with
+  their metadata kept and the original version recorded in tags, skipping
+  secrets that exist unless `--overwrite`, with `--only`, `--keep-deleted`
+  and `--dry-run`. The core contract gains `VaultBackup` and the audit
+  operations `vault_backup` and `secret_restore`; the error codes
+  `backup_passphrase` and `backup_format` are new. The format is in
+  `docs/backup-format.md`.
 * Every release carries a CycloneDX 1.5 software bill of materials per
   shipped binary and target: the CLI, the C ABI library, the Python
   extension and the Node addon, listing every Rust crate compiled in. The

@@ -349,23 +349,23 @@ are appended to the audit operation list, which is append-only.
 
 **Steps.**
 
-- [ ] `sourceorrery-crypto`: `backup_seal` / `backup_open`, tests with
+- [x] `sourceorrery-crypto`: `backup_seal` / `backup_open`, tests with
       canary bytes.
-- [ ] `sourceorrery-core`: `VaultBackup` trait, options and report types,
+- [x] `sourceorrery-core`: `VaultBackup` trait, options and report types,
       `AuditOperation::{VaultBackup, SecretRestore}`, new error codes only
       if a refusal has no existing code (`backup_passphrase` for a wrong
       passphrase, distinct from a vault unlock failure; `backup_format`
       for a file from a newer format version).
-- [ ] `sourceorrery-storage`: `backup.rs` with the encoder, the decoder,
+- [x] `sourceorrery-storage`: `backup.rs` with the encoder, the decoder,
       and the privileged version-value read (one ciphertext row per
       version, as `get` does today).
-- [ ] CLI: `sourceorrery backup --out FILE [--secret NAME]...
+- [x] CLI: `sourceorrery backup --out FILE [--secret NAME]...
       [--include-deleted]` and `sourceorrery restore FILE [--as NAME]
       [--only NAME]... [--overwrite] [--keep-deleted] [--dry-run]`, `-o
       json` reports names and counts only. `backup` refuses to write over
       an existing file without `--force`; `restore --dry-run` lists what
       would be created.
-- [ ] Conformance tests (`tests/conformance/tests/lifecycle.rs` and
+- [x] Conformance tests (`tests/conformance/tests/lifecycle.rs` and
       `security.rs`): round trip preserves names, version order, metadata
       and values; the backup file never contains a plaintext value or the
       passphrase (canary); wrong passphrase refused and not retried;
@@ -373,12 +373,14 @@ are appended to the audit operation list, which is append-only.
       refused cleanly; restore into an existing name skips without
       `--overwrite`; every operation leaves exactly the expected audit
       events, with no value in them; `Debug` of `Snapshot` is redacted.
-- [ ] Docs: `docs/cli.md` (new section, and point the three "restore from
+- [x] Docs: `docs/cli.md` (new section, and point the three "restore from
       a backup" sentences in the truncation section at the command),
       `docs/backup-format.md`, `docs/threat-model.md` (a backup file is as
       sensitive as the vault; the passphrase is the only protection),
       `docs/architecture.md` (the trait), `docs/vault-format.md` link,
       tick the box.
+
+**Decisions taken** (your call, 2026-10-22): restore through the write path with new version ids; live secrets only by default; top-level commands. The CLI has no `--as`: the target is the selected vault (`--vault`).
 
 **Decisions for you.** (a) Restore through the write path with new
 version ids (recommended, keeps every integrity invariant) versus

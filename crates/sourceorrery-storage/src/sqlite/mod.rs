@@ -22,6 +22,7 @@
 //! state of the rows they touched as checkpoints in that row.
 
 mod audit;
+mod backup;
 mod migrate;
 mod protectors;
 mod rows;

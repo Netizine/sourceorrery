@@ -168,6 +168,14 @@ treated as secrets. Users are told not to put sensitive information in them.
     path on every platform; the OS credential store is validated manually
     and has not yet been validated on macOS or a Linux desktop
     ([roadmap](roadmap.md)).
+11. **A backup is as sensitive as the vault, and only a passphrase protects
+    it.** `sourceorrery backup` writes every value, sealed under Argon2id
+    and XChaCha20-Poly1305 ([format](backup-format.md)); no OS credential
+    store is involved, so the file can be opened wherever its passphrase
+    is. Choose it as you would a vault passphrase, keep the file where the
+    vault's threat model allows, and remember that restoring it writes
+    every version into the target, audited but not reversible except by
+    deleting the secrets again.
 
 ## Planned (milestone 3): the hard problem
 

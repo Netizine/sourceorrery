@@ -23,6 +23,7 @@
 #![forbid(unsafe_code)]
 
 pub mod audit;
+pub mod backup;
 pub mod error;
 pub mod identity;
 pub mod listing;
@@ -34,6 +35,11 @@ pub mod traits;
 pub mod vault;
 
 pub use audit::{AuditEvent, AuditOperation, AuditOutcome, AuditQuery};
+pub use backup::{
+    ExportOptions, RESTORED_CREATED_ON_TAG, RESTORED_FROM_TAG, RestoreOptions, RestoreReport,
+    RestoredSecret, SecretSnapshot, SkipReason, SkippedSecret, Snapshot, VaultBackup,
+    VersionSnapshot,
+};
 pub use error::{Result, SecretError};
 pub use identity::{Principal, PrincipalKind};
 pub use listing::{ContinuationToken, ListOptions, Page};

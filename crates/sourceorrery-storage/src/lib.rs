@@ -31,6 +31,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod backup;
 pub mod integrity;
 pub mod keystore;
 pub mod protector;
@@ -38,9 +39,12 @@ pub mod registry;
 pub mod sqlite;
 pub mod unlock;
 
+pub use backup::{BACKUP_FORMAT, BackupInfo};
 pub use integrity::AuditVerification;
 pub use protector::{ProtectorInfo, ProtectorKind, ProtectorSpec};
 pub use registry::{DestroyReport, VaultRegistry};
+/// Argon2id cost parameters, as `ProtectorSpec::Passphrase` and `backup::seal` take them.
+pub use sourceorrery_crypto::Argon2Params;
 pub use sqlite::{Acknowledgement, CreateVaultOptions, OpenOptions, SqliteVault};
 pub use unlock::{NoInteraction, PassphrasePrompt, StaticPassphrase, UnlockProvider};
 

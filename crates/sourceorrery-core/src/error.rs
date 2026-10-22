@@ -115,6 +115,16 @@ pub enum SecretError {
     /// served under another vault's name.
     #[error("the file for vault '{requested}' holds the vault '{found}'")]
     VaultMismatch { requested: String, found: String },
+
+    /// The passphrase does not open the backup file. Distinct from
+    /// [`Self::Locked`] (a vault) and from [`Self::Crypto`] (a file that
+    /// was altered): the file's key check failed, nothing else was read.
+    #[error("the passphrase does not open this backup")]
+    BackupPassphrase,
+
+    /// The backup was written in a newer format than this build reads.
+    #[error("backup format {version} is newer than this build understands; upgrade sourceorrery")]
+    BackupFormat { version: u16 },
 }
 
 impl SecretError {
@@ -144,6 +154,8 @@ impl SecretError {
             Self::Io(_) => "io",
             Self::Unsupported(_) => "unsupported",
             Self::MigrationRequired { .. } => "migration_required",
+            Self::BackupPassphrase => "backup_passphrase",
+            Self::BackupFormat { .. } => "backup_format",
             Self::VaultMismatch { .. } => "vault_mismatch",
         }
     }
@@ -212,6 +224,8 @@ mod tests {
                 requested: "a".into(),
                 found: "b".into(),
             },
+            SecretError::BackupPassphrase,
+            SecretError::BackupFormat { version: 2 },
         ];
         let mut codes: Vec<_> = errors.iter().map(SecretError::code).collect();
         let total = codes.len();

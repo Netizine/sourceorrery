@@ -6,10 +6,12 @@ use std::sync::{Arc, Barrier};
 
 use sourceorrery_conformance::{FIXTURE_PASSPHRASE, Fixture};
 use sourceorrery_core::{
-    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ListOptions, Manifest,
-    SecretBytes, SecretClient, SetSecretOptions, UpdateSecretProperties, timestamp,
+    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ExportOptions,
+    ListOptions, Manifest, RestoreOptions, SecretBytes, SecretClient, SetSecretOptions,
+    UpdateSecretProperties, VaultBackup, timestamp,
 };
 use sourceorrery_crypto::{Argon2Params, SymmetricKey, aead, envelope, kdf, random};
+use sourceorrery_storage::backup;
 use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase};
 use time::Duration;
 
@@ -3040,5 +3042,133 @@ fn a_legacy_vault_under_another_name_is_not_migrated() {
     assert_eq!(
         vault.get_secret("beta", None).unwrap().value.expose(),
         b"beta-value"
+    );
+}
+
+#[test]
+fn backup_file_never_contains_a_value_a_name_or_the_passphrase() {
+    let fx = Fixture::new();
+    let vault = fx.create_vault("dev");
+    set_with(&vault, "api-key", CANARY, SetSecretOptions::default());
+    let snapshot = vault.export(&ExportOptions::default()).unwrap();
+    let passphrase = SecretBytes::from("CANARY-backup-passphrase-2b1d");
+    let bytes = backup::seal(&snapshot, &passphrase, Argon2Params::TESTING).unwrap();
+    for needle in [CANARY.as_bytes(), b"api-key", passphrase.expose()] {
+        assert!(
+            !contains(&bytes, needle),
+            "the backup file leaks {}",
+            String::from_utf8_lossy(needle)
+        );
+    }
+    // Neither does anything the export or the file put on the record.
+    let json = serde_json::to_string(&vault.audit_events(AuditQuery::default()).unwrap()).unwrap();
+    assert!(!json.contains(CANARY));
+    assert!(!format!("{snapshot:?}").contains(CANARY));
+    let info = backup::inspect(&bytes).unwrap();
+    assert!(!format!("{info:?}").contains("api-key"));
+}
+
+#[test]
+fn wrong_passphrase_tampering_and_newer_formats_refuse_a_backup() {
+    let fx = Fixture::new();
+    let vault = fx.create_vault("dev");
+    set_with(&vault, "api-key", CANARY, SetSecretOptions::default());
+    let snapshot = vault.export(&ExportOptions::default()).unwrap();
+    let bytes = backup::seal(
+        &snapshot,
+        &SecretBytes::from("right"),
+        Argon2Params::TESTING,
+    )
+    .unwrap();
+
+    assert_eq!(
+        backup::open(&bytes, &SecretBytes::from("wrong"))
+            .unwrap_err()
+            .code(),
+        "backup_passphrase"
+    );
+    // Any altered byte of the ciphertext is an integrity failure, and a
+    // changed header field is too, because the header is authenticated.
+    for position in [bytes.len() - 1, bytes.len() - 40] {
+        let mut flipped = bytes.clone();
+        flipped[position] ^= 0x01;
+        assert_eq!(
+            backup::open(&flipped, &SecretBytes::from("right"))
+                .unwrap_err()
+                .code(),
+            "crypto",
+            "byte {position}"
+        );
+    }
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let renamed = text.replacen("\"vault\":\"dev\"", "\"vault\":\"prd\"", 1);
+    assert_eq!(
+        backup::open(renamed.as_bytes(), &SecretBytes::from("right"))
+            .unwrap_err()
+            .code(),
+        "crypto"
+    );
+    let newer = text.replacen("\"format\":1", "\"format\":7", 1);
+    assert_eq!(
+        backup::open(newer.as_bytes(), &SecretBytes::from("right"))
+            .unwrap_err()
+            .code(),
+        "backup_format"
+    );
+    assert_eq!(
+        backup::open(b"not a backup", &SecretBytes::from("right"))
+            .unwrap_err()
+            .code(),
+        "crypto"
+    );
+    // Nothing above restored anything, and the honest file still does.
+    let target = fx.create_vault("copy");
+    let snapshot = backup::open(&bytes, &SecretBytes::from("right")).unwrap();
+    target
+        .restore(&snapshot, &RestoreOptions::default())
+        .unwrap();
+    assert_eq!(
+        target.get_secret("api-key", None).unwrap().value.expose(),
+        CANARY.as_bytes()
+    );
+}
+
+#[test]
+fn restore_is_an_audited_write_that_keeps_the_chain_intact() {
+    let fx = Fixture::new();
+    let vault = fx.create_vault("dev");
+    set_with(&vault, "api-key", CANARY, SetSecretOptions::default());
+    let snapshot = vault.export(&ExportOptions::default()).unwrap();
+    let target = fx.create_vault("copy");
+    target
+        .restore(&snapshot, &RestoreOptions::default())
+        .unwrap();
+    let restores = events_of(
+        &target,
+        AuditOperation::SecretRestore,
+        AuditOutcome::Success,
+    );
+    assert_eq!(restores.len(), 1);
+    assert_eq!(restores[0].secret_name.as_deref(), Some("api-key"));
+    assert!(restores[0].version.is_some());
+    let detail = restores[0].detail.clone().unwrap_or_default();
+    assert!(detail.starts_with("from version "), "{detail}");
+    assert!(!detail.contains(CANARY));
+    assert!(target.verify_audit_chain().unwrap().is_intact());
+    // The restored row is checkpointed like any other: removing it out of
+    // band is caught.
+    let path = fx.registry.vault_path("copy").unwrap();
+    drop(target);
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON; DELETE FROM secret_versions WHERE name = 'api-key';",
+        )
+        .unwrap();
+    }
+    let target = fx.open_vault("copy");
+    assert_eq!(
+        target.get_secret("api-key", None).unwrap_err().code(),
+        "crypto"
     );
 }
