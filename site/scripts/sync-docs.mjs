@@ -46,6 +46,11 @@ const PAGES = {
 		description:
 			'How SourceOrrery is built and published: one release workflow, locked dependencies, trusted publishing and provenance, how to check what you installed, and what is not done yet.',
 	},
+	'docs/ai-agents.md': {
+		dest: 'guides/ai-agents.md',
+		description:
+			'Skills that let Claude Code, Codex, Cursor, Copilot, Gemini CLI and seven other AI coding agents set up SourceOrrery and migrate a project off .env files without seeing a value.',
+	},
 	'docs/building.md': {
 		dest: 'guides/building-from-source.md',
 		description:
@@ -54,7 +59,7 @@ const PAGES = {
 	'docs/cli.md': {
 		dest: 'reference/cli.md',
 		description:
-			'Every sourceorrery command and option: vault, secret, audit, init, check, run and completions, plus global options, unlocking and exit codes.',
+			'Every sourceorrery command and option: vault, secret, audit, init, import, check, run, ui and completions, plus global options, unlocking and exit codes.',
 	},
 	'docs/vault-format.md': {
 		dest: 'reference/vault-format.md',

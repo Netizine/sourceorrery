@@ -66,8 +66,12 @@ pub enum Command {
     Secret(SecretCommand),
     /// Show the metadata-only audit log of a vault.
     Audit(AuditArgs),
-    /// Write a sourceorrery.toml manifest for the current project.
+    /// Write a sourceorrery.toml manifest for the current project, and install
+    /// the SourceOrrery skills for AI coding agents.
     Init(InitArgs),
+    /// Move a .env file into a vault: store every value (never printed) and
+    /// declare each key in sourceorrery.toml.
+    Import(ImportArgs),
     /// Verify every secret in the manifest is present and accessible (no values read).
     Check(CheckArgs),
     /// Run a command with the manifest's secrets injected as environment variables.
@@ -354,6 +358,98 @@ pub struct InitArgs {
     /// Overwrite an existing manifest.
     #[arg(long)]
     pub force: bool,
+    /// Install the SourceOrrery skills for an AI coding agent (repeatable or
+    /// comma-separated; `all` for every one). An existing manifest is kept.
+    #[arg(
+        long = "integration",
+        value_enum,
+        value_delimiter = ',',
+        value_name = "AGENT"
+    )]
+    pub integrations: Vec<IntegrationChoice>,
+    /// Where the skills go: this project (shared through the repository) or
+    /// your user profile (every project on this machine; no manifest is written).
+    #[arg(long, value_enum, default_value_t = SkillScope::Project, requires = "integrations")]
+    pub scope: SkillScope,
+    /// Write the skill folders into this directory instead, for example an
+    /// organisation's managed skills directory (no manifest is written).
+    #[arg(
+        long,
+        value_name = "DIR",
+        requires = "integrations",
+        conflicts_with = "scope"
+    )]
+    pub skills_dir: Option<PathBuf>,
+}
+
+/// An AI coding agent `init --integration` installs the skills for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum IntegrationChoice {
+    /// Claude Code: .claude/skills, plus a migration subagent in .claude/agents.
+    Claude,
+    /// Gemini CLI: .gemini/skills.
+    Gemini,
+    /// GitHub Copilot (VS Code agent mode, Copilot CLI, cloud agent): .github/skills.
+    Copilot,
+    /// Google Antigravity: .agents/skills.
+    Antigravity,
+    /// Cline: .cline/skills.
+    Cline,
+    /// OpenAI Codex: .agents/skills, with agents/openai.yaml per skill.
+    Codex,
+    /// Cursor: .cursor/skills.
+    Cursor,
+    /// Hermes Agent: .hermes/skills (run `hermes skills trust` once).
+    Hermes,
+    /// Kilo Code: .kilo/skills.
+    Kilocode,
+    /// Kimi Code CLI: .kimi-code/skills.
+    Kimi,
+    /// Kiro: .kiro/skills.
+    Kiro,
+    /// OpenCode: .opencode/skills.
+    Opencode,
+    /// Every agent above.
+    All,
+}
+
+/// Where `init --integration` puts the skills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum SkillScope {
+    /// The project: committed and shared with everyone who clones it.
+    Project,
+    /// Your user profile: available in every project on this machine.
+    User,
+}
+
+#[derive(Debug, Args)]
+pub struct ImportArgs {
+    /// The .env file to import (for example .env, .env.local, .env.production).
+    pub file: PathBuf,
+    /// Show what would happen, by key name only, and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Declare the keys in sourceorrery.toml without storing any value
+    /// (for .env.example files, or when the values will be set by hand).
+    #[arg(long, conflicts_with = "overwrite")]
+    pub manifest_only: bool,
+    /// Import only this key (repeatable).
+    #[arg(long = "only", value_name = "KEY")]
+    pub only: Vec<String>,
+    /// Leave this key out (repeatable).
+    #[arg(long = "exclude", value_name = "KEY")]
+    pub exclude: Vec<String>,
+    /// Store a new version even when the vault already holds the secret
+    /// (by default an existing secret is left as it is).
+    #[arg(long)]
+    pub overwrite: bool,
+    /// Manifest to update (default: the nearest sourceorrery.toml, or a new
+    /// one in the current directory).
+    #[arg(long, value_name = "FILE", conflicts_with = "no_manifest")]
+    pub manifest: Option<PathBuf>,
+    /// Do not create or change sourceorrery.toml.
+    #[arg(long, conflicts_with = "manifest_only")]
+    pub no_manifest: bool,
 }
 
 #[derive(Debug, Args)]

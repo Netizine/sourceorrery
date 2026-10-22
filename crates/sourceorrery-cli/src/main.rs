@@ -6,6 +6,8 @@ mod banner;
 mod cli;
 mod commands;
 mod context;
+mod dotenv;
+mod integrations;
 mod output;
 mod prompt;
 #[cfg(feature = "ui")]
@@ -40,6 +42,7 @@ fn main() -> ExitCode {
         Command::Secret(cmd) => commands::secret::run(&ctx, cmd),
         Command::Audit(args) => commands::audit::run(&ctx, args),
         Command::Init(args) => commands::project::init(&ctx, args),
+        Command::Import(args) => commands::import::run(&ctx, args),
         Command::Check(args) => commands::project::check(&ctx, args),
         Command::Run(args) => return commands::project::run(&ctx, args),
         #[cfg(feature = "ui")]

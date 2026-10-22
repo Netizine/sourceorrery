@@ -217,6 +217,15 @@ for output, `tracing` for diagnostics. Design rules:
   Its `dark` and `light` themes are the documentation site's palettes
   (`site/src/styles/paper.css`); keep the two in step.
 
+* `import` moves a `.env` file into a vault (`cli::dotenv` parses it; values
+  go straight into `SecretBytes`) and declares its keys in the manifest;
+  it prints key names only.
+* `init --integration <agent>` writes the agent skills compiled into the
+  binary from `crates/sourceorrery-cli/skills/` (`cli::integrations`), to
+  each agent's skills directory; `integrations/` and the Claude Code plugin
+  in `plugins/sourceorrery/` are generated from the same files and checked
+  by a test ([ai-agents.md](ai-agents.md)).
+
 Reference: [cli.md](cli.md).
 
 ## 7. Integration surface for other languages

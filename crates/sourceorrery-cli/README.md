@@ -53,7 +53,16 @@ sourceorrery run -- npm start      # DATABASE_PASSWORD is set in the child only
 
 # Browse vaults, secrets, versions and the audit log
 sourceorrery ui
+
+# Already have a .env file? Store every value and declare every key, printing names only
+sourceorrery import .env
+
+# Give an AI coding agent the skills to set up SourceOrrery and migrate the project
+sourceorrery init --integration claude      # or cursor, codex, copilot, gemini, ... all
 ```
+
+The agent skills are compiled into the binary, so nothing is downloaded:
+[AI coding agents](https://sourceorrery.ai/guides/ai-agents/).
 
 On a server, in a container or in CI there is no credential store: add a
 passphrase protector and unlock with `SOURCEORRERY_PASSPHRASE_FILE`

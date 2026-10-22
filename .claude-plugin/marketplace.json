@@ -1,0 +1,14 @@
+{
+  "name": "sourceorrery",
+  "description": "SourceOrrery for Claude Code: secrets in an encrypted local vault instead of .env files",
+  "owner": {
+    "name": "SourceOrrery"
+  },
+  "plugins": [
+    {
+      "name": "sourceorrery",
+      "source": "./plugins/sourceorrery",
+      "description": "Install and use SourceOrrery, and migrate a project off .env files without exposing a value"
+    }
+  ]
+}

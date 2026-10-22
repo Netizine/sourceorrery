@@ -77,7 +77,27 @@ vault and unlock with `--passphrase-file` or `SOURCEORRERY_PASSPHRASE`:
 sourceorrery vault protector add --kind passphrase --vault development
 ```
 
-See [docs/cli.md](docs/cli.md) for every command.
+Already have a `.env` file? `sourceorrery import .env` stores every value in
+the vault and declares each key in `sourceorrery.toml`, printing key names
+only. See [docs/cli.md](docs/cli.md) for every command.
+
+## AI coding agents
+
+`sourceorrery init --integration <agent>` installs two skills that let an
+AI coding agent set SourceOrrery up and migrate a project off `.env` files,
+code included, without a value ever entering its context. They are compiled
+into the CLI (it makes no network requests) and written where each agent
+looks:
+
+```bash
+sourceorrery init --integration claude    # gemini, copilot, antigravity, cline, codex,
+                                          # cursor, hermes, kilocode, kimi, kiro, opencode, all
+```
+
+The repository is also a Claude Code plugin marketplace
+(`/plugin marketplace add Netizine/sourceorrery`), and
+[integrations/](integrations/README.md) holds the skills per agent for
+copying by hand. Guide: [docs/ai-agents.md](docs/ai-agents.md).
 
 ## Reading secrets from code
 

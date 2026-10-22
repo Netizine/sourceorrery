@@ -6,6 +6,32 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+* `sourceorrery import <file>` moves a `.env` file into a vault: each value
+  is stored as a secret (`DATABASE_URL` → `database-url`, tagged
+  `imported-from`) and each key declared in `sourceorrery.toml`, appended
+  so the file's comments are kept, with an explicit `env` where the
+  default name would not deliver the original variable. Output, JSON and
+  errors carry key names and line numbers only, never a value.
+  `--dry-run`, `--manifest-only` (for `.env.example`), `--only`,
+  `--exclude` and `--overwrite`; secrets already in the vault are left
+  alone, so it can be re-run.
+* Skills for AI coding agents: `sourceorrery` (install, vaults, `run`, the
+  SDKs, errors) and `sourceorrery-migrate-env` (import the `.env` files,
+  find and convert every read of their variables in nine languages and in
+  scripts, Docker and CI, remove the plaintext), in the Agent Skills
+  format, never letting the agent see a value.
+  `sourceorrery init --integration <agent>` writes them, from the binary
+  and without any download, for Claude Code (plus a migration subagent),
+  Gemini CLI, GitHub Copilot, Google Antigravity, Cline, OpenAI Codex (plus
+  `agents/openai.yaml`), Cursor, Hermes Agent, Kilo Code, Kimi Code CLI,
+  Kiro and OpenCode, or `all`; `--scope user` and `--skills-dir` install
+  them outside the project. An existing manifest is kept, files
+  SourceOrrery wrote are updated and anyone else's are left alone.
+  `integrations/` holds the same files per agent, and the repository is a
+  Claude Code plugin marketplace (`plugins/sourceorrery`).
+
 ### Changed
 
 * PyPI and crates.io are published by trusted publishing, like npm and

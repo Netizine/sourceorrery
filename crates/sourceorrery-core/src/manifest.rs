@@ -222,6 +222,35 @@ pub fn default_env_name(secret_name: &str) -> String {
         .collect()
 }
 
+/// The secret name an environment variable is stored under when a `.env`
+/// file is imported: lower case, underscores as hyphens
+/// (`DATABASE_PASSWORD` → `database-password`), so that
+/// [`default_env_name`] gives the variable back whenever it was written in
+/// `UPPER_SNAKE_CASE`. `None` when `key` cannot be a manifest entry: not a
+/// valid environment variable name, reserved for SourceOrrery, or longer
+/// than a secret name may be.
+pub fn secret_name_for_env(key: &str) -> Option<String> {
+    validate_env_name(key).ok()?;
+    let name: String = key
+        .chars()
+        .map(|c| {
+            if c == '_' {
+                '-'
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect();
+    validate_secret_name(&name).ok()?;
+    Some(name)
+}
+
+/// The `env` a manifest entry for `key` needs: `None` when the secret
+/// name's default ([`default_env_name`]) already is `key`.
+pub fn explicit_env_for(secret_name: &str, key: &str) -> Option<String> {
+    (default_env_name(secret_name) != key).then(|| key.to_owned())
+}
+
 fn env_name_for(name: &str, requirement: &SecretRequirement) -> String {
     requirement
         .env
@@ -435,5 +464,32 @@ env = "1BAD"
     fn default_env_names() {
         assert_eq!(default_env_name("database-password"), "DATABASE_PASSWORD");
         assert_eq!(default_env_name("ApiKey2"), "APIKEY2");
+    }
+
+    #[test]
+    fn env_keys_map_to_secret_names_and_back() {
+        for (key, name, env) in [
+            ("DATABASE_PASSWORD", "database-password", None),
+            ("STRIPE_KEY_2", "stripe-key-2", None),
+            ("_PRIVATE", "-private", None),
+            ("apiKey", "apikey", Some("apiKey")),
+            ("npm_token", "npm-token", Some("npm_token")),
+        ] {
+            let secret = secret_name_for_env(key).unwrap();
+            assert_eq!(secret, name, "{key}");
+            assert_eq!(explicit_env_for(&secret, key).as_deref(), env, "{key}");
+            let delivered = env.map_or_else(|| default_env_name(&secret), str::to_owned);
+            assert_eq!(delivered, key, "the manifest entry delivers {key} back");
+        }
+        for key in [
+            "",
+            "2FA",
+            "WITH-DASH",
+            "a.b",
+            "SOURCEORRERY_HOME",
+            &"K".repeat(128),
+        ] {
+            assert_eq!(secret_name_for_env(key), None, "{key}");
+        }
     }
 }

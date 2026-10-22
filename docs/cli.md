@@ -143,7 +143,7 @@ with `invalid_argument`, and a log found shortened again at that moment is
 recorded and refused. With nothing to acknowledge the command says so and
 exits 0.
 
-## Project manifest: `init`, `check`, `run`
+## Project manifest: `init`, `import`, `check`, `run`
 
 `sourceorrery.toml` is the committed, value-free replacement for `.env`:
 
@@ -171,12 +171,69 @@ start with `SOURCEORRERY_`.
 | Command | Description |
 |---------|-------------|
 | `init [--project-name N] [--vault-name V] [--path FILE] [--force]` | Write a starter manifest. |
+| `init --integration AGENT[,AGENT...] [--scope project\|user] [--skills-dir DIR]` | Install the SourceOrrery skills for AI coding agents (below). An existing manifest is kept. |
+| `import FILE [--dry-run] [--manifest-only] [--only KEY]... [--exclude KEY]... [--overwrite] [--manifest FILE \| --no-manifest]` | Move a `.env` file into the vault and declare its keys (below). |
 | `check [--manifest FILE]` | Verify every entry resolves to an accessible version. Reads **metadata only**; writes no `secret_get` audit rows. Fails if a required secret is missing. |
 | `run [--manifest FILE] -- COMMAND [ARGS...]` | Resolve every entry and start `COMMAND` with the values in its environment (plus `SOURCEORRERY_PROJECT`). Missing required secrets abort before the child starts; an optional secret whose vault does not exist is skipped. The child never inherits `SOURCEORRERY_PASSPHRASE` or `SOURCEORRERY_PASSPHRASE_FILE`. `--vault` overrides the manifest's default vault. |
 
 The parent process never prints the values; they exist only in the child's
 environment (which other processes running as you can read — see the threat
 model).
+
+### `import`: moving a `.env` file into a vault
+
+```bash
+sourceorrery import .env --dry-run      # key names and what would happen; changes nothing
+sourceorrery import .env                # store the values, declare the keys
+sourceorrery --vault test import .env.test
+sourceorrery import .env.example --manifest-only
+```
+
+Each `KEY=value` becomes a secret named after the key in lower case with
+hyphens (`DATABASE_URL` → `database-url`), stored as a new version in the
+vault (`--vault`, else the manifest's vault, else `development`) and tagged
+`imported-from=<file name>`. Each key is declared in the nearest
+`sourceorrery.toml` (created if there is none) by appending
+`[secrets.<name>]` entries, so the file's comments and existing entries are
+kept; an `env` line is added when the default name would not deliver the
+original variable (`apiKey` → `env = "apiKey"`).
+
+Nothing the command prints contains a value: the table (or `-o json`)
+lists each key, its secret name, what happened in the vault and in the
+manifest, and a note. A secret the vault already holds is left as it is
+(`--overwrite` stores a new version), so the command can be run again.
+Keys that cannot become manifest entries are reported and skipped: an
+invalid environment variable name, a name starting with `SOURCEORRERY_`,
+an empty value. A key assigned twice, two keys that would map to the same
+secret, a syntax error (reported by line number only) or a manifest that
+would become invalid stops the command before anything is stored.
+`--manifest-only` declares the keys without opening a vault, for
+`.env.example` files.
+
+The syntax is what python-dotenv, dotenv for Node and godotenv share:
+`KEY=value` with optional `export`, `#` comments, single quotes and
+backticks literal, double quotes with `\n`, `\r`, `\t`, `\"` and `\\`
+escapes, multi-line quoted values. Nothing is expanded: a value containing
+`${...}` is stored as written and noted.
+
+### `init --integration`: skills for AI coding agents
+
+```bash
+sourceorrery init --integration claude
+sourceorrery init --integration cursor,codex --scope user
+sourceorrery init --integration all
+```
+
+Writes two skills, `sourceorrery` and `sourceorrery-migrate-env`, in the
+Agent Skills format to the directory the agent reads: `claude` (and a
+subagent), `gemini`, `copilot`, `antigravity`, `cline`, `codex`, `cursor`,
+`hermes`, `kilocode`, `kimi`, `kiro`, `opencode`, or `all`. The skills are
+compiled into the binary; nothing is downloaded. `--scope user` installs
+them for every project on this machine, and `--skills-dir DIR` anywhere
+else; neither writes a manifest. Running it again updates the files
+SourceOrrery wrote and leaves alone a skill of the same name that it did
+not. Paths per agent, the Claude Code plugin and what the skills do:
+[AI coding agents](ai-agents.md).
 
 ## `ui`
 

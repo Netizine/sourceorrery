@@ -12,9 +12,15 @@ use sourceorrery_core::{
 };
 use sourceorrery_storage::SqliteVault;
 
-use crate::cli::{CheckArgs, InitArgs, RunArgs};
+use crate::cli::{CheckArgs, InitArgs, IntegrationChoice, RunArgs, SkillScope};
 use crate::context::Ctx;
+use crate::integrations::{self, Agent, Outcome};
 use crate::output::{self, Table};
+
+/// Comment at the top of every manifest SourceOrrery writes.
+pub const MANIFEST_HEADER: &str = "# SourceOrrery project manifest — safe to commit.\n\
+     # Declares which secrets this project needs. It can never hold a secret:\n\
+     # a `value` key is rejected. Store values with `sourceorrery secret set`.\n\n";
 
 pub fn init(ctx: &Ctx, args: &InitArgs) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
@@ -22,12 +28,30 @@ pub fn init(ctx: &Ctx, args: &InitArgs) -> anyhow::Result<()> {
         .path
         .clone()
         .unwrap_or_else(|| cwd.join(MANIFEST_FILE_NAME));
+    if !args.integrations.is_empty() {
+        return init_integrations(ctx, args, &cwd, &path);
+    }
     if path.exists() && !args.force {
         return Err(anyhow!(
             "{} already exists (pass --force to overwrite)",
             path.display()
         ));
     }
+    let vault = write_manifest(ctx, args, &cwd, &path)?;
+    if ctx.json() {
+        return output::json(&serde_json::json!({ "manifest": path, "vault": vault }));
+    }
+    output::success(&format!("Wrote {}", path.display()));
+    eprintln!(
+        "next:\n  sourceorrery vault create {vault}\n  \
+         sourceorrery secret set database-password\n  \
+         sourceorrery run -- <your command>"
+    );
+    Ok(())
+}
+
+/// Write the starter manifest and return its vault.
+fn write_manifest(ctx: &Ctx, args: &InitArgs, cwd: &Path, path: &Path) -> anyhow::Result<String> {
     let project_name = args.project_name.clone().unwrap_or_else(|| {
         cwd.file_name()
             .and_then(|n| n.to_str())
@@ -40,23 +64,192 @@ pub fn init(ctx: &Ctx, args: &InitArgs) -> anyhow::Result<()> {
         .or_else(|| ctx.vault_flag.clone())
         .unwrap_or_else(|| "development".to_owned());
     let manifest = Manifest::template(&project_name, &vault);
-    let text = format!(
-        "# SourceOrrery project manifest — safe to commit.\n\
-         # Declares which secrets this project needs. It can never hold a secret:\n\
-         # a `value` key is rejected. Store values with `sourceorrery secret set`.\n\n{}",
-        manifest.to_toml()?
-    );
-    std::fs::write(&path, text).with_context(|| format!("cannot write {}", path.display()))?;
-    if ctx.json() {
-        return output::json(&serde_json::json!({ "manifest": path, "vault": vault }));
+    let text = format!("{MANIFEST_HEADER}{}", manifest.to_toml()?);
+    std::fs::write(path, text).with_context(|| format!("cannot write {}", path.display()))?;
+    Ok(vault)
+}
+
+#[derive(serde::Serialize)]
+struct InstalledIntegration {
+    agent: Agent,
+    title: &'static str,
+    directory: PathBuf,
+    files: Vec<InstalledFile>,
+    next_step: &'static str,
+}
+
+#[derive(serde::Serialize)]
+struct InstalledFile {
+    path: PathBuf,
+    outcome: Outcome,
+}
+
+/// `init --integration`: the skills for each agent, and the manifest unless
+/// it exists already or the skills go outside the project.
+fn init_integrations(ctx: &Ctx, args: &InitArgs, cwd: &Path, path: &Path) -> anyhow::Result<()> {
+    let agents: Vec<Agent> = if args.integrations.contains(&IntegrationChoice::All) {
+        Agent::ALL.to_vec()
+    } else {
+        let mut agents: Vec<Agent> = Vec::new();
+        for agent in args.integrations.iter().filter_map(|c| agent_for(*c)) {
+            if !agents.contains(&agent) {
+                agents.push(agent);
+            }
+        }
+        agents
+    };
+
+    let in_project = args.skills_dir.is_none() && args.scope == SkillScope::Project;
+    let manifest = if !in_project {
+        "untouched"
+    } else if path.exists() && !args.force {
+        "kept"
+    } else {
+        let existed = path.exists();
+        write_manifest(ctx, args, cwd, path)?;
+        if existed { "replaced" } else { "created" }
+    };
+
+    let root = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map_or_else(|| cwd.to_path_buf(), Path::to_path_buf);
+    let home = if args.skills_dir.is_none() && args.scope == SkillScope::User {
+        Some(std::env::home_dir().ok_or_else(|| anyhow!("cannot determine your home directory"))?)
+    } else {
+        None
+    };
+
+    let mut installed = Vec::new();
+    for agent in agents {
+        let directory = match (&args.skills_dir, &home) {
+            (Some(dir), _) => dir.clone(),
+            (None, Some(home)) => agent.user_skills_dir(home),
+            (None, None) => root.join(agent.project_skills_dir()),
+        };
+        let planned = integrations::plan(agent, &directory, args.skills_dir.is_none());
+        let results = integrations::install(&planned).with_context(|| {
+            format!(
+                "cannot write the {} skills to {}",
+                agent.title(),
+                directory.display()
+            )
+        })?;
+        installed.push(InstalledIntegration {
+            agent,
+            title: agent.title(),
+            directory,
+            files: results
+                .into_iter()
+                .map(|(path, outcome)| InstalledFile { path, outcome })
+                .collect(),
+            next_step: agent.next_step(),
+        });
     }
-    output::success(&format!("Wrote {}", path.display()));
-    eprintln!(
-        "next:\n  sourceorrery vault create {vault}\n  \
-         sourceorrery secret set database-password\n  \
-         sourceorrery run -- <your command>"
-    );
+
+    if ctx.json() {
+        return output::json(&serde_json::json!({
+            "manifest": { "path": path, "status": manifest },
+            "integrations": installed,
+        }));
+    }
+    print_integrations(path, manifest, &root, &installed);
     Ok(())
+}
+
+/// The table-mode report of `init --integration`.
+fn print_integrations(
+    path: &Path,
+    manifest: &str,
+    root: &Path,
+    installed: &[InstalledIntegration],
+) {
+    match manifest {
+        "created" | "replaced" => output::success(&format!("Wrote {}", path.display())),
+        "kept" => output::note(&format!("{} already exists; kept it", path.display())),
+        _ => {}
+    }
+    let shown = |p: &Path| {
+        p.strip_prefix(root)
+            .unwrap_or(p)
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    };
+    for integration in installed {
+        let count = |outcome: Outcome| {
+            integration
+                .files
+                .iter()
+                .filter(|f| f.outcome == outcome)
+                .count()
+        };
+        let mut parts = Vec::new();
+        for (outcome, label) in [
+            (Outcome::Created, "created"),
+            (Outcome::Updated, "updated"),
+            (Outcome::Unchanged, "unchanged"),
+            (Outcome::Kept, "kept"),
+        ] {
+            let n = count(outcome);
+            if n > 0 {
+                parts.push(format!("{n} {label}"));
+            }
+        }
+        output::success(&format!(
+            "{}: skills in {} ({})",
+            integration.title,
+            shown(&integration.directory),
+            parts.join(", ")
+        ));
+        // A skill or subagent someone else wrote is left whole: name it once.
+        let mut kept: Vec<String> = Vec::new();
+        for file in integration
+            .files
+            .iter()
+            .filter(|f| f.outcome == Outcome::Kept)
+        {
+            let relative = file
+                .path
+                .strip_prefix(&integration.directory)
+                .unwrap_or(&file.path);
+            let item = match relative.components().next() {
+                Some(first) if file.path.starts_with(&integration.directory) => {
+                    integration.directory.join(first)
+                }
+                _ => file.path.clone(),
+            };
+            let item = shown(&item);
+            if !kept.contains(&item) {
+                kept.push(item);
+            }
+        }
+        for item in kept {
+            output::note(&format!(
+                "left {item} as it is: SourceOrrery did not write it (remove it to install ours)"
+            ));
+        }
+        eprintln!("  {}", integration.next_step);
+    }
+}
+
+/// The agent a choice names; `None` for `all`.
+fn agent_for(choice: IntegrationChoice) -> Option<Agent> {
+    Some(match choice {
+        IntegrationChoice::Claude => Agent::Claude,
+        IntegrationChoice::Gemini => Agent::Gemini,
+        IntegrationChoice::Copilot => Agent::Copilot,
+        IntegrationChoice::Antigravity => Agent::Antigravity,
+        IntegrationChoice::Cline => Agent::Cline,
+        IntegrationChoice::Codex => Agent::Codex,
+        IntegrationChoice::Cursor => Agent::Cursor,
+        IntegrationChoice::Hermes => Agent::Hermes,
+        IntegrationChoice::Kilocode => Agent::Kilocode,
+        IntegrationChoice::Kimi => Agent::Kimi,
+        IntegrationChoice::Kiro => Agent::Kiro,
+        IntegrationChoice::Opencode => Agent::Opencode,
+        IntegrationChoice::All => return None,
+    })
 }
 
 fn load_manifest(explicit: Option<&Path>) -> anyhow::Result<(PathBuf, Manifest)> {

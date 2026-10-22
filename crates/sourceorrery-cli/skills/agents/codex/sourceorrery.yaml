@@ -1,0 +1,7 @@
+# managed-by: sourceorrery
+interface:
+  display_name: "SourceOrrery"
+  short_description: "Encrypted local secrets vault: install, store, run, read from code"
+  default_prompt: "Set up SourceOrrery for this project"
+policy:
+  allow_implicit_invocation: true

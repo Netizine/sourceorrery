@@ -1,0 +1,7 @@
+# managed-by: sourceorrery
+interface:
+  display_name: "SourceOrrery: migrate .env"
+  short_description: "Move .env files into a SourceOrrery vault and convert the code"
+  default_prompt: "Migrate this project from .env files to SourceOrrery"
+policy:
+  allow_implicit_invocation: true

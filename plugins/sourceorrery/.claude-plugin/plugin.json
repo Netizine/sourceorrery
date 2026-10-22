@@ -1,0 +1,13 @@
+{
+  "name": "sourceorrery",
+  "displayName": "SourceOrrery",
+  "description": "Skills for SourceOrrery, the encrypted local secrets vault that replaces .env files: install and use it, and migrate a project off .env without exposing a value. Includes a subagent that runs the whole migration.",
+  "author": {
+    "name": "SourceOrrery",
+    "url": "https://sourceorrery.ai"
+  },
+  "homepage": "https://sourceorrery.ai/guides/ai-agents/",
+  "repository": "https://github.com/Netizine/sourceorrery",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["secrets", "vault", "dotenv", "env", "security"]
+}
