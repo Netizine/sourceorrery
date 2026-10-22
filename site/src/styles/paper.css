@@ -129,6 +129,24 @@
 	background: var(--so-selection);
 }
 
+/* Use the hero's two voices only for the brand in display titles and chrome. */
+.so-wordmark {
+	font-family: var(--sl-font);
+	white-space: nowrap;
+}
+
+.so-wordmark__source {
+	color: var(--so-heading);
+	font-weight: 700;
+	font-style: normal;
+}
+
+.so-wordmark__orrery {
+	color: var(--sl-color-text-accent);
+	font-weight: 500;
+	font-style: italic;
+}
+
 /* ------------------------------------------------------------------ */
 /* Chrome: header, sidebar, table of contents                           */
 /* ------------------------------------------------------------------ */

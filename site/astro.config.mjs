@@ -4,6 +4,7 @@ import starlight from '@astrojs/starlight';
 import { satteri } from '@astrojs/markdown-satteri';
 import { externalLinks } from './plugins/external-links.mjs';
 import { githubAlerts, calloutIcons } from './plugins/github-alerts.mjs';
+import { brandHeadings } from './plugins/brand-headings.mjs';
 
 const SITE_URL = 'https://sourceorrery.ai';
 const GITHUB_URL = 'https://github.com/Netizine/sourceorrery';
@@ -17,7 +18,7 @@ export default defineConfig({
 		// attributes in the component overrides below.
 		processor: satteri({
 			mdastPlugins: [githubAlerts()],
-			hastPlugins: [calloutIcons(), externalLinks({ site: SITE_URL })],
+			hastPlugins: [calloutIcons(), externalLinks({ site: SITE_URL }), brandHeadings()],
 		}),
 	},
 	integrations: [

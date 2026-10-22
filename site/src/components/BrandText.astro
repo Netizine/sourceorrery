@@ -1,0 +1,8 @@
+---
+/** Display typography only; prose, code and accessible labels keep their plain text. */
+interface Props { text: string; }
+const parts = Astro.props.text.split(/(\bSourceOrrery\b)/u);
+---
+{parts.map((part) => part === 'SourceOrrery'
+	? <span class="so-wordmark" translate="no"><span class="so-wordmark__source">Source</span><span class="so-wordmark__orrery">Orrery</span></span>
+	: part)}

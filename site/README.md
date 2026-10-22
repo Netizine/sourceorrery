@@ -85,6 +85,11 @@ self-hosted through Fontsource: **Source Serif 4** for prose and headings,
 **Inter** for UI, and **Google Sans Code** for code. Expressive Code provides
 Shiki highlighting, filenames, terminal frames and copy buttons.
 
+Display titles and the header use a split wordmark: bold upright `Source` and
+lighter italic `Orrery`, matching the hero typography. `BrandText.astro` and
+the heading plugin apply it without changing heading IDs or source text.
+Leave paragraphs, code, package names and uppercase labels unstyled.
+
 Font Awesome Kit **515c69ad68**, revision **4** (`@awesome.me/kit-515c69ad68`
 1.0.4), is installed as a build dependency. That revision contains **duotone
 thin**, brands and the custom `sourceorrery` mark. `src/lib/font-awesome.mjs`
