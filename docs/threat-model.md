@@ -164,9 +164,14 @@ treated as secrets. Users are told not to put sensitive information in them.
    but not the copies an application takes out of it: a Python `str`, a
    Java `String` or a JavaScript string cannot be wiped. Keep such copies
    short-lived.
-10. **The OS-keyring path is checked by hand.** CI tests the passphrase
-    path on every platform; the OS credential store is validated manually
-    and has not yet been validated on macOS or a Linux desktop
+10. **The OS-keyring path is checked headlessly, and by hand in a desktop
+    session.** The conformance suite uses passphrase protectors only. CI
+    runs `scripts/dev/keyring-smoke.sh` (and `.ps1` on Windows) against a
+    real store on every push: a temporary keychain on macOS, GNOME Keyring
+    under a private session bus on Linux, Credential Manager on Windows. A
+    desktop session differs (the login keychain, a keyring or KWallet
+    unlocked at login, prompts), so the same script is run by hand there;
+    the macOS and Linux desktop runs are not yet recorded
     ([roadmap](roadmap.md)).
 11. **A backup is as sensitive as the vault, and only a passphrase protects
     it.** `sourceorrery backup` writes every value, sealed under Argon2id

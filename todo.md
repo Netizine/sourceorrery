@@ -401,7 +401,7 @@ Windows is done.
 
 **Steps.**
 
-- [ ] `scripts/dev/keyring-smoke.sh` (and `.ps1` for parity): with an
+- [x] `scripts/dev/keyring-smoke.sh` (and `.ps1` for parity): with an
       isolated `SOURCEORRERY_HOME`, create a vault with the `os-keyring`
       protector, `secret set` and `get --reveal` round trip, `vault
       protector list` shows `os-keyring`, a second process opens the vault
@@ -417,13 +417,13 @@ Windows is done.
       session (Secret Service through GNOME Keyring or KWallet; also note
       the behaviour when the session keyring is locked), and record the
       OS and desktop versions.
-- [ ] Optional, recommended: a CI job `keyring` that runs the same script
+- [x] Optional, recommended: a CI job `keyring` that runs the same script
       on `macos-latest` (create and unlock a temporary keychain with
       `security create-keychain` / `unlock-keychain` / `set-keychain-settings`)
       and on `ubuntu-latest` under `dbus-run-session -- sh -c 'gnome-keyring-daemon --unlock ...'`.
       It is not a desktop session, so it complements rather than replaces
       the manual run, but it keeps the path from rotting.
-- [ ] Docs: `docs/threat-model.md` item 10 becomes "validated on <OS
+- [x] Docs (the script and CI are documented; the desktop results are added when you have them): `docs/threat-model.md` item 10 becomes "validated on <OS
       versions>; CI exercises the path headlessly"; `docs/building.md` or
       `CONTRIBUTING.md` names the script; tick the box.
 

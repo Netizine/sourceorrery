@@ -27,7 +27,7 @@ items below are implemented; unchecked items remain planned.
   - [x] Metadata changes behind confirmations (enable/disable, tags, content type, time window, delete/recover; new versions through the hidden prompt), through a separate write-capable interface
 - [x] Value-free manifest `sourceorrery.toml`; `sourceorrery://` references
 - [x] Conformance + security suites; CI on Ubuntu/Windows/macOS; release workflow
-- [ ] Manual validation of the OS-keyring path on macOS and a Linux desktop
+- [ ] Manual validation of the OS-keyring path on macOS and a Linux desktop: `scripts/dev/keyring-smoke.sh` is the check, CI runs it headlessly on all three platforms (`keyring` job); the desktop-session runs remain to be done and recorded in the threat model
 - [x] Metadata and audit-log integrity (MAC over mutable metadata)
 - [x] Reads load only the value they return (metadata projection for every version query; one ciphertext row per `get`)
 - [x] Listing cost: one scan of the checkpoint rows and one statement each over the names, rows and versions of a listing window, and `list_*_page` with a name-based continuation token in core, with conformance tests (`secret list --limit N --after NAME`)

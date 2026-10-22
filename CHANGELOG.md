@@ -8,6 +8,12 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* `scripts/dev/keyring-smoke.sh` and `.ps1` exercise the OS-keyring
+  protector against a real credential store (create, read, protector add
+  and remove, destroy with and without `--keep-os-key`, the store inspected
+  after each step) in an isolated home, and the `keyring` CI job runs them
+  headlessly against a temporary macOS keychain, GNOME Keyring on a private
+  session bus and Windows Credential Manager.
 * `sourceorrery backup --out FILE` writes every live secret of a vault,
   every version with its value, into one file sealed under a passphrase of
   its own (Argon2id, XChaCha20-Poly1305; `SOURCEORRERY_BACKUP_PASSPHRASE`

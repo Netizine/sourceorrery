@@ -560,6 +560,63 @@ jobs:
           cd previous
           python3 tests/conformance/sdk/harness.py --command "$GITHUB_WORKSPACE/build/conformance_c_previous"
 
+  # The OS-keyring protector against a real credential store, headless: a
+  # temporary keychain on macOS, GNOME Keyring under a private session bus
+  # on Linux, Credential Manager on Windows. The same scripts are what a
+  # person runs in a desktop session (docs/threat-model.md); this keeps the
+  # path from rotting between those runs. Nothing here touches the runner
+  # user's own store beyond the entries the script creates and removes.
+  keyring:
+    name: OS keyring (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Linux build dependencies and a Secret Service
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config gnome-keyring libsecret-tools
+      - name: Build the CLI
+        run: cargo build -p sourceorrery-cli --locked
+      # `--unlock` with an empty password creates and unlocks the login
+      # keyring and makes it the default collection; `--start` then serves it
+      # on the session bus. Without an unlocked default collection the
+      # Secret Service answers every store with a prompt no one can answer.
+      - name: Smoke test against GNOME Keyring on a private session bus
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -c '
+            eval "$(printf "\n" | gnome-keyring-daemon --unlock 2>/dev/null)"
+            eval "$(printf "\n" | gnome-keyring-daemon --start 2>/dev/null)"
+            export GNOME_KEYRING_CONTROL SSH_AUTH_SOCK
+            sleep 1
+            bash scripts/dev/keyring-smoke.sh target/debug/sourceorrery
+          '
+      - name: Smoke test against a temporary keychain
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/smoke.keychain-db"
+          security create-keychain -p "" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "" "$keychain"
+          security default-keychain -s "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          trap 'security delete-keychain "$keychain"' EXIT
+          bash scripts/dev/keyring-smoke.sh target/debug/sourceorrery
+      - name: Smoke test against Credential Manager
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh scripts/dev/keyring-smoke.ps1 -Cli target\debug\sourceorrery.exe
+
   # ---------------------------------------------------------------------
   # The one status check branch protection on `main` requires. It passes
   # when every job above passed or was skipped and fails on any other
@@ -591,6 +648,7 @@ jobs:
       - workflows
       - scripts
       - abi-compat
+      - keyring
     steps:
       - name: Every job passed or was skipped
         env:
