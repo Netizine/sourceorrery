@@ -36,6 +36,7 @@ public final class SecretReader implements AutoCloseable {
 
     /** Open {@code vault} with explicit options. */
     public static SecretReader open(String vault, OpenOptions options) {
+        Native.requireAbi();
         Objects.requireNonNull(vault, "vault");
         Objects.requireNonNull(options, "options");
         MemorySegment opened = Native.readerOpen(vault, options.toJson(), options.passphraseBytes());

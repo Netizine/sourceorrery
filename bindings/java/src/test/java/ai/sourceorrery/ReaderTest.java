@@ -20,6 +20,8 @@ import java.util.concurrent.Future;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import ai.sourceorrery.internal.Native;
+
 /** The Java SDK against the vault created by scripts/ci/fixture-vault.sh. */
 class ReaderTest {
     static String home;
@@ -230,5 +232,17 @@ class ReaderTest {
         assertEquals(SourceOrreryException.class, err.getClass());
         assertEquals("brand_new_code", err.code());
         assertEquals("m. h", err.getMessage());
+    }
+
+    /** An SDK refuses a library built for another C ABI version with a typed exception (ADR 0007). */
+    @Test
+    void abiMismatchIsATypedException() {
+        assertEquals(Native.ABI_VERSION, Native.abiVersion(), "the installed library matches");
+        assertTrue(Native.abiMismatch(Native.ABI_VERSION) == null);
+        SourceOrreryException err = Native.abiMismatch(Native.ABI_VERSION + 1);
+        assertEquals("abi_mismatch", err.code());
+        assertTrue(err.getMessage().contains(String.valueOf(Native.ABI_VERSION + 1)));
+        assertTrue(err.getMessage().contains(String.valueOf(Native.ABI_VERSION)));
+        assertTrue(err.hint().contains("sourceorrery-ffi"));
     }
 }

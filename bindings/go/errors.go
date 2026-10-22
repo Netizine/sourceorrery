@@ -84,6 +84,9 @@ var (
 	ErrCrypto error = &sentinelError{"crypto"}
 	// ErrStorage matches the storage and io codes: the vault file could not be read.
 	ErrStorage error = &sentinelError{"storage"}
+	// ErrAbiMismatch: the native library was built for another C ABI version
+	// than this package; raised by the SDK itself, never by the core (ADR 0007).
+	ErrAbiMismatch error = &sentinelError{"abi_mismatch"}
 	// ErrUnsupported: no OS credential store here; use a passphrase.
 	ErrUnsupported error = &sentinelError{"unsupported"}
 )

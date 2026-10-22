@@ -168,6 +168,23 @@ inline void check(so_status status) {
     if (status != SO_STATUS_OK) throw_last_error(status);
 }
 
+/// The error for a library whose C ABI version is `found`, or none when it
+/// matches the `SO_ABI_VERSION` of the header this SDK was compiled
+/// against. Its code, `abi_mismatch`, is produced by the SDK itself, never
+/// by the core (ADR 0007).
+inline std::optional<Error> abi_mismatch(uint32_t found) {
+    if (found == SO_ABI_VERSION) return std::nullopt;
+    return Error("abi_mismatch",
+                 "the SourceOrrery native library implements C ABI version " + std::to_string(found) +
+                     "; this SDK was built for version " + std::to_string(SO_ABI_VERSION),
+                 "install the sourceorrery-ffi library of the release this SDK version belongs to");
+}
+
+/// Refuse a library built for another C ABI version before anything is opened.
+inline void require_abi() {
+    if (auto err = abi_mismatch(so_abi_version())) throw *err;
+}
+
 inline const uint8_t* ptr(std::string_view text) noexcept {
     return text.empty() ? nullptr : reinterpret_cast<const uint8_t*>(text.data());
 }
@@ -351,6 +368,7 @@ public:
     /// Open `vault`: OS credential store, then options.passphrase, then
     /// SOURCEORRERY_PASSPHRASE, then the passphrase file. Never prompts.
     static Reader open(std::string_view vault, const OpenOptions& options = {}) {
+        detail::require_abi();
         const std::string json = options.to_json();
         so_reader* handle = nullptr;
         detail::check(so_reader_open(detail::ptr(vault), vault.size(), detail::ptr(json), json.size(),
@@ -444,6 +462,7 @@ public:
     /// Load `manifest` (nullopt: the nearest sourceorrery.toml above the
     /// current directory). Options apply to every vault the manifest names.
     static Project load(std::optional<std::string> manifest = std::nullopt, const OpenOptions& options = {}) {
+        detail::require_abi();
         const std::string json = options.to_json();
         so_project* handle = nullptr;
         detail::check(so_project_load(detail::opt_ptr(manifest), detail::opt_len(manifest), detail::ptr(json),

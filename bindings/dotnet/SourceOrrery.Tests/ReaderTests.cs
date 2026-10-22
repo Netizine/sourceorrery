@@ -218,3 +218,18 @@ public sealed class ReaderTests : IClassFixture<Fixture>
         Assert.Equal("m. h", err.Message);
     }
 }
+
+/// <summary>An SDK refuses a library built for another C ABI version with a typed exception (ADR 0007).</summary>
+public sealed class AbiTests
+{
+    [Fact]
+    public void AbiMismatchIsATypedException()
+    {
+        Assert.Equal(Interop.AbiVersion, SourceOrreryNative.AbiVersion);
+        Assert.Null(Interop.AbiMismatch(Interop.AbiVersion));
+        var err = Interop.AbiMismatch(Interop.AbiVersion + 1)!;
+        Assert.Equal("abi_mismatch", err.Code);
+        Assert.Contains((Interop.AbiVersion + 1).ToString(), err.Message);
+        Assert.Contains("sourceorrery-ffi", err.Message + err.Hint);
+    }
+}

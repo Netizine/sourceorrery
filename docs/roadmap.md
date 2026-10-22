@@ -47,7 +47,7 @@ items below are implemented; unchecked items remain planned.
 - [x] Cross-language conformance harness: `tests/conformance/sdk/scenarios.json` + `harness.py` drive a runner per SDK through the same scenarios in every SDK CI job
 - [x] Registry publication: PyPI, npm (`@sourceorreryai`), crates.io, Maven Central, NuGet, Packagist and pkg.go.dev
 - [x] The npm main tarball on the release page carries the generated loader (`index.js`)
-- [ ] ABI compatibility tests and semantic versioning policy
+- [x] ABI compatibility tests and semantic versioning policy ([ADR 0007](adr/0007-versioning-and-compatibility.md): the header is compared with the previous release's, that release's C runner is run against the current library, every C-ABI binding refuses a mismatched library, and the release checks the Rust API against crates.io)
 
 ### Supply chain
 

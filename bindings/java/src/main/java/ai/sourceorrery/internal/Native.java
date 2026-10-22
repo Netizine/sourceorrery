@@ -257,6 +257,39 @@ public final class Native {
         }
     }
 
+    /**
+     * C ABI version these downcalls follow: {@code SO_ABI_VERSION} in the
+     * {@code sourceorrery.h} this package was written against.
+     */
+    public static final int ABI_VERSION = 1;
+
+    /**
+     * Refuse a library built for another C ABI version before anything is
+     * opened (ADR 0007).
+     */
+    public static void requireAbi() {
+        SourceOrreryException mismatch = abiMismatch(abiVersion());
+        if (mismatch != null) {
+            throw mismatch;
+        }
+    }
+
+    /**
+     * The exception for a library whose C ABI version is {@code found}, or
+     * {@code null} when it matches {@link #ABI_VERSION}. Its code,
+     * {@code abi_mismatch}, is produced by the SDK itself, never by the core.
+     */
+    public static SourceOrreryException abiMismatch(int found) {
+        if (found == ABI_VERSION) {
+            return null;
+        }
+        return new SourceOrreryException(
+                "the SourceOrrery native library implements C ABI version " + found
+                        + "; this SDK was built for version " + ABI_VERSION,
+                "abi_mismatch",
+                "install the sourceorrery-ffi library of the release this SDK version belongs to");
+    }
+
     public static String contractVersion() {
         try {
             return cString((MemorySegment) SO_CONTRACT_VERSION.invokeExact());

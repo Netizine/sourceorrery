@@ -22,4 +22,8 @@
     <None Include="$(SourceOrreryRuntimesDir)\**\*" Condition="Exists('$(SourceOrreryRuntimesDir)')" Pack="true" PackagePath="runtimes\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="SourceOrrery.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -48,6 +48,9 @@ type projectEntryJSON struct {
 // the current directory) and resolves every entry. opts apply to every
 // vault the manifest names.
 func LoadProject(manifest string, opts *OpenOptions) (*Project, error) {
+	if err := requireAbi(); err != nil {
+		return nil, err
+	}
 	optionsJSON := opts.json()
 	passphrase := opts.passphrase()
 	var handle *C.so_project

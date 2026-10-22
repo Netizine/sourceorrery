@@ -45,6 +45,7 @@ public sealed unsafe class Project : IDisposable
     /// </summary>
     public static Project Load(string? manifest = null, OpenOptions? options = null)
     {
+        Interop.RequireAbi();
         options ??= new OpenOptions();
         var manifestBytes = NativeLibraryLoader.Utf8(manifest);
         var json = NativeLibraryLoader.Utf8(options.ToJson())!;

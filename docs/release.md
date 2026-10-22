@@ -9,8 +9,15 @@ so the pipeline can be exercised without touching a registry.
 
 ## Procedure
 
-1. Update `CHANGELOG.md`: move the `[Unreleased]` entries under a new
-   `## [X.Y.Z] - YYYY-MM-DD` heading and commit to `main`.
+1. Choose the version by [ADR 0007](adr/0007-versioning-and-compatibility.md):
+   before 1.0 a patch may add but never breaks any surface (CLI, Rust
+   API, C ABI, contract, SDKs, vault file); anything else is a minor
+   release. A C ABI change needs `SO_ABI_VERSION` bumped, a contract
+   change `CONTRACT_VERSION`. The `semver` job of the workflow checks the
+   Rust API against crates.io for the version you type and fails the run
+   when a bigger bump is needed. Update `CHANGELOG.md`: move the
+   `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading and
+   commit to `main`.
 2. In GitHub, open *Actions → Release → Run workflow*, enter the version
    (`X.Y.Z`, no `v`) and leave **dry_run** ticked. Wait for green. The
    `release-dry-run-X.Y.Z` artifact holds everything the real run would
@@ -37,6 +44,7 @@ the next patch version.
 
 | Job | Output |
 |-----|--------|
+| `semver` | nothing: `cargo semver-checks` on `sourceorrery` and `sourceorrery-core` against the crates.io baseline, with the version you typed; the release waits for it. |
 | `native` (six targets) | `sourceorrery-X.Y.Z-<target>.{tar.gz,zip}`: the CLI. `sourceorrery-ffi-X.Y.Z-<target>.{tar.gz,zip}`: the shared and static C ABI libraries, `sourceorrery.h`, `sourceorrery.hpp`, licences. |
 | `python` (six targets + sdist) | abi3 wheels for Python 3.11+ (`manylinux_2_28` on Linux) and the sdist. |
 | `node-build`, `node-package` | `@sourceorreryai/sdk` and the six `@sourceorreryai/sdk-<platform>` tarballs. `node-build` compiles the addon per target and, on `x86_64-unknown-linux-gnu`, keeps the `index.js` loader and `index.d.ts` that `napi build` generates (artifact `npm-loader`); `node-package` lays out the platform packages around the addons, adds the loader, packs, then installs the main and `linux-x64-gnu` tarballs into a scratch project and requires `@sourceorreryai/sdk`, so a main package that cannot be loaded fails the run. |

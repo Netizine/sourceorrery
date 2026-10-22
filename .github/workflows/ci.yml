@@ -116,6 +116,16 @@ jobs:
           LD_LIBRARY_PATH=target/debug /tmp/so-smoke "$(mktemp -d)"
       - name: The Go module vendors the same header
         run: diff -u crates/sourceorrery-ffi/include/sourceorrery.h bindings/go/sourceorrery.h
+      # ADR 0007: a declaration the previous release had may not change or
+      # disappear unless SO_ABI_VERSION moves in the same change.
+      - name: The header is compatible with the previous release
+        run: |
+          set -euo pipefail
+          git fetch --quiet --tags origin
+          tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+          git show "$tag:crates/sourceorrery-ffi/include/sourceorrery.h" > /tmp/baseline.h
+          python3 scripts/ci/abi-check.py --baseline /tmp/baseline.h \
+            --current crates/sourceorrery-ffi/include/sourceorrery.h --baseline-name "$tag"
 
   # The native extension crates live outside the workspace (maturin and
   # napi build them); lint them the same way.
@@ -488,6 +498,67 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: python3 -m unittest -v scripts/release/package_managers_test.py
+      - run: python3 -m unittest -v scripts/ci/abi_check_test.py
+
+  # ADR 0007: the library built from this commit must still pass the
+  # conformance contract of the latest release: its C runner, compiled
+  # against its own header, driven by its own harness and scenarios, over a
+  # fixture its own script creates with the current CLI. Skipped when
+  # SO_ABI_VERSION was bumped since that release (the old runner is then
+  # expected to refuse the library, which the bindings' load-time check
+  # covers).
+  abi-compat:
+    name: C ABI compatible with the previous release
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Linux build dependencies (Secret Service)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+      - name: Check out the previous release next to the tree
+        id: previous
+        run: |
+          set -euo pipefail
+          git fetch --quiet --tags origin
+          tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+          git worktree add --quiet previous "$tag"
+          before="$(grep -E '^#define SO_ABI_VERSION' previous/crates/sourceorrery-ffi/include/sourceorrery.h | awk '{print $3}')"
+          now="$(grep -E '^#define SO_ABI_VERSION' crates/sourceorrery-ffi/include/sourceorrery.h | awk '{print $3}')"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ "$before" = "$now" ]; then
+            echo "same_abi=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "same_abi=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SO_ABI_VERSION moved from $before ($tag) to $now; the previous release's runner is not expected to work"
+          fi
+      - name: Build the current CLI and C ABI library
+        if: steps.previous.outputs.same_abi == 'true'
+        run: cargo build --release --locked -p sourceorrery-cli -p sourceorrery-ffi
+      - name: The previous release's fixture, made with the current CLI
+        if: steps.previous.outputs.same_abi == 'true'
+        env:
+          SOURCEORRERY_CLI: ${{ github.workspace }}/target/release/sourceorrery
+          SOURCEORRERY_NATIVE_DIR: ${{ github.workspace }}/target/release
+        run: bash previous/scripts/ci/fixture-vault.sh
+      - name: The previous release's C runner against the current library
+        if: steps.previous.outputs.same_abi == 'true'
+        env:
+          TAG: ${{ steps.previous.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          cc -Wall -Wextra -Werror -I previous/crates/sourceorrery-ffi/include \
+            previous/crates/sourceorrery-ffi/examples/conformance.c \
+            -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c_previous
+          export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR"
+          echo "running the $TAG contract against the library built from $GITHUB_SHA"
+          cd previous
+          python3 tests/conformance/sdk/harness.py --command "$GITHUB_WORKSPACE/build/conformance_c_previous"
 
   # ---------------------------------------------------------------------
   # The one status check branch protection on `main` requires. It passes
@@ -519,6 +590,7 @@ jobs:
       - audit
       - workflows
       - scripts
+      - abi-compat
     steps:
       - name: Every job passed or was skipped
         env:

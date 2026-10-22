@@ -329,3 +329,27 @@ func TestUnknownCodesKeepTheirCode(t *testing.T) {
 		t.Fatalf("io matches ErrStorage")
 	}
 }
+
+// An SDK built against one C ABI version refuses a library built for another
+// with a typed error (ADR 0007); the installed library matches.
+func TestAbiMismatchIsATypedError(t *testing.T) {
+	if err := abiError(AbiVersion()); err != nil {
+		t.Fatalf("matching ABI version reported %v", err)
+	}
+	if err := requireAbi(); err != nil {
+		t.Fatalf("the installed library was refused: %v", err)
+	}
+	err := abiError(AbiVersion() + 1)
+	var typed *Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *Error, got %T", err)
+	}
+	if typed.Code != "abi_mismatch" {
+		t.Fatalf("code %q", typed.Code)
+	}
+	for _, want := range []string{fmt.Sprint(AbiVersion() + 1), fmt.Sprint(AbiVersion()), "sourceorrery-ffi"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("message %q lacks %q", err.Error(), want)
+		}
+	}
+}

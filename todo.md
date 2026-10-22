@@ -173,7 +173,7 @@ a version number promises.
 
 **Steps.**
 
-- [ ] **ADR 0007: Versioning and compatibility.** One release version for
+- [x] **ADR 0007: Versioning and compatibility.** One release version for
       everything (already how the release workflow works). What SemVer
       covers, per surface: the CLI (commands, flags, JSON output), the
       `sourceorrery` crate and `sourceorrery-core` public API, each SDK's
@@ -187,21 +187,21 @@ a version number promises.
       Deprecation: one minor release of warning before removal. Record
       how `Cargo.toml` `version` requirements of the internal crates are
       kept in lockstep (`set-version.py` already does it).
-- [ ] **Load-time check in the C-ABI bindings.** Go, Java, .NET, PHP and
+- [x] **Load-time check in the C-ABI bindings.** Go, Java, .NET, PHP and
       the C++ header compare `so_abi_version()` with the constant they
       were built against on first use and fail with a typed error naming
       both numbers. One scenario in `tests/conformance/sdk/scenarios.json`
       cannot exercise a mismatch without a second library, so cover it
       with a unit test per binding that stubs the native call where the
       language allows (Java, .NET, Go) and a doc note elsewhere.
-- [ ] **Declaration-level ABI check in CI.** `scripts/ci/abi-check.py`
+- [x] **Declaration-level ABI check in CI.** `scripts/ci/abi-check.py`
       parses function prototypes, struct fields and enum values out of
       two headers and fails when an existing declaration changed or
       disappeared while `SO_ABI_VERSION` stayed the same. Baseline: the
       header from the latest `v*` tag (`git show <tag>:crates/sourceorrery-ffi/include/sourceorrery.h`),
       so no second file is committed. Runs in the existing `ffi-header`
       job.
-- [ ] **Previous-release contract against the current library.** New CI
+- [x] **Previous-release contract against the current library.** New CI
       job `abi-compat` (Linux is enough): check out the latest `v*` tag
       into a worktree, build its `bindings/c/examples/conformance.c`
       against *its* header, run it with *its* `harness.py` and
@@ -210,12 +210,12 @@ a version number promises.
       the new library while the ABI version is unchanged; when the version
       is bumped the job asserts the old runner refuses to load instead.
       Skip the job while no tag with the same ABI version exists.
-- [ ] **Rust API check.** `cargo semver-checks` on `sourceorrery` and
+- [x] **Rust API check.** `cargo semver-checks` on `sourceorrery` and
       `sourceorrery-core` against the crates.io baseline
       (`obi1kenobi/cargo-semver-checks-action`), in a job added to the
       gate. Pre-1.0 it treats a minor bump as the major boundary, which
       matches the ADR.
-- [ ] Docs: `bindings/README.md` *Versioning* points at the ADR;
+- [x] Docs: `bindings/README.md` *Versioning* points at the ADR;
       `docs/sdks/index.md` gains a *Compatibility* paragraph;
       `docs/release.md` step 1 asks whether the ABI or contract version
       must move; tick the box.

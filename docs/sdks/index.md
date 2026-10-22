@@ -99,6 +99,7 @@ core, so every language says the same thing.
 | `unsupported` | `Unsupported…` | no OS credential store here: add a passphrase protector |
 | `invalid_argument`, `invalid_name` | `InvalidArgument…`, `InvalidName…` | the reference and name rules |
 | `manifest` | `Manifest…` | fix `sourceorrery.toml`, check with `sourceorrery check` |
+| `abi_mismatch` (Go, Java, .NET, PHP, C++) | the base type | the native library implements another C ABI version than the SDK was built for: install the `sourceorrery-ffi` library of the SDK's release. Raised by the SDK itself before anything is opened, never by the core ([ADR 0007](../adr/0007-versioning-and-compatibility.md)) |
 | anything newer | the base type, code preserved | |
 
 Names follow each language's conventions (`SecretNotFoundError` in
@@ -120,6 +121,16 @@ wiped, so keep such copies short-lived.
 > around the smallest scope that needs a value. Closing the SDK buffer does
 > not erase a string already passed to a client library, an environment
 > variable or a log.
+
+## Compatibility
+
+One version number covers the CLI, the crates, the C ABI and every SDK.
+Before 1.0 a patch release (`0.x.y` → `0.x.(y+1)`) may add but never
+breaks any of them, so an SDK and the native library it loads may differ
+by a patch; a minor release may change behaviour and API, and a C ABI
+change bumps `SO_ABI_VERSION`, which the bindings check when they load.
+The rules per surface, and how CI checks them, are in
+[ADR 0007](../adr/0007-versioning-and-compatibility.md).
 
 ## How the SDKs are tested
 

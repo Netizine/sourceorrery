@@ -44,6 +44,17 @@ static std::string env(const char* name) {
 }
 
 int main() {
+    // An SDK refuses a library built for another C ABI version with a typed
+    // error (ADR 0007); the installed library matches.
+    CHECK(so_abi_version() == SO_ABI_VERSION);
+    CHECK(!so::detail::abi_mismatch(SO_ABI_VERSION).has_value());
+    {
+        auto mismatch = so::detail::abi_mismatch(SO_ABI_VERSION + 1);
+        CHECK(mismatch.has_value());
+        CHECK(mismatch->code() == "abi_mismatch");
+        CHECK(std::string(mismatch->what()).find(std::to_string(SO_ABI_VERSION + 1)) != std::string::npos);
+    }
+
     const std::string home = env("SOURCEORRERY_HOME");
     const std::string passphrase = env("SOURCEORRERY_PASSPHRASE");
     const std::string vault = env("SOURCEORRERY_TEST_VAULT");

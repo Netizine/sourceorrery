@@ -105,6 +105,33 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: python3 scripts/release/set-version.py "$VERSION"
 
+  # ADR 0007: the version typed for this release must fit the change to the
+  # public Rust API of the crates applications build on. cargo-semver-checks
+  # compares the stamped manifests with the crates.io baseline and fails a
+  # patch release that would need a minor bump (and, from 1.0, a minor
+  # release that would need a major). Runs in dry runs too; the GitHub
+  # Release waits for it.
+  semver:
+    name: rust api fits the version
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Linux build dependencies (Secret Service)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+      - name: Stamp the version
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: python3 scripts/release/set-version.py "$VERSION"
+      - uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        with:
+          package: sourceorrery,sourceorrery-core
+          rust-toolchain: manual
+
   # ---------------------------------------------------------------------
   # Native artefacts: the CLI and the C ABI for the six Tier 1 targets.
   # ---------------------------------------------------------------------
@@ -498,7 +525,7 @@ jobs:
   # ---------------------------------------------------------------------
   release:
     name: github release
-    needs: [preflight, native, python, node-package, java, dotnet, crates, php]
+    needs: [preflight, semver, native, python, node-package, java, dotnet, crates, php]
     runs-on: ubuntu-latest
     permissions:
       contents: write

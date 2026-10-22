@@ -9,6 +9,7 @@ require __DIR__ . '/../autoload.php';
 use SourceOrrery\InvalidArgumentException;
 use SourceOrrery\InvalidNameException;
 use SourceOrrery\ManifestException;
+use SourceOrrery\Native;
 use SourceOrrery\OpenOptions;
 use SourceOrrery\PolicyException;
 use SourceOrrery\Project;
@@ -183,6 +184,14 @@ $unknown = SourceOrreryException::forCode('brand_new_code', 'm', 'h');
 check($unknown::class === SourceOrreryException::class && $unknown->code() === 'brand_new_code' && $unknown->getMessage() === 'm. h', 'unknown code');
 
 $reader->close();
+// An SDK refuses a library built for another C ABI version with a typed
+// exception (ADR 0007); the installed library matches.
+check(SourceOrrery::abiVersion() === Native::ABI_VERSION, 'the installed library matches the ABI version');
+check(Native::abiMismatch(Native::ABI_VERSION) === null, 'no mismatch for the built version');
+$mismatch = Native::abiMismatch(Native::ABI_VERSION + 1);
+check($mismatch instanceof SourceOrreryException && $mismatch->code() === 'abi_mismatch', 'abi_mismatch is typed');
+check($mismatch !== null && str_contains($mismatch->getMessage(), (string) (Native::ABI_VERSION + 1)), 'the message names the versions');
+
 if ($failures > 0) {
     fwrite(STDERR, "$failures check(s) failed\n");
     exit(1);

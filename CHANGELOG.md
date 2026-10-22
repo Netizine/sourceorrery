@@ -8,6 +8,16 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* ADR 0007 fixes what a version number promises for every surface (CLI,
+  Rust API, C ABI, contract, SDKs, vault file, error codes) and how it is
+  checked: `scripts/ci/abi-check.py` fails CI when a declaration of the
+  previous release's C header changed or disappeared without a
+  `SO_ABI_VERSION` bump, the `abi-compat` job runs the previous release's C
+  conformance runner against the current library, and the release workflow
+  runs `cargo semver-checks` on `sourceorrery` and `sourceorrery-core` for
+  the version typed. The Go, Java, .NET, PHP and C++ SDKs compare
+  `so_abi_version()` with the version they were built against before
+  opening anything and refuse a mismatch with the code `abi_mismatch`.
 * Paged listings: `SecretClient::list_properties_of_secrets_page` and
   `list_deleted_secrets_page` take `ListOptions` (`max_results`, a
   `ContinuationToken`) and return a `Page` whose token is the last name
