@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sourceorrery"
-description = "Read secrets from a SourceOrrery vault: secrets belong to the runtime, not the repository"
+description = "Read secrets from SourceOrrery vaults, the encrypted replacement for .env files; read-only, with vaults created and secrets stored by the sourceorrery CLI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"

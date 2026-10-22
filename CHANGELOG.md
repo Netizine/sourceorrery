@@ -6,6 +6,34 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+* PyPI and crates.io are published by trusted publishing, like npm and
+  NuGet: the release jobs exchange the workflow's GitHub identity token
+  for a short-lived credential (`rust-lang/crates-io-auth-action` for
+  crates.io), and no `PYPI_API_TOKEN` or `CARGO_REGISTRY_TOKEN` is read
+  any more. PyPI files now carry a signed attestation. Both jobs run in
+  every real release and fail rather than skip if the registry does not
+  trust the workflow; `ReleasePackages.yaml` does the same.
+* Every registry page explains its package: each of the six crates has a
+  README on crates.io; the PyPI, npm, NuGet, Go and PHP READMEs, the Maven
+  description and javadoc overview say what the SDK is, that vaults are
+  created and secrets stored with the `sourceorrery` CLI (which no SDK
+  installs and which need not be present where the application runs), and
+  link to sourceorrery.ai. The six npm platform packages say which
+  platform their addon is for and to install `@sourceorreryai/sdk`
+  instead (`scripts/release/npm-platform-packages.py`, run after
+  `napi create-npm-dirs`).
+* The CLI archives carry the CLI's README, the C ABI archives a README of
+  their own (what is inside, who needs it, how to link it), and the
+  GitHub Release notes list what each file is for.
+
+### Fixed
+
+* The Linux and macOS C ABI archives no longer include Cargo's
+  `libsourceorrery_ffi.rlib` and `libsourceorrery_ffi.d` next to the
+  libraries.
+
 ## [0.1.3] - 2026-10-21
 
 The first release: an encrypted local secrets vault with an Azure Key

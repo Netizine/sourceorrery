@@ -51,7 +51,8 @@ How each package is published and how to check it: [Supply chain](supply-chain.m
 - [x] npm by trusted publishing, with Sigstore provenance on every package
 - [x] NuGet by trusted publishing
 - [x] Maven Central artefacts signed with the release key
-- [ ] PyPI and crates.io by trusted publishing, with PyPI attestations
+- [x] PyPI and crates.io by trusted publishing, with PyPI attestations
+- [x] Every registry page says what its package is, that vaults are managed with the CLI, and where the documentation is
 - [ ] Signatures or build attestations for the release archives
 - [ ] Signed and notarised macOS binaries; Authenticode-signed Windows binaries
 - [ ] Third-party GitHub Actions pinned to commits; automated dependency updates

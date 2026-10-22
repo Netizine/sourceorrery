@@ -79,7 +79,10 @@ sourceorrery vault protector add --kind passphrase --vault development
 
 See [docs/cli.md](docs/cli.md) for every command.
 
-From code, an application only ever *reads* ([why](docs/adr/0005-read-only-sdks.md)):
+## Reading secrets from code
+
+The CLI manages vaults; applications read them through the SDKs, which
+only ever *read* ([why](docs/adr/0005-read-only-sdks.md)):
 
 ```python
 from sourceorrery import SecretReader            # pip install sourceorrery
@@ -88,10 +91,29 @@ with SecretReader("development") as reader, reader.get("database-password") as s
     connect(password=secret.value.expose_text())  # zeroised when the block ends
 ```
 
-The same five calls exist for JavaScript/TypeScript, Rust, Java, .NET, Go,
-C, C++ and PHP, each with typed errors whose hint says what to do
-(`sourceorrery secret set ...`, which passphrase sources were tried, ...).
-See [docs/sdks](docs/sdks/index.md).
+The same calls exist in every language, each with typed errors whose hint
+says what to do (`sourceorrery secret set ...`, which passphrase sources
+were tried, ...). No SDK installs the CLI: create the vault and store its
+secrets with the CLI first. An SDK opens the vault file itself, so the CLI
+need not be installed where the application runs.
+
+| Language | Package | Guide |
+|----------|---------|-------|
+| Python | [`sourceorrery`](https://pypi.org/project/sourceorrery/) on PyPI | [Python](https://sourceorrery.ai/sdks/python/) |
+| JavaScript / TypeScript | [`@sourceorreryai/sdk`](https://www.npmjs.com/package/@sourceorreryai/sdk) on npm | [JavaScript](https://sourceorrery.ai/sdks/javascript/) |
+| Rust | [`sourceorrery`](https://crates.io/crates/sourceorrery) on crates.io | [Rust](https://sourceorrery.ai/sdks/rust/) |
+| Java | [`ai.sourceorrery:sourceorrery`](https://central.sonatype.com/artifact/ai.sourceorrery/sourceorrery) on Maven Central | [Java](https://sourceorrery.ai/sdks/java/) |
+| .NET | [`SourceOrrery`](https://www.nuget.org/packages/SourceOrrery) on NuGet | [.NET](https://sourceorrery.ai/sdks/dotnet/) |
+| Go | [`github.com/netizine/sourceorrery/bindings/go`](https://pkg.go.dev/github.com/netizine/sourceorrery/bindings/go) | [Go](https://sourceorrery.ai/sdks/go/) |
+| PHP | [`sourceorrery/sourceorrery`](https://packagist.org/packages/sourceorrery/sourceorrery) on Packagist | [PHP](https://sourceorrery.ai/sdks/php/) |
+| C, C++ | `sourceorrery-ffi` archive on the [GitHub release](https://github.com/Netizine/sourceorrery/releases/latest) | [C](https://sourceorrery.ai/sdks/c/), [C++](https://sourceorrery.ai/sdks/cpp/) |
+
+Python, JavaScript, Rust, Java and .NET packages include the native code
+they need. Go, PHP, C and C++ load the C ABI library from the
+`sourceorrery-ffi-<version>-<target>` archive on the GitHub release; each
+guide shows where to put it. The PHP package on Packagist is this
+repository at the release tag, with the SDK in
+[`bindings/php`](bindings/php/README.md).
 
 ## What SourceOrrery does and does not protect
 
@@ -184,9 +206,9 @@ SDK test vault and the conformance harness:
 
 1. **Core and local CLI** — shipped.
 2. **Read-only SDKs** for Python, JavaScript/TypeScript, Rust, Java, .NET,
-   Go, C, C++ and PHP, and a release pipeline — shipped. Supply-chain
-   hardening continues: trusted publishing for PyPI and crates.io, signed
-   archives.
+   Go, C, C++ and PHP, and a release pipeline — shipped, published by
+   trusted publishing wherever the registry offers it. Supply-chain
+   hardening continues: signed archives, notarised binaries.
 3. Authenticated local broker, capability tokens, agent-aware profiles.
 4. Enterprise: remote providers, workload identity, rotation, RBAC.
 5. Community SDKs via the published C ABI and conformance harness.

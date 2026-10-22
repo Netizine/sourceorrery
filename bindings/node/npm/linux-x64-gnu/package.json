@@ -8,7 +8,7 @@
   "files": [
     "sourceorrery.linux-x64-gnu.node"
   ],
-  "description": "Read secrets from a SourceOrrery vault: secrets belong to the runtime, not the repository",
+  "description": "SourceOrrery native addon for Linux x64 (glibc), installed automatically by @sourceorreryai/sdk; install @sourceorreryai/sdk, not this package",
   "keywords": [
     "secrets",
     "vault",

@@ -42,7 +42,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | **Tamperer** — can modify the vault file but cannot unlock it | Swaps or edits ciphertext, flips `enabled`, edits timestamps or tags, undeletes a secret, edits or deletes audit rows | Ciphertext swap/edit is detected (AAD binding + AEAD tag). Mutable metadata carries an HMAC under a key derived from the DEK, checked on every read: a re-enabled version, extended expiry, cleared `not_before`, edited tags or forged deletion state is refused with `crypto` and audited. The audit log is a keyed hash chain with a keyed head record: edits, gaps and reordering break the chain; rows removed from the end are detected and recorded at the next unlock, and the vault then refuses every unlock and operation until its owner has reviewed the surviving history and acknowledged the truncation. Rows written before unlock (failed attempts) are chained with a public key: forgeable, but not silently removable. Vault-wide settings (schema, name, recovery level, retention) carry their own HMAC, so retention cannot be shortened to force a purge. A schema marker rolled back to the legacy format is refused: the vault key is wrapped under an AAD that names the format, and migration is only ever an explicit command. Removing the whole audit history together with its head is recorded, not accepted as a fresh log. |
 | **Careless operator / agent reading output** | Sees stdout/stderr of CLI commands, logs, JSON | Metadata commands never show values; `--reveal` is explicit; prompts never echo; `-v` never prints values; the `ui` browser cannot read a value at all; SDK values print as `[REDACTED]` and no SDK error, message or hint contains one. |
 | **Compromised dependency inside an application** | Runs inside a process that uses an SDK | Reads every secret the application can read: the same process, the same unlock. Cannot write through the SDK: no binding has a set, update, delete, recover, purge, protector or audit operation ([ADR 0005](adr/0005-read-only-sdks.md)), so it cannot plant a value or disable a version through the library. Read-only is a smaller surface, not a boundary: the write-capable `so_vault_*` functions are in the same C ABI library for tooling, and code that can load them or run the CLI is the same-user process below. Every read it makes is audited. |
-| **Supply-chain attacker** | Alters a dependency, the build, or a package between the repository and you | Locked dependencies, `cargo audit` in CI, one workflow that builds every package from one commit, trusted publishing with provenance for npm and NuGet, signed artefacts on Maven Central, `SHA256SUMS` on every release. PyPI and crates.io still publish with API tokens and the archives are not signed; see [Supply chain](supply-chain.md). |
+| **Supply-chain attacker** | Alters a dependency, the build, or a package between the repository and you | Locked dependencies, `cargo audit` in CI, one workflow that builds every package from one commit, trusted publishing for npm, PyPI, crates.io and NuGet, with provenance on npm and PyPI, signed artefacts on Maven Central, `SHA256SUMS` on every release. The archives on the GitHub release are not signed; see [Supply chain](supply-chain.md). |
 | **Same-user malicious process or agent** | Runs code as you, reads your memory, calls the CLI, reads the OS credential store under your login | **Not defended.** Can call `secret get --reveal` exactly as you can. This is the honest boundary of a local-first tool and the reason the broker exists. |
 | **Root / kernel / debugger** | Everything | Out of scope. Memory hygiene (zeroisation, short-lived plaintext) reduces residue; it does not resist a privileged attacker. |
 
@@ -86,7 +86,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | One unlock order, no prompt in a library | The Rust client owns the unlock order (OS credential store, an explicit passphrase, `SOURCEORRERY_PASSPHRASE`, `SOURCEORRERY_PASSPHRASE_FILE`); SDKs never prompt and never migrate a vault (`crates/sourceorrery`) |
 | Values guarded in every language | A value stays in native memory until the application closes it and is zeroised then (`so_bytes_free`, `SecretBytes`); the wrapper prints as `[REDACTED]` and refuses serialisation where the language allows; bytes leave only through an explicit call (`docs/sdks`) |
 | Same behaviour in every SDK | One scenario list, judged by one harness, runs against every SDK in CI on Ubuntu, Windows and macOS (`tests/conformance/sdk`) |
-| Release integrity | Locked builds, `cargo audit`, one release workflow from one commit, trusted publishing and provenance where the registry supports it, signatures on Maven Central, checksums on the release ([Supply chain](supply-chain.md)) |
+| Release integrity | Locked builds, `cargo audit`, one release workflow from one commit, trusted publishing on every registry that offers it (npm, PyPI, crates.io, NuGet) with provenance on npm and PyPI, signatures on Maven Central, checksums on the release ([Supply chain](supply-chain.md)) |
 
 ## Known gaps
 
@@ -99,12 +99,11 @@ treated as secrets. Users are told not to put sensitive information in them.
 3. **Side channels.** Argon2id, HMAC and the AEAD implementations are
    RustCrypto's; no additional constant-time guarantees are claimed beyond
    theirs.
-4. **Release signing is partial.** npm packages carry provenance, Maven
-   Central artefacts are signed with the release key and nuget.org signs
-   every package it serves. PyPI and crates.io still publish with API
-   tokens, PyPI files carry no attestation, the archives on the GitHub
-   release have checksums but no signature, and the binaries are neither
-   notarised (macOS) nor Authenticode-signed (Windows). See
+4. **Release signing is partial.** npm and PyPI files carry provenance,
+   Maven Central artefacts are signed with the release key and nuget.org
+   signs every package it serves, but the archives on the GitHub release
+   have checksums and no signature, and the binaries are neither notarised
+   (macOS) nor Authenticode-signed (Windows). See
    [Supply chain](supply-chain.md#not-done-yet).
 5. **Integrity, not availability.** A tamperer can still destroy data
    (delete rows, corrupt the file) and can forge or remove the *unkeyed*

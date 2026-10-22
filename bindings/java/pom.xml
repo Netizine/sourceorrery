@@ -11,8 +11,8 @@
   <packaging>jar</packaging>
 
   <name>SourceOrrery</name>
-  <description>Read secrets from a SourceOrrery vault. Secrets belong to the runtime, not the repository.</description>
-  <url>https://sourceorrery.ai</url>
+  <description>Read secrets from SourceOrrery vaults, the encrypted replacement for .env files. Read-only: vaults are created and secrets stored with the sourceorrery CLI (https://sourceorrery.ai/getting-started/). One jar with the native library for Windows, macOS and Linux, x64 and arm64; Java 22+.</description>
+  <url>https://sourceorrery.ai/sdks/java/</url>
 
   <licenses>
     <license>

@@ -36,19 +36,23 @@ With trusted publishing, a registry is told once which repository and
 which workflow file may publish a package. At release time the publishing
 job presents an identity token that GitHub signs for that one workflow run
 (OpenID Connect), and the registry exchanges it for a credential that
-expires within the hour, for that package only. No long-lived token exists, so there
-is none to leak from a CI log, steal from a maintainer's laptop or reuse
-elsewhere. npm also records a **provenance** statement, signed through
-Sigstore, that ties each published tarball to the commit and the workflow
-run that built it.
+expires within the hour, for that package only. No long-lived token
+exists, so there is none to leak from a CI log, steal from a maintainer's
+laptop or reuse elsewhere. npm and PyPI also record a **provenance**
+statement, signed through Sigstore, that ties each published file to the
+commit and the workflow run that built it.
+
+Every registry that supports trusted publishing gets the packages that
+way, from `release.yml` or `ReleasePackages.yaml` in
+`Netizine/sourceorrery`:
 
 | Registry | Package | Published with | What you can check |
 |----------|---------|----------------|--------------------|
-| npm | `@sourceorreryai/sdk` and its six platform packages | Trusted publishing, from `release.yml` or `ReleasePackages.yaml` in `Netizine/sourceorrery` | Provenance and registry signatures |
+| npm | `@sourceorreryai/sdk` and its six platform packages | Trusted publishing | Provenance and registry signatures |
+| PyPI | `sourceorrery` | Trusted publishing | An attestation for every file, and its SHA-256 against the release |
+| crates.io | the six `sourceorrery*` crates | Trusted publishing (a token that lives 30 minutes) | The checksums in `Cargo.lock` |
 | NuGet | `SourceOrrery` | Trusted publishing (a key that lives one hour) | nuget.org's repository signature |
-| Maven Central | `ai.sourceorrery:sourceorrery` | A Central user token; every file signed with the release key | The `.asc` signature next to each file |
-| PyPI | `sourceorrery` | An API token | The SHA-256 of each file, against the release |
-| crates.io | the six `sourceorrery*` crates | An API token | The checksums in `Cargo.lock` |
+| Maven Central | `ai.sourceorrery:sourceorrery` | A Central user token (Central has no trusted publishing); every file signed with the release key | The `.asc` signature next to each file |
 | Go module proxy | `github.com/netizine/sourceorrery/bindings/go` | Nothing uploaded: the tag `bindings/go/vX.Y.Z` | The Go checksum database |
 | Packagist | `sourceorrery/sourceorrery` | Nothing uploaded: the tag `vX.Y.Z` | The commit recorded in `composer.lock` |
 | GitHub Release | CLI and C ABI archives, wheels, jar, `.nupkg`, npm tarballs | The release workflow | `SHA256SUMS` and the workflow run linked from the release |
@@ -102,9 +106,19 @@ gpg --verify sourceorrery-0.1.3.jar.asc sourceorrery-0.1.3.jar    # Good signatu
 
 ### PyPI
 
-PyPI files carry no attestation yet, so pin the hashes. Each file's
-SHA-256 is on its PyPI page and in the release's `SHA256SUMS`; check that
-the two agree, then require them:
+Each file published by trusted publishing carries an attestation, shown
+under *Provenance* on the file's page on pypi.org with the repository,
+workflow and commit that built it. To check one yourself:
+
+```bash
+pip install pypi-attestations
+pypi-attestations verify pypi --repository https://github.com/Netizine/sourceorrery \
+    pypi:sourceorrery-<version>-cp311-abi3-manylinux_2_28_x86_64.whl
+```
+
+To make sure every install gets exactly those files, pin the hashes. Each
+file's SHA-256 is on its PyPI page and in the release's `SHA256SUMS`;
+check that the two agree, then require them:
 
 ```text
 # requirements.txt
@@ -185,8 +199,8 @@ change yet:
 
 ## Not done yet
 
-* PyPI and crates.io are published with API tokens stored as repository
-  secrets, not by trusted publishing, and PyPI files carry no attestation.
+* Maven Central is published with a stored user token, because Central
+  offers no trusted publishing; its files are GPG-signed instead.
 * The release archives have checksums but no signature or build
   attestation.
 * macOS binaries are not signed or notarised; Windows binaries are not

@@ -8,8 +8,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-categories.workspace = true
-keywords.workspace = true
+readme = "README.md"
+categories = ["cryptography"]
+keywords = ["xchacha20poly1305", "argon2", "envelope", "hkdf", "secrets"]
 
 [dependencies]
 chacha20poly1305 = { version = "0.11", features = ["getrandom", "zeroize"] }

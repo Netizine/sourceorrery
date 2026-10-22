@@ -69,7 +69,7 @@ const PAGES = {
 	'docs/release.md': {
 		dest: 'reference/release.md',
 		description:
-			'How a release is cut: the manual workflow, what one run builds for six targets and ten languages, the registry secrets each publish job needs, and dry runs.',
+			'How a release is cut: the manual workflow, what one run builds for six targets and ten languages, trusted publishing and the setup each registry needs, dry runs, and where each registry page gets its text.',
 	},
 	'docs/sdks/index.md': {
 		dest: 'sdks/index.md',
