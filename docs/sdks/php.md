@@ -133,13 +133,14 @@ try {
 ```
 
 Classes: `VaultNotFoundException`, `VaultLockedException`,
-`MigrationRequiredException`, `SecretNotFoundException`,
-`VersionNotFoundException`, `SecretDeletedException`, `PolicyException`
-with `SecretDisabledException`, `SecretNotYetValidException`
-(`isTransient()`), `SecretExpiredException`, `IntegrityException`,
-`UnsupportedException`, `InvalidArgumentException`, `InvalidNameException`,
-`ManifestException`, `PermissionDeniedException`, `StorageException`. See
-[the SDK overview](index.md#errors).
+`MigrationRequiredException`, `VaultMismatchException`,
+`SecretNotFoundException`, `VersionNotFoundException`,
+`SecretDeletedException`, `PolicyException` with
+`SecretDisabledException`, `SecretNotYetValidException` (`isTransient()`),
+`SecretExpiredException`, `IntegrityException`, `UnsupportedException`,
+`InvalidArgumentException`, `InvalidNameException`, `ManifestException`,
+`PermissionDeniedException`, `StorageException`. See [the SDK
+overview](index.md#errors).
 
 ## Load a project
 

@@ -42,6 +42,7 @@ class SourceOrreryException extends RuntimeException
             'vault_not_found' => new VaultNotFoundException($message, $code, $hint),
             'locked' => new VaultLockedException($message, $code, $hint),
             'migration_required' => new MigrationRequiredException($message, $code, $hint),
+            'vault_mismatch' => new VaultMismatchException($message, $code, $hint),
             'not_found' => new SecretNotFoundException($message, $code, $hint),
             'version_not_found' => new VersionNotFoundException($message, $code, $hint),
             'deleted' => new SecretDeletedException($message, $code, $hint),
@@ -66,6 +67,8 @@ class VaultNotFoundException extends SourceOrreryException {}
 class VaultLockedException extends SourceOrreryException {}
 /** `migration_required`: run `sourceorrery vault migrate <name>` first. */
 class MigrationRequiredException extends SourceOrreryException {}
+/** `vault_mismatch`: the file found for the vault holds another vault (renamed, copied or swapped in). */
+class VaultMismatchException extends SourceOrreryException {}
 /** `not_found`: no secret with that name. */
 class SecretNotFoundException extends SourceOrreryException {}
 /** `version_not_found`: the secret exists but the version does not. */

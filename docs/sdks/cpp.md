@@ -100,12 +100,12 @@ destructor zeroises too.
 
 Every failure throws `sourceorrery::Error` (a `std::runtime_error`) or a
 subclass: `VaultNotFoundError`, `VaultLockedError`,
-`MigrationRequiredError`, `SecretNotFoundError` (also `version_not_found`),
-`SecretDeletedError`, `PolicyError` (`disabled`, `not_yet_valid`,
-`expired`), `IntegrityError`, `UnsupportedError`, `InvalidArgumentError`
-(also `invalid_name`), `ManifestError`. Each has `code()`, `message()`,
-`hint()`, `kind()`, `transient()` and `policy()`. See
-[the SDK overview](index.md#errors).
+`MigrationRequiredError`, `VaultMismatchError`, `SecretNotFoundError`
+(also `version_not_found`), `SecretDeletedError`, `PolicyError`
+(`disabled`, `not_yet_valid`, `expired`), `IntegrityError`,
+`UnsupportedError`, `InvalidArgumentError` (also `invalid_name`),
+`ManifestError`. Each has `code()`, `message()`, `hint()`, `kind()`,
+`transient()` and `policy()`. See [the SDK overview](index.md#errors).
 
 ## Load a project
 

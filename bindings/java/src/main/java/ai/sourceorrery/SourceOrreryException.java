@@ -47,6 +47,7 @@ public class SourceOrreryException extends RuntimeException {
             case "vault_not_found" -> new VaultNotFoundException(message, code, hint);
             case "locked" -> new VaultLockedException(message, code, hint);
             case "migration_required" -> new MigrationRequiredException(message, code, hint);
+            case "vault_mismatch" -> new VaultMismatchException(message, code, hint);
             case "not_found" -> new SecretNotFoundException(message, code, hint);
             case "version_not_found" -> new VersionNotFoundException(message, code, hint);
             case "deleted" -> new SecretDeletedException(message, code, hint);

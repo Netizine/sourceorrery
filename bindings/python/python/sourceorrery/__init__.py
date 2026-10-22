@@ -40,6 +40,7 @@ from .errors import (
     StorageError,
     UnsupportedError,
     VaultLockedError,
+    VaultMismatchError,
     VaultNotFoundError,
     VersionNotFoundError,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "VaultNotFoundError",
     "VaultLockedError",
     "MigrationRequiredError",
+    "VaultMismatchError",
     "SecretNotFoundError",
     "VersionNotFoundError",
     "SecretDeletedError",

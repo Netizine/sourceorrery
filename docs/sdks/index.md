@@ -76,6 +76,7 @@ core, so every language says the same thing.
 | `vault_not_found` | `VaultNotFound…` | how to create the vault with the CLI, and which home directory was searched |
 | `locked` | `VaultLocked…` | which passphrase sources were tried (option, `SOURCEORRERY_PASSPHRASE`, `SOURCEORRERY_PASSPHRASE_FILE`) and how to add a protector |
 | `migration_required` | `MigrationRequired…` | run `sourceorrery vault migrate <name>`; SDKs never migrate |
+| `vault_mismatch` | `VaultMismatch…` | the file found for the vault holds another vault (renamed, copied or swapped in): move it back or restore the vault from a backup, and treat an unexplained swap as tampering |
 | `not_found` | `SecretNotFound…` | how to store the secret (`sourceorrery secret set`) |
 | `version_not_found` | `VersionNotFound…` (a `SecretNotFound…`) | list versions, or omit the version |
 | `disabled`, `not_yet_valid`, `expired` | `SecretDisabled…`, `SecretNotYetValid…`, `SecretExpired…` (all `Policy…`) | the policy decision and the `secret update` that changes it; `not_yet_valid` is marked transient |

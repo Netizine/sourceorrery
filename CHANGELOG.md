@@ -28,6 +28,21 @@ uses [Semantic Versioning](https://semver.org/).
   their own (what is inside, who needs it, how to link it), and the
   GitHub Release notes list what each file is for.
 
+### Security
+
+* A vault is only served under its own name. Opening vault `X` used to
+  load `<home>/vaults/X.sorvault` without checking that the file holds
+  the vault `X`, so a file renamed, copied or swapped in from another
+  vault that unlocks with the same passphrase or credential store was
+  served under the wrong name. Every open by name (the CLI, `ui`,
+  `audit`, `vault migrate`, the SDKs and the C ABI) now compares the
+  requested name with the authenticated name in the file and refuses a
+  mismatch with the new, append-only code `vault_mismatch`, recording
+  the refusal in that file's audit log. A legacy file under the wrong
+  name is refused before it is migrated. Every SDK has a typed error for
+  the code (`VaultMismatchError`, `VaultMismatchException`,
+  `ErrVaultMismatch`), and the SDK conformance harness checks it.
+
 ### Fixed
 
 * The Linux and macOS C ABI archives no longer include Cargo's

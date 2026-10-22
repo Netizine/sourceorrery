@@ -2867,3 +2867,134 @@ fn damaged_value_on_one_version_does_not_affect_the_others() {
     // Nothing above touched the metadata or the audit log.
     assert!(vault.verify_audit_chain().unwrap().is_intact());
 }
+
+/// A file found under one vault's name that holds another vault.
+fn assert_mismatch(err: &sourceorrery_core::SecretError, requested: &str, found: &str) {
+    assert_eq!(err.code(), "vault_mismatch", "{err}");
+    assert_eq!(
+        err.to_string(),
+        format!("the file for vault '{requested}' holds the vault '{found}'")
+    );
+}
+
+#[test]
+fn a_vault_file_under_another_name_is_refused() {
+    let fx = Fixture::new();
+    set_with(
+        &fx.create_vault("dev"),
+        "db-password",
+        "dev-value",
+        SetSecretOptions::default(),
+    );
+    let dev_path = fx.registry.vault_path("dev").unwrap();
+    let prod_path = fx.registry.vault_path("prod").unwrap();
+    std::fs::copy(&dev_path, &prod_path).unwrap();
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+
+    // Every way of opening by name refuses the copy once its stored name
+    // is authenticated: it unlocks, but it is not the vault asked for.
+    assert_mismatch(
+        &fx.registry.open("prod", &unlock).unwrap_err(),
+        "prod",
+        "dev",
+    );
+    assert_mismatch(
+        &fx.registry
+            .open_for_inspection("prod", &unlock)
+            .unwrap_err(),
+        "prod",
+        "dev",
+    );
+    assert_mismatch(
+        &fx.registry.migrate("prod", &unlock).unwrap_err(),
+        "prod",
+        "dev",
+    );
+
+    // Each refusal is on the copy's own log; the original never saw them.
+    {
+        let copy = SqliteVault::open(&prod_path, &unlock).unwrap();
+        assert_eq!(open_refusals(&copy, "opened as vault 'prod'"), 3);
+        assert!(copy.verify_audit_chain().unwrap().is_intact());
+        let dev = fx.open_vault("dev");
+        assert_eq!(open_refusals(&dev, "opened as vault 'prod'"), 0);
+        assert_eq!(
+            dev.get_secret("db-password", None).unwrap().value.expose(),
+            b"dev-value"
+        );
+    }
+
+    // Moved back under its own name, the file is the vault it says it is.
+    std::fs::remove_file(&dev_path).unwrap();
+    std::fs::rename(&prod_path, &dev_path).unwrap();
+    assert_eq!(
+        fx.open_vault("dev")
+            .get_secret("db-password", None)
+            .unwrap()
+            .value
+            .expose(),
+        b"dev-value"
+    );
+}
+
+#[test]
+fn swapped_vault_files_are_not_served_under_each_others_names() {
+    let fx = Fixture::new();
+    for (name, value) in [("dev", "dev-value"), ("prod", "prod-value")] {
+        set_with(
+            &fx.create_vault(name),
+            "db-password",
+            value,
+            SetSecretOptions::default(),
+        );
+    }
+    let dev = fx.registry.vault_path("dev").unwrap();
+    let prod = fx.registry.vault_path("prod").unwrap();
+    let parked = dev.with_extension("parked");
+    std::fs::rename(&prod, &parked).unwrap();
+    std::fs::rename(&dev, &prod).unwrap();
+    std::fs::rename(&parked, &dev).unwrap();
+
+    // Both vaults share the fixture passphrase, so both files unlock: only
+    // the name check stands between an application asking for `prod` and
+    // the development secrets.
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    assert_mismatch(
+        &fx.registry.open("prod", &unlock).unwrap_err(),
+        "prod",
+        "dev",
+    );
+    assert_mismatch(
+        &fx.registry.open("dev", &unlock).unwrap_err(),
+        "dev",
+        "prod",
+    );
+}
+
+#[test]
+fn a_legacy_vault_under_another_name_is_not_migrated() {
+    let fx = Fixture::new();
+    std::fs::create_dir_all(fx.registry.vaults_dir()).unwrap();
+    // A schema 1 file holding the vault `legacy`, under the name `other`.
+    let other = fx.registry.vault_path("other").unwrap();
+    craft_schema_1_vault(&other);
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+
+    // Migration would bind whatever name it finds into the settings tag
+    // for good, so a file under the wrong name is refused before it starts.
+    assert_mismatch(
+        &fx.registry.migrate("other", &unlock).unwrap_err(),
+        "other",
+        "legacy",
+    );
+    assert_eq!(schema_marker(&other), "1", "nothing was migrated");
+
+    // Under its own name it migrates as usual.
+    std::fs::rename(&other, fx.registry.vault_path("legacy").unwrap()).unwrap();
+    let vault = fx.migrate_vault("legacy");
+    assert_eq!(migrations(&vault), 1);
+    assert_eq!(
+        vault.get_secret("beta", None).unwrap().value.expose(),
+        b"beta-value"
+    );
+}

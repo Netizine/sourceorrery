@@ -126,13 +126,14 @@ catch (SourceOrreryException e) { Console.Error.WriteLine($"{e.Code}: {e.Message
 ```
 
 Classes: `VaultNotFoundException`, `VaultLockedException`,
-`MigrationRequiredException`, `SecretNotFoundException`,
-`VersionNotFoundException`, `SecretDeletedException`, `PolicyException`
-with `SecretDisabledException`, `SecretNotYetValidException`
-(`IsTransient`), `SecretExpiredException`, `IntegrityException`,
-`UnsupportedException`, `InvalidArgumentException`, `InvalidNameException`,
-`ManifestException`, `PermissionDeniedException`, `StorageException`. See
-[the SDK overview](index.md#errors).
+`MigrationRequiredException`, `VaultMismatchException`,
+`SecretNotFoundException`, `VersionNotFoundException`,
+`SecretDeletedException`, `PolicyException` with
+`SecretDisabledException`, `SecretNotYetValidException` (`IsTransient`),
+`SecretExpiredException`, `IntegrityException`, `UnsupportedException`,
+`InvalidArgumentException`, `InvalidNameException`, `ManifestException`,
+`PermissionDeniedException`, `StorageException`. See [the SDK
+overview](index.md#errors).
 
 ## Load a project
 

@@ -36,6 +36,7 @@ public class SourceOrreryException : Exception
             "vault_not_found" => new VaultNotFoundException(message, code, hint),
             "locked" => new VaultLockedException(message, code, hint),
             "migration_required" => new MigrationRequiredException(message, code, hint),
+            "vault_mismatch" => new VaultMismatchException(message, code, hint),
             "not_found" => new SecretNotFoundException(message, code, hint),
             "version_not_found" => new VersionNotFoundException(message, code, hint),
             "deleted" => new SecretDeletedException(message, code, hint),
@@ -62,6 +63,9 @@ public class VaultLockedException(string message, string code = "locked", string
 
 /// <summary><c>migration_required</c>: run <c>sourceorrery vault migrate</c> first.</summary>
 public class MigrationRequiredException(string message, string code = "migration_required", string hint = "") : SourceOrreryException(message, code, hint);
+
+/// <summary><c>vault_mismatch</c>: the file found for the vault holds another vault (renamed, copied or swapped in).</summary>
+public class VaultMismatchException(string message, string code = "vault_mismatch", string hint = "") : SourceOrreryException(message, code, hint);
 
 /// <summary><c>not_found</c>: no secret with that name.</summary>
 public class SecretNotFoundException(string message, string code = "not_found", string hint = "") : SourceOrreryException(message, code, hint);

@@ -88,9 +88,9 @@ match SecretReader::open("development").and_then(|r| r.get("database-password"))
 `ErrorKind` has a variant per code (`NotFound`, `VersionNotFound`,
 `Deleted`, `Disabled`, `NotYetValid`, `Expired`, `InvalidName`,
 `InvalidArgument`, `PermissionDenied`, `Locked`, `VaultNotFound`,
-`MigrationRequired`, `Manifest`, `Crypto`, `Storage`, `Io`, `Unsupported`)
-plus `Other` for codes added later. See [the SDK overview](index.md#errors)
-for what each hint says.
+`MigrationRequired`, `VaultMismatch`, `Manifest`, `Crypto`, `Storage`,
+`Io`, `Unsupported`) plus `Other` for codes added later. See [the SDK
+overview](index.md#errors) for what each hint says.
 
 ## Load a project
 

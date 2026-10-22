@@ -158,6 +158,7 @@ export class SourceOrreryError extends Error {
 export class VaultNotFoundError extends SourceOrreryError {}
 export class VaultLockedError extends SourceOrreryError {}
 export class MigrationRequiredError extends SourceOrreryError {}
+export class VaultMismatchError extends SourceOrreryError {}
 export class SecretNotFoundError extends SourceOrreryError {}
 export class VersionNotFoundError extends SecretNotFoundError {}
 export class SecretDeletedError extends SourceOrreryError {}

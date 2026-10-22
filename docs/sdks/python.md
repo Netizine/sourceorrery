@@ -129,13 +129,14 @@ except SourceOrreryError as err:
     print(err.code, err)
 ```
 
-Classes: `VaultNotFoundError`, `VaultLockedError`, `MigrationRequiredError`,
-`SecretNotFoundError`, `VersionNotFoundError`, `SecretDeletedError`,
-`PolicyError` with `SecretDisabledError`, `SecretNotYetValidError`
-(`.transient` is true), `SecretExpiredError`, `IntegrityError`,
-`UnsupportedError`, `InvalidArgumentError`, `InvalidNameError`,
-`ManifestError`, `PermissionDeniedError`, `StorageError`. See
-[the SDK overview](index.md#errors) for what each hint says.
+Classes: `VaultNotFoundError`, `VaultLockedError`,
+`MigrationRequiredError`, `VaultMismatchError`, `SecretNotFoundError`,
+`VersionNotFoundError`, `SecretDeletedError`, `PolicyError` with
+`SecretDisabledError`, `SecretNotYetValidError` (`.transient` is true),
+`SecretExpiredError`, `IntegrityError`, `UnsupportedError`,
+`InvalidArgumentError`, `InvalidNameError`, `ManifestError`,
+`PermissionDeniedError`, `StorageError`. See [the SDK
+overview](index.md#errors) for what each hint says.
 
 ## Load a project
 

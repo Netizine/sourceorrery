@@ -145,9 +145,10 @@ case err != nil:
 Sentinels: `ErrNotFound`, `ErrVersionNotFound`, `ErrDeleted`,
 `ErrDisabled`, `ErrNotYetValid`, `ErrExpired`, `ErrPolicy`,
 `ErrInvalidName`, `ErrInvalidArgument`, `ErrPermissionDenied`,
-`ErrLocked`, `ErrVaultNotFound`, `ErrMigrationRequired`, `ErrManifest`,
-`ErrCrypto`, `ErrStorage`, `ErrUnsupported`. `(*Error).Transient()` is true
-for `not_yet_valid`. See [the SDK overview](index.md#errors).
+`ErrLocked`, `ErrVaultNotFound`, `ErrMigrationRequired`,
+`ErrVaultMismatch`, `ErrManifest`, `ErrCrypto`, `ErrStorage`,
+`ErrUnsupported`. `(*Error).Transient()` is true for `not_yet_valid`. See
+[the SDK overview](index.md#errors).
 
 ## Load a project
 

@@ -12,6 +12,7 @@ __all__ = [
     "VaultNotFoundError",
     "VaultLockedError",
     "MigrationRequiredError",
+    "VaultMismatchError",
     "SecretNotFoundError",
     "VersionNotFoundError",
     "SecretDeletedError",
@@ -73,6 +74,13 @@ class MigrationRequiredError(SourceOrreryError):
     """``migration_required``: run ``sourceorrery vault migrate <name>`` first."""
 
     default_code = "migration_required"
+
+
+class VaultMismatchError(SourceOrreryError):
+    """``vault_mismatch``: the file found for the vault holds another vault
+    (renamed, copied or swapped in); move it back or restore from a backup."""
+
+    default_code = "vault_mismatch"
 
 
 class SecretNotFoundError(SourceOrreryError):
@@ -161,6 +169,7 @@ _BY_CODE: dict[str, type[SourceOrreryError]] = {
     "vault_not_found": VaultNotFoundError,
     "locked": VaultLockedError,
     "migration_required": MigrationRequiredError,
+    "vault_mismatch": VaultMismatchError,
     "not_found": SecretNotFoundError,
     "version_not_found": VersionNotFoundError,
     "deleted": SecretDeletedError,

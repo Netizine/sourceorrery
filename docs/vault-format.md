@@ -16,7 +16,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | key | value |
 |-----|-------|
 | `schema_version` | `3` |
-| `name` | vault name |
+| `name` | vault name; covered by `settings_tag`. Opening a vault by name refuses a file whose name here is not the one asked for (`vault_mismatch`), so `<name>.sorvault` always holds the vault `<name>` |
 | `id` | 32 hex chars, random; bound into every AAD and every integrity tag |
 | `created_on` | Unix nanoseconds |
 | `recovery_level` | `"recoverable"` or `"purgeable"` (JSON string) |
@@ -276,7 +276,9 @@ truncation is still a truncation. The check is read-only.
 clear error. An **older** schema is refused too (`migration_required`):
 migrating is an explicit, one-way command, `sourceorrery vault migrate`,
 because the legacy format carries no integrity data and its contents can
-only be taken on trust.
+only be taken on trust. A legacy file found under another vault's name is not
+migrated (`vault_mismatch`): the migration would bind whatever name it finds
+into the settings tag for good.
 
 The migration is guarded by the key wrapping. Since schema 2 the vault key
 is wrapped under an AAD that names the format, so a file whose marker was

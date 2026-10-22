@@ -125,7 +125,10 @@ impl VaultRegistry {
     /// [`SecretError::MigrationRequired`]; see [`VaultRegistry::migrate`].
     /// A vault whose audit log has a detected truncation that nobody has
     /// acknowledged is refused with [`SecretError::Crypto`]; see
-    /// [`VaultRegistry::open_for_inspection`].
+    /// [`VaultRegistry::open_for_inspection`]. A file under `name` that
+    /// holds another vault (renamed, copied or swapped in) is refused with
+    /// [`SecretError::VaultMismatch`] once its stored name is authenticated;
+    /// this applies to every way of opening by name.
     pub fn open(&self, name: &str, unlock: &dyn UnlockProvider) -> Result<SqliteVault> {
         let path = self.vault_path(name)?;
         if !path.is_file() {
@@ -133,7 +136,7 @@ impl VaultRegistry {
                 name: name.to_owned(),
             });
         }
-        SqliteVault::open(&path, unlock)
+        SqliteVault::open_named(&path, name, unlock, OpenOptions::default())
     }
 
     /// Open a vault for inspection of its audit log: as [`VaultRegistry::open`],
@@ -152,8 +155,9 @@ impl VaultRegistry {
                 name: name.to_owned(),
             });
         }
-        SqliteVault::open_with(
+        SqliteVault::open_named(
             &path,
+            name,
             unlock,
             OpenOptions {
                 allow_quarantined: true,
@@ -175,8 +179,9 @@ impl VaultRegistry {
                 name: name.to_owned(),
             });
         }
-        SqliteVault::open_with(
+        SqliteVault::open_named(
             &path,
+            name,
             unlock,
             OpenOptions {
                 allow_legacy_migration: true,
