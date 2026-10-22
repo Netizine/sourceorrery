@@ -4,7 +4,7 @@ All notable changes to SourceOrrery are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.4] - 2026-10-22
 
 ### Added
 
@@ -210,5 +210,5 @@ package registry.
   the Composer manifest is at the repository root, where Packagist reads
   it. Procedure and per-registry setup: `docs/release.md`.
 
-[Unreleased]: https://github.com/Netizine/sourceorrery/compare/v0.1.3...HEAD
+[0.1.4]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3
