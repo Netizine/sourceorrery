@@ -133,6 +133,67 @@ jobs:
           rust-toolchain: manual
 
   # ---------------------------------------------------------------------
+  # Software bill of materials: one CycloneDX 1.5 document per shipped
+  # binary and target, from the lock files alone (no build), so one runner
+  # produces them all: the CLI and the C ABI library for the six targets
+  # (every SDK package embeds that library), and the Python and Node
+  # extension crates for the six targets (they compile the core in). The
+  # files join the release, SHA256SUMS and the provenance attestation.
+  # ---------------------------------------------------------------------
+  sbom:
+    name: software bill of materials
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: sbom
+      - name: Stamp the version
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: python3 scripts/release/set-version.py "$VERSION"
+      - name: Install cargo-cyclonedx
+        run: cargo install --locked cargo-cyclonedx
+      - name: Render one SBOM per binary and target
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+                        x86_64-apple-darwin aarch64-apple-darwin \
+                        x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+            for root in Cargo.toml bindings/python/Cargo.toml bindings/node/Cargo.toml; do
+              cargo cyclonedx --manifest-path "$root" --format json --target "$target" \
+                --describe binaries --target-in-filename --spec-version 1.5 --no-build-deps
+            done
+            # cargo-cyclonedx names a file after the Cargo target; the release
+            # names it after the archive it describes.
+            mv "crates/sourceorrery-cli/sourceorrery_bin_$target.cdx.json" "dist/sourceorrery-$VERSION-$target.cdx.json"
+            mv crates/sourceorrery-ffi/sourceorrery_ffi_*_"$target".cdx.json "dist/sourceorrery-ffi-$VERSION-$target.cdx.json"
+            mv "bindings/python/sourceorrery_python_cdylib_$target.cdx.json" "dist/sourceorrery-python-$VERSION-$target.cdx.json"
+            mv "bindings/node/sourceorrery_node_cdylib_$target.cdx.json" "dist/sourceorrery-node-$VERSION-$target.cdx.json"
+          done
+          ls dist
+          test "$(ls dist | wc -l)" -eq 24
+          python3 - <<'CHECK'
+          import glob, json
+          for path in sorted(glob.glob("dist/*.cdx.json")):
+              doc = json.load(open(path))
+              assert doc["bomFormat"] == "CycloneDX" and doc["components"], path
+              print(f"{path}: {doc['metadata']['component']['name']} {doc['metadata']['component']['version']}, {len(doc['components'])} components")
+          CHECK
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom
+          path: dist/*.cdx.json
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
   # Native artefacts: the CLI and the C ABI for the six Tier 1 targets.
   # ---------------------------------------------------------------------
   native:
@@ -164,9 +225,16 @@ jobs:
       - name: Stamp the version
         shell: bash
         run: python3 scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      # cargo-auditable embeds the dependency list in each binary (an ELF /
+      # Mach-O / PE section), so `cargo audit bin sourceorrery` can check a
+      # shipped binary against the advisory database. rust-cache keeps the
+      # installed tool between runs.
+      - name: Install cargo-auditable
+        shell: bash
+        run: cargo install --locked cargo-auditable
       - name: Build
         shell: bash
-        run: cargo build --release --locked -p sourceorrery-cli -p sourceorrery-ffi --target ${{ matrix.target }}
+        run: cargo auditable build --release --locked -p sourceorrery-cli -p sourceorrery-ffi --target ${{ matrix.target }}
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -525,7 +593,7 @@ jobs:
   # ---------------------------------------------------------------------
   release:
     name: github release
-    needs: [preflight, semver, native, python, node-package, java, dotnet, crates, php]
+    needs: [preflight, semver, sbom, native, python, node-package, java, dotnet, crates, php]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -556,6 +624,10 @@ jobs:
         with:
           name: nuget-packages
           path: release/nuget
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sbom
+          path: release
       - name: Flatten and checksum
         shell: bash
         run: |
@@ -590,6 +662,7 @@ jobs:
             echo "| \`sourceorreryai-sdk-$VERSION.tgz\`, \`sourceorreryai-sdk-<platform>-$VERSION.tgz\` | the JavaScript / TypeScript SDK and its native addon per platform |"
             echo "| \`sourceorrery-$VERSION.jar\` | the Java SDK, native libraries included |"
             echo "| \`SourceOrrery.$VERSION.nupkg\` | the .NET SDK, native libraries included |"
+            echo "| \`sourceorrery-$VERSION-<target>.cdx.json\`, \`sourceorrery-ffi-$VERSION-<target>.cdx.json\`, \`sourceorrery-python-…\`, \`sourceorrery-node-…\` | software bills of materials (CycloneDX 1.5): the Rust dependencies compiled into the CLI, the C ABI library, the Python extension and the Node addon, per target |"
             echo "| \`SHA256SUMS\` | checksums: \`sha256sum -c --ignore-missing SHA256SUMS\` |"
             echo
             echo "Every file above carries a build provenance attestation naming the commit and the workflow run that built it: \`gh attestation verify <file> --repo ${{ github.repository }}\`."

@@ -254,26 +254,33 @@ carry nothing that proves which workflow run built them.
 
 **Steps.**
 
-- [ ] Build the CLI and the C ABI with `cargo auditable build` in the
+- [x] Build the CLI and the C ABI with `cargo auditable build` in the
       `native` job (one extra `cargo install cargo-auditable --locked`,
       cached). The binaries then embed their dependency list, which
       `cargo audit bin <binary>` and syft read; this is cheap and useful
       on its own.
-- [ ] One CycloneDX SBOM per native archive:
+- [x] One CycloneDX SBOM per native archive:
       `cargo cyclonedx --manifest-path crates/sourceorrery-cli/Cargo.toml --target <triple> --format json`
       and the same for `sourceorrery-ffi`, renamed
       `sourceorrery-X.Y.Z-<target>.cdx.json` and
       `sourceorrery-ffi-X.Y.Z-<target>.cdx.json`, uploaded with the
       archives so they land in `release/` and in `SHA256SUMS`.
-- [ ] SDK packages, where the ecosystem tool is a one-liner: Node
+- [x] *Done differently:* the SBOMs are rendered on one runner from the
+      lock files (`sbom` job) rather than in each build job, and cover the
+      Python extension and the Node addon per target; the language-level
+      wrappers have no third-party runtime dependencies, so no npm, Maven
+      or NuGet SBOM is published. SDK packages, where the ecosystem tool is a one-liner: Node
       (`@cyclonedx/cyclonedx-npm` in `node-package`), Java
       (`cyclonedx-maven-plugin` in the `java` job), .NET (`dotnet CycloneDX`
       in `dotnet`). Python and the Rust crates are covered by the Cargo
       SBOM (no runtime dependencies of their own). Go and PHP ship no
       binary of their own.
-- [ ] `actions/attest-sbom` for each SBOM next to item 4's provenance,
-      so the SBOM is bound to the artefact it describes.
-- [ ] Docs: a *Software bill of materials* section in
+- [x] `actions/attest-sbom` for each SBOM next to item 4's provenance,
+      so the SBOM is bound to the artefact it describes. *Done differently:*
+      the SBOMs are release files, so item 4's provenance attestation covers
+      them; a per-pair SBOM attestation would need one action step per
+      archive (24) for no extra assurance, and was left out.
+- [x] Docs: a *Software bill of materials* section in
       `docs/supply-chain.md` (what is in each file, how to read it,
       `cargo audit bin`), the release notes table, and the roadmap tick.
 

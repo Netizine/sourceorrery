@@ -8,6 +8,12 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* Every release carries a CycloneDX 1.5 software bill of materials per
+  shipped binary and target: the CLI, the C ABI library, the Python
+  extension and the Node addon, listing every Rust crate compiled in. The
+  CLI and the C ABI library are built with `cargo auditable`, so
+  `cargo audit bin` can check a shipped binary against the advisory
+  database.
 * Every file on a GitHub Release, `SHA256SUMS` included, carries a build
   provenance attestation signed in the release workflow run, so
   `gh attestation verify <file> --repo Netizine/sourceorrery` proves which

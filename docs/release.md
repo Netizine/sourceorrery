@@ -44,6 +44,7 @@ the next patch version.
 
 | Job | Output |
 |-----|--------|
+| `sbom` | `sourceorrery-X.Y.Z-<target>.cdx.json`, `sourceorrery-ffi-X.Y.Z-<target>.cdx.json`, `sourceorrery-python-X.Y.Z-<target>.cdx.json`, `sourceorrery-node-X.Y.Z-<target>.cdx.json`: CycloneDX 1.5 bills of materials for the six targets, rendered from the lock files by `cargo cyclonedx` on one runner (artifact `sbom`). The `native` job builds the CLI and the C ABI with `cargo auditable`, which embeds the dependency list in the binaries. |
 | `semver` | nothing: `cargo semver-checks` on `sourceorrery` and `sourceorrery-core` against the crates.io baseline, with the version you typed; the release waits for it. |
 | `native` (six targets) | `sourceorrery-X.Y.Z-<target>.{tar.gz,zip}`: the CLI. `sourceorrery-ffi-X.Y.Z-<target>.{tar.gz,zip}`: the shared and static C ABI libraries, `sourceorrery.h`, `sourceorrery.hpp`, licences. |
 | `python` (six targets + sdist) | abi3 wheels for Python 3.11+ (`manylinux_2_28` on Linux) and the sdist. |

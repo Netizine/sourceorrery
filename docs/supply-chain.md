@@ -39,6 +39,10 @@ itself.
   Maven dependencies (Rust lock files only; a range change is a deliberate
   commit), and the `workflows` CI job runs zizmor over `.github/` so an
   unpinned action or a shell step that expands an input fails the gate.
+* **Bills of materials and auditable binaries.** Every release carries a
+  CycloneDX document per shipped binary and target, and the CLI and the C
+  ABI library are built with `cargo auditable`, which embeds their
+  dependency list in the binary ([below](#software-bill-of-materials)).
 * **Immutable versions.** The workflow refuses a tag that already exists.
   A version is never rebuilt or replaced; a mistake is fixed by the next
   patch version.
@@ -203,6 +207,46 @@ GitHub CLI, as [Getting started](https://sourceorrery.ai/getting-started/)
 shows; for the files that are also on a registry, compare with the
 registry's hash as above.
 
+### Software bill of materials
+
+Every GitHub Release carries one [CycloneDX](https://cyclonedx.org) 1.5
+document (`*.cdx.json`) per shipped binary and target, listed in
+`SHA256SUMS` and covered by the provenance attestation like every other
+file:
+
+| File | Describes |
+|------|-----------|
+| `sourceorrery-X.Y.Z-<target>.cdx.json` | the `sourceorrery` CLI binary in the archive of the same name |
+| `sourceorrery-ffi-X.Y.Z-<target>.cdx.json` | the C ABI library (`libsourceorrery_ffi.*`, `sourceorrery_ffi.dll`) in the `sourceorrery-ffi` archive, and the same library as embedded in the Java jar, the .NET package and the Go, C, C++ and PHP SDKs |
+| `sourceorrery-python-X.Y.Z-<target>.cdx.json` | the extension module inside the Python wheel for that platform |
+| `sourceorrery-node-X.Y.Z-<target>.cdx.json` | the addon inside the `@sourceorreryai/sdk-<platform>` package |
+
+Each lists every Rust crate compiled into that binary for that target,
+with name, version, licence and
+[package URL](https://github.com/package-url/purl-spec) (`pkg:cargo/…`),
+and the dependency graph between them; build-time-only dependencies are
+left out. The documents are rendered from the lock files by
+`cargo cyclonedx` in the release workflow, so they describe exactly what
+`cargo --locked` built. The language-level wrappers around the C ABI (the
+jar, the NuGet package, the npm main package, the Go module, the PHP
+package) have no third-party runtime dependencies of their own, so no
+separate document is published for them.
+
+```bash
+jq -r '.components[] | "\(.name) \(.version) \(.licenses[0].license.id // "")"' sourceorrery-0.2.0-x86_64-unknown-linux-gnu.cdx.json
+```
+
+The CLI and the C ABI library are also built with
+[`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable),
+which embeds the same dependency list in the binary itself, so a binary
+on disk can be checked against the RustSec advisory database without its
+SBOM:
+
+```bash
+cargo install cargo-audit --locked
+cargo audit bin ./sourceorrery
+```
+
 ## What SourceOrrery changes in your own supply chain
 
 A malicious dependency, a poisoned install script or a misled coding agent
@@ -243,8 +287,9 @@ It does not change these limits:
   offers no trusted publishing; its files are GPG-signed instead.
 * macOS binaries are not signed or notarised; Windows binaries are not
   Authenticode-signed.
-* There is no software bill of materials and no claim of reproducible
-  builds.
+* No claim of reproducible builds is made: an SBOM and an attestation say
+  what was built from which commit, not that a second build would be
+  byte-for-byte the same.
 
 These are on the [roadmap](roadmap.md). To report a package you suspect
 was tampered with, follow the
