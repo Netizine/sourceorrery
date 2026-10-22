@@ -1,7 +1,7 @@
 [package]
 name = "sourceorrery-node"
 description = "Node.js addon for the SourceOrrery read-only client (built by napi-rs)"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -22,7 +22,7 @@ default = ["os-keyring"]
 os-keyring = ["sourceorrery/os-keyring"]
 
 [dependencies]
-sourceorrery = { path = "../../crates/sourceorrery", version = "0.1.0", default-features = false }
+sourceorrery = { path = "../../crates/sourceorrery", version = "0.1.4", default-features = false }
 napi = { version = "3", default-features = false, features = ["napi8"] }
 napi-derive = "3"
 serde = { version = "1", features = ["derive"] }

@@ -1,7 +1,7 @@
 {
   "name": "@sourceorreryai/sdk",
-  "version": "0.1.0",
-  "description": "Read secrets from a SourceOrrery vault: secrets belong to the runtime, not the repository",
+  "version": "0.1.4",
+  "description": "Read secrets from SourceOrrery vaults, the encrypted replacement for .env files; read-only, with vaults created and secrets stored by the sourceorrery CLI",
   "license": "(MIT OR Apache-2.0)",
   "homepage": "https://sourceorrery.ai/sdks/javascript/",
   "repository": {

@@ -55,6 +55,19 @@
       "expect": { "outcome": "ok", "descriptor.name": "${vault}" }
     },
     {
+      "id": "open-vault-under-another-name",
+      "about": "A copy of the vault filed under another vault's name unlocks with the same passphrase but is refused: a reader asking for one vault never gets another.",
+      "op": "open",
+      "args": { "vault": "${vault}-copy" },
+      "expect": {
+        "outcome": "error",
+        "code": "vault_mismatch",
+        "message": "the file for vault '${vault}-copy' holds the vault '${vault}'",
+        "transient": false,
+        "hint_contains": ["Move it back to ${vault}.sorvault"]
+      }
+    },
+    {
       "id": "get-latest",
       "about": "`get` without a version returns the newest accessible version with its metadata.",
       "op": "get",

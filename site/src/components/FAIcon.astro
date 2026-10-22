@@ -1,0 +1,20 @@
+---
+/** Render the installed Kit's SVG paths at build time, with no browser runtime. */
+import { iconData } from '../lib/font-awesome.mjs';
+
+interface Props {
+	name: string;
+	family?: 'duotone' | 'brands' | 'kit';
+	class?: string;
+	label?: string;
+}
+
+const { name, family = 'duotone', class: className, label } = Astro.props;
+const icon = iconData(name, family);
+---
+
+<span class:list={['so-icon', className]} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'}>
+	<svg xmlns="http://www.w3.org/2000/svg" viewBox={`0 0 ${icon.width} ${icon.height}`} width="1em" height="1em" class="so-fa-icon" data-icon={icon.name} data-prefix={icon.prefix} aria-hidden="true" focusable="false">
+		{icon.paths.map(({ d, className }) => <path {d} class={className} />)}
+	</svg>
+</span>

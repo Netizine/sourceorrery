@@ -17,7 +17,11 @@ messages, metadata output, the manifest), lets a ciphertext be substituted or
 tampered with undetected, or bypasses enforced policy (disabled versions,
 activation and expiry windows, soft-delete state).
 
-Out of scope for milestone 1, by design and documented in the
+A package that was tampered with between this repository and a registry
+is in scope too; [docs/supply-chain.md](docs/supply-chain.md) describes
+how releases are built and published.
+
+Out of scope today, by design and documented in the
 [threat model](docs/threat-model.md):
 
 * Code already running as the same OS user with access to an unlocked vault

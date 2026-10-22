@@ -1,0 +1,18 @@
+---
+import FAIcon from './FAIcon.astro';
+
+const { dir, pagination } = Astro.locals.starlightRoute;
+const { prev, next } = pagination;
+const isRtl = dir === 'rtl';
+---
+
+<nav class="pagination-links so-pagination print:hidden" {dir} aria-label="Documentation pages">
+	{prev && <a href={prev.href} rel="prev">
+		<FAIcon name={isRtl ? 'arrow-right' : 'arrow-left'} />
+		<span>{Astro.locals.t('page.previousLink')}<span class="link-title">{prev.label}</span></span>
+	</a>}
+	{next && <a href={next.href} rel="next">
+		<FAIcon name={isRtl ? 'arrow-left' : 'arrow-right'} />
+		<span>{Astro.locals.t('page.nextLink')}<span class="link-title">{next.label}</span></span>
+	</a>}
+</nav>

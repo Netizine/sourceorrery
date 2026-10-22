@@ -75,6 +75,9 @@ var (
 	ErrVaultNotFound error = &sentinelError{"vault_not_found"}
 	// ErrMigrationRequired: run `sourceorrery vault migrate <name>` first.
 	ErrMigrationRequired error = &sentinelError{"migration_required"}
+	// ErrVaultMismatch: the file found for the vault holds another vault
+	// (renamed, copied or swapped in); move it back or restore a backup.
+	ErrVaultMismatch error = &sentinelError{"vault_mismatch"}
 	// ErrManifest: sourceorrery.toml is missing or invalid.
 	ErrManifest error = &sentinelError{"manifest"}
 	// ErrCrypto: the vault file failed an integrity check.

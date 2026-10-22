@@ -108,6 +108,13 @@ pub enum SecretError {
          (only do this for a file you trust)"
     )]
     MigrationRequired { name: String, schema: u32 },
+
+    /// The file found for the requested vault holds a different vault: it
+    /// was renamed or copied from that vault, or swapped in by someone who
+    /// can write the vault directory. Refused so that a vault is never
+    /// served under another vault's name.
+    #[error("the file for vault '{requested}' holds the vault '{found}'")]
+    VaultMismatch { requested: String, found: String },
 }
 
 impl SecretError {
@@ -137,6 +144,7 @@ impl SecretError {
             Self::Io(_) => "io",
             Self::Unsupported(_) => "unsupported",
             Self::MigrationRequired { .. } => "migration_required",
+            Self::VaultMismatch { .. } => "vault_mismatch",
         }
     }
 
@@ -199,6 +207,10 @@ mod tests {
             SecretError::MigrationRequired {
                 name: "a".into(),
                 schema: 1,
+            },
+            SecretError::VaultMismatch {
+                requested: "a".into(),
+                found: "b".into(),
             },
         ];
         let mut codes: Vec<_> = errors.iter().map(SecretError::code).collect();

@@ -14,7 +14,12 @@ and `docs/threat-model.md` before changing anything security-relevant.
   OS keyring access, vault registry (paths).
 - `crates/sourceorrery-cli` — the `sourceorrery` binary. `src/ui/` is the
   Ratatui vault browser (`sourceorrery ui`, cargo feature `ui`, on by
-  default).
+  default). `skills/` is the only source of the AI-agent skills that
+  `init --integration` writes (embedded with `include_str!`; the CLI never
+  fetches anything). `integrations/` and `plugins/sourceorrery/` at the
+  root are generated from it: after editing a skill run
+  `SOURCEORRERY_BLESS=1 cargo test -p sourceorrery-cli --test integrations`.
+  The skills must never tell an agent to read, print or write a value.
 - `crates/sourceorrery` — the read-only client (the Rust SDK): CLI unlock
   order, `Project::load` mirroring `sourceorrery run`, and the actionable
   `hint` every error carries. All SDK logic lives here.

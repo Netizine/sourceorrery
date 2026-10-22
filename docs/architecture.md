@@ -24,12 +24,20 @@ source code.
   Linux.
 * **Azure Key Vault–inspired API.** Familiar `SecretClient`, `set_secret`,
   `get_secret`, versioning and lifecycle operations, independent of Azure.
-* **Multi-language SDKs.** C#, Python, JavaScript/TypeScript, Java and more via
-  native bindings or a standard local protocol.
+* **Multi-language SDKs.** Read-only clients for Python,
+  JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP over one Rust
+  implementation (shipped); a standard local protocol with the broker
+  (milestone 3).
 * **Enterprise capabilities.** Identity-aware authorisation, least privilege,
   rotation, auditability, recoverability and integration with external vaults.
 * **Local-first.** No mandatory cloud account, SaaS subscription or remote
   server to get started.
+
+> [!NOTE]
+> In 0.1.4, retrieval uses the local vault and the caller's available unlock
+> credentials. The broker, verified workload identity, per-identity access
+> controls and remote vault providers describe the planned architecture,
+> not capabilities already enforced by the local SDKs.
 
 One important qualification: removing `.env` files eliminates a major
 accidental-exposure route, but it does not protect against an AI agent or
@@ -88,7 +96,7 @@ bindings/{java,dotnet,go,cpp,php} ──► sourceorrery-ffi (C ABI) foreign-fun
 | `DeletedSecret` | A soft-deleted secret with `deleted_on`, `scheduled_purge_on`, `recovery_id`. |
 | `SecretReference` | `sourceorrery://vault/name[/version]` — contains no secret material. |
 | `SecretError` | Typed errors with stable, append-only string codes for SDKs. |
-| `Principal` | Who is asking (`user`, `workload`, `agent`, `system`). Milestone 1 labels the OS user; it is not verified identity. |
+| `Principal` | Who is asking (`user`, `workload`, `agent`, `system`). Today it labels the OS user; it is not verified identity. |
 | `AuditEvent` | Metadata-only record: actor, operation, secret, version, outcome, detail (error code). |
 | `Manifest` | `sourceorrery.toml`: project name, default vault, required secrets. Rejects unknown fields, so it cannot hold a value. |
 
@@ -142,6 +150,8 @@ No algorithms are implemented in this repository.
 |---------|-----------|-------|
 | Value and key encryption | XChaCha20-Poly1305, random 24-byte nonce | `chacha20poly1305` |
 | Passphrase → key | Argon2id v1.3, 64 MiB / 3 passes / 1 lane by default | `argon2` |
+| Integrity keys | HKDF-SHA256 sub-keys of the vault key | `hkdf` |
+| Metadata, settings and audit-chain tags | HMAC-SHA256 | `hmac`, `sha2` |
 | Randomness | OS CSPRNG | `getrandom` |
 
 Every ciphertext carries **additional authenticated data** naming where it
@@ -149,11 +159,17 @@ lives, so a ciphertext copied between records fails to decrypt instead of
 returning the wrong secret:
 
 * values: `sourceorrery/v1/value/<vault id>/<name>/<version>`
-* wrapped keys: `sourceorrery/v1/protector/<vault id>/<protector id>`
+* wrapped keys: `sourceorrery/v<schema>/protector/<vault id>/<protector id>`,
+  so a wrapped key is bound to the on-disk format it was written for (`v3`
+  now)
+
+Mutable rows, vault settings and the audit chain are authenticated with
+HMAC-SHA256 under keys derived from the vault key; the domains and what
+each tag covers are in [vault-format.md](vault-format.md).
 
 ## 5. Storage (`sourceorrery-storage`)
 
-The milestone 1 backend is the **encrypted vault**: one SQLite file per vault
+The one backend today is the **encrypted vault**: one SQLite file per vault
 with versioned records, soft-delete state and the audit log. The OS credential
 store is used to protect the vault *key*, not to hold secret values, because
 Credential Manager, Keychain and Secret Service do not natively provide
@@ -174,12 +190,12 @@ Adding a protector wraps the same DEK again. A vault created on Windows with
 Credential Manager can therefore also carry a passphrase protector for WSL,
 Docker or CI. Removing the last protector is refused.
 
-### Backend classes (planned)
+### Backend classes
 
 | Backend | Status |
 |---------|--------|
-| Encrypted SQLite vault, key in OS store or passphrase | Milestone 1 |
-| Remote provider (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault, SourceOrrery server) implementing the same contract | Milestone 4 |
+| Encrypted SQLite vault, key in OS store or passphrase | Shipped (milestone 1) |
+| Remote provider (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault, SourceOrrery server) implementing the same contract | Planned (milestone 4) |
 
 Headless Linux servers often have no Secret Service daemon. The fallback is a
 passphrase protector with an independently provisioned secret — never silent
@@ -207,23 +223,36 @@ for output, `tracing` for diagnostics. Design rules:
   Its `dark` and `light` themes are the documentation site's palettes
   (`site/src/styles/paper.css`); keep the two in step.
 
+* `import` moves a `.env` file into a vault (`cli::dotenv` parses it; values
+  go straight into `SecretBytes`) and declares its keys in the manifest;
+  it prints key names only.
+* `init --integration <agent>` writes the agent skills compiled into the
+  binary from `crates/sourceorrery-cli/skills/` (`cli::integrations`), to
+  each agent's skills directory; `integrations/` and the Claude Code plugin
+  in `plugins/sourceorrery/` are generated from the same files and checked
+  by a test ([ai-agents.md](ai-agents.md)).
+
 Reference: [cli.md](cli.md).
 
 ## 7. Integration surface for other languages
 
-Three ways to reach the Rust core, in order of preference for a given host:
+Three ways to reach the Rust core:
 
-1. **Native bindings** — the application loads the Rust library (napi-rs,
-   PyO3/Maturin, Interoptopus, JNI/FFM, UniFFI).
-2. **Local broker protocol** — an authenticated local socket / named pipe to a
-   SourceOrrery process. The universal fallback and the only path that can
-   offer a security boundary the application does not control.
-3. **Stable C ABI** — for long-tail languages to build their own bindings.
+1. **Native extensions** (shipped) — the Python (PyO3 and maturin) and
+   Node.js (napi-rs) SDKs compile the Rust client into the extension
+   module itself.
+2. **The C ABI** (shipped) — `sourceorrery-ffi`, which the Java (Foreign
+   Function and Memory API), .NET (`LibraryImport`), Go (cgo), C, C++ and
+   PHP (FFI) SDKs call, and which any other language can call to build its
+   own binding.
+3. **Local broker protocol** (milestone 3) — an authenticated local socket
+   / named pipe to a SourceOrrery process. The only path that can offer a
+   security boundary the application does not control.
 
 The compatibility contract is the SourceOrrery API and `CONTRACT_VERSION`,
 not any binding generator. See [`bindings/README.md`](../bindings/README.md).
 
-### The bindings layer (milestone 2, shipped)
+### The bindings layer
 
 Ten SDKs, all **read-only** ([ADR 0005](adr/0005-read-only-sdks.md)): open
 a vault with the CLI's unlock order, get the newest accessible or an
@@ -268,25 +297,29 @@ Three rules keep the layer thin ([ADR 0006](adr/0006-binding-technologies.md)):
 
 ## 8. Platform matrix
 
-| OS | Arch | Tier |
-|----|------|------|
-| macOS | arm64, x86-64 | 1 |
-| Windows | x86-64, arm64 | 1 |
-| Linux glibc | x86-64, arm64 | 1 |
-| Linux musl | x86-64, arm64 | 2 |
-| Linux | armv7 | 2 |
-| FreeBSD / OpenBSD | x86-64 | community |
+| OS | Arch | Tier | Today |
+|----|------|------|-------|
+| macOS | arm64, x86-64 | 1 | release builds; CI on arm64 |
+| Windows | x86-64, arm64 | 1 | release builds; CI on x86-64 |
+| Linux glibc | x86-64, arm64 | 1 | release builds; CI on x86-64 |
+| Linux musl | x86-64, arm64 | 2 | planned (milestone 5) |
+| Linux | armv7 | 2 | planned (milestone 5) |
+| FreeBSD / OpenBSD | x86-64 | community | planned (milestone 5) |
 
-A working binary does not guarantee a working credential backend; CI tests
-the passphrase path everywhere and the OS-keyring path is validated manually
-per platform until a keyring-capable CI matrix exists.
+Every release builds the CLI, the C ABI and the SDK packages for the six
+Tier 1 targets on native runners (Windows arm64 is cross-compiled); CI
+runs every test on Ubuntu, Windows and macOS. A working binary does not
+guarantee a working credential backend; CI tests the passphrase path
+everywhere and the OS-keyring path is validated manually per platform
+until a keyring-capable CI matrix exists.
 
 ## 9. Differentiators
 
 * **Agent-aware access profiles** (milestone 3): a coding-agent session starts
   with no production-secret privileges.
 * **Secret references instead of values**: shipped.
-* **No-secret project manifests**: shipped.
+* **Reference-based project manifests**: inline `value` fields are rejected;
+  comments and metadata still require care.
 * **Policy-aware runtime resolution**: time windows and enabled state shipped;
   identity-based policy with the broker.
 * **Provider-agnostic contract**: start local, move to enterprise storage

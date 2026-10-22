@@ -2,31 +2,43 @@
 
 ## Install
 
-### From the v0.1.3 tag
+### From crates.io
 
-Depend on the tag the
-[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3)
-was cut from:
-
-```toml
-[dependencies]
-sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.1.3" }
+```bash
+cargo add sourceorrery
 ```
 
-### From crates.io
+or, in `Cargo.toml`:
 
 ```toml
 [dependencies]
 sourceorrery = "0.1"
 ```
 
-Every release is on crates.io, as are the crates it depends on.
+[`sourceorrery` on crates.io](https://crates.io/crates/sourceorrery) is
+the read-only client every other SDK is built on. It depends on
+`sourceorrery-storage` directly (no C ABI in between), so it needs what
+the CLI needs to build: Rust 1.88 or newer and a C compiler for the
+bundled SQLite, and on Linux `pkg-config` and `libdbus-1-dev` for the
+Secret Service. The `os-keyring` feature (default) enables the OS
+credential store; for headless servers that only use passphrases, turn it
+off with `cargo add sourceorrery --no-default-features`, which also drops
+the D-Bus requirement.
 
-The `sourceorrery` crate is the read-only client every other SDK is built
-on. It depends on `sourceorrery-storage` directly (no C ABI in between)
-and, like the CLI, needs a C compiler for the bundled SQLite. The
-`os-keyring` feature (default) enables the OS credential store; disable it
-for headless servers that only use passphrases.
+### From the v0.1.4 tag
+
+Depend on the tag the
+[v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4)
+was cut from:
+
+```toml
+[dependencies]
+sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.1.4" }
+```
+
+### From source
+
+See [Building from source](#building-from-source) below.
 
 ## Get a secret
 
@@ -76,9 +88,9 @@ match SecretReader::open("development").and_then(|r| r.get("database-password"))
 `ErrorKind` has a variant per code (`NotFound`, `VersionNotFound`,
 `Deleted`, `Disabled`, `NotYetValid`, `Expired`, `InvalidName`,
 `InvalidArgument`, `PermissionDenied`, `Locked`, `VaultNotFound`,
-`MigrationRequired`, `Manifest`, `Crypto`, `Storage`, `Io`, `Unsupported`)
-plus `Other` for codes added later. See [the SDK overview](index.md#errors)
-for what each hint says.
+`MigrationRequired`, `VaultMismatch`, `Manifest`, `Crypto`, `Storage`,
+`Io`, `Unsupported`) plus `Other` for codes added later. See [the SDK
+overview](index.md#errors) for what each hint says.
 
 ## Load a project
 
@@ -97,11 +109,44 @@ the current directory. It mirrors `sourceorrery run`: a required secret
 that cannot be read fails the load with that secret's error; optional ones
 are left out.
 
-## Example and tests
+## Building from source
+
+You need Git, Rust 1.88 or newer installed with rustup, and a C compiler
+(on Linux also `pkg-config` and `libdbus-1-dev`);
+[Building from source](../building.md#what-you-need) has the commands for
+each platform.
 
 ```bash
-cargo run -p sourceorrery --example get_secret -- development database-password
-cargo test -p sourceorrery
+git clone https://github.com/Netizine/sourceorrery
+cd sourceorrery
+git checkout v0.1.4              # or stay on main for the newest changes
+cargo build --release -p sourceorrery
 ```
 
+To use a local checkout from your own crate, depend on it by path:
+
+```toml
+[dependencies]
+sourceorrery = { path = "../sourceorrery/crates/sourceorrery" }
+```
+
+The example reads a secret from any vault you can unlock:
+
+```bash
+cargo run --release -p sourceorrery --example get_secret -- development database-password
+```
+
+The crate's tests need nothing set up. The conformance harness reads the
+test vault that the CLI creates, so build the CLI and run the rest in
+Bash (Git Bash on Windows):
+
+```bash
+cargo test -p sourceorrery
+cargo build --release -p sourceorrery-cli
+cargo build --release -p sourceorrery --example conformance
+eval "$(bash scripts/ci/fixture-vault.sh)"       # a throwaway vault and the variables the harness reads
+python tests/conformance/sdk/harness.py --runner rust
+```
+
+What the fixture script creates: [The SDK test vault](../building.md#the-sdk-test-vault).
 Source: [`crates/sourceorrery`](../../crates/sourceorrery).

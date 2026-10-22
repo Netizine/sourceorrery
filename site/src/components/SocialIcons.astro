@@ -1,37 +1,16 @@
 ---
-/**
- * Starlight's SocialIcons (the GitHub icon in the header) with every link
- * opening in a new tab. Same markup and styles as the original in
- * @astrojs/starlight/components/SocialIcons.astro, plus target and rel.
- */
 import config from 'virtual:starlight/user-config';
-import { Icon } from '@astrojs/starlight/components';
+import FAIcon from './FAIcon.astro';
 
 const links = config.social || [];
+const brands: Record<string, string> = {
+	github: 'github', gitlab: 'gitlab', discord: 'discord', mastodon: 'mastodon',
+	twitter: 'x-twitter', 'x.com': 'x-twitter', youtube: 'youtube', linkedin: 'linkedin',
+};
 ---
 
-{
-	links.length > 0 && (
-		<>
-			{links.map(({ label, href, icon }) => (
-				<a {href} rel="me noopener noreferrer" target="_blank" class="sl-flex">
-					<span class="sr-only">{label}</span>
-					<Icon name={icon} />
-				</a>
-			))}
-		</>
-	)
-}
-
-<style>
-	@layer starlight.core {
-		a {
-			color: var(--sl-color-text-accent);
-			padding: 0.5em;
-			margin: -0.5em;
-		}
-		a:hover {
-			color: var(--sl-color-white);
-		}
-	}
-</style>
+{links.map(({ label, href, icon }) => (
+	<a {href} rel="me noopener noreferrer" target="_blank" class="so-social-link sl-flex" aria-label={label} title={label}>
+		<FAIcon name={brands[icon] || 'arrow-up-right-from-square'} family={brands[icon] ? 'brands' : 'duotone'} />
+	</a>
+))}

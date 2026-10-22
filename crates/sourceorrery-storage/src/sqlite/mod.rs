@@ -282,8 +282,34 @@ impl SqliteVault {
     }
 
     /// [`SqliteVault::open`] with options.
+    ///
+    /// Opening by path takes the file as it is, whatever vault it holds.
+    /// [`crate::VaultRegistry`] opens by name and refuses a file that holds
+    /// another vault ([`SecretError::VaultMismatch`]).
     pub fn open_with(
         path: &Path,
+        unlock: &dyn UnlockProvider,
+        options: OpenOptions,
+    ) -> Result<Self> {
+        Self::open_checked(path, None, unlock, options)
+    }
+
+    /// [`SqliteVault::open_with`] for the vault named `name`: once the name
+    /// stored in the file is authenticated, a file that holds another vault
+    /// is refused with [`SecretError::VaultMismatch`] and the refusal is
+    /// recorded in that file's audit log.
+    pub(crate) fn open_named(
+        path: &Path,
+        name: &str,
+        unlock: &dyn UnlockProvider,
+        options: OpenOptions,
+    ) -> Result<Self> {
+        Self::open_checked(path, Some(name), unlock, options)
+    }
+
+    fn open_checked(
+        path: &Path,
+        expected_name: Option<&str>,
         unlock: &dyn UnlockProvider,
         options: OpenOptions,
     ) -> Result<Self> {
@@ -336,7 +362,16 @@ impl SqliteVault {
                             kek,
                             wrapped_schema,
                         };
-                        return Self::finish_open(conn, dek, meta, path, actor, &unlocked, options);
+                        return Self::finish_open(
+                            conn,
+                            dek,
+                            meta,
+                            path,
+                            actor,
+                            &unlocked,
+                            options,
+                            expected_name,
+                        );
                     }
                     Err(err) => reasons.push(format!("{}: {err}", protector.label)),
                 },
@@ -352,7 +387,16 @@ impl SqliteVault {
         if let Some((dek, unlocked)) =
             try_passphrases(&conn, &meta, &protectors, unlock, &unkeyed, &mut reasons)?
         {
-            return Self::finish_open(conn, dek, meta, path, actor, &unlocked, options);
+            return Self::finish_open(
+                conn,
+                dek,
+                meta,
+                path,
+                actor,
+                &unlocked,
+                options,
+                expected_name,
+            );
         }
 
         unkeyed.record(
@@ -366,6 +410,7 @@ impl SqliteVault {
         Err(SecretError::Locked(reasons.join("; ")))
     }
 
+    #[allow(clippy::too_many_arguments)] // one call per unlock route, all of them needed
     fn finish_open(
         mut conn: Connection,
         dek: SymmetricKey,
@@ -374,6 +419,7 @@ impl SqliteVault {
         actor: Principal,
         unlocked: &Unlocked,
         options: OpenOptions,
+        expected_name: Option<&str>,
     ) -> Result<Self> {
         let metadata_key = integrity::derive_metadata_key(&dek);
         let migrated = meta.schema < SCHEMA_VERSION;
@@ -405,6 +451,10 @@ impl SqliteVault {
                         .to_owned(),
                 ));
             }
+            // The legacy name is not authenticated, but a file under the
+            // wrong name must not be migrated: migration binds the name it
+            // finds into the settings tag for good.
+            Self::refuse_if_misnamed(&conn, None, &meta, &actor, expected_name)?;
             // Refuses a schema 2 file whose audit log was truncated.
             migrate(&mut conn, &mut meta, &dek, &metadata_key, &actor, unlocked)?;
         } else {
@@ -416,6 +466,8 @@ impl SqliteVault {
                 options.allow_quarantined,
             )?;
             Self::verify_settings(&conn, &metadata_key, &meta, &actor)?;
+            // The settings tag covers the name, so it is authentic here.
+            Self::refuse_if_misnamed(&conn, Some(&metadata_key), &meta, &actor, expected_name)?;
         }
 
         // The chain is in the current format. A detected truncation that
@@ -513,6 +565,45 @@ impl SqliteVault {
             Some("audit log truncated"),
         )?;
         Err(SecretError::Crypto(truncated_message(&problem)))
+    }
+
+    /// Refuse a vault opened by a name that is not its own: the file found
+    /// for `expected` holds another vault, renamed, copied or swapped in.
+    /// Recording the refusal puts it on that vault's own log. `key` is
+    /// `None` for a legacy file that is about to be migrated, whose rows
+    /// are not keyed yet.
+    fn refuse_if_misnamed(
+        conn: &Connection,
+        key: Option<&SymmetricKey>,
+        meta: &Meta,
+        actor: &Principal,
+        expected: Option<&str>,
+    ) -> Result<()> {
+        let Some(expected) = expected else {
+            return Ok(());
+        };
+        if meta.name == expected {
+            return Ok(());
+        }
+        let detail = format!("opened as vault '{expected}'");
+        AuditWriter {
+            meta,
+            key,
+            actor,
+            allow_empty_chain: false,
+        }
+        .record(
+            conn,
+            AuditOperation::VaultOpen,
+            None,
+            None,
+            AuditOutcome::Failure,
+            Some(detail.as_str()),
+        )?;
+        Err(SecretError::VaultMismatch {
+            requested: expected.to_owned(),
+            found: meta.name.clone(),
+        })
     }
 
     /// Refuse to unlock a vault whose authenticated settings do not verify.

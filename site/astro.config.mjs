@@ -3,6 +3,8 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { satteri } from '@astrojs/markdown-satteri';
 import { externalLinks } from './plugins/external-links.mjs';
+import { githubAlerts, calloutIcons } from './plugins/github-alerts.mjs';
+import { brandHeadings } from './plugins/brand-headings.mjs';
 
 const SITE_URL = 'https://sourceorrery.ai';
 const GITHUB_URL = 'https://github.com/Netizine/sourceorrery';
@@ -14,7 +16,10 @@ export default defineConfig({
 		// Every link that leaves the site opens in a new tab. Links in page
 		// chrome (the GitHub icon, "Edit page", the hero) get the same
 		// attributes in the component overrides below.
-		processor: satteri({ hastPlugins: [externalLinks({ site: SITE_URL })] }),
+		processor: satteri({
+			mdastPlugins: [githubAlerts()],
+			hastPlugins: [calloutIcons(), externalLinks({ site: SITE_URL }), brandHeadings()],
+		}),
 	},
 	integrations: [
 		starlight({
@@ -28,7 +33,7 @@ export default defineConfig({
 			},
 			favicon: '/favicon.svg',
 			head: [
-				// Safari does not load SVG favicons; it takes this PNG (see scripts/make-favicon.mjs).
+				// PNG fallback for browsers that do not load SVG favicons.
 				{
 					tag: 'link',
 					attrs: { rel: 'icon', href: '/favicon.png', type: 'image/png', sizes: '128x128' },
@@ -39,14 +44,21 @@ export default defineConfig({
 			// in any page's frontmatter (scripts/sync-docs.mjs writes none),
 			// Starlight renders none.
 			customCss: [
-				// Self-hosted type: serif for text, a sans for interface labels, a mono for code.
+				// Preserve the site's paper typography; every font is served locally.
 				'@fontsource-variable/source-serif-4/opsz.css',
 				'@fontsource-variable/source-serif-4/opsz-italic.css',
 				'@fontsource-variable/inter',
-				'@fontsource-variable/jetbrains-mono',
+				'@fontsource-variable/google-sans-code',
+				'@fontsource-variable/google-sans-code/wght-italic.css',
 				'./src/styles/paper.css',
 			],
 			components: {
+				SiteTitle: './src/components/SiteTitle.astro',
+				PageTitle: './src/components/PageTitle.astro',
+				Search: './src/components/Search.astro',
+				ThemeSelect: './src/components/ThemeSelect.astro',
+				MobileMenuToggle: './src/components/MobileMenuToggle.astro',
+				Pagination: './src/components/Pagination.astro',
 				Hero: './src/components/Hero.astro',
 				// Starlight's own version, with the GitHub link opening in a new tab.
 				SocialIcons: './src/components/SocialIcons.astro',
@@ -59,12 +71,11 @@ export default defineConfig({
 				styleOverrides: {
 					borderRadius: '2px',
 					borderWidth: '1px',
-					codeFontFamily: "'JetBrains Mono Variable', ui-monospace, Consolas, monospace",
-					codeFontSize: '0.9rem',
+					codeFontFamily: "'Google Sans Code Variable', ui-monospace, Consolas, monospace",
+					codeFontSize: '0.85rem',
 					codeLineHeight: '1.6',
 					codePaddingBlock: '1rem',
 					codePaddingInline: '1.25rem',
-					// Paper-toned code backgrounds instead of the themes' own.
 					codeBackground: ({ theme }) => (theme.type === 'dark' ? '#1e1c18' : '#edeae1'),
 					frames: {
 						shadowColor: 'transparent',
@@ -74,13 +85,18 @@ export default defineConfig({
 					},
 				},
 			},
-			lastUpdated: true,
+			// The page title shows Git-based dates for the original source document.
+			lastUpdated: false,
 			credits: false,
 			sidebar: [
 				{ label: 'Getting started', slug: 'getting-started' },
 				{
 					label: 'Guides',
-					items: [{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' }],
+					items: [
+						{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' },
+						{ label: 'AI coding agents', slug: 'guides/ai-agents' },
+						{ label: 'Building from source', slug: 'guides/building-from-source' },
+					],
 				},
 				{
 					label: 'SDKs',
@@ -108,7 +124,10 @@ export default defineConfig({
 				},
 				{
 					label: 'Security',
-					items: [{ label: 'Threat model', slug: 'security/threat-model' }],
+					items: [
+						{ label: 'Threat model', slug: 'security/threat-model' },
+						{ label: 'Supply chain', slug: 'security/supply-chain' },
+					],
 				},
 				{ label: 'Architecture', slug: 'architecture' },
 				{ label: 'Roadmap', slug: 'roadmap' },

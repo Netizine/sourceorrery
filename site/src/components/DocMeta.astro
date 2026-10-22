@@ -1,0 +1,31 @@
+---
+import FAIcon from './FAIcon.astro';
+
+const { entry, lastUpdated } = Astro.locals.starlightRoute;
+const minutes = entry.data.readingTimeMinutes;
+const updated = lastUpdated instanceof Date && !Number.isNaN(lastUpdated.getTime()) ? lastUpdated : undefined;
+const displayDate = updated && new Intl.DateTimeFormat('en-GB', {
+	day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
+}).format(updated);
+---
+
+<div class="so-doc-meta" aria-label="Page information" data-pagefind-ignore>
+	{minutes && (
+		<span title="Estimated reading time; completing the steps may take longer">
+			<FAIcon name="clock" />
+			{minutes} min read
+		</span>
+	)}
+	{updated && (
+		<span title="Last change to this page's source in Git">
+			<FAIcon name="calendar-days" />
+			Updated <time datetime={updated.toISOString()}>{displayDate}</time>
+		</span>
+	)}
+</div>
+
+<style>
+	.so-doc-meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-block: 1rem 0.25rem; color: var(--sl-color-gray-2); font-family: var(--so-font-ui, var(--sl-font)); font-size: 0.8125rem; }
+	.so-doc-meta > span { display: inline-flex; align-items: center; gap: 0.45rem; }
+	.so-doc-meta :global(.so-icon) { color: var(--sl-color-text-accent); }
+</style>

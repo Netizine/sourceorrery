@@ -44,8 +44,6 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       tag: ${{ steps.plan.outputs.tag }}
       publish: ${{ steps.plan.outputs.publish }}
-      has_crates_io: ${{ steps.secrets.outputs.has_crates_io }}
-      has_pypi: ${{ steps.secrets.outputs.has_pypi }}
       has_npm: ${{ steps.secrets.outputs.has_npm }}
       has_nuget: ${{ steps.secrets.outputs.has_nuget }}
       has_maven: ${{ steps.secrets.outputs.has_maven }}
@@ -69,12 +67,13 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           if [ "$DRY_RUN" = "true" ]; then echo "publish=false" >> "$GITHUB_OUTPUT"; else echo "publish=true" >> "$GITHUB_OUTPUT"; fi
+      # crates.io and PyPI use trusted publishing with no switch: their jobs
+      # run in every real release and fail loudly if a registry does not
+      # trust this workflow.
       - name: Which registry secrets exist
         id: secrets
         shell: bash
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
           # npm uses trusted publishing (no token); this repository variable
           # switches it on once each package has its trusted publishers.
           NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
@@ -87,8 +86,6 @@ jobs:
         run: |
           has() { if [ -n "$2" ]; then echo "$1=true"; else echo "$1=false"; fi; }
           {
-            has has_crates_io "$CARGO_REGISTRY_TOKEN"
-            has has_pypi "$PYPI_API_TOKEN"
             if [ "$NPM_TRUSTED_PUBLISHING" = true ]; then echo "has_npm=true"; else echo "has_npm=false"; fi
             has has_nuget "$NUGET_USER"
             has has_maven "${MAVEN_CENTRAL_USERNAME}${MAVEN_CENTRAL_PASSWORD}${MAVEN_GPG_PRIVATE_KEY}"
@@ -142,10 +139,16 @@ jobs:
           cli="sourceorrery-$VERSION-${{ matrix.target }}"
           ffi="sourceorrery-ffi-$VERSION-${{ matrix.target }}"
           mkdir -p "dist/$cli" "dist/$ffi/include" "dist/native/${{ matrix.rid }}" "dist/jni/${{ matrix.jdir }}"
-          cp "$out/sourceorrery" README.md LICENSE-MIT LICENSE-APACHE "dist/$cli/"
-          cp "$out"/libsourceorrery_ffi.* "dist/$ffi/"
+          # Each archive gets the README written for it: the CLI crate's, and the
+          # C ABI archive's own (what is inside, who needs it, how to link it).
+          cp "$out/sourceorrery" LICENSE-MIT LICENSE-APACHE "dist/$cli/"
+          cp crates/sourceorrery-cli/README.md "dist/$cli/README.md"
+          # The shared and static libraries only: a libsourceorrery_ffi.* glob would
+          # also take the .rlib and the .d dependency file that Cargo leaves there.
+          cp "$out"/libsourceorrery_ffi.so "dist/$ffi/" 2>/dev/null || cp "$out"/libsourceorrery_ffi.dylib "dist/$ffi/"
+          cp "$out"/libsourceorrery_ffi.a "dist/$ffi/"
           cp crates/sourceorrery-ffi/include/sourceorrery.h bindings/cpp/include/sourceorrery.hpp "dist/$ffi/include/"
-          cp bindings/README.md "dist/$ffi/README.md"; cp LICENSE-MIT LICENSE-APACHE "dist/$ffi/"
+          cp scripts/release/ffi-archive-README.md "dist/$ffi/README.md"; cp LICENSE-MIT LICENSE-APACHE "dist/$ffi/"
           tar -C dist -czf "dist/$cli.tar.gz" "$cli"
           tar -C dist -czf "dist/$ffi.tar.gz" "$ffi"
           # Loose shared library for the .NET (runtimes/<rid>/native) and Java (native/<os>-<arch>) packages.
@@ -162,10 +165,11 @@ jobs:
           $cli = "sourceorrery-$env:VERSION-${{ matrix.target }}"
           $ffi = "sourceorrery-ffi-$env:VERSION-${{ matrix.target }}"
           New-Item -ItemType Directory -Force "dist/$cli", "dist/$ffi/include", "dist/native/${{ matrix.rid }}", "dist/jni/${{ matrix.jdir }}" | Out-Null
-          Copy-Item "$out/sourceorrery.exe", "README.md", "LICENSE-MIT", "LICENSE-APACHE" "dist/$cli/"
+          Copy-Item "$out/sourceorrery.exe", "LICENSE-MIT", "LICENSE-APACHE" "dist/$cli/"
+          Copy-Item "crates/sourceorrery-cli/README.md" "dist/$cli/README.md"
           Copy-Item "$out/sourceorrery_ffi.dll", "$out/sourceorrery_ffi.dll.lib", "$out/sourceorrery_ffi.lib" "dist/$ffi/"
           Copy-Item "crates/sourceorrery-ffi/include/sourceorrery.h", "bindings/cpp/include/sourceorrery.hpp" "dist/$ffi/include/"
-          Copy-Item "bindings/README.md" "dist/$ffi/README.md"; Copy-Item "LICENSE-MIT", "LICENSE-APACHE" "dist/$ffi/"
+          Copy-Item "scripts/release/ffi-archive-README.md" "dist/$ffi/README.md"; Copy-Item "LICENSE-MIT", "LICENSE-APACHE" "dist/$ffi/"
           Compress-Archive -Path "dist/$cli/*" -DestinationPath "dist/$cli.zip"
           Compress-Archive -Path "dist/$ffi/*" -DestinationPath "dist/$ffi.zip"
           Copy-Item "$out/sourceorrery_ffi.dll" "dist/native/${{ matrix.rid }}/"
@@ -335,8 +339,11 @@ jobs:
           path: bindings/node
       - name: Lay out the platform packages
         run: |
-          # Regenerates the committed npm/<platform> manifests from the stamped package.json.
+          # Regenerates the committed npm/<platform> manifests from the stamped package.json,
+          # then replaces napi's one-line READMEs and the copied description with text that
+          # says which platform each addon is for and to install @sourceorreryai/sdk instead.
           npx napi create-npm-dirs
+          python3 ../../scripts/release/npm-platform-packages.py
           npx napi artifacts --output-dir artifacts
           ls -R npm
           ls -la index.js index.d.ts
@@ -359,6 +366,9 @@ jobs:
           echo "$listing"
           grep -qx 'package/index.js' <<< "$listing"
           grep -qx 'package/index.d.ts' <<< "$listing"
+          grep -qx 'package/README.md' <<< "$listing"
+          # Each platform package carries its own README, not napi's one-liner.
+          tar xzOf "$platform" package/README.md | grep -q 'Do not install this package directly'
           scratch="$(mktemp -d)"
           cd "$scratch"
           npm init -y >/dev/null
@@ -515,9 +525,21 @@ jobs:
           {
             echo "## SourceOrrery $VERSION"
             echo
-            echo "CLI binaries (\`sourceorrery-$VERSION-<target>\`), the C ABI with headers (\`sourceorrery-ffi-$VERSION-<target>\`), Python wheels, npm, Maven and NuGet packages. Verify with \`sha256sum -c SHA256SUMS\`."
+            echo "Secrets belong to the runtime, not the repository. Install guide: [Getting started](https://sourceorrery.ai/getting-started/); changes: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v$VERSION/CHANGELOG.md)."
             echo
-            echo "Changes: see [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/v$VERSION/CHANGELOG.md)."
+            echo "Start with the CLI: it creates vaults and stores secrets. The SDKs only read them, and are also on their registries (PyPI, npm, crates.io, Maven Central, NuGet, Packagist, pkg.go.dev)."
+            echo
+            echo "| File | What it is |"
+            echo "|------|------------|"
+            echo "| \`sourceorrery-$VERSION-<target>.tar.gz\` / \`.zip\` | the \`sourceorrery\` CLI |"
+            echo "| \`sourceorrery-ffi-$VERSION-<target>.tar.gz\` / \`.zip\` | the C ABI library and headers, for C, C++, Go and PHP |"
+            echo "| \`sourceorrery-$VERSION-cp311-abi3-*.whl\`, \`sourceorrery-$VERSION.tar.gz\` | the Python SDK: wheels and sdist |"
+            echo "| \`sourceorreryai-sdk-$VERSION.tgz\`, \`sourceorreryai-sdk-<platform>-$VERSION.tgz\` | the JavaScript / TypeScript SDK and its native addon per platform |"
+            echo "| \`sourceorrery-$VERSION.jar\` | the Java SDK, native libraries included |"
+            echo "| \`SourceOrrery.$VERSION.nupkg\` | the .NET SDK, native libraries included |"
+            echo "| \`SHA256SUMS\` | checksums: \`sha256sum -c --ignore-missing SHA256SUMS\` |"
+            echo
+            echo "Targets: \`x86_64-pc-windows-msvc\`, \`aarch64-pc-windows-msvc\`, \`x86_64-apple-darwin\`, \`aarch64-apple-darwin\`, \`x86_64-unknown-linux-gnu\`, \`aarch64-unknown-linux-gnu\`. How each package is published and how to check it: [Supply chain](https://sourceorrery.ai/security/supply-chain/)."
           } > notes.md
       - name: "Dry run: keep everything as one artifact"
         if: needs.preflight.outputs.publish != 'true'
@@ -539,29 +561,50 @@ jobs:
           fail_on_unmatched_files: true
 
   # ---------------------------------------------------------------------
-  # Registry publishing: each job is skipped when its secret is absent or
-  # when this is a dry run.
+  # Registry publishing: skipped in a dry run. crates.io, PyPI, npm and
+  # NuGet are published by trusted publishing (GitHub OIDC, no stored
+  # token). npm also needs the variable NPM_TRUSTED_PUBLISHING and NuGet the
+  # secret NUGET_USER; Maven Central and Packagist are skipped while their
+  # secrets are absent; pkg.go.dev needs nothing.
   # ---------------------------------------------------------------------
+
+  # crates.io trusted publishing: crates-io-auth-action trades this job's
+  # GitHub OIDC token for a crates.io token that lives 30 minutes, granted
+  # only for crates whose Trusted Publishing settings name this repository
+  # and release.yml (docs/release.md); its post step revokes the token.
   publish-crates:
     name: publish crates.io
     needs: [preflight, release, crates]
-    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_crates_io == 'true'
+    if: needs.preflight.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
       - run: python3 scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
+      - name: crates.io token (GitHub OIDC, 30 minutes)
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@v1
       - name: cargo publish (workspace, dependency order)
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         run: cargo publish --workspace --locked --allow-dirty
 
+  # PyPI trusted publishing: the action trades this job's GitHub OIDC token
+  # for a short-lived upload token, granted only if the project's trusted
+  # publishers name this repository and release.yml (docs/release.md), and
+  # uploads a signed attestation with every file.
   publish-pypi:
     name: publish PyPI
     needs: [preflight, release, python]
-    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_pypi == 'true'
+    if: needs.preflight.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -570,7 +613,6 @@ jobs:
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist
 
   # npm trusted publishing: no token is stored. npm (11.5.1 or later) trades

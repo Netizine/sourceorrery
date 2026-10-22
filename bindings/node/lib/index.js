@@ -32,6 +32,7 @@ class SourceOrreryError extends Error {
 class VaultNotFoundError extends SourceOrreryError {}
 class VaultLockedError extends SourceOrreryError {}
 class MigrationRequiredError extends SourceOrreryError {}
+class VaultMismatchError extends SourceOrreryError {}
 class SecretNotFoundError extends SourceOrreryError {}
 class VersionNotFoundError extends SecretNotFoundError {}
 class SecretDeletedError extends SourceOrreryError {}
@@ -51,6 +52,7 @@ const ERRORS_BY_CODE = {
   vault_not_found: VaultNotFoundError,
   locked: VaultLockedError,
   migration_required: MigrationRequiredError,
+  vault_mismatch: VaultMismatchError,
   not_found: SecretNotFoundError,
   version_not_found: VersionNotFoundError,
   deleted: SecretDeletedError,
@@ -306,6 +308,7 @@ module.exports = {
   VaultNotFoundError,
   VaultLockedError,
   MigrationRequiredError,
+  VaultMismatchError,
   SecretNotFoundError,
   VersionNotFoundError,
   SecretDeletedError,

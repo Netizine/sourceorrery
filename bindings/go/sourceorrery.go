@@ -10,10 +10,16 @@
 //	connect(secret.Value.Text())
 //
 // The package only reads: there is no way to create, change or delete a
-// secret, and no protector or audit management. It is a cgo binding over
-// the read-only part of the SourceOrrery C ABI (sourceorrery.h, shipped in
-// this directory); build with the `sourceorrery_ffi` library on the linker
-// path, for example:
+// secret, and no protector or audit management. Vaults are created, and
+// secrets stored, with the sourceorrery command-line tool, which is
+// installed separately and need not be present where the program runs; see
+// https://sourceorrery.ai/getting-started/ and the Go guide at
+// https://sourceorrery.ai/sdks/go/.
+//
+// The package is a cgo binding over the read-only part of the SourceOrrery
+// C ABI (sourceorrery.h, shipped in this directory); build with the
+// `sourceorrery_ffi` library, from the sourceorrery-ffi archive on the
+// GitHub release, on the linker path, for example:
 //
 //	CGO_LDFLAGS="-L/path/to/lib" go build ./...
 //

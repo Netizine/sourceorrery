@@ -1,0 +1,9 @@
+---
+import FAIcon from './FAIcon.astro';
+---
+
+<button popovertarget="starlight__sidebar" class="so-menu-button sl-menu-button sl-flex md:sl-hidden print:hidden">
+	<FAIcon name="bars" class="so-menu-open" />
+	<FAIcon name="xmark" class="so-menu-close" />
+	<span class="sr-only">{Astro.locals.t('menuButton.accessibleLabel')}</span>
+</button>

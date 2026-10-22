@@ -9,6 +9,7 @@ use std::fmt;
 use std::path::Path;
 
 use sourceorrery_core::SecretError;
+use sourceorrery_storage::VAULT_FILE_EXTENSION;
 
 use crate::unlock::UnlockReport;
 use crate::{HOME_ENV, PASSPHRASE_ENV, PASSPHRASE_FILE_ENV};
@@ -48,6 +49,9 @@ pub enum ErrorKind {
     VaultNotFound,
     /// `migration_required`: the vault file is in an older format.
     MigrationRequired,
+    /// `vault_mismatch`: the file found for the vault holds another vault
+    /// (renamed, copied or swapped in).
+    VaultMismatch,
     /// `manifest`: `sourceorrery.toml` is missing or invalid.
     Manifest,
     /// `crypto`: a value, its metadata or the audit chain failed verification.
@@ -79,6 +83,7 @@ impl ErrorKind {
             "locked" => Self::Locked,
             "vault_not_found" => Self::VaultNotFound,
             "migration_required" => Self::MigrationRequired,
+            "vault_mismatch" => Self::VaultMismatch,
             "manifest" => Self::Manifest,
             "crypto" => Self::Crypto,
             "storage" => Self::Storage,
@@ -211,6 +216,17 @@ impl Context<'_> {
     }
 }
 
+/// Hint for a vault file found under another vault's name.
+fn mismatch_hint(requested: &str, found: &str, ctx: &Context<'_>) -> String {
+    format!(
+        "The file {requested}.{VAULT_FILE_EXTENSION} is the vault '{found}', renamed or copied, \
+         or put there by someone who can write the vault directory; SourceOrrery never serves \
+         one vault under another's name. Move it back to {found}.{VAULT_FILE_EXTENSION} or \
+         restore '{requested}' from a backup, and if nobody moved it, treat it as tampering.{}",
+        ctx.home_note()
+    )
+}
+
 /// The actionable part of an error. Mentions commands and configuration,
 /// never values.
 fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
@@ -281,6 +297,7 @@ fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
             ctx.vault_flag(),
             ctx.vault_flag()
         ),
+        SecretError::VaultMismatch { requested, found } => mismatch_hint(requested, found, ctx),
         SecretError::Crypto(_) => format!(
             "The vault file failed an integrity check: a value, its metadata or the audit chain \
              does not verify, so the file was edited, truncated or restored from a partial copy. \
@@ -334,6 +351,7 @@ mod tests {
             "locked",
             "vault_not_found",
             "migration_required",
+            "vault_mismatch",
             "manifest",
             "crypto",
             "storage",
@@ -376,6 +394,32 @@ mod tests {
         );
         assert!(transient.is_transient());
         assert!(transient.hint().contains("--clear-not-before"));
+    }
+
+    #[test]
+    fn mismatch_hint_names_both_files() {
+        let err = Error::new(
+            &SecretError::VaultMismatch {
+                requested: "prod".into(),
+                found: "dev".into(),
+            },
+            &Context {
+                vault: Some("prod"),
+                ..Context::default()
+            },
+        );
+        assert_eq!(err.code(), "vault_mismatch");
+        assert_eq!(err.kind(), ErrorKind::VaultMismatch);
+        assert_eq!(
+            err.message(),
+            "the file for vault 'prod' holds the vault 'dev'"
+        );
+        assert!(
+            err.hint()
+                .starts_with("The file prod.sorvault is the vault 'dev'")
+        );
+        assert!(err.hint().contains("Move it back to dev.sorvault"));
+        assert!(!err.is_transient());
     }
 
     #[test]

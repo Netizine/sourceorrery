@@ -43,6 +43,7 @@ enum class ErrorKind {
     Locked,
     VaultNotFound,
     MigrationRequired,
+    VaultMismatch,
     Manifest,
     Crypto,
     Storage,
@@ -65,6 +66,7 @@ inline ErrorKind kind_for_code(std::string_view code) noexcept {
     if (code == "locked") return ErrorKind::Locked;
     if (code == "vault_not_found") return ErrorKind::VaultNotFound;
     if (code == "migration_required") return ErrorKind::MigrationRequired;
+    if (code == "vault_mismatch") return ErrorKind::VaultMismatch;
     if (code == "manifest") return ErrorKind::Manifest;
     if (code == "crypto") return ErrorKind::Crypto;
     if (code == "storage") return ErrorKind::Storage;
@@ -112,6 +114,8 @@ class VaultNotFoundError : public Error { using Error::Error; };
 class VaultLockedError : public Error { using Error::Error; };
 /// `migration_required`.
 class MigrationRequiredError : public Error { using Error::Error; };
+/// `vault_mismatch`: the file found for the vault holds another vault.
+class VaultMismatchError : public Error { using Error::Error; };
 /// `not_found` and `version_not_found`.
 class SecretNotFoundError : public Error { using Error::Error; };
 /// `deleted`.
@@ -144,6 +148,7 @@ inline std::string c_string(const char* text) { return text == nullptr ? std::st
     case ErrorKind::VaultNotFound: throw VaultNotFoundError(code, message, hint);
     case ErrorKind::Locked: throw VaultLockedError(code, message, hint);
     case ErrorKind::MigrationRequired: throw MigrationRequiredError(code, message, hint);
+    case ErrorKind::VaultMismatch: throw VaultMismatchError(code, message, hint);
     case ErrorKind::NotFound:
     case ErrorKind::VersionNotFound: throw SecretNotFoundError(code, message, hint);
     case ErrorKind::Deleted: throw SecretDeletedError(code, message, hint);

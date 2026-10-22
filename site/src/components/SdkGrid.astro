@@ -1,0 +1,31 @@
+---
+import FAIcon from './FAIcon.astro';
+
+const sdks = [
+	{ name: 'Python', slug: 'python', icon: 'python', family: 'brands', registry: 'PyPI', package: 'sourceorrery', href: 'https://pypi.org/project/sourceorrery/' },
+	{ name: 'JavaScript / TypeScript', slug: 'javascript', icon: 'js', family: 'brands', registry: 'npm', package: '@sourceorreryai/sdk', href: 'https://www.npmjs.com/package/@sourceorreryai/sdk' },
+	{ name: 'Rust', slug: 'rust', icon: 'rust', family: 'brands', registry: 'crates.io', package: 'sourceorrery', href: 'https://crates.io/crates/sourceorrery' },
+	{ name: 'Java', slug: 'java', icon: 'java', family: 'brands', registry: 'Maven Central', package: 'ai.sourceorrery:sourceorrery', href: 'https://central.sonatype.com/artifact/ai.sourceorrery/sourceorrery' },
+	{ name: '.NET', slug: 'dotnet', icon: 'microsoft', family: 'brands', registry: 'NuGet', package: 'SourceOrrery', href: 'https://www.nuget.org/packages/SourceOrrery' },
+	{ name: 'Go', slug: 'go', icon: 'golang', family: 'brands', registry: 'pkg.go.dev', package: 'github.com/netizine/sourceorrery/bindings/go', href: 'https://pkg.go.dev/github.com/netizine/sourceorrery/bindings/go' },
+	{ name: 'C', slug: 'c', icon: 'code', family: 'duotone', registry: 'Release archives', package: 'C ABI · shared and static libraries', href: 'https://github.com/Netizine/sourceorrery/releases/latest' },
+	{ name: 'C++', slug: 'cpp', icon: 'brackets-curly', family: 'duotone', registry: 'Release archives', package: 'C++17 · header-only wrapper', href: 'https://github.com/Netizine/sourceorrery/releases/latest' },
+	{ name: 'PHP', slug: 'php', icon: 'php', family: 'brands', registry: 'Packagist', package: 'sourceorrery/sourceorrery', href: 'https://packagist.org/packages/sourceorrery/sourceorrery' },
+] as const;
+---
+
+<ul class="so-sdk-grid not-content" aria-label="SourceOrrery SDKs">
+	{sdks.map((sdk) => (
+		<li class="so-sdk-card">
+			<a class="so-sdk-card__guide" href={`/sdks/${sdk.slug}/`}>
+				<FAIcon name={sdk.icon} family={sdk.family} class="so-sdk-card__icon" />
+				<span>{sdk.name}<span class="so-sdk-card__guide-label">SDK guide</span></span>
+				<FAIcon name="arrow-right" class="so-sdk-card__arrow" />
+			</a>
+			<a class="so-sdk-card__package" href={sdk.href} target="_blank" rel="noopener noreferrer" aria-label={`${sdk.name}: ${sdk.package} on ${sdk.registry}`}>
+				<span>{sdk.registry}</span>
+				<FAIcon name="arrow-up-right" />
+			</a>
+		</li>
+	))}
+</ul>

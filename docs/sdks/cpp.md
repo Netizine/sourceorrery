@@ -4,9 +4,11 @@ A header-only C++17 wrapper, `sourceorrery.hpp`, over the C ABI.
 
 ## Install
 
+The C++ SDK is not on a package registry: the release archive is the
+package, or [build it from source](#building-from-source).
 `sourceorrery.hpp` ships next to `sourceorrery.h` in the `include/`
-directory of the `sourceorrery-ffi-0.1.3-<target>` archive on the
-[v0.1.3 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3),
+directory of the `sourceorrery-ffi-0.1.4-<target>` archive on the
+[v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4),
 together with the shared and static libraries. Download the one for your
 platform, unpack it, and compile against it exactly as for [C](c.md#install);
 the example below is `get_secret.cpp` from the next section.
@@ -16,9 +18,9 @@ the example below is `get_secret.cpp` from the next section.
 #### Windows
 
 ```powershell
-$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.3"
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.4"
 $dir = "$env:LOCALAPPDATA\sourceorrery-ffi"
-Invoke-WebRequest "$release/sourceorrery-ffi-0.1.3-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
+Invoke-WebRequest "$release/sourceorrery-ffi-0.1.4-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
 Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 
 cl /std:c++17 /EHsc /I "$dir\include" get_secret.cpp /link "$dir\sourceorrery_ffi.dll.lib"
@@ -29,8 +31,8 @@ $env:Path = "$dir;$env:Path"          # sourceorrery_ffi.dll must be on PATH at 
 #### macOS
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.3
-archive=sourceorrery-ffi-0.1.3-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.4
+archive=sourceorrery-ffi-0.1.4-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 
@@ -41,8 +43,8 @@ DYLD_LIBRARY_PATH=/opt/sourceorrery ./get_secret
 #### Linux
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.3
-archive=sourceorrery-ffi-0.1.3-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.4
+archive=sourceorrery-ffi-0.1.4-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 
@@ -98,12 +100,12 @@ destructor zeroises too.
 
 Every failure throws `sourceorrery::Error` (a `std::runtime_error`) or a
 subclass: `VaultNotFoundError`, `VaultLockedError`,
-`MigrationRequiredError`, `SecretNotFoundError` (also `version_not_found`),
-`SecretDeletedError`, `PolicyError` (`disabled`, `not_yet_valid`,
-`expired`), `IntegrityError`, `UnsupportedError`, `InvalidArgumentError`
-(also `invalid_name`), `ManifestError`. Each has `code()`, `message()`,
-`hint()`, `kind()`, `transient()` and `policy()`. See
-[the SDK overview](index.md#errors).
+`MigrationRequiredError`, `VaultMismatchError`, `SecretNotFoundError`
+(also `version_not_found`), `SecretDeletedError`, `PolicyError`
+(`disabled`, `not_yet_valid`, `expired`), `IntegrityError`,
+`UnsupportedError`, `InvalidArgumentError` (also `invalid_name`),
+`ManifestError`. Each has `code()`, `message()`, `hint()`, `kind()`,
+`transient()` and `policy()`. See [the SDK overview](index.md#errors).
 
 ## Load a project
 
@@ -115,17 +117,55 @@ for (const auto& secret : project.secrets()) {
 project.close();   // zeroise every value
 ```
 
-## Building
+## Building from source
 
-`bindings/cpp/CMakeLists.txt` builds the example and the test against a
-built `sourceorrery-ffi`:
+You need Git, Rust 1.88 or newer installed with rustup, and a C compiler
+(on Linux also `pkg-config` and `libdbus-1-dev`);
+[Building from source](../building.md#what-you-need) has the commands for
+each platform. For this SDK, also a C++17 compiler, and CMake 3.16 or
+newer to build the example and the test.
+
+The wrapper is a header; what you build is the C ABI library under it:
 
 ```bash
+git clone https://github.com/Netizine/sourceorrery
+cd sourceorrery
+git checkout v0.1.4              # or stay on main for the newest changes
 cargo build --release -p sourceorrery-ffi
-cmake -S bindings/cpp -B build/cpp -DSOURCEORRERY_NATIVE_DIR=$PWD/target/release
-cmake --build build/cpp
 ```
 
-CI compiles both with `-Wall -Wextra -Werror` (gcc, clang) and `/W4 /WX`
-(MSVC) and runs them against a vault the CLI created. Source:
-[`bindings/cpp`](../../bindings/cpp/README.md).
+Compile against `bindings/cpp/include` (for `sourceorrery.hpp`),
+`crates/sourceorrery-ffi/include` (for `sourceorrery.h`, which it
+includes) and the library in `target/release`, where the install steps
+above use the unpacked archive. In CMake, `bindings/cpp/CMakeLists.txt`
+defines an interface target, `sourceorrery`, that carries all three.
+
+To build and run the example, the test and the conformance runner against
+the test vault the CLI creates, build the CLI too and run the rest in Bash
+from the repository root:
+
+```bash
+cargo build --release -p sourceorrery-cli -p sourceorrery-ffi
+eval "$(bash scripts/ci/fixture-vault.sh)"       # a throwaway vault, the variables the tests read, SOURCEORRERY_NATIVE_DIR
+cmake -S bindings/cpp -B build/cpp -DSOURCEORRERY_NATIVE_DIR="$SOURCEORRERY_NATIVE_DIR"
+cmake --build build/cpp --config Release         # get_secret and reader_test
+c++ -std=c++17 -Wall -Wextra -Werror -I bindings/cpp/include -I crates/sourceorrery-ffi/include \
+    bindings/cpp/conformance/run.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_cpp
+export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" DYLD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR"
+ctest --test-dir build/cpp -C Release --output-on-failure
+build/cpp/get_secret "$SOURCEORRERY_TEST_VAULT" database-password
+python tests/conformance/sdk/harness.py --runner cpp
+```
+
+On Windows, run this in Git Bash started from a *Developer Command Prompt
+for VS*, so that MSVC's `cl` is on `PATH`, as described for
+[C](c.md#building-from-source). CMake builds into `build/cpp/Release/`
+there; compile the runner with
+`cl -nologo -std:c++17 -EHsc -W4 -WX -I bindings/cpp/include -I crates/sourceorrery-ffi/include bindings/cpp/conformance/run.cpp -Fe:build/conformance_cpp.exe -Fo:build/ -link "$SOURCEORRERY_NATIVE_DIR/sourceorrery_ffi.dll.lib"`
+and put the DLL on `PATH` with
+`export PATH="$(cygpath -u "$SOURCEORRERY_NATIVE_DIR"):$PATH"`.
+
+CI compiles everything with `-Wall -Wextra -Werror` (gcc, clang) and
+`/W4 /WX` (MSVC). What the fixture script creates:
+[The SDK test vault](../building.md#the-sdk-test-vault).
+Source: [`bindings/cpp`](../../bindings/cpp/README.md).

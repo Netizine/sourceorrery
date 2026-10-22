@@ -4,7 +4,76 @@ All notable changes to SourceOrrery are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.4] - 2026-10-22
+
+### Added
+
+* `sourceorrery import <file>` moves a `.env` file into a vault: each value
+  is stored as a secret (`DATABASE_URL` → `database-url`, tagged
+  `imported-from`) and each key declared in `sourceorrery.toml`, appended
+  so the file's comments are kept, with an explicit `env` where the
+  default name would not deliver the original variable. Output, JSON and
+  errors carry key names and line numbers only, never a value.
+  `--dry-run`, `--manifest-only` (for `.env.example`), `--only`,
+  `--exclude` and `--overwrite`; secrets already in the vault are left
+  alone, so it can be re-run.
+* Skills for AI coding agents: `sourceorrery` (install, vaults, `run`, the
+  SDKs, errors) and `sourceorrery-migrate-env` (import the `.env` files,
+  find and convert every read of their variables in nine languages and in
+  scripts, Docker and CI, remove the plaintext), in the Agent Skills
+  format, never letting the agent see a value.
+  `sourceorrery init --integration <agent>` writes them, from the binary
+  and without any download, for Claude Code (plus a migration subagent),
+  Gemini CLI, GitHub Copilot, Google Antigravity, Cline, OpenAI Codex (plus
+  `agents/openai.yaml`), Cursor, Hermes Agent, Kilo Code, Kimi Code CLI,
+  Kiro and OpenCode, or `all`; `--scope user` and `--skills-dir` install
+  them outside the project. An existing manifest is kept, files
+  SourceOrrery wrote are updated and anyone else's are left alone.
+  `integrations/` holds the same files per agent, and the repository is a
+  Claude Code plugin marketplace (`plugins/sourceorrery`).
+
+### Changed
+
+* PyPI and crates.io are published by trusted publishing, like npm and
+  NuGet: the release jobs exchange the workflow's GitHub identity token
+  for a short-lived credential (`rust-lang/crates-io-auth-action` for
+  crates.io), and no `PYPI_API_TOKEN` or `CARGO_REGISTRY_TOKEN` is read
+  any more. PyPI files now carry a signed attestation. Both jobs run in
+  every real release and fail rather than skip if the registry does not
+  trust the workflow; `ReleasePackages.yaml` does the same.
+* Every registry page explains its package: each of the six crates has a
+  README on crates.io; the PyPI, npm, NuGet, Go and PHP READMEs, the Maven
+  description and javadoc overview say what the SDK is, that vaults are
+  created and secrets stored with the `sourceorrery` CLI (which no SDK
+  installs and which need not be present where the application runs), and
+  link to sourceorrery.ai. The six npm platform packages say which
+  platform their addon is for and to install `@sourceorreryai/sdk`
+  instead (`scripts/release/npm-platform-packages.py`, run after
+  `napi create-npm-dirs`).
+* The CLI archives carry the CLI's README, the C ABI archives a README of
+  their own (what is inside, who needs it, how to link it), and the
+  GitHub Release notes list what each file is for.
+
+### Security
+
+* A vault is only served under its own name. Opening vault `X` used to
+  load `<home>/vaults/X.sorvault` without checking that the file holds
+  the vault `X`, so a file renamed, copied or swapped in from another
+  vault that unlocks with the same passphrase or credential store was
+  served under the wrong name. Every open by name (the CLI, `ui`,
+  `audit`, `vault migrate`, the SDKs and the C ABI) now compares the
+  requested name with the authenticated name in the file and refuses a
+  mismatch with the new, append-only code `vault_mismatch`, recording
+  the refusal in that file's audit log. A legacy file under the wrong
+  name is refused before it is migrated. Every SDK has a typed error for
+  the code (`VaultMismatchError`, `VaultMismatchException`,
+  `ErrVaultMismatch`), and the SDK conformance harness checks it.
+
+### Fixed
+
+* The Linux and macOS C ABI archives no longer include Cargo's
+  `libsourceorrery_ffi.rlib` and `libsourceorrery_ffi.d` next to the
+  libraries.
 
 ## [0.1.3] - 2026-10-21
 
@@ -141,5 +210,5 @@ package registry.
   the Composer manifest is at the repository root, where Packagist reads
   it. Procedure and per-registry setup: `docs/release.md`.
 
-[Unreleased]: https://github.com/Netizine/sourceorrery/compare/v0.1.3...HEAD
+[0.1.4]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3

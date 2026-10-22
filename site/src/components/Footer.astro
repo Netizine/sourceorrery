@@ -1,44 +1,62 @@
 ---
-/**
- * Starlight's footer with one addition: on the homepage only, a short
- * privacy note beneath it. Every other page gets the default footer.
- *
- * The note is true as written: the site loads no analytics or third-party
- * scripts and sets no cookies, and the CLI has no HTTP client and never
- * checks for updates. Keep it that way, or change the note.
- */
-import Default from '@astrojs/starlight/components/Footer.astro';
+import Pagination from 'virtual:starlight/components/Pagination';
+import FAIcon from './FAIcon.astro';
+import BrandText from './BrandText.astro';
 
-// Starlight normalises the root index page's id to the empty string.
 const isHome = Astro.locals.starlightRoute.id === '';
+const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
 ---
 
-<Default />
-{
-	isHome && (
-		<p class="so-privacy">
-			<span class="so-privacy__icon" aria-hidden="true">🍪</span>SourceOrrery has no cookie banner
-			because I’m not interested in stalking you around the internet. SourceOrrery takes privacy so
-			seriously that I even refused to build an auto-updater because phoning home once was already
-			one call too many.
-		</p>
-	)
-}
+<footer class:list={['so-page-footer', { 'so-home-footer': isHome }]} data-pagefind-ignore>
+	{isHome ? (
+		<>
+			<a class="so-footer-brand" href={siteTitleHref}>
+				<FAIcon name="sourceorrery" family="kit" />
+				<BrandText text={siteTitle} />
+			</a>
+			<p class="so-privacy">
+				<FAIcon name="cookie-bite" class="so-privacy__icon" /> SourceOrrery has no cookie banner because I’m not interested in
+				stalking you around the internet. SourceOrrery takes privacy so seriously that I even refused
+				to build an auto-updater because phoning home once was already one call too many.
+			</p>
+		</>
+	) : <Pagination />}
+</footer>
 
 <style>
-	.so-privacy {
-		max-width: 44rem;
-		margin: 2.5rem auto 1rem;
-		padding-top: 1.25rem;
+	.so-page-footer.so-home-footer {
+		display: grid;
+		align-items: start;
+		gap: 0.75rem 2rem;
+		margin-top: 2rem;
+		padding-block: 1rem 0;
 		border-top: 1px solid var(--sl-color-hairline);
+	}
+
+	.so-footer-brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		justify-self: start;
+		color: var(--sl-color-text-accent);
+		font-size: 1.05rem;
+		line-height: 1.4;
+		text-decoration: none;
+	}
+
+	.so-footer-brand:hover { text-decoration: underline; }
+
+	.so-privacy {
+		margin: 0;
 		font-family: var(--so-font-ui);
 		font-size: 0.8rem;
 		line-height: 1.6;
-		text-align: center;
 		color: var(--sl-color-gray-3);
 	}
 
-	.so-privacy__icon {
-		margin-inline-end: 0.35em;
+	.so-privacy :global(.so-privacy__icon) { margin-inline-end: 0.25em; }
+
+	@media (min-width: 48rem) {
+		.so-home-footer { grid-template-columns: auto minmax(0, 1fr); }
 	}
 </style>

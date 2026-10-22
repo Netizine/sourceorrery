@@ -40,6 +40,7 @@ from .errors import (
     StorageError,
     UnsupportedError,
     VaultLockedError,
+    VaultMismatchError,
     VaultNotFoundError,
     VersionNotFoundError,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "VaultNotFoundError",
     "VaultLockedError",
     "MigrationRequiredError",
+    "VaultMismatchError",
     "SecretNotFoundError",
     "VersionNotFoundError",
     "SecretDeletedError",
@@ -73,7 +75,7 @@ __all__ = [
     "StorageError",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.4"
 
 PathLike = str | os.PathLike[str]
 

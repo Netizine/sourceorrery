@@ -8,8 +8,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-categories.workspace = true
-keywords.workspace = true
+readme = "README.md"
+categories = ["cryptography", "authentication"]
+keywords = ["secrets", "vault", "key-vault", "audit", "policy"]
 
 [dependencies]
 serde.workspace = true

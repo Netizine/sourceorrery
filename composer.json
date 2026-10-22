@@ -1,6 +1,6 @@
 {
     "name": "sourceorrery/sourceorrery",
-    "description": "Read secrets from a SourceOrrery vault. Secrets belong to the runtime, not the repository.",
+    "description": "Read secrets from SourceOrrery vaults, the encrypted replacement for .env files. Read-only: vaults are created and secrets stored with the sourceorrery CLI; the native library comes from the GitHub release.",
     "type": "library",
     "license": "MIT OR Apache-2.0",
     "keywords": ["secrets", "vault", "keyring", "security", "dotenv", "ffi"],

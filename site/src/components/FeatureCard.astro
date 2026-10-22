@@ -1,0 +1,17 @@
+---
+import FAIcon from './FAIcon.astro';
+
+interface Props {
+	title: string;
+	icon: string;
+	family?: 'duotone' | 'brands' | 'kit';
+}
+
+const { title, icon, family = 'duotone' } = Astro.props;
+---
+
+<article class="so-feature-card not-content">
+	<FAIcon name={icon} {family} class="so-card-icon" />
+	<h3>{title}</h3>
+	<div class="so-feature-card__body"><slot /></div>
+</article>

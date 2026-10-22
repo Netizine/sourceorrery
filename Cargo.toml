@@ -14,22 +14,20 @@ members = [
 exclude = ["bindings/python", "bindings/node"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.4"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Netizine/sourceorrery"
 homepage = "https://sourceorrery.ai"
 authors = ["James Melvin <james@melvin.tech>"]
-categories = ["command-line-utilities", "cryptography"]
-keywords = ["secrets", "vault", "keyring", "security", "cli"]
 
 [workspace.dependencies]
 # internal
-sourceorrery-core = { path = "crates/sourceorrery-core", version = "0.1.0" }
-sourceorrery-crypto = { path = "crates/sourceorrery-crypto", version = "0.1.0" }
-sourceorrery-storage = { path = "crates/sourceorrery-storage", version = "0.1.0", default-features = false }
-sourceorrery = { path = "crates/sourceorrery", version = "0.1.0", default-features = false }
+sourceorrery-core = { path = "crates/sourceorrery-core", version = "0.1.4" }
+sourceorrery-crypto = { path = "crates/sourceorrery-crypto", version = "0.1.4" }
+sourceorrery-storage = { path = "crates/sourceorrery-storage", version = "0.1.4", default-features = false }
+sourceorrery = { path = "crates/sourceorrery", version = "0.1.4", default-features = false }
 
 # shared
 serde = { version = "1", features = ["derive"] }

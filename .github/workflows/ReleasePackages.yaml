@@ -12,9 +12,11 @@
 #
 # Every registry is checked before anything is uploaded, a version that is
 # already on a registry is skipped rather than failed, and a registry whose
-# secret is missing is skipped. `dry_run` (the default) downloads and checks
-# everything and uploads nothing, with or without secrets. The secrets are
-# the ones release.yml uses; setup per registry is in docs/release.md.
+# secret is missing is skipped. crates.io, PyPI, npm and NuGet use trusted
+# publishing, so each must also trust this workflow file. `dry_run` (the
+# default) downloads and checks everything and uploads nothing, with or
+# without secrets. The secrets are the ones release.yml uses; setup per
+# registry is in docs/release.md.
 name: Release packages
 
 on:
@@ -80,8 +82,6 @@ jobs:
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
-      has_crates_io: ${{ steps.secrets.outputs.has_crates_io }}
-      has_pypi: ${{ steps.secrets.outputs.has_pypi }}
       has_npm: ${{ steps.secrets.outputs.has_npm }}
       has_nuget: ${{ steps.secrets.outputs.has_nuget }}
       has_maven: ${{ steps.secrets.outputs.has_maven }}
@@ -115,11 +115,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # crates.io and PyPI use trusted publishing with no switch: ticking
+      # their boxes is enough, and they fail loudly if not trusted.
       - name: Which registry secrets exist
         id: secrets
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
           # npm uses trusted publishing (no token); this repository variable
           # switches it on once each package has its trusted publishers.
           NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
@@ -132,8 +132,6 @@ jobs:
         run: |
           has() { if [ -n "$2" ]; then echo "$1=true"; else echo "$1=false"; fi; }
           {
-            has has_crates_io "$CARGO_REGISTRY_TOKEN"
-            has has_pypi "$PYPI_API_TOKEN"
             if [ "$NPM_TRUSTED_PUBLISHING" = true ]; then echo "has_npm=true"; else echo "has_npm=false"; fi
             has has_nuget "$NUGET_USER"
             has has_maven "${MAVEN_CENTRAL_USERNAME}${MAVEN_CENTRAL_PASSWORD}${MAVEN_GPG_PRIVATE_KEY}"
@@ -212,13 +210,20 @@ jobs:
           publish "$main"
 
   # ---------------------------------------------------------------------
-  # PyPI: the abi3 wheels and the sdist, as attached to the release.
+  # PyPI: the abi3 wheels and the sdist, as attached to the release, with
+  # trusted publishing: the action trades this job's GitHub OIDC token for a
+  # short-lived upload token, granted only if the project's trusted
+  # publishers name this repository and ReleasePackages.yaml, and uploads
+  # a signed attestation with every file.
   # ---------------------------------------------------------------------
   pypi:
     name: PyPI
     needs: plan
-    if: inputs.pypi && (inputs.dry_run || needs.plan.outputs.has_pypi == 'true')
+    if: inputs.pypi
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -242,7 +247,6 @@ jobs:
         if: ${{ !inputs.dry_run }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist
           skip-existing: true
 
@@ -296,13 +300,20 @@ jobs:
 
   # ---------------------------------------------------------------------
   # crates.io: built from the tag's source, one crate at a time in
-  # dependency order, skipping any version crates.io already has.
+  # dependency order, skipping any version crates.io already has, with
+  # trusted publishing: crates-io-auth-action trades this job's GitHub OIDC
+  # token for a crates.io token that lives 30 minutes, granted only for
+  # crates whose Trusted Publishing settings name this repository and
+  # ReleasePackages.yaml; its post step revokes the token.
   # ---------------------------------------------------------------------
   crates:
     name: crates.io
     needs: plan
-    if: inputs.crates && (inputs.dry_run || needs.plan.outputs.has_crates_io == 'true')
+    if: inputs.crates
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
@@ -315,10 +326,14 @@ jobs:
         run: python3 scripts/release/set-version.py "$VERSION"
       - name: Every crate packages and builds
         run: cargo publish --workspace --locked --allow-dirty --dry-run
+      - name: crates.io token (GitHub OIDC, 30 minutes)
+        id: crates-io-auth
+        if: ${{ !inputs.dry_run }}
+        uses: rust-lang/crates-io-auth-action@v1
       - name: Publish
         if: ${{ !inputs.dry_run }}
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         run: |
           set -euo pipefail
           for crate in sourceorrery-core sourceorrery-crypto sourceorrery-storage sourceorrery sourceorrery-ffi sourceorrery-cli; do

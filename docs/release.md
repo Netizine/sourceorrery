@@ -3,10 +3,9 @@
 Releases are cut by hand from the **Release** workflow
 (`.github/workflows/release.yml`), never by pushing a tag. One run builds
 every artefact for one version from one commit, publishes the GitHub
-Release and, for each registry whose secret exists, publishes the package.
-A dry run does everything except create the tag, the release and the
-registry uploads, so the pipeline can be exercised before a single token
-exists.
+Release and publishes each package to its registry. A dry run does
+everything except create the tag, the release and the registry uploads,
+so the pipeline can be exercised without touching a registry.
 
 ## Procedure
 
@@ -26,8 +25,9 @@ exists.
    the manifests itself from the version you typed; the committed version
    does not have to match).
 5. Point the install instructions at the new release: the download links
-   in `site/src/content/docs/getting-started.mdx` and `docs/sdks/*.md` name
-   the version in every file name and tag.
+   in `site/src/content/docs/getting-started.mdx` and `docs/sdks/*.md`, and
+   the examples in `docs/building.md` and `docs/supply-chain.md`, name the
+   version in every file name and tag.
 
 The workflow refuses a version that is not semver and, outside a dry run,
 a tag that already exists. Releases are immutable: a mistake is fixed by
@@ -60,27 +60,32 @@ without them being on the registry; stamping replaces the links with the
 version, which is what the published package depends on, so the node jobs
 run `npm ci` before they stamp.
 
-## Registry secrets
+## Registry credentials
 
-Each publish job runs only when the run is not a dry run **and** its
-secret is set in the repository (*Settings → Secrets and variables →
-Actions → New repository secret*). A job whose secret is absent is
-skipped, not failed, so the registries can be brought online one at a
-time. The **Release packages** workflow
-([below](#publishing-an-existing-release)) uses the same secrets.
+No publish job runs in a dry run. crates.io, PyPI, npm and NuGet are
+published by **trusted publishing**: the job presents the identity token
+GitHub signs for that workflow run, and the registry exchanges it for a
+short-lived credential, granted only if the package's trusted-publisher
+settings name `Netizine/sourceorrery` and the workflow file. No token for
+them is stored anywhere. Maven Central and Packagist still use stored
+secrets (*Settings → Secrets and variables → Actions*); their jobs are
+skipped, not failed, while the secrets are absent. The **Release
+packages** workflow ([below](#publishing-an-existing-release)) needs the
+same settings, with its own file name, `ReleasePackages.yaml`.
 
-| Registry | Release job | Secrets |
-|----------|-------------|---------|
-| npm | `publish-npm` | none (trusted publishing; switched on by the repository variable `NPM_TRUSTED_PUBLISHING`) |
-| PyPI | `publish-pypi` | `PYPI_API_TOKEN` |
-| NuGet | `publish-nuget` | `NUGET_USER` (trusted publishing; no API key) |
-| crates.io | `publish-crates` | `CARGO_REGISTRY_TOKEN` |
-| Maven Central | `publish-maven` | `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`, `MAVEN_GPG_PASSPHRASE` |
-| Packagist | `publish-packagist` | `PACKAGIST_USERNAME`, `PACKAGIST_API_TOKEN` |
-| pkg.go.dev | `publish-go` | none (uses `GITHUB_TOKEN`) |
+| Registry | Release job | Runs when | Stored credential |
+|----------|-------------|-----------|-------------------|
+| crates.io | `publish-crates` | every real release | none (trusted publishing) |
+| PyPI | `publish-pypi` | every real release | none (trusted publishing) |
+| npm | `publish-npm` | the repository variable `NPM_TRUSTED_PUBLISHING` is `true` | none (trusted publishing) |
+| NuGet | `publish-nuget` | the secret `NUGET_USER` exists | none besides the profile name (trusted publishing) |
+| Maven Central | `publish-maven` | its secrets exist | `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`, `MAVEN_GPG_PASSPHRASE` |
+| Packagist | `publish-packagist` | its secrets exist | `PACKAGIST_USERNAME`, `PACKAGIST_API_TOKEN` |
+| pkg.go.dev | `publish-go` | every real release | none (uses `GITHUB_TOKEN`) |
 
-No secret is needed for the GitHub Release itself (`GITHUB_TOKEN` with
-`contents: write`).
+crates.io and PyPI have no switch: a registry that does not trust the
+workflow fails the job loudly instead of skipping it. No secret is needed
+for the GitHub Release itself (`GITHUB_TOKEN` with `contents: write`).
 
 ### Setting up each registry
 
@@ -116,14 +121,43 @@ package is published by hand, once.
    disallow tokens*. Trusted publishing keeps working; no token can
    publish.
 
-**PyPI** (`sourceorrery`):
+**PyPI** (`sourceorrery`), with trusted publishing, so no token is stored
+anywhere. `pypa/gh-action-pypi-publish` trades the job's GitHub identity
+token for a short-lived upload token and uploads a signed attestation
+(PEP 740) with every file.
 
-1. A pypi.org account (two-factor authentication is mandatory).
-2. *Account settings → API tokens → Add API token*, scope **Entire
-   account**: a token scoped to the project can only be made once the
-   project exists. Save it as `PYPI_API_TOKEN` (it starts with `pypi-`).
-3. After the first upload, replace it with a token scoped to the
-   `sourceorrery` project.
+1. A pypi.org account (two-factor authentication is mandatory) that owns
+   the `sourceorrery` project.
+2. The project's *Manage → Publishing → Add a new publisher → GitHub*:
+   Owner `Netizine`, Repository name `sourceorrery`, Workflow name
+   `release.yml`, Environment name empty. Then a second publisher with
+   Workflow name `ReleasePackages.yaml`.
+3. Delete any `PYPI_API_TOKEN` repository secret and revoke the token on
+   pypi.org; nothing reads it any more.
+
+**crates.io** (`sourceorrery-core`, `sourceorrery-crypto`,
+`sourceorrery-storage`, `sourceorrery`, `sourceorrery-ffi`,
+`sourceorrery-cli`, published in that order), with trusted publishing, so
+no token is stored anywhere. `rust-lang/crates-io-auth-action` trades the
+job's GitHub identity token for a crates.io token that lives 30 minutes
+and revokes it when the job ends. crates.io grants it only for crates
+whose settings name the workflow, so all six need the setting, or the
+publish stops at the first crate without it.
+
+1. For each of the six crates, *Settings → Trusted Publishing → Add →
+   GitHub*: Repository owner `Netizine`, Repository name `sourceorrery`,
+   Workflow filename `release.yml`, Environment empty. Then a second
+   configuration with `ReleasePackages.yaml`.
+2. Delete any `CARGO_REGISTRY_TOKEN` repository secret and revoke the token
+   under *Account Settings → API Tokens*.
+3. Optionally, once a release has gone through: each crate's *Settings →
+   Trusted Publishing → Only allow trusted publishing*, so that no API
+   token can publish it.
+
+A crate's first version can only be published with an API token; trusted
+publishing applies from the second version on. A new crate added to the
+workspace therefore needs one publish by hand (`cargo publish -p <crate>`
+with a token scoped to it) before its setting can be added.
 
 **NuGet** (`SourceOrrery`), with trusted publishing, so no API key is
 stored anywhere. The publish jobs trade the job's GitHub identity token
@@ -146,16 +180,6 @@ A new policy can show as *temporarily active* for 7 days, mostly for
 private repositories, until a first publish locks it to the repository; if
 nothing publishes in that window it turns inactive and can be restarted
 from the same page.
-
-**crates.io** (`sourceorrery-core`, `sourceorrery-crypto`,
-`sourceorrery-storage`, `sourceorrery`, `sourceorrery-ffi`,
-`sourceorrery-cli`, published in that order):
-
-1. Log in to crates.io with GitHub and verify an email address under
-   *Account Settings*; crates.io refuses publishes without one.
-2. *Account Settings → API Tokens → New Token*: scopes `publish-new` and
-   `publish-update`, crates `sourceorrery*`, an expiry. Save it as
-   `CARGO_REGISTRY_TOKEN`. The first publish claims the six names.
 
 **Maven Central** (`ai.sourceorrery:sourceorrery`):
 
@@ -192,8 +216,8 @@ which indexes it.
 
 `.github/workflows/ReleasePackages.yaml` (*Actions → Release packages →
 Run workflow*) publishes the packages of a release that already exists,
-for a registry whose secret was added after the release ran. It builds no
-new release:
+for a registry that was set up after the release ran or failed during it.
+It builds no new release:
 
 - npm, PyPI and NuGet upload the exact files attached to the release.
 - crates.io publishes from the release tag's source.
@@ -205,8 +229,33 @@ new release:
 Inputs: the tag (empty means the latest release), **dry_run** (on by
 default) and one tick box per registry. Every registry's files are
 checked before anything is uploaded, a version a registry already has is
-skipped, and a registry without its secret is skipped. A dry run checks
-every ticked registry, with or without secrets, and uploads nothing.
+skipped, and npm, NuGet, Maven Central and Packagist are skipped while
+their variable or secrets are missing; a ticked crates.io or PyPI box
+always publishes, by trusted publishing. A dry run checks every ticked
+registry, with or without secrets, and uploads nothing.
+
+## What each registry page shows
+
+Each package's page is written for someone who has just found it there:
+what the package is, that vaults are created and secrets stored with the
+CLI (no SDK installs it), and where the documentation is. Change the
+text in its source:
+
+| Page | Text comes from |
+|------|-----------------|
+| crates.io, each crate | `crates/<crate>/README.md` (the `readme` key in its `Cargo.toml`), plus `description`, `keywords` and `categories` |
+| PyPI | `bindings/python/README.md` and `description` in `bindings/python/pyproject.toml` |
+| npm, `@sourceorreryai/sdk` | `bindings/node/README.md` and `description` in `bindings/node/package.json` |
+| npm, the six platform packages | `scripts/release/npm-platform-packages.py`, which the release runs after `napi create-npm-dirs` regenerates `bindings/node/npm/<platform>/` |
+| NuGet | `bindings/dotnet/README.md` (`PackageReadmeFile`) and `Description` in `SourceOrrery.csproj` |
+| Maven Central | `name`, `description` and `url` in `bindings/java/pom.xml`; the javadoc's package overview is `package-info.java` |
+| pkg.go.dev | `bindings/go/README.md` and the package comment in `sourceorrery.go` |
+| Packagist | the repository's root `README.md` (Packagist reads a GitHub repository's README, whatever `composer.json` says) and `description` in `composer.json` |
+| GitHub Release | the *Release notes* step of `release.yml`; the CLI archives carry `crates/sourceorrery-cli/README.md`, the C ABI archives `scripts/release/ffi-archive-README.md` |
+
+Registries take the text from the version they publish, so a change shows
+up with the next release; Packagist alone re-reads the root README
+whenever it updates the package.
 
 ## The PHP package and Packagist
 
@@ -268,6 +317,7 @@ curl -LO https://github.com/Netizine/sourceorrery/releases/download/vX.Y.Z/sourc
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
-Package signing (Sigstore for npm and PyPI provenance, cosign for the
-archives) is on the roadmap; until then the checksums and the workflow run
-linked from the release are the provenance.
+What each registry adds on top (npm provenance, the Maven Central
+signatures, nuget.org's repository signature) and how a user checks it is
+in [Supply chain](supply-chain.md); signing the archives themselves is on
+the [roadmap](roadmap.md#supply-chain).

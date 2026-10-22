@@ -15,9 +15,14 @@
  */
 import { Image } from 'astro:assets';
 import { LinkButton } from '@astrojs/starlight/components';
+import FAIcon from './FAIcon.astro';
 
 const { data } = Astro.locals.starlightRoute.entry;
 const { title = data.title, tagline, image, actions = [] } = data.hero || {};
+const actionIcons: Record<string, string> = {
+	'right-arrow': 'arrow-right', 'external': 'arrow-up-right', 'padlock': 'shield-keyhole',
+	'github': 'github', 'download': 'download', 'document': 'book-open',
+};
 
 // `hero.image` is `{ file }` or `{ light, dark }`; the dark image is hidden on
 // the light theme and vice versa with Starlight's `<theme>:sl-hidden` classes.
@@ -33,7 +38,7 @@ const art =
 const alt = (image && 'alt' in image && image.alt) || '';
 
 const meta = [
-	{ label: 'Status', value: 'Milestone 2 · local-first' },
+	{ label: 'Status', value: '0.1.4 · local-first' },
 	{ label: 'Licence', value: 'MIT or Apache-2.0' },
 	{
 		label: 'Source',
@@ -43,7 +48,7 @@ const meta = [
 ];
 ---
 
-<section class="so-cover">
+<section class="so-cover" aria-labelledby="_top">
 	<div class="so-cover__copy">
 		<p class="so-kicker">Open source · Rust-native · Local-first</p>
 		<h1 id="_top" data-page-title set:html={title} />
@@ -51,14 +56,15 @@ const meta = [
 		{
 			actions.length > 0 && (
 				<div class="so-cover__actions">
-					{actions.map(
-						({ attrs: { class: className, ...attrs } = {}, icon, link: href, text, variant }) => (
-							<LinkButton {href} {variant} icon={icon?.name} class:list={[className]} {...attrs}>
+					{actions.map(({ attrs: { class: className, ...attrs } = {}, icon, link: href, text, variant }) => {
+						const external = /^(https?:)?\/\//.test(href);
+						return (
+							<LinkButton {href} {variant} class:list={[className]} {...attrs} target={external ? '_blank' : attrs.target} rel={external ? 'noopener noreferrer' : attrs.rel}>
 								{text}
-								{icon?.html && <Fragment set:html={icon.html} />}
+								{icon && <FAIcon name={actionIcons[icon.name || ''] || 'arrow-right'} family={icon.name === 'github' ? 'brands' : 'duotone'} />}
 							</LinkButton>
-						)
-					)}
+						);
+					})}
 				</div>
 			)
 		}

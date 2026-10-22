@@ -1,0 +1,21 @@
+---
+import DefaultPageTitle from '@astrojs/starlight/components/PageTitle.astro';
+import BrandText from './BrandText.astro';
+import DocMeta from './DocMeta.astro';
+const { entry } = Astro.locals.starlightRoute;
+---
+
+{ /\bSourceOrrery\b/u.test(entry.data.title)
+	? <h1 id="_top"><BrandText text={entry.data.title} /></h1>
+	: <DefaultPageTitle /> }
+{entry.data.template !== 'splash' && (
+	<>
+		{entry.data.description && <p class="so-page-description">{entry.data.description}</p>}
+		<DocMeta />
+	</>
+)}
+
+<style>
+	h1 { margin-top: 1rem; }
+	.so-page-description { max-width: 68ch; margin-block: 0.875rem 0; color: var(--sl-color-gray-2); font-size: 1.0625rem; line-height: 1.7; }
+</style>

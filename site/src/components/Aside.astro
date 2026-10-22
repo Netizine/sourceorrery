@@ -1,0 +1,25 @@
+---
+import FAIcon from './FAIcon.astro';
+
+interface Props {
+	type?: 'note' | 'tip' | 'caution' | 'danger';
+	title?: string;
+}
+
+const { type = 'note', title } = Astro.props;
+const variants = {
+	note: { title: 'Note', icon: 'circle-info' },
+	tip: { title: 'Tip', icon: 'lightbulb' },
+	caution: { title: 'Caution', icon: 'triangle-exclamation' },
+	danger: { title: 'Danger', icon: 'octagon-exclamation' },
+};
+const heading = title ?? variants[type].title;
+---
+
+<aside class:list={['starlight-aside', `starlight-aside--${type}`]} aria-label={heading}>
+	<p class="starlight-aside__title" aria-hidden="true">
+		<FAIcon name={variants[type].icon} class="starlight-aside__icon" />
+		{heading}
+	</p>
+	<div class="starlight-aside__content"><slot /></div>
+</aside>

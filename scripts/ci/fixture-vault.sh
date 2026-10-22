@@ -21,6 +21,8 @@
 #   expired-token      "x", expired 2020-01-01         -> expired
 #   future-token       "x", not before 2100-01-01      -> not_yet_valid
 #   deleted-secret     "x", then deleted               -> deleted
+# and a byte-for-byte copy of the vault filed as `ci-copy`, which unlocks with
+# the same passphrase but must be refused as vault_mismatch.
 set -euo pipefail
 
 # `pwd -W` gives a C:/... path on Git Bash, which every toolchain understands.
@@ -62,6 +64,9 @@ set_secret expired-token "x" --expires 2020-01-01T00:00:00Z
 set_secret future-token "x" --not-before 2100-01-01T00:00:00Z
 set_secret deleted-secret "x"
 "$cli" secret delete deleted-secret --vault "$vault"
+
+# The same vault under another vault's name (renamed, copied or swapped in).
+cp "$home/vaults/$vault.sorvault" "$home/vaults/$vault-copy.sorvault"
 
 # Oldest version id of database-password (`versions` lists newest first).
 old_version="$("$cli" secret versions database-password --vault "$vault" -o json \

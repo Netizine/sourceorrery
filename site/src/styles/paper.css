@@ -18,7 +18,7 @@
 :root {
 	--so-font-ui: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 	--sl-font: 'Source Serif 4 Variable', 'Source Serif 4', Georgia, 'Times New Roman', serif;
-	--sl-font-mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', Consolas, 'Liberation Mono', monospace;
+	--sl-font-mono: 'Google Sans Code Variable', 'Google Sans Code', ui-monospace, 'Cascadia Code', Consolas, 'Liberation Mono', monospace;
 	--sl-line-height: 1.65;
 	--sl-line-height-headings: 1.15;
 	--sl-content-width: 47rem;
@@ -129,6 +129,24 @@
 	background: var(--so-selection);
 }
 
+/* Use the hero's two voices only for the brand in display titles and chrome. */
+.so-wordmark {
+	font-family: var(--sl-font);
+	white-space: nowrap;
+}
+
+.so-wordmark__source {
+	color: var(--so-heading);
+	font-weight: 700;
+	font-style: normal;
+}
+
+.so-wordmark__orrery {
+	color: var(--sl-color-text-accent);
+	font-weight: 500;
+	font-style: italic;
+}
+
 /* ------------------------------------------------------------------ */
 /* Chrome: header, sidebar, table of contents                           */
 /* ------------------------------------------------------------------ */
@@ -226,7 +244,7 @@ header.header {
 }
 
 /* Article titles only: the landing page's hero sets its own title. */
-html:not([data-has-hero]) h1[data-page-title],
+html:not([data-has-hero]) h1:is(#_top, [data-page-title]),
 .sl-markdown-content h1 {
 	font-family: var(--sl-font);
 	font-weight: 700;
@@ -360,10 +378,6 @@ html:not([data-has-hero]) h1[data-page-title],
 	background: var(--so-aside-bg);
 }
 
-.starlight-aside__icon {
-	display: none;
-}
-
 .starlight-aside__title {
 	font-family: var(--so-font-ui);
 	font-size: 0.72rem;
@@ -393,7 +407,7 @@ html:not([data-has-hero]) h1[data-page-title],
 
 .starlight-aside--caution {
 	--sl-color-asides-border: var(--so-callout-taupe-bar);
-	--sl-color-asides-text-accent: var(--so-callout-taupe-bar);
+	--sl-color-asides-text-accent: var(--sl-color-gray-2);
 	--so-aside-bg: var(--so-callout-taupe-bg);
 }
 
@@ -586,4 +600,469 @@ site-search button[data-open-modal] {
 	border-color: var(--sl-color-hairline);
 	background: var(--sl-color-bg);
 	font-family: var(--so-font-ui);
+}
+
+/* ------------------------------------------------------------------ */
+/* Local icons and new documentation components, in the paper theme    */
+/* ------------------------------------------------------------------ */
+
+:root {
+	--so-icon-primary: var(--sl-color-text-accent);
+	--so-icon-secondary: var(--sl-color-text-accent);
+	--so-icon-secondary-opacity: 0.65;
+	--fa-primary-color: var(--so-icon-primary);
+	--fa-primary-opacity: 1;
+	--fa-secondary-color: var(--so-icon-secondary);
+	--fa-secondary-opacity: var(--so-icon-secondary-opacity);
+}
+
+:focus-visible {
+	outline: 2px solid var(--sl-color-text-accent);
+	outline-offset: 4px;
+}
+
+html {
+	scroll-padding-top: calc(var(--sl-nav-height) + 2rem);
+}
+
+/* SVG paths come from the installed Kit at build time, with no browser runtime. */
+.so-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	width: 1.25em;
+	height: 1.25em;
+	line-height: 1;
+	vertical-align: -0.15em;
+	color: var(--so-icon-primary);
+	--fa-primary-color: currentColor;
+	--fa-primary-opacity: 1;
+	--fa-secondary-color: var(--so-icon-secondary);
+	--fa-secondary-opacity: var(--so-icon-secondary-opacity);
+}
+
+.so-fa-icon {
+	display: inline-block;
+	width: 1em;
+	height: 1em;
+	fill: currentColor;
+	vertical-align: -0.125em;
+}
+
+.so-icon > svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	max-width: 100%;
+	max-height: 100%;
+}
+
+.so-fa-icon .fa-primary {
+	fill: var(--fa-primary-color, currentColor);
+	opacity: var(--fa-primary-opacity, 1);
+}
+
+.so-fa-icon .fa-secondary {
+	fill: var(--fa-secondary-color, currentColor);
+	opacity: var(--fa-secondary-opacity, 0.65);
+}
+
+.so-external-icon {
+	display: inline-flex;
+	margin-inline-start: 0.25em;
+	font-size: 0.68em;
+	vertical-align: 0.08em;
+	--fa-primary-color: currentColor;
+	--fa-secondary-color: currentColor;
+}
+
+/* Keep hidden new-tab labels inside horizontally scrolling tables. */
+a[data-so-external] {
+	position: relative;
+}
+
+.site-title {
+	align-items: center;
+	min-width: 0;
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.site-title .so-site-emblem {
+	width: 1.9rem;
+	height: 1.9rem;
+	font-size: 1.8rem;
+}
+
+.site-title .so-site-label {
+	border-inline-start: 1px solid var(--sl-color-hairline-shade);
+	padding-inline-start: 0.65rem;
+	margin-inline-start: 0.15rem;
+	font: 450 0.7rem/1.5 var(--so-font-ui);
+	letter-spacing: 0;
+	color: var(--sl-color-gray-3);
+}
+
+.so-social-link {
+	align-items: center;
+	justify-content: center;
+	width: 2.5rem;
+	height: 2.5rem;
+	color: var(--sl-color-text-accent);
+}
+
+.so-social-link .so-icon {
+	color: inherit;
+	font-size: 1.2rem;
+}
+
+.so-social-link:hover {
+	color: var(--sl-color-white);
+}
+
+/* These wrappers change the glyphs while retaining Starlight's controls. */
+.so-search-shell {
+	position: relative;
+	width: 2.5rem;
+}
+
+.so-search-shell button[data-open-modal] {
+	width: 100%;
+	min-width: 2.5rem;
+}
+
+.so-search-shell button[data-open-modal] > svg {
+	visibility: hidden;
+}
+
+.so-search-glyph {
+	position: absolute;
+	inset-inline-start: 0.72rem;
+	top: 50%;
+	transform: translateY(-50%);
+	pointer-events: none;
+	font-size: 0.95rem;
+}
+
+.so-theme-picker {
+	position: relative;
+}
+
+.so-theme-picker starlight-theme-select svg {
+	visibility: hidden;
+}
+
+.so-theme-picker__icon,
+.so-theme-picker__caret {
+	position: absolute;
+	top: 50%;
+	transform: translateY(-50%);
+	pointer-events: none;
+}
+
+.so-theme-picker__icon {
+	inset-inline-start: 0;
+	font-size: 0.9rem;
+}
+
+.so-theme-picker__caret {
+	inset-inline-end: 0;
+	font-size: 0.6rem;
+}
+
+.so-menu-button {
+	position: fixed;
+	top: calc((var(--sl-nav-height) - var(--sl-menu-button-size)) / 2);
+	inset-inline-end: var(--sl-nav-pad-x);
+	z-index: var(--sl-z-index-navbar);
+	align-items: center;
+	justify-content: center;
+	width: var(--sl-menu-button-size);
+	height: var(--sl-menu-button-size);
+	border: 1px solid var(--sl-color-hairline);
+	border-radius: 2px;
+	padding: 0.5rem;
+	background: var(--so-panel);
+	cursor: pointer;
+}
+
+.so-menu-button:has(~ :popover-open) .so-menu-open,
+.so-menu-button:not(:has(~ :popover-open)) .so-menu-close {
+	display: none;
+}
+
+body:has(#starlight__sidebar:popover-open) {
+	overflow: hidden;
+}
+
+.starlight-aside__title :is(.so-icon, .so-fa-icon) {
+	color: var(--sl-color-asides-text-accent);
+	--fa-primary-color: currentColor;
+	--fa-secondary-color: currentColor;
+}
+
+.starlight-aside__title .so-icon {
+	display: inline-flex;
+	margin-inline-end: 0.4em;
+	font-size: 1.05rem;
+	vertical-align: -0.2em;
+}
+
+.so-doc-meta .so-icon {
+	font-size: 0.95em;
+}
+
+/* New cards use the same serif titles, square edges, and paper panels. */
+.so-feature-grid,
+.so-link-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 1rem;
+	margin-block: 1.5rem;
+}
+
+.so-feature-grid > *,
+.so-link-grid > * {
+	margin: 0 !important;
+}
+
+.so-feature-card {
+	min-width: 0;
+	padding: 1.3rem 1.45rem;
+	border: 1px solid var(--sl-color-hairline);
+	border-radius: 2px;
+	background: var(--so-panel);
+}
+
+.so-card-icon {
+	font-size: 1.35rem;
+	margin-bottom: 0.9rem;
+}
+
+.so-feature-card h3 {
+	margin: 0 0 0.65rem;
+	color: var(--so-heading);
+	font: 700 1.15rem/1.4 var(--sl-font);
+	letter-spacing: -0.005em;
+}
+
+.so-feature-card__body {
+	color: var(--sl-color-gray-2);
+	font-size: 0.97rem;
+	line-height: 1.65;
+}
+
+.so-feature-card__body > :first-child {
+	margin-top: 0;
+}
+
+.so-feature-card__body > :last-child {
+	margin-bottom: 0;
+}
+
+.so-feature-card__body code {
+	font-family: var(--sl-font-mono);
+	font-size: 0.86em;
+	overflow-wrap: anywhere;
+}
+
+.so-link-card {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.9rem;
+	min-width: 0;
+	padding: 1.3rem 1.45rem;
+	color: var(--sl-color-text);
+	border: 1px solid var(--sl-color-hairline);
+	border-radius: 2px;
+	background: var(--so-panel);
+	text-decoration: none;
+}
+
+.so-link-card .so-card-icon {
+	margin: 0.08rem 0 0;
+}
+
+.so-link-card__copy {
+	display: block;
+	min-width: 0;
+}
+
+.so-link-card__title {
+	display: block;
+	margin-bottom: 0.35rem;
+	color: var(--so-heading);
+	font: 700 1.15rem/1.4 var(--sl-font);
+}
+
+.so-link-card__description {
+	display: block;
+	color: var(--sl-color-gray-2);
+	font-size: 0.95rem;
+	line-height: 1.65;
+}
+
+.so-link-card__arrow {
+	margin-inline-start: auto;
+	margin-top: 0.2rem;
+	color: var(--sl-color-gray-3);
+	font-size: 0.8rem;
+}
+
+.so-link-card:hover {
+	background: var(--sl-color-gray-7);
+	border-color: var(--sl-color-gray-5);
+}
+
+.sl-link-button .so-icon {
+	font-size: 0.95em;
+	color: inherit;
+	--fa-secondary-color: currentColor;
+}
+
+.so-page-footer {
+	margin-top: 3rem;
+}
+
+.so-pagination {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+	gap: 1rem;
+}
+
+.so-pagination a {
+	display: flex;
+	align-items: center;
+	gap: 0.9rem;
+	padding: 1rem 1.2rem;
+	color: var(--sl-color-gray-3);
+	font: 400 0.8rem/1.6 var(--so-font-ui);
+	text-decoration: none;
+	overflow-wrap: anywhere;
+}
+
+.so-pagination a[rel='next'] {
+	text-align: end;
+	flex-direction: row-reverse;
+}
+
+.so-pagination .link-title {
+	display: block;
+	margin-top: 0.2rem;
+	font-size: 1.15rem;
+}
+
+.so-sdk-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 0.8rem;
+	padding: 0;
+	margin: 1.5rem 0;
+	list-style: none;
+}
+
+.so-sdk-grid .so-sdk-card {
+	margin: 0;
+	min-width: 0;
+	border: 1px solid var(--sl-color-hairline);
+	border-radius: 2px;
+	background: var(--so-panel);
+	overflow: hidden;
+}
+
+.so-sdk-card__guide {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 1rem;
+	color: var(--so-heading);
+	font: 700 1rem/1.4 var(--sl-font);
+	text-decoration: none;
+}
+
+.so-sdk-card__guide:hover {
+	background: var(--sl-color-gray-7);
+}
+
+.so-sdk-card__icon {
+	width: 2rem;
+	height: 2rem;
+	font-size: 1.5rem;
+}
+
+.so-sdk-card__guide-label {
+	display: block;
+	margin-top: 0.15rem;
+	color: var(--sl-color-gray-3);
+	font: 400 0.7rem/1.5 var(--so-font-ui);
+}
+
+.so-sdk-card__arrow {
+	margin-inline-start: auto;
+	color: var(--sl-color-gray-3);
+	font-size: 0.7rem;
+}
+
+.so-sdk-card__package {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.6rem 1rem;
+	border-top: 1px solid var(--sl-color-hairline-light);
+	color: var(--sl-color-text-accent);
+	font: 450 0.7rem/1.5 var(--so-font-ui);
+	text-decoration: none;
+}
+
+.so-sdk-card__package:hover {
+	text-decoration: underline;
+	text-underline-offset: 0.2em;
+}
+
+.so-sdk-card__package .so-icon {
+	font-size: 0.65rem;
+}
+
+@media (min-width: 38rem) {
+	.so-feature-grid,
+	.so-link-grid,
+	.so-sdk-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
+@media (min-width: 50rem) {
+	.so-search-shell {
+		width: 100%;
+		max-width: 22rem;
+	}
+
+	body:has(#starlight__sidebar:popover-open) {
+		overflow: auto;
+	}
+}
+
+@media (min-width: 62rem) {
+	.so-sdk-grid {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
+@media (max-width: 30rem) {
+	.site-title .so-site-label {
+		display: none;
+	}
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	@view-transition {
+		navigation: auto;
+	}
+
+	::view-transition-old(root),
+	::view-transition-new(root) {
+		animation-duration: 120ms;
+	}
 }
