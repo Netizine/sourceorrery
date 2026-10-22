@@ -33,6 +33,14 @@ CI runs the same on Ubuntu, Windows and macOS, plus a build with
 Tests must not touch the real OS credential store: use passphrase
 protectors with `Argon2Params::TESTING` (see `tests/conformance`).
 
+Third-party GitHub Actions are pinned to a commit, with the version as a
+comment (`uses: actions/checkout@<sha> # v4.4.0`). Dependabot moves the
+pins; to add or bump one by hand, resolve the release tag to its commit
+(`git ls-remote --tags https://github.com/<owner>/<action>`) and keep the
+comment, and give `dtolnay/rust-toolchain` an explicit `toolchain:`. The
+`workflows` CI job (zizmor) rejects an unpinned action and a `run:` step
+that expands an expression; put the value in `env:` instead.
+
 ## Pull requests
 
 * One logical change per PR, with tests. Behavioural changes to the

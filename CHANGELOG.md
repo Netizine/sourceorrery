@@ -4,6 +4,18 @@ All notable changes to SourceOrrery are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+* Every third-party GitHub Action in the workflows is pinned to the commit
+  of its release, with the version as a comment, and Dependabot updates
+  the pins and the Rust, npm, Python, NuGet and Maven dependencies weekly
+  in one grouped pull request per ecosystem. A `workflows` CI job runs
+  zizmor over `.github/`, so an unpinned action or a shell step that
+  expands an input fails the gate. The release workflow is read-only
+  except for the two jobs that create the tag and the GitHub Release.
+
 ## [0.1.4] - 2026-10-22
 
 ### Added

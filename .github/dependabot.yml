@@ -1,0 +1,76 @@
+# Automated dependency updates (roadmap: supply chain). One grouped pull
+# request per ecosystem per week for minor and patch updates; a major
+# update gets its own PR. Third-party actions are pinned to commits in the
+# workflows; Dependabot moves the pin and keeps the version comment.
+#
+# Cargo manifests declare ranges, so only Cargo.lock is updated
+# (lockfile-only); a range change is a deliberate commit. The Python and
+# Node native extensions are their own Cargo roots with their own lock
+# files. Go and Composer have no third-party dependencies to watch.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: cargo
+    directories:
+      - /
+      - /bindings/python
+      - /bindings/node
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: lockfile-only
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directories:
+      - /bindings/node
+      - /site
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      npm:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /bindings/python
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: nuget
+    directory: /bindings/dotnet
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      nuget:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: maven
+    directory: /bindings/java
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      maven:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

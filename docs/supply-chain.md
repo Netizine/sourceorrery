@@ -30,6 +30,15 @@ itself.
   against the committed `Cargo.lock` (the Python and Node extensions have
   lock files of their own) and with `npm ci` against `package-lock.json`.
   A dependency changes only in a commit that changes a lock file.
+* **Pinned actions, automated updates.** Every third-party GitHub Action
+  the workflows use is referenced by the full commit SHA of a release,
+  with the version as a comment, so a moved or compromised tag cannot
+  change what runs in CI or in a release build. Dependabot
+  (`.github/dependabot.yml`) opens a weekly grouped pull request per
+  ecosystem for the actions and for the Rust, npm, Python, NuGet and
+  Maven dependencies (Rust lock files only; a range change is a deliberate
+  commit), and the `workflows` CI job runs zizmor over `.github/` so an
+  unpinned action or a shell step that expands an input fails the gate.
 * **Immutable versions.** The workflow refuses a tag that already exists.
   A version is never rebuilt or replaced; a mistake is fixed by the next
   patch version.
@@ -217,8 +226,6 @@ It does not change these limits:
   attestation.
 * macOS binaries are not signed or notarised; Windows binaries are not
   Authenticode-signed.
-* The workflows refer to third-party GitHub Actions by version tag rather
-  than by commit, and dependency updates are not automated.
 * There is no software bill of materials and no claim of reproducible
   builds.
 

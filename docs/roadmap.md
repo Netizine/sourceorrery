@@ -59,7 +59,7 @@ How each package is published and how to check it: [Supply chain](supply-chain.m
 - [x] Maven Central artefacts signed with the release key
 - [ ] Signatures or build attestations for the release archives
 - [ ] Signed and notarised macOS binaries; Authenticode-signed Windows binaries
-- [ ] Third-party GitHub Actions pinned to commits; automated dependency updates
+- [x] Third-party GitHub Actions pinned to commits; automated dependency updates
 - [ ] Software bill of materials for each release
 
 ## Release: 0.1.4

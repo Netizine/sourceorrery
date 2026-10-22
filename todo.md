@@ -48,13 +48,13 @@ one `actions/checkout@v3`. No `.github/dependabot.yml`.
 
 **Steps.**
 
-- [ ] Pin every `uses:` to a full commit SHA with the version as a trailing
+- [x] Pin every `uses:` to a full commit SHA with the version as a trailing
       comment (`uses: actions/checkout@<sha> # v4.2.2`). `pinact run` or
       `frizbee` does the whole tree in one pass; check the diff by hand
       for `dtolnay/rust-toolchain@stable` (pin the action's commit, keep
       `stable` as the toolchain input) and `pypa/gh-action-pypi-publish`
       (pin the commit behind `release/v1`). Bump the stray `checkout@v3`.
-- [ ] Add `.github/dependabot.yml`, weekly, one grouped PR per ecosystem
+- [x] Add `.github/dependabot.yml`, weekly, one grouped PR per ecosystem
       (minor and patch grouped; majors separate):
       `github-actions` (`/`), `cargo` (`/`, `/bindings/python`,
       `/bindings/node`; `versioning-strategy: lockfile-only` so the ranges
@@ -63,15 +63,15 @@ one `actions/checkout@v3`. No `.github/dependabot.yml`.
       (`/bindings/java`), `gomod` (`/bindings/go`), `composer` (`/`).
       Dependabot keeps SHA-pinned actions current and preserves the
       version comment, so pinning does not freeze the workflows.
-- [ ] Optional, recommended: a `workflows-lint` CI job running `zizmor`
+- [x] Optional, recommended: a `workflows-lint` CI job running `zizmor`
       over `.github/`, which fails on an unpinned action and on the common
       workflow injection patterns; add it to the gate.
-- [ ] Docs: drop the "referred to by version tag" bullet from
+- [x] Docs: drop the "referred to by version tag" bullet from
       `docs/supply-chain.md` *Not done yet* and describe the pin policy
       under *From commit to package*; one paragraph in `CONTRIBUTING.md`
       on how a pinned action is updated (Dependabot PR, or by hand with
       the comment kept).
-- [ ] Tick the roadmap box.
+- [x] Tick the roadmap box.
 
 ---
 
