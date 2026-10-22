@@ -70,6 +70,9 @@ way, from `release.yml` or `ReleasePackages.yaml` in
 | Go module proxy | `github.com/netizine/sourceorrery/bindings/go` | Nothing uploaded: the tag `bindings/go/vX.Y.Z` | The Go checksum database |
 | Packagist | `sourceorrery/sourceorrery` | Nothing uploaded: the tag `vX.Y.Z` | The commit recorded in `composer.lock` |
 | GitHub Release | CLI and C ABI archives, wheels, jar, `.nupkg`, npm tarballs | The release workflow | `SHA256SUMS` and the workflow run linked from the release |
+| Homebrew tap | `sourceorrery` in `Netizine/homebrew-sourceorrery` | Nothing uploaded: the release workflow commits a formula naming the release archive for each platform and its SHA-256 | Homebrew checks the hash before installing; the formula is a readable file in the tap |
+| Scoop bucket | `sourceorrery` in `Netizine/scoop-sourceorrery` | Nothing uploaded: the release workflow commits a manifest naming the release archives and their SHA-256 | Scoop checks the hash before installing |
+| WinGet | `Netizine.SourceOrrery` | A pull request on `microsoft/winget-pkgs` with manifests naming the release archives and their SHA-256, validated there | WinGet checks `InstallerSha256` before installing |
 
 The wheels and sdist on PyPI, the npm tarballs and the jar on Maven
 Central are byte for byte the files attached to the GitHub Release, so

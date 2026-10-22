@@ -507,25 +507,25 @@ releases are updates.
 
 **Steps.**
 
-- [ ] `scripts/release/package-managers.py`: from the version and
+- [x] `scripts/release/package-managers.py`: from the version and
       `SHA256SUMS`, render `Formula/sourceorrery.rb` (per-target URLs and
       sha256 for the four macOS/Linux archives, `bin.install`, shell
       completions from `sourceorrery completions`), and
       `bucket/sourceorrery.json` (x64 and arm64 zips, `bin`,
       `checkver`/`autoupdate` against GitHub releases). Unit-tested
       against a fixture `SHA256SUMS`.
-- [ ] Release job `publish-package-managers`, after `release`, real
+- [x] Release job `publish-package-managers`, after `release`, real
       releases only, skipped while `PACKAGING_TOKEN` is absent: commit the
       formula to the tap and the manifest to the bucket; `wingetcreate
       update Netizine.SourceOrrery --version X.Y.Z --urls <x64 zip> <arm64
       zip> --submit` (installer type `zip`, nested `portable`). Add the
       job to `ReleasePackages.yaml` with its own tick box so an existing
       release can be packaged later.
-- [ ] Smoke test in the same job: `brew install --build-from-source` the
+- [x] Smoke test in the same job: `brew install --build-from-source` the
       rendered formula on the macOS runner (or `brew audit --strict`),
       `scoop install` from the local manifest on Windows. Dry run renders
       and audits, uploads nothing.
-- [ ] Docs: `site/src/content/docs/getting-started.mdx` gains the three
+- [x] Docs: `site/src/content/docs/getting-started.mdx` gains the three
       one-liners above the archive tabs and drops the roadmap sentence,
       plus one line on the SmartScreen prompt Windows users see while the
       binaries are unsigned (item 8 deferred) and how to check the

@@ -478,6 +478,17 @@ jobs:
           # Plain output; no upload to the Security tab.
           advanced-security: "false"
 
+  # The release scripts are Python; their unit tests run here so a broken
+  # renderer is caught before a release run needs it.
+  scripts:
+    name: release scripts (python)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: python3 -m unittest -v scripts/release/package_managers_test.py
+
   # ---------------------------------------------------------------------
   # The one status check branch protection on `main` requires. It passes
   # when every job above passed or was skipped and fails on any other
@@ -507,6 +518,7 @@ jobs:
       - docs
       - audit
       - workflows
+      - scripts
     steps:
       - name: Every job passed or was skipped
         env:

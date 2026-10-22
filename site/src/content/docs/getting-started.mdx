@@ -67,14 +67,59 @@ Go, C, C++ and PHP load the C ABI library from the release (below); each
 to check that what you installed is what was released, is in
 [Supply chain](/security/supply-chain/).
 
+### With a package manager
+
+Each package manager downloads the CLI archive from the GitHub release
+and checks its SHA-256 against the one recorded at release time, so what
+it installs is the released file.
+
+<Tabs syncKey="os">
+<TabItem label="Windows">
+
+```powershell
+winget install Netizine.SourceOrrery
+```
+
+or, with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery
+scoop install sourceorrery
+```
+
+WinGet lists a new version once the community repository has merged its
+submission, usually a few days after a release; the Scoop bucket has it at
+once. The binaries are not code-signed yet, so SmartScreen may ask the
+first time `sourceorrery` runs (*More info → Run anyway*); the hash check
+above, the release's `SHA256SUMS` and `gh attestation verify` are how to
+check a download in the meantime.
+
+</TabItem>
+<TabItem label="macOS">
+
+```bash
+brew install Netizine/sourceorrery/sourceorrery
+```
+
+</TabItem>
+<TabItem label="Linux">
+
+With [Homebrew on Linux](https://docs.brew.sh/Homebrew-on-Linux):
+
+```bash
+brew install Netizine/sourceorrery/sourceorrery
+```
+
+</TabItem>
+</Tabs>
+
 ### From the GitHub release
 
 The [v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4)
 ships the CLI for Windows, macOS and Linux on x64 and arm64, the C ABI
 library with its headers, and every SDK package (wheels, the npm tarballs,
 the jar, the NuGet package), with a `SHA256SUMS` file to check each
-download against. Homebrew, WinGet and Scoop packages are on the
-[roadmap](/roadmap/).
+download against.
 
 <Tabs syncKey="os">
 <TabItem label="Windows">

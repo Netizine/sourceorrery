@@ -34,7 +34,7 @@ items below are implemented; unchecked items remain planned.
 - [ ] `backup` / `restore` (encrypted export of a vault or a secret)
 - [x] Pre-built CLI archives for six targets on the GitHub release, with `SHA256SUMS`
 - [x] `cargo install --locked sourceorrery-cli --version 0.1.4`
-- [ ] Package managers: Homebrew, WinGet, Scoop
+- [x] Package managers: Homebrew, WinGet, Scoop
 - [x] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`, deployed by Azure Static Web Apps
 
 ## Milestone 2 — first-class language bindings

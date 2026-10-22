@@ -199,7 +199,7 @@ they are not SourceOrrery. Read more in
 SourceOrrery 0.1.4 can be installed three ways (step by step in
 [Getting started](https://sourceorrery.ai/getting-started/)):
 
-- **From the package registries.** The CLI: `cargo install --locked sourceorrery-cli --version 0.1.4`.
+- **From the package registries.** The CLI: `brew install Netizine/sourceorrery/sourceorrery` (macOS, Linux), `winget install Netizine.SourceOrrery`, `scoop install sourceorrery` (bucket `Netizine/scoop-sourceorrery`) or `cargo install --locked sourceorrery-cli --version 0.1.4`.
   The SDKs: `pip install sourceorrery`, `npm install @sourceorreryai/sdk`,
   `cargo add sourceorrery`, `ai.sourceorrery:sourceorrery` on Maven Central,
   `dotnet add package SourceOrrery`,

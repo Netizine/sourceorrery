@@ -51,6 +51,8 @@ jobs:
       has_nuget: ${{ steps.secrets.outputs.has_nuget }}
       has_maven: ${{ steps.secrets.outputs.has_maven }}
       has_packagist: ${{ steps.secrets.outputs.has_packagist }}
+      has_packaging: ${{ steps.secrets.outputs.has_packaging }}
+      has_winget: ${{ steps.secrets.outputs.has_winget }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Validate the version and the tag
@@ -86,6 +88,8 @@ jobs:
           MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
           PACKAGIST_API_TOKEN: ${{ secrets.PACKAGIST_API_TOKEN }}
+          PACKAGING_TOKEN: ${{ secrets.PACKAGING_TOKEN }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
           has() { if [ -n "$2" ]; then echo "$1=true"; else echo "$1=false"; fi; }
           {
@@ -93,6 +97,8 @@ jobs:
             has has_nuget "$NUGET_USER"
             has has_maven "${MAVEN_CENTRAL_USERNAME}${MAVEN_CENTRAL_PASSWORD}${MAVEN_GPG_PRIVATE_KEY}"
             has has_packagist "${PACKAGIST_USERNAME}${PACKAGIST_API_TOKEN}"
+            has has_packaging "$PACKAGING_TOKEN"
+            has has_winget "$WINGET_TOKEN"
           } | tee -a "$GITHUB_OUTPUT"
       - name: Manifests accept the version
         env:
@@ -528,6 +534,12 @@ jobs:
           for d in python npm maven nuget; do mv "$d"/* . 2>/dev/null || true; rmdir "$d" 2>/dev/null || true; done
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
+      # The package-manager manifests are rendered from this file.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: checksums
+          path: release/SHA256SUMS
+          if-no-files-found: error
       - name: Release notes
         shell: bash
         env:
@@ -549,6 +561,8 @@ jobs:
             echo "| \`sourceorrery-$VERSION.jar\` | the Java SDK, native libraries included |"
             echo "| \`SourceOrrery.$VERSION.nupkg\` | the .NET SDK, native libraries included |"
             echo "| \`SHA256SUMS\` | checksums: \`sha256sum -c --ignore-missing SHA256SUMS\` |"
+            echo
+            echo "Install the CLI with a package manager: \`brew install Netizine/sourceorrery/sourceorrery\` (macOS and Linux), \`winget install Netizine.SourceOrrery\` or \`scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery && scoop install sourceorrery\` (Windows). Each installs the archive above and checks its hash."
             echo
             echo "Targets: \`x86_64-pc-windows-msvc\`, \`aarch64-pc-windows-msvc\`, \`x86_64-apple-darwin\`, \`aarch64-apple-darwin\`, \`x86_64-unknown-linux-gnu\`, \`aarch64-unknown-linux-gnu\`. How each package is published and how to check it: [Supply chain](https://sourceorrery.ai/security/supply-chain/)."
           } > notes.md
@@ -756,6 +770,104 @@ jobs:
           git push origin "bindings/go/v$VERSION"
           # Fetching the version through the public proxy makes pkg.go.dev index it.
           curl -fsS "https://proxy.golang.org/github.com/netizine/sourceorrery/bindings/go/@v/v$VERSION.info" || echo "::warning::proxy fetch failed; it indexes on first use"
+
+  # ---------------------------------------------------------------------
+  # Package managers. The formula, the Scoop manifest and the WinGet
+  # manifests are rendered from the release's SHA256SUMS in every run (so a
+  # dry run checks them); the pushes need PACKAGING_TOKEN (contents: write
+  # on Netizine/homebrew-sourceorrery and Netizine/scoop-sourceorrery) and
+  # WINGET_TOKEN (a classic token with public_repo, for the pull request to
+  # microsoft/winget-pkgs), and are skipped while a token is absent.
+  # ---------------------------------------------------------------------
+  package-managers:
+    name: package managers (render)
+    needs: [preflight, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: checksums
+          path: checksums
+      - name: Render the formula and the manifests from SHA256SUMS
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts/release/package_managers_test.py
+          python3 scripts/release/package-managers.py --version "$VERSION" \
+            --sha256sums checksums/SHA256SUMS --release-date "$(date -u +%F)" --out dist
+      - name: Check what was rendered
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          ruby -c dist/homebrew/Formula/sourceorrery.rb
+          python3 -m json.tool dist/scoop/bucket/sourceorrery.json > /dev/null
+          for f in dist/winget/manifests/n/Netizine/SourceOrrery/"$VERSION"/*.yaml; do
+            python3 -c 'import sys, yaml; yaml.safe_load(open(sys.argv[1]))' "$f"
+          done
+          grep -c "$VERSION" dist/homebrew/Formula/sourceorrery.rb dist/scoop/bucket/sourceorrery.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-managers
+          path: dist
+          if-no-files-found: error
+
+  publish-homebrew-scoop:
+    name: publish Homebrew tap and Scoop bucket
+    needs: [preflight, package-managers]
+    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_packaging == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package-managers
+          path: dist
+      - name: Commit the formula to the tap and the manifest to the bucket
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          PACKAGING_TOKEN: ${{ secrets.PACKAGING_TOKEN }}
+        run: |
+          set -euo pipefail
+          publish() { # <repository> <rendered file> <path in the repository>
+            local repo="$1" src="$2" dest="$3" dir
+            dir="$(mktemp -d)"
+            git clone --quiet --depth 1 "https://x-access-token:${PACKAGING_TOKEN}@github.com/Netizine/$repo" "$dir"
+            if cmp -s "$src" "$dir/$dest"; then echo "$repo already carries $VERSION"; return; fi
+            mkdir -p "$dir/$(dirname "$dest")"
+            cp "$src" "$dir/$dest"
+            git -C "$dir" config user.name "github-actions[bot]"
+            git -C "$dir" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git -C "$dir" add "$dest"
+            git -C "$dir" commit --quiet -m "sourceorrery $VERSION"
+            git -C "$dir" push --quiet
+            echo "$repo: $dest -> $VERSION"
+          }
+          publish homebrew-sourceorrery dist/homebrew/Formula/sourceorrery.rb Formula/sourceorrery.rb
+          publish scoop-sourceorrery dist/scoop/bucket/sourceorrery.json bucket/sourceorrery.json
+
+  publish-winget:
+    name: publish WinGet
+    needs: [preflight, package-managers]
+    if: needs.preflight.outputs.publish == 'true' && needs.preflight.outputs.has_winget == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package-managers
+          path: dist
+      - name: Open the pull request on microsoft/winget-pkgs
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          $manifests = "dist/winget/manifests/n/Netizine/SourceOrrery/$env:VERSION"
+          Get-ChildItem $manifests
+          .\wingetcreate.exe submit --token $env:WINGET_TOKEN --prtitle "Netizine.SourceOrrery version $env:VERSION" $manifests
 
   publish-packagist:
     name: publish Packagist

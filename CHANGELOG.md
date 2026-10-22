@@ -6,6 +6,16 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+* The CLI installs from a Homebrew tap (`brew install
+  Netizine/sourceorrery/sourceorrery`, macOS and Linux), a Scoop bucket
+  (`Netizine/scoop-sourceorrery`) and WinGet (`Netizine.SourceOrrery`).
+  The release workflow renders the formula and the manifests from the
+  release's `SHA256SUMS` (`scripts/release/package-managers.py`), commits
+  them to the tap and the bucket and opens the WinGet pull request; the
+  *Release packages* workflow can do the same for an existing release.
+
 ### Changed
 
 * Every third-party GitHub Action in the workflows is pinned to the commit

@@ -45,6 +45,7 @@ the next patch version.
 | `crates` | a `cargo publish --workspace --dry-run` proving every crate packages in dependency order. |
 | `php` | `composer validate --strict` on the root `composer.json` and a Composer install of the version from a local tag (`scripts/ci/php-package-install.sh`); nothing is uploaded, the package Packagist serves is the git tag itself. |
 | `release` | the GitHub Release (or the dry-run artifact) with `SHA256SUMS`. |
+| `package-managers` | the Homebrew formula, the Scoop manifest and the three WinGet manifests, rendered from `SHA256SUMS` by `scripts/release/package-managers.py` (artifact `package-managers`); every URL is a release archive and every hash comes from the release. |
 
 Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
 `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`,
@@ -82,6 +83,8 @@ same settings, with its own file name, `ReleasePackages.yaml`.
 | Maven Central | `publish-maven` | its secrets exist | `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`, `MAVEN_GPG_PASSPHRASE` |
 | Packagist | `publish-packagist` | its secrets exist | `PACKAGIST_USERNAME`, `PACKAGIST_API_TOKEN` |
 | pkg.go.dev | `publish-go` | every real release | none (uses `GITHUB_TOKEN`) |
+| Homebrew tap, Scoop bucket | `publish-homebrew-scoop` | the secret `PACKAGING_TOKEN` exists | `PACKAGING_TOKEN` |
+| WinGet | `publish-winget` | the secret `WINGET_TOKEN` exists | `WINGET_TOKEN` |
 
 crates.io and PyPI have no switch: a registry that does not trust the
 workflow fails the job loudly instead of skipping it. No secret is needed
@@ -212,6 +215,37 @@ repository was never submitted, and waits for the version to appear.
 `bindings/go/vX.Y.Z` and fetches the version through `proxy.golang.org`,
 which indexes it.
 
+**Homebrew tap and Scoop bucket** (`Netizine/homebrew-sourceorrery`,
+`Netizine/scoop-sourceorrery`): the release job commits
+`Formula/sourceorrery.rb` to the tap and `bucket/sourceorrery.json` to the
+bucket, both rendered from the release's `SHA256SUMS`. Users run
+`brew install Netizine/sourceorrery/sourceorrery` and
+`scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery`
+then `scoop install sourceorrery`. The manifest also carries `checkver` and
+`autoupdate`, so a bucket that runs Scoop's Excavator would follow releases
+by itself; the job keeps it current either way.
+
+1. The two repositories, each with a licence and nothing else needed.
+2. A fine-grained personal access token (*Settings → Developer settings →
+   Fine-grained tokens*) limited to those two repositories with
+   *Contents: read and write*, saved as the repository secret
+   `PACKAGING_TOKEN`. Set an expiry and note it: the job is skipped, not
+   failed, once the token has expired.
+
+**WinGet** (`Netizine.SourceOrrery`): the release job renders the three
+manifests (`version`, `installer`, `defaultLocale`, manifest schema 1.10,
+installer type `zip` with a `portable` nested installer) and runs
+`wingetcreate submit`, which forks `microsoft/winget-pkgs` under the
+token's account and opens a pull request there. The first submission of a
+package and every version after it go through that repository's automated
+validation and, for a new package, a moderator; a version is installable
+once its pull request is merged, usually within a few days.
+
+1. A classic personal access token with the `public_repo` scope (a
+   fine-grained token cannot open a pull request on a repository you do not
+   own), saved as the repository secret `WINGET_TOKEN`.
+2. Nothing else: `wingetcreate` creates the fork on first use.
+
 ## Publishing an existing release
 
 `.github/workflows/ReleasePackages.yaml` (*Actions → Release packages →
@@ -225,6 +259,9 @@ It builds no new release:
   out of the release's jar, because Central needs sources, javadoc and
   signatures, which the release does not carry.
 - Packagist and pkg.go.dev upload nothing; they are pointed at the tag.
+- The Homebrew tap, the Scoop bucket and WinGet get manifests rendered from
+  the release's `SHA256SUMS` with the renderer in the checkout, so a fix to
+  the renderer can be applied to an existing release.
 
 Inputs: the tag (empty means the latest release), **dry_run** (on by
 default) and one tick box per registry. Every registry's files are
