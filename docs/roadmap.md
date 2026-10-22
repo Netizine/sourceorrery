@@ -1,9 +1,13 @@
 # Roadmap
 
 Where the project stands: milestones 1 and 2 shipped in 0.1.3, the
-current release, with the unticked items below still open. Milestone 3,
-the authenticated local broker, is next; until it exists SourceOrrery
-makes no agent-isolation claim ([threat model](threat-model.md)).
+current release, with the unticked items below still open. The next
+release, 0.1.4, adds a `.env` import and skills for AI coding agents,
+refuses a vault file filed under another vault's name, and moves PyPI and
+crates.io to trusted publishing ([below](#next-release-014)). Milestone 3,
+the authenticated local broker, comes after it; until it exists
+SourceOrrery makes no agent-isolation claim
+([threat model](threat-model.md)).
 
 ## Milestone 1 — core and local CLI *(shipped in 0.1.3)*
 
@@ -51,12 +55,21 @@ How each package is published and how to check it: [Supply chain](supply-chain.m
 - [x] npm by trusted publishing, with Sigstore provenance on every package
 - [x] NuGet by trusted publishing
 - [x] Maven Central artefacts signed with the release key
-- [x] PyPI and crates.io by trusted publishing, with PyPI attestations
-- [x] Every registry page says what its package is, that vaults are managed with the CLI, and where the documentation is
 - [ ] Signatures or build attestations for the release archives
 - [ ] Signed and notarised macOS binaries; Authenticode-signed Windows binaries
 - [ ] Third-party GitHub Actions pinned to commits; automated dependency updates
 - [ ] Software bill of materials for each release
+
+## Next release: 0.1.4
+
+Done and waiting for the release; until then 0.1.3 is what the registries
+and the GitHub release serve.
+
+- [x] `sourceorrery import <file>`: a `.env` file into a vault and its keys into `sourceorrery.toml`, printing key names and line numbers only, never a value ([CLI reference](cli.md#import-moving-a-env-file-into-a-vault))
+- [x] Skills for AI coding agents (`sourceorrery`, `sourceorrery-migrate-env`) that install SourceOrrery, import the `.env` files and convert the code that reads them without the agent seeing a value; `sourceorrery init --integration <agent>` writes them from the binary, with no download, for twelve agents; `integrations/` and a Claude Code plugin marketplace carry the same files ([AI coding agents](ai-agents.md))
+- [x] A vault is only served under its own name: a file renamed, copied or swapped in from another vault is refused with `vault_mismatch` by the CLI, `ui`, the C ABI and every SDK, each with a typed error that the SDK conformance harness checks
+- [x] PyPI and crates.io by trusted publishing (no stored token), with PyPI attestations
+- [x] Every registry page says what its package is, that vaults are managed with the CLI, and where the documentation is; each release archive carries a README
 
 ## Milestone 3 — local broker and agent isolation
 
