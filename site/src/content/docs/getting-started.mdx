@@ -349,3 +349,43 @@ The [threat model](/security/threat-model/) explains this boundary.
 - [Install skills for AI coding agents](/guides/ai-agents/) with
   `sourceorrery init --integration claude`, `cursor`, `codex` or another
   supported agent. These are workflow instructions, not a security boundary.
+
+## Updating
+
+SourceOrrery deliberately has **no update checks or automatic updater**.
+When you choose to update, open the
+[latest release](https://github.com/Netizine/sourceorrery/releases/latest)
+and read its release notes, then use your original installation method:
+
+- **Cargo:** run `cargo install --locked sourceorrery-cli`. Leaving out
+  `--version` selects the latest published version; Cargo replaces an older
+  installation. Keep any feature flags you used for a headless build.
+- **Release archive:** follow the [download and checksum steps](#from-the-github-release)
+  with the new version in place of `0.1.4`. Close the CLI and interactive
+  manager before replacing the executable in its existing installation
+  directory. On Windows, skip adding that directory to `PATH` again.
+- **Source:** follow [From source](#from-source) with the new release tag and
+  matching version-stamping argument, then reinstall the CLI. The
+  [build guide](/guides/building-from-source/) covers custom builds.
+
+Confirm which version your terminal runs:
+
+```bash
+sourceorrery --version
+```
+
+Keep your existing vault files and OS credential-store entries; an update
+does not require creating a new vault.
+
+**SDKs update separately** through your application's package manager.
+For example, use `python -m pip install --upgrade sourceorrery` in your
+Python environment, or `npm install @sourceorreryai/sdk@latest` in your
+JavaScript/TypeScript project. Update any pinned dependency versions and
+regenerate lockfiles through your package manager. Check your
+[SDK guide](/sdks/) for native-library requirements, then test your application.
+
+<Aside type="note" title="Compatibility from 0.1.4">
+Version **0.1.4** is the backwards-compatibility baseline. Future releases
+will continue to support vaults, manifests and public interfaces from
+0.1.4 onward.
+</Aside>

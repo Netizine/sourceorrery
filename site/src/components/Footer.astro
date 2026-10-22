@@ -1,23 +1,62 @@
 ---
 import Pagination from 'virtual:starlight/components/Pagination';
 import FAIcon from './FAIcon.astro';
+import BrandText from './BrandText.astro';
 
 const isHome = Astro.locals.starlightRoute.id === '';
+const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
 ---
 
-<footer class="so-page-footer"><Pagination /></footer>
-{isHome && (
-	<div class="so-privacy">
-		<p>
-			<FAIcon name="cookie-bite" class="so-privacy__icon" /> SourceOrrery has no cookie banner because I’m not interested in
-			stalking you around the internet. SourceOrrery takes privacy so seriously that I even refused
-			to build an auto-updater because phoning home once was already one call too many.
-		</p>
-		<p>Fonts and icons are served by this site. No analytics, tracking cookies or third-party asset requests.</p>
-	</div>
-)}
+<footer class:list={['so-page-footer', { 'so-home-footer': isHome }]} data-pagefind-ignore>
+	{isHome ? (
+		<>
+			<a class="so-footer-brand" href={siteTitleHref}>
+				<FAIcon name="sourceorrery" family="kit" />
+				<BrandText text={siteTitle} />
+			</a>
+			<p class="so-privacy">
+				<FAIcon name="cookie-bite" class="so-privacy__icon" /> SourceOrrery has no cookie banner because I’m not interested in
+				stalking you around the internet. SourceOrrery takes privacy so seriously that I even refused
+				to build an auto-updater because phoning home once was already one call too many.
+			</p>
+		</>
+	) : <Pagination />}
+</footer>
 
 <style>
-	.so-privacy { max-width: 44rem; margin: 2.5rem auto 1rem; padding-top: 1.25rem; border-top: 1px solid var(--sl-color-hairline); font-family: var(--so-font-ui); font-size: 0.8rem; line-height: 1.6; text-align: center; color: var(--sl-color-gray-3); }
-	.so-privacy :global(.so-privacy__icon) { margin-inline-end: 0.35em; }
+	.so-page-footer.so-home-footer {
+		display: grid;
+		align-items: start;
+		gap: 0.75rem 2rem;
+		margin-top: 2rem;
+		padding-block: 1rem 0;
+		border-top: 1px solid var(--sl-color-hairline);
+	}
+
+	.so-footer-brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		justify-self: start;
+		color: var(--sl-color-text-accent);
+		font-size: 1.05rem;
+		line-height: 1.4;
+		text-decoration: none;
+	}
+
+	.so-footer-brand:hover { text-decoration: underline; }
+
+	.so-privacy {
+		margin: 0;
+		font-family: var(--so-font-ui);
+		font-size: 0.8rem;
+		line-height: 1.6;
+		color: var(--sl-color-gray-3);
+	}
+
+	.so-privacy :global(.so-privacy__icon) { margin-inline-end: 0.25em; }
+
+	@media (min-width: 48rem) {
+		.so-home-footer { grid-template-columns: auto minmax(0, 1fr); }
+	}
 </style>

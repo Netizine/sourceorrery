@@ -6,6 +6,26 @@ import FAIcon from './FAIcon.astro';
 
 <div class="so-theme-picker">
 	<Default />
-	<FAIcon name="circle-half-stroke" class="so-theme-picker__icon" />
+	<FAIcon name="sun" class="so-theme-picker__icon so-theme-picker__icon--light" />
+	<FAIcon name="moon" class="so-theme-picker__icon so-theme-picker__icon--dark" />
+	<FAIcon name="circle-half-stroke" class="so-theme-picker__icon so-theme-picker__icon--auto" />
 	<FAIcon name="chevron-down" class="so-theme-picker__caret" />
 </div>
+
+<style>
+	/* :checked follows the native select's value, including restored preferences.
+	 * The resolved document theme would incorrectly turn Auto into Sun or Moon. */
+	.so-theme-picker :global(.so-theme-picker__icon--light),
+	.so-theme-picker :global(.so-theme-picker__icon--dark) {
+		display: none;
+	}
+
+	.so-theme-picker:has(:global(option[value='light']:checked)) :global(.so-theme-picker__icon--light),
+	.so-theme-picker:has(:global(option[value='dark']:checked)) :global(.so-theme-picker__icon--dark) {
+		display: inline-flex;
+	}
+
+	.so-theme-picker:has(:global(option[value='light']:checked), :global(option[value='dark']:checked)) :global(.so-theme-picker__icon--auto) {
+		display: none;
+	}
+</style>
