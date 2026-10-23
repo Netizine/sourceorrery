@@ -29,9 +29,9 @@ export function readingTimeMinutes(markdown = '') {
 	const text = withoutMdxImports(body)
 		.replace(/<!--[^]*?-->|\{\/\*[^]*?\*\/\}/g, ' ')
 		.replace(/<\/?[A-Za-z][^>]*>/g, ' ')
-		.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-		.replace(/^\s*\[[^\]]+\]:\s*\S+.*$/gm, '')
-		.replace(/^[ \t]*(?:`{3,}|~{3,}).*$/gm, '')
+		.replace(/!?\[([^[\]]*)\]\([^()]*\)/g, '$1')
+		.replace(/^[ \t]*\[[^\]\n]+\]:[ \t]*\S.*$/gm, '')
+		.replace(/^[ \t]*(?:```|~~~).*$/gm, '')
 		.replace(/\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/g, '');
 	const words = text.match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
 	return Math.max(1, Math.ceil(words / 200));

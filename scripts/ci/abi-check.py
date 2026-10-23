@@ -74,8 +74,10 @@ def normalise(text: str) -> str:
     punctuation, a run of `*` glued to what follows (`uint8_t *name`,
     `so_reader **out`)."""
     text = re.sub(r"\s+", " ", text).strip()
-    text = re.sub(r"\s*([(),;{}])\s*", r"\1", text)
-    text = re.sub(r"\s*(\*+)\s*", r" \1", text)
+    # Whitespace is single spaces from here on, so one optional space on
+    # each side is all there is to remove.
+    text = re.sub(r" ?([(),;{}]) ?", r"\1", text)
+    text = re.sub(r" ?(\*+) ?", r" \1", text)
     text = text.replace("( *", "(*").replace(", *", ",*")
     return re.sub(r"\s+", " ", text).strip()
 
@@ -91,7 +93,7 @@ def parse(text: str) -> Declarations:
     # once by name.
     # cbindgen may give an enum a C++ underlying type (`enum x : int32_t {`).
     for name, members in re.findall(
-        r"\benum\s+([A-Za-z_]\w*)\s*(?::\s*[A-Za-z_]\w*)?\s*\{([^}]*)\}", body
+        r"\benum\s+([A-Za-z_]\w*)\s*(?::\s*[A-Za-z_]\w*\s*)?\{([^}]*)\}", body
     ):
         value = -1
         for member in members.split(","):
@@ -110,7 +112,7 @@ def parse(text: str) -> Declarations:
     # typedef, an enum or a struct body. Enum and struct bodies were read
     # above; what is left of the extern "C" block is a stray brace.
     without_bodies = re.sub(
-        r"\b(enum|struct)\s+[A-Za-z_]\w*\s*(?::\s*[A-Za-z_]\w*)?\s*\{[^}]*\}", r"\1 _", body
+        r"\b(enum|struct)\s+[A-Za-z_]\w*\s*(?::\s*[A-Za-z_]\w*\s*)?\{[^}]*\}", r"\1 _", body
     )
     statements = re.split(r";", without_bodies.replace("{", " ").replace("}", " "))
     for statement in statements:

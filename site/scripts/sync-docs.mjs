@@ -302,10 +302,10 @@ function convertTabs(markdown, source) {
 				if (!fence) fence = fenceMatch[1];
 				else if (line.startsWith(fence)) fence = null;
 			}
-			const heading = fence ? null : line.match(/^(#{2,6}) (.+?)\s*$/);
+			const heading = fence ? null : line.match(/^(#{2,6}) (.+)$/);
 			if (heading && (level === null || heading[1].length === level)) {
 				level = heading[1].length;
-				items.push({ label: plainText(heading[2]), lines: [] });
+				items.push({ label: plainText(heading[2].trimEnd()), lines: [] });
 				continue;
 			}
 			if (items.length === 0) {
@@ -331,7 +331,7 @@ function rewriteLinks(markdown, source) {
 		.split(/(```[\s\S]*?```)/)
 		.map((segment, index) => {
 			if (index % 2 === 1) return segment; // fenced code block
-			return segment.replace(/(!?)\[([^\]]*)\]\(([^)\s]+)((?:\s+"[^"]*")?)\)/g, (match, bang, text, target, titlePart) => {
+			return segment.replace(/(!?)\[([^[\]]*)\]\(([^()\s]+)((?:\s+"[^"]*")?)\)/g, (match, bang, text, target, titlePart) => {
 				if (bang) return match;
 				if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#') || target.startsWith('/')) return match;
 				const [targetPath, anchor] = splitAnchor(target);
@@ -367,8 +367,8 @@ function deriveDescription(body, page) {
 	let text = body;
 	if (page.adr) {
 		// The first paragraph of an ADR is its status line; describe the decision instead.
-		const decision = body.match(/(?:^|\n)## Decision\n+([\s\S]*?)(?=\n## |$)/);
-		if (decision) text = decision[1];
+		const decision = sectionBody(body, 'Decision');
+		if (decision !== null) text = decision;
 	}
 	for (const block of text.split(/\n\s*\n/)) {
 		let paragraph = block.trim();
@@ -384,9 +384,42 @@ function deriveDescription(body, page) {
 	throw new Error(`no paragraph found to derive a description from (${page.dest})`);
 }
 
+/**
+ * The arms of the first `match self {` after `signature`, up to the first
+ * line whose first non-blank character is `}`; null when not found.
+ */
+function matchArmsOf(rust, signature) {
+	const at = rust.indexOf(signature);
+	if (at < 0) return null;
+	const open = rust.indexOf('match self {', at);
+	if (open < 0) return null;
+	const start = open + 'match self {'.length;
+	for (let newline = rust.indexOf('\n', start); newline >= 0; newline = rust.indexOf('\n', newline + 1)) {
+		let next = newline + 1;
+		while (next < rust.length && /\s/.test(rust[next])) next += 1;
+		if (rust[next] === '}') return rust.slice(start, newline);
+	}
+	return null;
+}
+
+/**
+ * The text under `## <heading>`, from its first non-blank line up to the
+ * next `## ` heading or the end; null when there is no such section.
+ */
+function sectionBody(body, heading) {
+	const marker = `## ${heading}\n`;
+	let at = body.startsWith(marker) ? 0 : body.indexOf(`\n${marker}`);
+	if (at < 0) return null;
+	if (at > 0 || !body.startsWith(marker)) at += 1;
+	let start = at + marker.length;
+	while (body[start] === '\n') start += 1;
+	const end = body.indexOf('\n## ', start);
+	return body.slice(start, end < 0 ? body.length : end);
+}
+
 function plainText(markdown) {
 	return markdown
-		.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+		.replace(/\[([^[\]]*)\]\([^()]*\)/g, '$1')
 		.replace(/`([^`]*)`/g, '$1')
 		.replace(/\*\*([^*]+)\*\*/g, '$1')
 		.replace(/\*([^*]+)\*/g, '$1')
@@ -396,7 +429,11 @@ function plainText(markdown) {
 
 function truncate(text, max) {
 	if (text.length <= max) return text;
-	const cut = text.slice(0, max).replace(/\s+\S*$/, '');
+	// Drop the word cut in half and the whitespace before it.
+	const head = text.slice(0, max);
+	let end = head.length;
+	while (end > 0 && !/\s/.test(head[end - 1])) end -= 1;
+	const cut = end === 0 ? head : head.slice(0, end).trimEnd();
 	return `${cut}…`;
 }
 
@@ -464,21 +501,34 @@ async function writeErrorCodes() {
 	// across lines around the string, and the string itself may contain
 	// `\`-newline continuations, so whitespace is allowed around the literal
 	// and an escape may be followed by any character, newline included.
-	const variantRe =
-		/((?:[ \t]*\/\/\/[^\n]*\n)+)[ \t]*#\[error\(\s*"((?:[^"\\]|\\[\s\S])*)"\s*\)\]\s*(\w+)/g;
-	for (const match of enumBody.matchAll(variantRe)) {
-		const doc = match[1]
-			.split('\n')
-			.map((line) => line.replace(/^\s*\/\/\/ ?/, '').trim())
-			.filter(Boolean)
-			.join(' ');
-		variants.push({ name: match[3], doc, message: rustStringLiteral(match[2]) });
+	// A variant is a run of `///` lines directly followed by its attribute;
+	// the attribute is matched anchored (sticky) where that line starts.
+	const attributeRe = /#\[error\(\s*"((?:[^"\\]|\\[\s\S])*)"\s*\)\]\s*(\w+)/y;
+	let docLines = [];
+	let offset = 0;
+	for (const line of enumBody.split('\n')) {
+		const lineStart = offset;
+		offset += line.length + 1;
+		const trimmed = line.trimStart();
+		if (trimmed.startsWith('///')) {
+			docLines.push(trimmed.slice(3).replace(/^ /, '').trim());
+			continue;
+		}
+		if (docLines.length > 0 && /^[ \t]*#\[error\(/.test(line)) {
+			attributeRe.lastIndex = lineStart + (line.length - trimmed.length);
+			const match = attributeRe.exec(enumBody);
+			if (match) {
+				const doc = docLines.filter(Boolean).join(' ');
+				variants.push({ name: match[2], doc, message: rustStringLiteral(match[1]) });
+			}
+		}
+		docLines = [];
 	}
 
-	const codeBody = rust.match(/pub fn code\(&self\)[\s\S]*?match self \{([\s\S]*?)\n\s*\}/)?.[1];
+	const codeBody = matchArmsOf(rust, 'pub fn code(&self)');
 	if (!codeBody) throw new Error(`${source}: could not find 'fn code'`);
 	const codes = new Map();
-	for (const match of codeBody.matchAll(/Self::(\w+)\s*(?:\{[^}]*\}|\([^)]*\))?\s*=>\s*"([a-z_]+)"/g)) {
+	for (const match of codeBody.matchAll(/Self::(\w+)\s*(?:(?:\{[^}]*\}|\([^)]*\))\s*)?=>\s*"([a-z_]+)"/g)) {
 		codes.set(match[1], match[2]);
 	}
 
