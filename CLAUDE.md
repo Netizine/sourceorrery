@@ -39,9 +39,16 @@ and `docs/threat-model.md` before changing anything security-relevant.
   Policy is the core's; the crate maps paths, versions, `custom_metadata`
   and statuses, and never logs a body or puts one in a message. Its `live`
   test runs the lifecycle suite against a server named by
-  `SOURCEORRERY_VAULT_TEST_ADDR` (CI: the `provider-vault` job). A new
-  provider follows the same shape: a crate over core, a feature in
-  `sourceorrery-provider`, a `docs/providers/<name>.md`, a CI job in the gate.
+  `SOURCEORRERY_VAULT_TEST_ADDR` (CI: the `provider-vault` job).
+- `crates/sourceorrery-provider-aws` — AWS Secrets Manager behind
+  `AsyncSecretClient` over the official SDK (`docs/providers/aws-secrets-manager.md`).
+  Properties are per secret there, so the lifecycle suite runs with
+  `lifecycle_with(&[], ..)` (no `PerVersionProperties`); its `live` test
+  needs `SOURCEORRERY_AWS_TEST_ENDPOINT` (CI: LocalStack in the
+  `provider-aws` job; locally `moto_server`). A new provider follows the
+  same shape: a crate over core, a feature in `sourceorrery-provider`, a
+  `docs/providers/<name>.md`, a CI job in the gate, and a `Capability` in
+  the conformance suite for anything its service cannot express.
 - `bindings/{python,node,java,dotnet,go,cpp,php}` — the SDKs. Python and
   Node are native extensions over `crates/sourceorrery` (own workspace
   roots, own lock files); the rest call the C ABI. `bindings/README.md` is

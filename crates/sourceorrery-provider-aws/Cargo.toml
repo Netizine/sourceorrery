@@ -1,0 +1,29 @@
+[package]
+name = "sourceorrery-provider-aws"
+description = "AWS Secrets Manager behind the SourceOrrery secret contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+categories = ["authentication", "asynchronous"]
+keywords = ["secrets", "aws", "secrets-manager", "provider"]
+
+[dependencies]
+sourceorrery-core.workspace = true
+async-trait.workspace = true
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+aws-sdk-secretsmanager = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+time.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+sourceorrery-provider.workspace = true
+sourceorrery-conformance = { path = "../../tests/conformance" }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

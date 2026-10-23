@@ -15,13 +15,16 @@ keywords = ["secrets", "vault", "async", "tokio", "provider"]
 [features]
 default = []
 # Every remote provider.
-remote = ["provider-vault"]
+remote = ["provider-vault", "provider-aws"]
 # HashiCorp Vault, KV version 2.
 provider-vault = ["dep:sourceorrery-provider-vault"]
+# AWS Secrets Manager.
+provider-aws = ["dep:sourceorrery-provider-aws"]
 
 [dependencies]
 sourceorrery-core.workspace = true
 sourceorrery-provider-vault = { workspace = true, optional = true }
+sourceorrery-provider-aws = { workspace = true, optional = true }
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 

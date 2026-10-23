@@ -824,13 +824,25 @@ default credential chain (environment, profile, IMDS, web identity /
 OIDC), `rustls`. Weighed in ADR 0008: it is the largest dependency tree
 in the workspace.
 
+**Done, with notes.** `[vaults.<name>]` for AWS gains an optional
+`endpoint_url` (a private endpoint or an emulator; addressing, not a
+credential). The conformance suite gains `Capability` flags and
+`lifecycle_with`, and the SDK harness a `requires: remote-per-version`
+scenario class behind `--remote-per-version`, so the per-secret
+properties are a visible, named skip rather than a silent one. Versions
+the provider writes get time-ordered 32-hex ids as the
+`ClientRequestToken`, so version order does not depend on the service's
+timestamp resolution. The SDK's default features were trimmed to the
+Tokio and rustls stack; the CLI still grows by 7.7 MB (ADR 0008). Tested
+locally against `moto_server` (no Docker here); CI uses LocalStack.
+
 **Steps.**
 
-- [ ] Crate `sourceorrery-provider-aws` (behind `provider-aws`).
-- [ ] CI job `provider-aws`: LocalStack in Docker, conformance through the
+- [x] Crate `sourceorrery-provider-aws` (behind `provider-aws`).
+- [x] CI job `provider-aws`: LocalStack in Docker, conformance through the
       adapter with the documented differences excluded by a capability
       flag the suite reads, canaries, SDK harness scenario. In the gate.
-- [ ] Docs: `docs/providers/aws-secrets-manager.md`.
+- [x] Docs: `docs/providers/aws-secrets-manager.md`.
 
 ---
 

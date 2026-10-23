@@ -672,6 +672,54 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           export SOURCEORRERY_TEST_REMOTE_VAULT=remote SOURCEORRERY_TEST_REMOTE_MANIFEST="$remote/sourceorrery.toml"
           cargo build --release --locked -p sourceorrery --example conformance
+          python3 tests/conformance/sdk/harness.py --runner rust --remote --remote-per-version
+          mkdir -p build
+          cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
+          LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" python3 tests/conformance/sdk/harness.py --runner c --remote --remote-per-version
+
+  provider-aws:
+    name: provider AWS Secrets Manager
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    services:
+      localstack:
+        image: localstack/localstack:2026.10.2
+        env:
+          SERVICES: secretsmanager
+        ports:
+          - 4566:4566
+    env:
+      SOURCEORRERY_AWS_TEST_ENDPOINT: http://127.0.0.1:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Wait for LocalStack
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:4566/_localstack/health | grep -q '"secretsmanager": *"\(running\|available\)"'; then exit 0; fi
+            sleep 2
+          done
+          echo "LocalStack did not come up"; curl -s http://127.0.0.1:4566/_localstack/health || true; exit 1
+      - uses: ./.github/actions/sdk-fixture
+      - name: Lifecycle conformance (without per-version properties) and the provider's own tests
+        run: cargo test --locked -p sourceorrery-provider-aws
+      - name: A remote vault in the manifest, through the CLI and the SDK harness
+        run: |
+          remote="$RUNNER_TEMP/remote-aws-project"
+          mkdir -p "$remote"
+          printf '[project]\nname = "remote-project"\nvault = "remote"\n\n[vaults.remote]\nprovider = "aws-secrets-manager"\nregion = "us-east-1"\nprefix = "harness/"\nendpoint_url = "http://127.0.0.1:4566"\n' > "$remote/sourceorrery.toml"
+          cd "$remote"
+          printf 'remote-secret-value' | "$SOURCEORRERY_CLI" secret set database-password --vault remote --stdin --content-type text/plain --tag env=remote
+          printf 'old' | "$SOURCEORRERY_CLI" secret set rotated-key --vault remote --stdin
+          printf 'new' | "$SOURCEORRERY_CLI" secret set rotated-key --vault remote --stdin
+          "$SOURCEORRERY_CLI" vault list
+          "$SOURCEORRERY_CLI" check
+          cd "$GITHUB_WORKSPACE"
+          export SOURCEORRERY_TEST_REMOTE_VAULT=remote SOURCEORRERY_TEST_REMOTE_MANIFEST="$remote/sourceorrery.toml"
+          cargo build --release --locked -p sourceorrery --example conformance
           python3 tests/conformance/sdk/harness.py --runner rust --remote
           mkdir -p build
           cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
@@ -703,6 +751,7 @@ jobs:
       - abi-compat
       - keyring
       - provider-vault
+      - provider-aws
     steps:
       - name: Every job passed or was skipped
         env:

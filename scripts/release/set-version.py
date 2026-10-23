@@ -86,6 +86,7 @@ def main(argv: list[str]) -> int:
             "sourceorrery",
             "sourceorrery-provider",
             "sourceorrery-provider-vault",
+            "sourceorrery-provider-aws",
         ):
             text = sub_once(
                 rf'^({re.escape(crate)} = \{{ path = "crates/{re.escape(crate)}", version = )"[^"]+"',

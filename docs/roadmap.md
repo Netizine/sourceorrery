@@ -83,7 +83,7 @@ The 0.1.4 build includes these changes alongside milestones 1 and 2:
 
 ## Milestone 4 — enterprise integrations
 
-- [ ] Remote providers behind the same contract: HashiCorp Vault (shipped: `sourceorrery-provider-vault`, [docs](providers/hashicorp-vault.md)), AWS Secrets Manager, Azure Key Vault (no SourceOrrery server: the providers' own services are the only remote ends)
+- [ ] Remote providers behind the same contract: HashiCorp Vault (shipped: `sourceorrery-provider-vault`, [docs](providers/hashicorp-vault.md)), AWS Secrets Manager (shipped: `sourceorrery-provider-aws`, [docs](providers/aws-secrets-manager.md)), Azure Key Vault (no SourceOrrery server: the providers' own services are the only remote ends)
 - [x] `AsyncSecretClient` ([ADR 0008](adr/0008-remote-providers.md): the async shape of the contract in core, the `Blocking` and `AsyncLocal` adapters in `sourceorrery-provider`, and the lifecycle conformance suite as a function every backend runs)
 - [ ] Workload identity federation, RBAC, centrally administered policy and revocation
 - [ ] Rotation workflows with issuer cooperation (issue → validate → activate → retire)

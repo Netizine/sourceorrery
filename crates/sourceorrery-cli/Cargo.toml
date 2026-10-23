@@ -31,6 +31,8 @@ os-keyring = ["sourceorrery-storage/os-keyring"]
 remote = ["sourceorrery-provider/remote"]
 # HashiCorp Vault, KV version 2.
 provider-vault = ["sourceorrery-provider/provider-vault"]
+# AWS Secrets Manager.
+provider-aws = ["sourceorrery-provider/provider-aws"]
 # The interactive vault browser, `sourceorrery ui` (Ratatui). Nothing else
 # in the CLI depends on it; disable for minimal builds.
 ui = ["dep:ratatui"]

@@ -100,5 +100,8 @@ with `--remote`, when `SOURCEORRERY_TEST_REMOTE_VAULT` and
 `SOURCEORRERY_TEST_REMOTE_MANIFEST` name that vault and manifest. The
 provider CI jobs (`provider-vault`) set them up with the CLI and run the
 Rust and C runners; a runner takes part by passing a `manifest=` argument
-through to its SDK's open options.
+through to its SDK's open options. A scenario with `"requires":
+"remote-per-version"` also needs the provider to keep properties per
+version (HashiCorp Vault does, AWS Secrets Manager does not) and runs
+only with `--remote-per-version` as well.
 

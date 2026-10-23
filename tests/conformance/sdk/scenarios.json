@@ -1,5 +1,5 @@
 {
-  "$comment": "Cross-language SDK conformance scenarios. Every SDK runner executes each scenario against the fixture vault from scripts/ci/fixture-vault.sh and tests/conformance/sdk/harness.py compares what it observed with `expect`. Variables: ${vault} ${home} ${passphrase} ${manifest} ${old_version} come from the SOURCEORRERY_TEST_* / SOURCEORRERY_* environment; scenarios with `requires: remote` use ${remote_vault} and ${remote_manifest} (a vault a manifest declares in [vaults.<name>]) and run only with --remote, in the provider CI jobs. Protocol: tests/conformance/sdk/README.md.",
+  "$comment": "Cross-language SDK conformance scenarios. Every SDK runner executes each scenario against the fixture vault from scripts/ci/fixture-vault.sh and tests/conformance/sdk/harness.py compares what it observed with `expect`. Variables: ${vault} ${home} ${passphrase} ${manifest} ${old_version} come from the SOURCEORRERY_TEST_* / SOURCEORRERY_* environment; scenarios with `requires: remote` use ${remote_vault} and ${remote_manifest} (a vault a manifest declares in [vaults.<name>]) and run only with --remote, in the provider CI jobs; `requires: remote-per-version` also needs the provider to keep properties per version (--remote-per-version). Protocol: tests/conformance/sdk/README.md.",
   "scenarios": [
     {
       "id": "open-unknown-vault",
@@ -263,7 +263,7 @@
     },
     {
       "id": "remote-disabled-falls-back",
-      "requires": "remote",
+      "requires": "remote-per-version",
       "about": "Policy is evaluated in the core for a remote vault too: a disabled newest version falls back to the previous one.",
       "op": "get",
       "args": { "vault": "${remote_vault}", "manifest": "${remote_manifest}", "name": "rotated-key" },

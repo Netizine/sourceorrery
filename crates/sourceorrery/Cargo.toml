@@ -21,6 +21,8 @@ os-keyring = ["sourceorrery-storage/os-keyring"]
 remote = ["sourceorrery-provider/remote"]
 # HashiCorp Vault, KV version 2.
 provider-vault = ["sourceorrery-provider/provider-vault"]
+# AWS Secrets Manager.
+provider-aws = ["sourceorrery-provider/provider-aws"]
 
 [dependencies]
 sourceorrery-core.workspace = true

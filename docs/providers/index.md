@@ -10,7 +10,7 @@ the provider's own service is the remote end.
 | Provider | `provider =` | Addressing keys | Status |
 |----------|--------------|-----------------|--------|
 | [HashiCorp Vault](hashicorp-vault.md), KV v2 | `"hashicorp-vault"` | `address` (`http://` or `https://`), `mount`, optional `namespace` | shipped (0.3.0) |
-| AWS Secrets Manager | `"aws-secrets-manager"` | `region`, optional `prefix` | planned (milestone 4.4) |
+| [AWS Secrets Manager](aws-secrets-manager.md) | `"aws-secrets-manager"` | `region`, optional `prefix`, optional `endpoint_url` | shipped (0.3.0) |
 | Azure Key Vault | `"azure-key-vault"` | `vault_url` (`https://`) | planned (milestone 4.5) |
 
 Opening a vault whose provider this build leaves out (its Cargo feature
@@ -42,6 +42,7 @@ namespace = "platform"                # Vault Enterprise only
 provider = "aws-secrets-manager"
 region = "eu-west-1"
 prefix = "myapp/"                     # every secret name is placed under it
+# endpoint_url = "http://localhost:4566"   # a private endpoint or an emulator
 
 [vaults.azure-shared]
 provider = "azure-key-vault"

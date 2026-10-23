@@ -101,6 +101,7 @@ Taken on the first implementation (this repository at this ADR's date, a
 | `sourceorrery-provider` on top of it (Tokio and the adapters) | 2 s |
 | `libtokio.rlib`, `rt` feature only | 2.7 MB before linking |
 | The release CLI with the HashiCorp Vault provider (`remote` on, `reqwest` with `rustls`, Tokio, the provider) against the same build without it | 12.5 MB against 8.7 MB on x86_64 Linux: 3.8 MB for the HTTP and TLS stack, which the next providers share |
+| The release CLI with the AWS Secrets Manager provider added (the official SDK, `default-features = false` plus `rt-tokio` and `default-https-client`, which keeps the legacy hyper 0.14 and rustls 0.21 stack out) | 20.1 MB against 12.5 MB: 7.7 MB, the largest dependency tree in the workspace (198 crates in the provider's graph), as the plan weighed |
 
 ## Consequences
 

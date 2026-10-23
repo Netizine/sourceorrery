@@ -17,6 +17,24 @@ use sourceorrery_core::{
 };
 use time::Duration;
 
+/// Something the contract asks for that a remote provider's service may be
+/// unable to express. A backend that lacks one documents the difference
+/// (ADR 0008) and runs the suite with [`lifecycle_with`], which skips the
+/// scenarios that need it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Capability {
+    /// `enabled`, `not_before`, `expires_on` and `content_type` belong to
+    /// one version, so disabling the newest version falls back to the one
+    /// before. A service whose metadata is per secret applies them to every
+    /// version at once.
+    PerVersionProperties,
+}
+
+impl Capability {
+    /// Everything the local vault does.
+    pub const ALL: &'static [Self] = &[Self::PerVersionProperties];
+}
+
 /// One lifecycle scenario.
 #[derive(Debug, Clone, Copy)]
 pub struct Scenario {
@@ -25,6 +43,8 @@ pub struct Scenario {
     /// The scenario; it panics on a violation and needs a client with no
     /// secrets in it.
     pub run: fn(&dyn SecretClient),
+    /// What the backend must be able to do for the scenario to apply.
+    pub needs: &'static [Capability],
 }
 
 /// Every lifecycle scenario.
@@ -32,50 +52,62 @@ pub static SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "set_creates_a_new_immutable_version_each_time",
         run: set_creates_a_new_immutable_version_each_time,
+        needs: &[],
     },
     Scenario {
         name: "get_returns_latest_accessible_version",
         run: get_returns_latest_accessible_version,
+        needs: &[Capability::PerVersionProperties],
     },
     Scenario {
         name: "time_window_is_enforced_on_retrieval",
         run: time_window_is_enforced_on_retrieval,
+        needs: &[],
     },
     Scenario {
         name: "update_changes_metadata_never_the_value",
         run: update_changes_metadata_never_the_value,
+        needs: &[],
     },
     Scenario {
         name: "list_returns_metadata_for_live_secrets_only",
         run: list_returns_metadata_for_live_secrets_only,
+        needs: &[],
     },
     Scenario {
         name: "listings_are_paged_by_name_without_gaps_or_repeats",
         run: listings_are_paged_by_name_without_gaps_or_repeats,
+        needs: &[],
     },
     Scenario {
         name: "pages_follow_the_name_order_through_changes",
         run: pages_follow_the_name_order_through_changes,
+        needs: &[],
     },
     Scenario {
         name: "delete_recover_and_purge",
         run: delete_recover_and_purge,
+        needs: &[],
     },
     Scenario {
         name: "names_and_versions_are_validated",
         run: names_and_versions_are_validated,
+        needs: &[],
     },
     Scenario {
         name: "references_resolve_within_their_vault",
         run: references_resolve_within_their_vault,
+        needs: &[],
     },
     Scenario {
         name: "many_versions_are_listed_and_read_correctly",
         run: many_versions_are_listed_and_read_correctly,
+        needs: &[],
     },
     Scenario {
         name: "errors_and_debug_output_never_carry_a_value",
         run: errors_and_debug_output_never_carry_a_value,
+        needs: &[],
     },
 ];
 
@@ -84,18 +116,36 @@ pub static SCENARIOS: &[Scenario] = &[
 ///
 /// A backend passes the lifecycle conformance suite when this returns.
 pub fn lifecycle(fresh: &mut dyn FnMut(&str) -> Box<dyn SecretClient>) {
+    lifecycle_with(Capability::ALL, fresh);
+}
+
+/// [`lifecycle`] for a backend with exactly the capabilities `supported`:
+/// a scenario that needs one it lacks is skipped and named on stderr, so a
+/// provider's documented differences are visible in its test output and
+/// nowhere else.
+pub fn lifecycle_with(
+    supported: &[Capability],
+    fresh: &mut dyn FnMut(&str) -> Box<dyn SecretClient>,
+) {
     let mut failed = Vec::new();
     for scenario in SCENARIOS {
+        if let Some(missing) = scenario.needs.iter().find(|c| !supported.contains(c)) {
+            eprintln!("skipped {}: the backend lacks {missing:?}", scenario.name);
+            continue;
+        }
         let client = fresh(scenario.name);
         if catch_unwind(AssertUnwindSafe(|| (scenario.run)(client.as_ref()))).is_err() {
             failed.push(scenario.name);
         }
     }
+    let run = SCENARIOS
+        .iter()
+        .filter(|s| s.needs.iter().all(|c| supported.contains(c)))
+        .count();
     assert!(
         failed.is_empty(),
-        "{} of {} lifecycle scenarios failed: {}",
+        "{} of {run} lifecycle scenarios failed: {}",
         failed.len(),
-        SCENARIOS.len(),
         failed.join(", ")
     );
 }
@@ -736,6 +786,36 @@ mod tests {
         fn audit_events(&self, _: AuditQuery) -> Result<Vec<AuditEvent>> {
             Err(SecretError::Unsupported("broken".into()))
         }
+    }
+
+    #[test]
+    fn a_backend_without_a_capability_skips_what_needs_it() {
+        let mut labels = Vec::new();
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            lifecycle_with(&[], &mut |label| {
+                labels.push(label.to_owned());
+                Box::new(Broken)
+            });
+        }));
+        let message = outcome
+            .unwrap_err()
+            .downcast::<String>()
+            .expect("a formatted message");
+        let needing: Vec<&str> = SCENARIOS
+            .iter()
+            .filter(|s| !s.needs.is_empty())
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(needing, ["get_returns_latest_accessible_version"]);
+        assert!(
+            !labels.iter().any(|l| l == needing[0]),
+            "skipped scenarios never get a client"
+        );
+        let total = SCENARIOS.len() - needing.len();
+        assert!(
+            message.starts_with(&format!("{total} of {total} lifecycle scenarios failed: ")),
+            "{message}"
+        );
     }
 
     #[test]

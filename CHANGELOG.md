@@ -8,6 +8,20 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* AWS Secrets Manager is the second remote provider: `provider =
+  "aws-secrets-manager"` with `region`, an optional `prefix` and an optional
+  `endpoint_url` serves the secrets under that prefix behind the same
+  contract (`docs/providers/aws-secrets-manager.md`). Credentials come from
+  the AWS SDK's default chain, never the manifest. Secrets Manager keeps
+  properties per secret, not per version, so `enabled`, `content_type` and
+  the time window apply to every version and `update_secret_properties`
+  accepts only the newest version; the lifecycle conformance suite gains
+  capability flags (`lifecycle_with`) so such a documented difference skips
+  exactly the scenario that needs it. The crate `sourceorrery-provider-aws`
+  (the official SDK, trimmed to its Tokio and rustls stack) is on by
+  default everywhere (feature `provider-aws`, part of `remote`). The
+  `provider-aws` CI job runs the suite against LocalStack and the SDK
+  harness's remote scenarios through the CLI, the Rust and the C runners.
 * HashiCorp Vault is the first remote provider: `provider =
   "hashicorp-vault"` in a `[vaults.<name>]` table serves a KV version 2
   mount behind the same contract as a local vault (versions, per-version

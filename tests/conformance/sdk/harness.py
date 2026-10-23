@@ -222,6 +222,11 @@ def main() -> int:
         action="store_true",
         help="also run the scenarios that need a remote vault (SOURCEORRERY_TEST_REMOTE_VAULT and _MANIFEST)",
     )
+    parser.add_argument(
+        "--remote-per-version",
+        action="store_true",
+        help="with --remote: the remote provider keeps properties per version, so run the scenarios that need that too",
+    )
     options = parser.parse_args()
 
     scenarios = json.loads(SCENARIOS.read_text(encoding="utf-8"))["scenarios"]
@@ -243,10 +248,13 @@ def main() -> int:
     label = options.runner or command[0]
 
     failures = 0
+    allowed = {None}
+    if options.remote:
+        allowed.add("remote")
+        if options.remote_per_version:
+            allowed.add("remote-per-version")
     selected = [
-        s
-        for s in scenarios
-        if (not options.only or s["id"] in options.only) and (options.remote or s.get("requires") != "remote")
+        s for s in scenarios if (not options.only or s["id"] in options.only) and s.get("requires") in allowed
     ]
     for scenario in selected:
         try:

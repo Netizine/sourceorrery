@@ -98,6 +98,10 @@ pub enum RemoteVault {
         /// account can hold several vaults.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prefix: Option<String>,
+        /// The service endpoint, for a private endpoint or an emulator such
+        /// as LocalStack (`http://localhost:4566`). Default: the region's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint_url: Option<String>,
     },
     /// `provider = "azure-key-vault"`.
     AzureKeyVault {
@@ -127,10 +131,22 @@ impl RemoteVault {
                 Some(ns) => format!("{address} {ns}/{mount}"),
                 None => format!("{address} {mount}"),
             },
-            Self::AwsSecretsManager { region, prefix } => match prefix {
-                Some(prefix) => format!("{region} {prefix}"),
-                None => region.clone(),
-            },
+            Self::AwsSecretsManager {
+                region,
+                prefix,
+                endpoint_url,
+            } => {
+                let mut location = region.clone();
+                if let Some(endpoint) = endpoint_url {
+                    location.push(' ');
+                    location.push_str(endpoint);
+                }
+                if let Some(prefix) = prefix {
+                    location.push(' ');
+                    location.push_str(prefix);
+                }
+                location
+            }
             Self::AzureKeyVault { vault_url } => vault_url.clone(),
         }
     }
@@ -157,7 +173,15 @@ impl RemoteVault {
                     return Err(invalid("namespace", "must not be empty when given"));
                 }
             }
-            Self::AwsSecretsManager { region, prefix } => {
+            Self::AwsSecretsManager {
+                region,
+                prefix,
+                endpoint_url,
+            } => {
+                if let Some(endpoint) = endpoint_url {
+                    validate_url(endpoint, &["http://", "https://"])
+                        .map_err(|reason| invalid("endpoint_url", reason))?;
+                }
                 let shape_ok = !region.is_empty()
                     && region
                         .bytes()
@@ -274,6 +298,7 @@ mod tests {
         let aws = RemoteVault::AwsSecretsManager {
             region: "eu-west-1".to_owned(),
             prefix: Some("app/".to_owned()),
+            endpoint_url: None,
         };
         assert_eq!(aws.location(), "eu-west-1 app/");
         assert!(aws.validate().is_ok());
@@ -281,9 +306,28 @@ mod tests {
             RemoteVault::AwsSecretsManager {
                 region: "EU West".to_owned(),
                 prefix: None,
+                endpoint_url: None,
             }
             .validate()
             .is_err()
+        );
+        let local = RemoteVault::AwsSecretsManager {
+            region: "us-east-1".to_owned(),
+            prefix: None,
+            endpoint_url: Some("http://localhost:4566".to_owned()),
+        };
+        assert_eq!(local.location(), "us-east-1 http://localhost:4566");
+        assert!(local.validate().is_ok());
+        assert!(
+            RemoteVault::AwsSecretsManager {
+                region: "us-east-1".to_owned(),
+                prefix: None,
+                endpoint_url: Some("localhost:4566".to_owned()),
+            }
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("endpoint_url")
         );
         assert!(
             RemoteVault::HashicorpVault {

@@ -49,6 +49,17 @@ pub fn open_remote(name: &str, config: &RemoteVault) -> Result<Remote> {
                 descriptor,
             })
         }
+        #[cfg(feature = "provider-aws")]
+        Provider::AwsSecretsManager => {
+            use sourceorrery_provider_aws::{AwsClient, Settings};
+            let settings = Settings::from_manifest(config)?;
+            let client = crate::Blocking::connect(|| AwsClient::connect(name, &settings))?;
+            let descriptor = client.inner().descriptor().clone();
+            Ok(Remote {
+                client: Box::new(client),
+                descriptor,
+            })
+        }
         provider => Err(not_built_in(name, provider)),
     }
 }
