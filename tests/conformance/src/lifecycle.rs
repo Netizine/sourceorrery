@@ -124,7 +124,7 @@ fn set_creates_a_new_immutable_version_each_time(client: &dyn SecretClient) {
     let v1 = set(client, "db-password", "one");
     let v2 = set(client, "db-password", "two");
     assert_ne!(v1.version, v2.version);
-    assert!(!v1.version.is_empty());
+    assert_ne!(v1.version, "", "a version has an id");
     assert_eq!(v1.vault, client.vault_name());
 
     let versions = client
