@@ -13,6 +13,7 @@ use SourceOrrery\Native;
 use SourceOrrery\OpenOptions;
 use SourceOrrery\PolicyException;
 use SourceOrrery\Project;
+use SourceOrrery\ProviderUnavailableException;
 use SourceOrrery\SecretDeletedException;
 use SourceOrrery\SecretDisabledException;
 use SourceOrrery\SecretExpiredException;
@@ -21,6 +22,8 @@ use SourceOrrery\SecretNotYetValidException;
 use SourceOrrery\SecretReader;
 use SourceOrrery\SourceOrrery;
 use SourceOrrery\SourceOrreryException;
+use SourceOrrery\UnauthenticatedException;
+use SourceOrrery\UnsupportedException;
 use SourceOrrery\VaultLockedException;
 use SourceOrrery\VaultNotFoundException;
 use SourceOrrery\VersionNotFoundException;
@@ -179,6 +182,35 @@ $project->close();
 check($project->env('ROTATED')?->isClosed() === true, 'project closed');
 expectThrow(fn() => Project::load($manifest . '.missing'), ManifestException::class, 'manifest');
 expectThrow(fn() => Project::load($manifest, new OpenOptions(passphrase: 'wrong', environment: false)), VaultLockedException::class, 'locked');
+
+// A vault the manifest declares in [vaults.<name>] is opened at its remote
+// provider, which this build does not include; a vault without a table is
+// still the local file.
+$remoteDir = sys_get_temp_dir() . '/sourceorrery-php-remote-' . getmypid();
+mkdir($remoteDir, 0700, true);
+$remoteManifest = "$remoteDir/sourceorrery.toml";
+file_put_contents(
+    $remoteManifest,
+    "[project]\nname = \"demo\"\nvault = \"$vault\"\n\n"
+    . "[vaults.remote-x]\nprovider = \"hashicorp-vault\"\n"
+    . "address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n",
+);
+$withManifest = new OpenOptions(manifest: $remoteManifest);
+check(str_contains($withManifest->toJson(), '"manifest":'), 'manifest reaches the options document');
+$remote = expectThrow(fn() => SecretReader::open('remote-x', $withManifest), UnsupportedException::class, 'unsupported', 'HashiCorp Vault provider');
+check($remote !== null && str_contains($remote->detail, 'HashiCorp Vault'), 'remote detail names the provider');
+check($remote !== null && !$remote->isTransient(), 'unsupported not transient');
+$local = SecretReader::open($vault, $withManifest);
+check($local->get('database-password')->value->expose() === LATEST, 'a vault without a table stays local');
+$local->close();
+unlink($remoteManifest);
+rmdir($remoteDir);
+
+$unauthenticated = SourceOrreryException::forCode('unauthenticated', 'm', 'h');
+check($unauthenticated instanceof UnauthenticatedException && !$unauthenticated->isTransient(), 'unauthenticated is typed and not transient');
+$unavailable = SourceOrreryException::forCode('provider_unavailable', 'm', 'h');
+check($unavailable instanceof ProviderUnavailableException && $unavailable->isTransient(), 'provider_unavailable is typed and transient');
+check(!($unavailable instanceof PolicyException), 'provider_unavailable is not a policy error');
 
 $unknown = SourceOrreryException::forCode('brand_new_code', 'm', 'h');
 check($unknown::class === SourceOrreryException::class && $unknown->code() === 'brand_new_code' && $unknown->getMessage() === 'm. h', 'unknown code');

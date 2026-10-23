@@ -33,12 +33,14 @@ fn open_options(
     passphrase: Option<Vec<u8>>,
     passphrase_file: Option<PathBuf>,
     environment: bool,
+    manifest: Option<PathBuf>,
 ) -> OpenOptions {
     OpenOptions {
         home,
         passphrase: passphrase.map(SecretBytes::new),
         passphrase_file,
         environment,
+        manifest,
     }
 }
 
@@ -200,8 +202,11 @@ impl Reader {
 
 #[pymethods]
 impl Reader {
+    /// Open `vault`. `manifest` is the `sourceorrery.toml` whose
+    /// `[vaults.<name>]` tables say which vaults are remote (`None`: the
+    /// nearest one above the current directory).
     #[new]
-    #[pyo3(signature = (vault, home=None, passphrase=None, passphrase_file=None, environment=true))]
+    #[pyo3(signature = (vault, home=None, passphrase=None, passphrase_file=None, environment=true, manifest=None))]
     fn new(
         py: Python<'_>,
         vault: &str,
@@ -209,8 +214,9 @@ impl Reader {
         passphrase: Option<Vec<u8>>,
         passphrase_file: Option<PathBuf>,
         environment: bool,
+        manifest: Option<PathBuf>,
     ) -> PyResult<Self> {
-        let options = open_options(home, passphrase, passphrase_file, environment);
+        let options = open_options(home, passphrase, passphrase_file, environment, manifest);
         let outcome = py.detach(move || SecretReader::open_with(vault, &options));
         let reader = outcome.map_err(|err| to_py(py, &err))?;
         Ok(Self {
@@ -300,7 +306,8 @@ fn load_project(
     passphrase_file: Option<PathBuf>,
     environment: bool,
 ) -> PyResult<(String, Vec<(String, SecretValue)>)> {
-    let options = open_options(home, passphrase, passphrase_file, environment);
+    // The project resolves remote vaults through the manifest it loads.
+    let options = open_options(home, passphrase, passphrase_file, environment, None);
     let outcome = py.detach(move || Project::load(manifest.as_deref(), &options));
     let project = outcome.map_err(|err| to_py(py, &err))?;
     let info = json_text(&ProjectInfo {

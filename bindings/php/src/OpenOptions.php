@@ -20,6 +20,14 @@ final class OpenOptions
         public readonly ?string $passphraseFile = null,
         /** Consult SOURCEORRERY_PASSPHRASE and SOURCEORRERY_PASSPHRASE_FILE. */
         public readonly bool $environment = true,
+        /**
+         * The sourceorrery.toml whose `[vaults.<name>]` tables say which vaults
+         * are remote and where; null uses the nearest one above the current
+         * directory. A vault with a table is opened at its provider instead of
+         * as a local file. Credentials come from the provider's own
+         * environment, never from the manifest.
+         */
+        public readonly ?string $manifest = null,
     ) {
     }
 
@@ -32,6 +40,9 @@ final class OpenOptions
         }
         if ($this->passphraseFile !== null && $this->passphraseFile !== '') {
             $options['passphrase_file'] = $this->passphraseFile;
+        }
+        if ($this->manifest !== null && $this->manifest !== '') {
+            $options['manifest'] = $this->manifest;
         }
         return json_encode($options, JSON_THROW_ON_ERROR);
     }

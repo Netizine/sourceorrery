@@ -17,6 +17,7 @@ from sourceorrery import (
     ManifestError,
     PolicyError,
     Project,
+    ProviderUnavailableError,
     SecretDeletedError,
     SecretDisabledError,
     SecretExpiredError,
@@ -25,6 +26,8 @@ from sourceorrery import (
     SecretReader,
     SecretValue,
     SourceOrreryError,
+    UnauthenticatedError,
+    UnsupportedError,
     VaultLockedError,
     VaultNotFoundError,
     VersionNotFoundError,
@@ -226,3 +229,42 @@ def test_unknown_codes_keep_their_code():
     err = sourceorrery.errors.error_for("brand_new_code", "m", "h")
     assert type(err) is SourceOrreryError
     assert err.code == "brand_new_code"
+
+
+def test_provider_codes_map_to_typed_errors():
+    unauthenticated = sourceorrery.errors.error_for("unauthenticated", "m", "h")
+    assert type(unauthenticated) is UnauthenticatedError
+    assert unauthenticated.code == "unauthenticated"
+    assert not unauthenticated.transient
+    unavailable = sourceorrery.errors.error_for("provider_unavailable", "m", "h")
+    assert type(unavailable) is ProviderUnavailableError
+    assert unavailable.code == "provider_unavailable"
+    assert unavailable.transient
+    assert UnauthenticatedError("m").code == "unauthenticated"
+    assert ProviderUnavailableError("m").code == "provider_unavailable"
+
+
+def test_a_remote_vault_in_the_manifest_is_opened_at_its_provider(fixture, tmp_path):
+    manifest = tmp_path / "sourceorrery.toml"
+    manifest.write_text(
+        "[project]\n"
+        'name = "demo"\n'
+        f'vault = "{fixture.vault}"\n'
+        "\n"
+        "[vaults.remote-x]\n"
+        'provider = "hashicorp-vault"\n'
+        'address = "https://vault.example.com:8200"\n'
+        'mount = "secret"\n'
+    )
+    options = dict(home=fixture.home, passphrase=fixture.passphrase, environment=False)
+
+    # No provider is built in yet, so the remote vault is refused by name.
+    with pytest.raises(UnsupportedError) as info:
+        SecretReader("remote-x", manifest=manifest, **options)
+    assert info.value.code == "unsupported"
+    assert "HashiCorp Vault" in info.value.message
+    assert "HashiCorp Vault provider" in info.value.hint
+
+    # A vault without a `[vaults.<name>]` table is still the local file.
+    with SecretReader(fixture.vault, manifest=manifest, **options) as reader:
+        assert reader.get("database-password").value.expose() == fixture.LATEST

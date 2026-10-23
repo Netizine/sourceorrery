@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +21,7 @@ import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import ai.sourceorrery.internal.Native;
 
@@ -224,6 +227,48 @@ class ReaderTest {
         assertThrows(ManifestException.class, () -> Project.load(manifest + ".missing"));
         OpenOptions wrong = OpenOptions.defaults().withPassphrase("wrong").withEnvironment(false);
         assertThrows(VaultLockedException.class, () -> Project.load(Optional.of(manifest), wrong));
+    }
+
+    /** A vault the manifest declares in {@code [vaults.<name>]} goes to its provider, which this build lacks. */
+    @Test
+    void manifestDeclaresRemoteVaults(@TempDir Path dir) throws Exception {
+        Path remoteManifest = dir.resolve("sourceorrery.toml");
+        Files.writeString(remoteManifest, String.join("\n",
+                "[project]",
+                "name = \"demo\"",
+                "vault = \"" + vault + "\"",
+                "",
+                "[vaults.remote-x]",
+                "provider = \"hashicorp-vault\"",
+                "address = \"https://vault.example.com:8200\"",
+                "mount = \"secret\"",
+                ""));
+        OpenOptions options = OpenOptions.defaults().withManifest(remoteManifest);
+        assertEquals(Optional.of(remoteManifest.toString()), options.manifest());
+        assertTrue(options.toJson().contains("\"manifest\":"));
+
+        UnsupportedException err = assertThrows(UnsupportedException.class, () -> SecretReader.open("remote-x", options));
+        assertEquals("unsupported", err.code());
+        assertTrue(err.detail().contains("HashiCorp Vault"), err.detail());
+        assertTrue(err.hint().contains("HashiCorp Vault provider"), err.hint());
+
+        // A vault without a table is still the local file.
+        try (SecretReader reader = SecretReader.open(vault, options); Secret secret = reader.get("database-password")) {
+            assertEquals(vault, reader.vaultName());
+            assertEquals(LATEST, secret.value().exposeText());
+        }
+    }
+
+    @Test
+    void remoteCodesMapToTheirExceptions() {
+        SourceOrreryException unauthenticated = SourceOrreryException.forCode("unauthenticated", "m", "h");
+        assertInstanceOf(UnauthenticatedException.class, unauthenticated);
+        assertEquals("unauthenticated", unauthenticated.code());
+        assertFalse(unauthenticated.isTransient());
+        SourceOrreryException unavailable = SourceOrreryException.forCode("provider_unavailable", "m", "h");
+        assertInstanceOf(ProviderUnavailableException.class, unavailable);
+        assertEquals("provider_unavailable", unavailable.code());
+        assertTrue(unavailable.isTransient());
     }
 
     @Test

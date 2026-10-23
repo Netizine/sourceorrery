@@ -87,8 +87,15 @@ public sealed record OpenOptions
     /// <summary>Consult <c>SOURCEORRERY_PASSPHRASE</c> and <c>SOURCEORRERY_PASSPHRASE_FILE</c> (default true).</summary>
     public bool Environment { get; init; } = true;
 
+    /// <summary>
+    /// The <c>sourceorrery.toml</c> whose <c>[vaults.&lt;name&gt;]</c> tables say which vaults are
+    /// remote and where; null uses the nearest manifest above the current directory. Credentials
+    /// for a remote provider come from the provider's own environment, never from the manifest.
+    /// </summary>
+    public string? Manifest { get; init; }
+
     internal string ToJson() => JsonSerializer.Serialize(
-        new ReaderOptionsDto { Home = Home, PassphraseFile = PassphraseFile, Environment = Environment },
+        new ReaderOptionsDto { Home = Home, PassphraseFile = PassphraseFile, Environment = Environment, Manifest = Manifest },
         SourceOrreryJsonContext.Default.ReaderOptionsDto);
 }
 
@@ -116,6 +123,9 @@ internal sealed class ReaderOptionsDto
     public string? PassphraseFile { get; set; }
 
     public bool Environment { get; set; } = true;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Manifest { get; set; }
 }
 
 internal sealed class ProjectInfoDto

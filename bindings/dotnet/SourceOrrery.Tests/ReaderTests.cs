@@ -209,6 +209,58 @@ public sealed class ReaderTests : IClassFixture<Fixture>
         Assert.Throws<VaultLockedException>(() => Project.Load(fx.Manifest, new OpenOptions { Passphrase = "wrong", Environment = false }));
     }
 
+    /// <summary>A vault the manifest declares in [vaults.name] goes to its provider, which this build lacks.</summary>
+    [Fact]
+    public void ManifestDeclaresRemoteVaults()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "sourceorrery-dotnet-" + Path.GetRandomFileName());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var remoteManifest = Path.Combine(dir, "sourceorrery.toml");
+            File.WriteAllText(remoteManifest, string.Join("\n",
+                "[project]",
+                "name = \"demo\"",
+                $"vault = \"{fx.Vault}\"",
+                "",
+                "[vaults.remote-x]",
+                "provider = \"hashicorp-vault\"",
+                "address = \"https://vault.example.com:8200\"",
+                "mount = \"secret\"",
+                ""));
+            var options = new OpenOptions { Manifest = remoteManifest };
+            Assert.Contains("\"manifest\":", options.ToJson());
+
+            var err = Assert.Throws<UnsupportedException>(() => SecretReader.Open("remote-x", options));
+            Assert.Equal("unsupported", err.Code);
+            Assert.Contains("HashiCorp Vault", err.Detail);
+            Assert.Contains("HashiCorp Vault provider", err.Hint);
+
+            // A vault without a table is still the local file.
+            using var reader = SecretReader.Open(fx.Vault, options);
+            using var secret = reader.Get("database-password");
+            Assert.Equal(fx.Vault, reader.VaultName);
+            Assert.Equal(Fixture.Latest, secret.Value.ExposeText());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void RemoteCodesMapToTheirExceptions()
+    {
+        var unauthenticated = SourceOrreryException.ForCode("unauthenticated", "m", "h");
+        Assert.IsType<UnauthenticatedException>(unauthenticated);
+        Assert.Equal("unauthenticated", unauthenticated.Code);
+        Assert.False(unauthenticated.IsTransient);
+        var unavailable = SourceOrreryException.ForCode("provider_unavailable", "m", "h");
+        Assert.IsType<ProviderUnavailableException>(unavailable);
+        Assert.Equal("provider_unavailable", unavailable.Code);
+        Assert.True(unavailable.IsTransient);
+    }
+
     [Fact]
     public void UnknownCodesKeepTheirCode()
     {

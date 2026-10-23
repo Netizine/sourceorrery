@@ -29,10 +29,13 @@ class SourceOrreryException extends RuntimeException
         return $this->code_;
     }
 
-    /** True when retrying later could succeed without administrative action. */
+    /**
+     * True when retrying later could succeed without administrative action:
+     * `not_yet_valid` and `provider_unavailable`.
+     */
     public function isTransient(): bool
     {
-        return $this->code_ === 'not_yet_valid';
+        return $this->code_ === 'not_yet_valid' || $this->code_ === 'provider_unavailable';
     }
 
     /** The exception for a stable code. */
@@ -51,6 +54,8 @@ class SourceOrreryException extends RuntimeException
             'expired' => new SecretExpiredException($message, $code, $hint),
             'crypto' => new IntegrityException($message, $code, $hint),
             'unsupported' => new UnsupportedException($message, $code, $hint),
+            'unauthenticated' => new UnauthenticatedException($message, $code, $hint),
+            'provider_unavailable' => new ProviderUnavailableException($message, $code, $hint),
             'invalid_argument' => new InvalidArgumentException($message, $code, $hint),
             'invalid_name' => new InvalidNameException($message, $code, $hint),
             'manifest' => new ManifestException($message, $code, $hint),
@@ -85,8 +90,12 @@ class SecretNotYetValidException extends PolicyException {}
 class SecretExpiredException extends PolicyException {}
 /** `crypto`: the vault file failed an integrity check. */
 class IntegrityException extends SourceOrreryException {}
-/** `unsupported`: no OS credential store here; use a passphrase. */
+/** `unsupported`: this platform or build lacks what the operation needs (an OS credential store, a remote provider). */
 class UnsupportedException extends SourceOrreryException {}
+/** `unauthenticated`: the remote provider has no credentials for this process, or they expired; they come from its own environment, never from the manifest. */
+class UnauthenticatedException extends SourceOrreryException {}
+/** `provider_unavailable`: the remote provider could not be reached or answered with a server error. Transient. */
+class ProviderUnavailableException extends SourceOrreryException {}
 /** `invalid_argument`: a malformed reference, version or option. */
 class InvalidArgumentException extends SourceOrreryException {}
 /** `invalid_name`: a secret or vault name breaks the naming rules. */

@@ -60,6 +60,13 @@ in containers and in CI, give the vault a passphrase protector and pass the
 passphrase as a file
 ([Headless](https://sourceorrery.ai/guides/headless/)).
 
+A vault that the project's `sourceorrery.toml` declares in a
+`[vaults.<name>]` table is remote: `SecretReader` opens it at its provider
+instead of as a local file. Pass `manifest=` to name the manifest; the
+default is the nearest `sourceorrery.toml` above the current directory.
+Credentials come from the provider's own environment, never from the
+manifest.
+
 ## Errors and values
 
 Every failure is a `SourceOrreryError` subclass (`SecretNotFoundError`,

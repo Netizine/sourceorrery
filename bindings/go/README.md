@@ -76,6 +76,16 @@ would store a missing secret; `errors.Is` matches the `Err*` sentinels. A
 value is a `*SecretValue`: it prints and encodes as `[REDACTED]`, the bytes
 come out only through `Bytes()` or `Text()`, and `Close()` zeroises them.
 
+## Remote vaults
+
+`OpenOptions.Manifest` names the `sourceorrery.toml` whose
+`[vaults.<name>]` tables say which vaults are remote and at which provider;
+by default the nearest one above the current directory is used. A vault
+with such a table is opened at its provider instead of as a local file,
+and `ErrUnauthenticated` / `ErrProviderUnavailable` (transient) report
+its failures. Credentials come from the provider's own environment, never
+from the manifest.
+
 ## Tests
 
 ```bash

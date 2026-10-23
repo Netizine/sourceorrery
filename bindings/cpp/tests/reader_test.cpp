@@ -2,6 +2,8 @@
 // Plain assertions: exits non-zero on the first failure.
 #define _CRT_SECURE_NO_WARNINGS 1 // std::getenv on MSVC
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -173,6 +175,46 @@ int main() {
         wrong.passphrase = "wrong";
         wrong.environment = false;
         expect_throw<so::VaultLockedError>([&] { so::Project::load(manifest, wrong); }, "locked");
+    }
+
+    {
+        // A vault the manifest declares in [vaults.<name>] is opened at its
+        // remote provider, which this build does not include; a vault without
+        // a table is still the local file.
+        const auto dir = std::filesystem::temp_directory_path() / "sourceorrery-cpp-remote";
+        std::filesystem::create_directories(dir);
+        const std::string remote_manifest = (dir / "sourceorrery.toml").string();
+        {
+            std::ofstream out(remote_manifest);
+            out << "[project]\nname = \"demo\"\nvault = \"" << vault << "\"\n\n"
+                << "[vaults.remote-x]\nprovider = \"hashicorp-vault\"\n"
+                << "address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n";
+        }
+        so::OpenOptions with_manifest;
+        with_manifest.manifest = remote_manifest;
+        CHECK(with_manifest.to_json().find("\"manifest\":") != std::string::npos);
+        expect_throw<so::UnsupportedError>([&] { so::Reader::open("remote-x", with_manifest); }, "unsupported", "HashiCorp Vault provider");
+        try { so::Reader::open("remote-x", with_manifest); } catch (const so::Error& err) {
+            CHECK(err.message().find("HashiCorp Vault") != std::string::npos);
+            CHECK(err.kind() == so::ErrorKind::Unsupported);
+            CHECK(!err.transient());
+        }
+        auto local = so::Reader::open(vault, with_manifest);
+        CHECK(local.get("database-password").value.text() == latest);
+        local.close();
+        std::filesystem::remove_all(dir);
+    }
+    {
+        // The remote provider codes have their own kinds and classes.
+        CHECK(so::kind_for_code("unauthenticated") == so::ErrorKind::Unauthenticated);
+        CHECK(so::kind_for_code("provider_unavailable") == so::ErrorKind::ProviderUnavailable);
+        const so::UnauthenticatedError unauthenticated("unauthenticated", "m", "h");
+        CHECK(!unauthenticated.transient());
+        CHECK(!unauthenticated.policy());
+        const so::ProviderUnavailableError unavailable("provider_unavailable", "m", "h");
+        CHECK(unavailable.transient());
+        CHECK(!unavailable.policy());
+        CHECK(std::string(unavailable.what()) == "m. h");
     }
 
     if (failures != 0) {

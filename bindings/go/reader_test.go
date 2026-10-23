@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -318,6 +319,60 @@ func TestProjectLoadMirrorsRun(t *testing.T) {
 	expectErr(t, err, ErrManifest, "manifest", "")
 	_, err = LoadProject(fx.manifest, &OpenOptions{Passphrase: []byte("wrong"), IgnoreEnvironment: true})
 	expectErr(t, err, ErrLocked, "locked", "")
+}
+
+// A manifest whose [vaults.<name>] table makes `remote` a remote vault; the
+// fixture vault stays a local file.
+func manifestWithRemote(t *testing.T, fx fixture, remote string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "sourceorrery.toml")
+	content := fmt.Sprintf("[project]\nname = \"demo\"\nvault = %q\n\n"+
+		"[vaults.%s]\nprovider = \"hashicorp-vault\"\n"+
+		"address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n", fx.vault, remote)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	return path
+}
+
+func TestAVaultTheManifestDeclaresRemoteIsOpenedAtItsProvider(t *testing.T) {
+	fx := loadFixture(t)
+	opts := &OpenOptions{Manifest: manifestWithRemote(t, fx, "remote-x")}
+	// This build has no provider, so the remote vault is refused by name.
+	_, err := Open("remote-x", opts)
+	e := expectErr(t, err, ErrUnsupported, "unsupported", "HashiCorp Vault provider")
+	if !strings.Contains(e.Message, "HashiCorp Vault") || e.Transient() {
+		t.Fatalf("unexpected remote error: %v", err)
+	}
+	// A vault without a table is still the local file.
+	reader, err := Open(fx.vault, opts)
+	if err != nil {
+		t.Fatalf("open local vault with manifest: %v", err)
+	}
+	defer reader.Close()
+	if get(t, reader, "database-password").Value.Text() != latestValue {
+		t.Fatalf("local vault value")
+	}
+}
+
+func TestRemoteProviderCodesMapToSentinels(t *testing.T) {
+	cases := []struct {
+		code      string
+		sentinel  error
+		transient bool
+	}{
+		{"unauthenticated", ErrUnauthenticated, false},
+		{"provider_unavailable", ErrProviderUnavailable, true},
+	}
+	for _, tc := range cases {
+		err := &Error{Code: tc.code, Message: "m", Hint: "h"}
+		if !errors.Is(err, tc.sentinel) || errors.Is(err, ErrUnsupported) || errors.Is(err, ErrPolicy) {
+			t.Fatalf("%s: sentinel mismatch", tc.code)
+		}
+		if err.Transient() != tc.transient || err.Policy() {
+			t.Fatalf("%s: transient=%v policy=%v", tc.code, err.Transient(), err.Policy())
+		}
+	}
 }
 
 func TestUnknownCodesKeepTheirCode(t *testing.T) {

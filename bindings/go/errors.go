@@ -20,8 +20,11 @@ func (e *Error) Error() string {
 }
 
 // Transient reports whether retrying later could succeed without
-// administrative action.
-func (e *Error) Transient() bool { return e.Code == "not_yet_valid" }
+// administrative action: a version not yet valid, or a remote provider
+// that could not be reached.
+func (e *Error) Transient() bool {
+	return e.Code == "not_yet_valid" || e.Code == "provider_unavailable"
+}
 
 // Policy reports whether a version was refused by policy (disabled, not yet
 // valid or expired).
@@ -87,8 +90,16 @@ var (
 	// ErrAbiMismatch: the native library was built for another C ABI version
 	// than this package; raised by the SDK itself, never by the core (ADR 0007).
 	ErrAbiMismatch error = &sentinelError{"abi_mismatch"}
-	// ErrUnsupported: no OS credential store here; use a passphrase.
+	// ErrUnsupported: this platform or build lacks what the operation needs
+	// (an OS credential store, a remote provider).
 	ErrUnsupported error = &sentinelError{"unsupported"}
+	// ErrUnauthenticated: the remote provider has no credentials for this
+	// process, or they expired; give them the way the provider's own tools
+	// take them, never in the manifest.
+	ErrUnauthenticated error = &sentinelError{"unauthenticated"}
+	// ErrProviderUnavailable: the remote provider could not be reached or
+	// answered with a server error. Transient.
+	ErrProviderUnavailable error = &sentinelError{"provider_unavailable"}
 )
 
 // AsError returns err as *Error when it is one.

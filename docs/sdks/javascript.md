@@ -82,11 +82,18 @@ try {
 }
 ```
 
-`new SecretReader(vault, { home, passphrase, passphraseFile, environment })`
+`new SecretReader(vault, { home, passphrase, passphraseFile, environment, manifest })`
 opens the vault; with no options it behaves like the CLI (`SOURCEORRERY_HOME`,
 then the OS credential store, `SOURCEORRERY_PASSPHRASE`,
 `SOURCEORRERY_PASSPHRASE_FILE`). `environment: false` ignores the two
 passphrase variables.
+
+`manifest` is the `sourceorrery.toml` whose `[vaults.<name>]` tables say
+which vaults are remote and where; the default is the nearest one above
+the current directory, as `sourceorrery run` finds it. A vault declared
+there is opened at its provider rather than as a local file, with the
+credentials the provider's own tools expect from the environment: the
+manifest never holds any. A vault without a table stays local.
 
 | Call | Returns |
 |------|---------|
@@ -137,8 +144,10 @@ Classes: `VaultNotFoundError`, `VaultLockedError`,
 `SecretDisabledError`, `SecretNotYetValidError` (`transient` is true),
 `SecretExpiredError`, `IntegrityError`, `UnsupportedError`,
 `InvalidArgumentError`, `InvalidNameError`, `ManifestError`,
-`PermissionDeniedError`, `StorageError`. See [the SDK
-overview](index.md#errors).
+`PermissionDeniedError`, `StorageError`, and for remote vaults
+`UnauthenticatedError` (the provider has no credentials for this process)
+and `ProviderUnavailableError` (it could not be reached; `transient` is
+true). See [the SDK overview](index.md#errors).
 
 ## Load a project
 

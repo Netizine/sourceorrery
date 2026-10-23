@@ -63,12 +63,19 @@ type OpenOptions struct {
 	PassphraseFile string
 	// IgnoreEnvironment skips SOURCEORRERY_PASSPHRASE and SOURCEORRERY_PASSPHRASE_FILE.
 	IgnoreEnvironment bool
+	// Manifest is the sourceorrery.toml whose [vaults.<name>] tables say
+	// which vaults are remote and where; empty uses the nearest one above
+	// the current directory. A vault with a table is opened at its provider
+	// instead of as a local file. Credentials come from the provider's own
+	// environment, never from the manifest.
+	Manifest string
 }
 
 type readerOptionsJSON struct {
 	Home           string `json:"home,omitempty"`
 	PassphraseFile string `json:"passphrase_file,omitempty"`
 	Environment    bool   `json:"environment"`
+	Manifest       string `json:"manifest,omitempty"`
 }
 
 func (o *OpenOptions) json() []byte {
@@ -80,6 +87,7 @@ func (o *OpenOptions) json() []byte {
 		Home:           opts.Home,
 		PassphraseFile: opts.PassphraseFile,
 		Environment:    !opts.IgnoreEnvironment,
+		Manifest:       opts.Manifest,
 	})
 	return text
 }
