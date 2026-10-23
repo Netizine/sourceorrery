@@ -89,8 +89,10 @@ address only. Every SDK takes a
 `manifest` option next to `home` and `passphrase_file` naming the manifest
 to resolve through; the default is the nearest `sourceorrery.toml` above
 the current directory, and the project loader always uses the manifest it
-loads. HashiCorp Vault is the first provider; a provider the build
-leaves out fails with `unsupported`, naming it.
+loads. HashiCorp Vault and AWS Secrets Manager are the providers; a
+provider the build leaves out fails with `unsupported`, naming it. Who
+decides what, and the workload identity set-up per platform:
+[enterprise.md](../enterprise.md).
 
 ## Errors
 

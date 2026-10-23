@@ -93,10 +93,10 @@ overrides any of that. `manifest` names the `sourceorrery.toml` whose
 `[vaults.<name>]` tables say which vaults are remote and at which provider
 (default: the nearest one above the current directory); a vault with such
 a table is opened at its provider instead of as a local file. Credentials
-come from the provider's own environment, never from the manifest: HashiCorp
-Vault is the first provider, and its credential comes from `VAULT_TOKEN` or
-the other sources
-[the provider documents](../providers/hashicorp-vault.md).
+come from the provider's own environment, never from the manifest: [HashiCorp
+Vault](../providers/hashicorp-vault.md) takes `VAULT_TOKEN` or the other
+sources it documents, [AWS Secrets Manager](../providers/aws-secrets-manager.md)
+the AWS default credential chain.
 
 | Call | Returns |
 |------|---------|

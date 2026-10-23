@@ -76,6 +76,26 @@ const PAGES = {
 		description:
 			'How a release is cut: the manual workflow, what one run builds for six targets and ten languages, trusted publishing and the setup each registry needs, dry runs, and where each registry page gets its text.',
 	},
+	'docs/providers/index.md': {
+		dest: 'providers/index.md',
+		description:
+			'Remote vaults: a secrets service of another vendor behind the same contract as a local vault, declared in sourceorrery.toml without a credential, opened by the CLI and every SDK with the same calls and error codes.',
+	},
+	'docs/providers/hashicorp-vault.md': {
+		dest: 'providers/hashicorp-vault.md',
+		description:
+			'The HashiCorp Vault provider: a KV version 2 mount as a SourceOrrery vault, the credential sources it tries, how names, versions, properties and deletion map onto KV, and what differs from a local vault.',
+	},
+	'docs/providers/aws-secrets-manager.md': {
+		dest: 'providers/aws-secrets-manager.md',
+		description:
+			'The AWS Secrets Manager provider: secrets under a prefix as a SourceOrrery vault, the default credential chain, how versions, tags and deletion map onto the service, and what differs from a local vault.',
+	},
+	'docs/enterprise.md': {
+		dest: 'guides/enterprise.md',
+		description:
+			'Identity, policy and revocation through the remote providers: who decides what, the workload identity set-up for GitHub Actions, Kubernetes and VMs, what a revocation reaches, and checking what an identity may read.',
+	},
 	'docs/sdks/index.md': {
 		dest: 'sdks/index.md',
 		description:
@@ -132,6 +152,7 @@ const PAGES = {
 const DIRECTORIES = {
 	'docs/adr': '/decisions/',
 	'docs/sdks': '/sdks/',
+	'docs/providers': '/providers/',
 };
 
 const ADR_SOURCE_DIR = 'docs/adr';

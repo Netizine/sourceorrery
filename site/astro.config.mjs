@@ -96,6 +96,15 @@ export default defineConfig({
 						{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' },
 						{ label: 'AI coding agents', slug: 'guides/ai-agents' },
 						{ label: 'Building from source', slug: 'guides/building-from-source' },
+						{ label: 'Enterprise: identity, policy, revocation', slug: 'guides/enterprise' },
+					],
+				},
+				{
+					label: 'Remote providers',
+					items: [
+						{ label: 'Overview', slug: 'providers' },
+						{ label: 'HashiCorp Vault', slug: 'providers/hashicorp-vault' },
+						{ label: 'AWS Secrets Manager', slug: 'providers/aws-secrets-manager' },
 					],
 				},
 				{

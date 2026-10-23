@@ -214,7 +214,7 @@ keys and the commands that work against a remote vault are in
 | `init [--project-name N] [--vault-name V] [--path FILE] [--force]` | Write a starter manifest. |
 | `init --integration AGENT[,AGENT...] [--scope project\|user] [--skills-dir DIR]` | Install the SourceOrrery skills for AI coding agents (below). An existing manifest is kept. |
 | `import FILE [--dry-run] [--manifest-only] [--only KEY]... [--exclude KEY]... [--overwrite] [--manifest FILE \| --no-manifest]` | Move a `.env` file into the vault and declare its keys (below). |
-| `check [--manifest FILE]` | Verify every entry resolves to an accessible version. Reads **metadata only**; writes no `secret_get` audit rows. Fails if a required secret is missing. |
+| `check [--manifest FILE] [--access]` | Verify every entry resolves to an accessible version. Reads **metadata only**; writes no `secret_get` audit rows. Fails if a required secret is missing. `--access` also reads each value and discards it, so the status says whether this identity may read the secret and not only inspect it (a remote provider can allow metadata and deny values); on a local vault that is an audited read. |
 | `run [--manifest FILE] -- COMMAND [ARGS...]` | Resolve every entry and start `COMMAND` with the values in its environment (plus `SOURCEORRERY_PROJECT`). Missing required secrets abort before the child starts; an optional secret whose vault does not exist is skipped. The child never inherits `SOURCEORRERY_PASSPHRASE` or `SOURCEORRERY_PASSPHRASE_FILE`. `--vault` overrides the manifest's default vault. |
 
 The parent resolves values in memory without printing them, then passes

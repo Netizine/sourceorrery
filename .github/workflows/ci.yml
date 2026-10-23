@@ -676,6 +676,10 @@ jobs:
           mkdir -p build
           cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
           LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" python3 tests/conformance/sdk/harness.py --runner c --remote --remote-per-version
+      - name: Platform identity and policy enforcement (AppRole, JWT, metadata-only policy, revocation)
+        # Logs in without a stored token, reads with the policy's permission,
+        # and is refused exactly where the policy says (`check --access`).
+        run: bash scripts/ci/vault-federation.sh
 
   provider-aws:
     name: provider AWS Secrets Manager
@@ -724,6 +728,8 @@ jobs:
           mkdir -p build
           cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
           LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" python3 tests/conformance/sdk/harness.py --runner c --remote
+      - name: Platform identity (web identity at STS) and no-credentials refusal
+        run: bash scripts/ci/aws-federation.sh
 
   ci:
     name: CI

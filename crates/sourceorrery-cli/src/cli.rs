@@ -502,6 +502,12 @@ pub struct CheckArgs {
     /// Manifest path (default: discovered upwards from the current directory).
     #[arg(long, value_name = "FILE")]
     pub manifest: Option<PathBuf>,
+    /// Also read each value and discard it, so the status says whether this
+    /// identity may read the secret, not only inspect it. A remote provider
+    /// can allow metadata and deny values; on a local vault this is an
+    /// audited read.
+    #[arg(long)]
+    pub access: bool,
 }
 
 #[derive(Debug, Args)]

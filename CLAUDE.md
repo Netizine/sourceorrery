@@ -143,4 +143,5 @@ Docker validates Linux (`rust:1-bookworm` needs `libdbus-1-dev pkg-config`).
 - Secret names: letters, digits, hyphens; max 127 (portable to the managed cloud secrets services).
   Vault names: lowercase, digits, hyphens; max 64.
 - Keep docs in `docs/` in sync with behaviour; `docs/cli.md` is the CLI
-  reference.
+  reference, `docs/providers/` the remote providers and
+  `docs/enterprise.md` identity, policy and revocation through them.

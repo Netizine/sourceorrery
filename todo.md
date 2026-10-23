@@ -871,21 +871,40 @@ provider and honoured by the client."*
 
 **Steps.**
 
-- [ ] Each provider authenticates with the platform identity where one
+- [x] Each provider authenticates with the platform identity where one
       exists, with no stored credential: Vault JWT/OIDC and Kubernetes
       auth, AWS web identity and IMDS; CI proves the federated path where
       it can (Vault JWT auth against the dev server with a local JWKS).
-- [ ] A revoked or expired identity is `unauthenticated`, a denied read
+      *Done: the providers already had the paths (M4.3, M4.4);
+      `scripts/ci/vault-federation.sh` proves AppRole and JWT login
+      (RS256 key minted on the runner, a wrong audience refused) and
+      `scripts/ci/aws-federation.sh` the web identity exchange at the
+      emulator's STS and the no-credentials refusal; both run in the
+      provider CI jobs. Vault's own cloud auth methods (`aws`, `gcp`,
+      `azure`) are not implemented: on a VM, AppRole or `vault login`.*
+- [x] A revoked or expired identity is `unauthenticated`, a denied read
       `permission_denied`, both with hints naming the provider's console
       or command; `sourceorrery check` reports, per secret, whether the
       current identity may read it (metadata only).
-- [ ] No value cache across processes: a reader holds a value until it is
+      *Done: `permission_denied` hints name the Vault paths to grant with
+      `vault policy write` / `sys/capabilities-self`, or the
+      `secretsmanager:*` actions and `aws sts get-caller-identity`.
+      `check` stays metadata-only; `check --access` adds one discarded
+      read per secret so a metadata-only identity shows
+      `permission_denied` where `run` would fail (proven by the Vault
+      script with a `metadata`-only policy, and a revoked token).*
+- [x] No value cache across processes: a reader holds a value until it is
       closed and never writes one to disk; documented as what revocation
       can and cannot reach on a running process.
-- [ ] `docs/enterprise.md`: who decides what, per provider, with the
+      *Done: already the behaviour; documented in `docs/enterprise.md`
+      ("What revocation reaches"), including that a login token or
+      resolved session is kept for the client's life and not renewed.*
+- [x] `docs/enterprise.md`: who decides what, per provider, with the
       federation set-up for GitHub Actions, Kubernetes and VMs.
 
 **Decision for you.** The re-scoped wording for the roadmap line.
+*Applied as recommended ("go with your recommendations"); reword in
+`docs/roadmap.md` if you want it otherwise.*
 
 ---
 

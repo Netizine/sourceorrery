@@ -8,6 +8,18 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* `sourceorrery check --access` reads each value and discards it, so the
+  status says whether this identity may read the secret and not only
+  inspect it: a remote provider's policy can allow metadata and deny
+  values, and the plain `check` stays metadata-only. A denied read on a
+  remote vault now carries a hint in the provider's own terms (the Vault
+  paths to grant and `vault read sys/capabilities-self`; the
+  `secretsmanager:*` actions and `aws sts get-caller-identity`).
+  `docs/enterprise.md` describes who decides what per provider, the
+  workload identity set-up for GitHub Actions, Kubernetes and VMs, and
+  what a revocation reaches; `scripts/ci/vault-federation.sh` and
+  `scripts/ci/aws-federation.sh` prove the federated logins, a
+  metadata-only policy and a revoked token in the provider CI jobs.
 * AWS Secrets Manager is the second remote provider: `provider =
   "aws-secrets-manager"` with `region`, an optional `prefix` and an optional
   `endpoint_url` serves the secrets under that prefix behind the same

@@ -239,7 +239,7 @@ Docker or CI. Removing the last protector is refused.
 | Backend | Status |
 |---------|--------|
 | Encrypted SQLite vault, key in OS store or passphrase | Shipped (milestone 1) |
-| Remote providers (HashiCorp Vault, AWS Secrets Manager) implementing the same contract ([providers](providers/index.md)) | Shipped (0.3.0) |
+| Remote providers (HashiCorp Vault, AWS Secrets Manager) implementing the same contract ([providers](providers/index.md); identity, policy and revocation: [enterprise](enterprise.md)) | Shipped (0.3.0) |
 
 Headless Linux servers often have no Secret Service daemon. The fallback is a
 passphrase protector with an independently provisioned secret — never silent

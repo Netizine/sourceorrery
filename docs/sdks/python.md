@@ -89,10 +89,10 @@ which vaults are remote and where; the default is the nearest one above
 the current directory, as `sourceorrery run` finds it. A vault declared
 there is opened at its provider rather than as a local file, with the
 credentials the provider's own tools expect from the environment: the
-manifest never holds any. HashiCorp Vault is the first provider: its
-credential comes from `VAULT_TOKEN` or the other sources
-[the provider documents](../providers/hashicorp-vault.md), never the
-manifest. A vault without a table stays local.
+manifest never holds any. [HashiCorp Vault](../providers/hashicorp-vault.md) takes
+`VAULT_TOKEN` or the other sources it documents,
+[AWS Secrets Manager](../providers/aws-secrets-manager.md) the AWS default
+credential chain, never the manifest. A vault without a table stays local.
 
 > [!IMPORTANT]
 > `expose_text()` returns a Python `str` copy. Leaving the `with` block

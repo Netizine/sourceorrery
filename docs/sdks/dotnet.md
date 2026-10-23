@@ -93,9 +93,10 @@ the same call; `new OpenOptions { Manifest = path }` names the manifest to
 resolve through (default: the nearest `sourceorrery.toml` above the current
 directory; `Project.Load` always uses the manifest it loads). Credentials
 come from the provider's own environment, never from the manifest, which
-holds the address only. HashiCorp Vault is the first provider: its
-credential comes from `VAULT_TOKEN` or the other sources
-[the provider documents](../providers/hashicorp-vault.md).
+holds the address only. [HashiCorp Vault](../providers/hashicorp-vault.md)
+takes `VAULT_TOKEN` or the other sources it documents,
+[AWS Secrets Manager](../providers/aws-secrets-manager.md) the AWS default
+credential chain.
 
 | Call | Returns |
 |------|---------|

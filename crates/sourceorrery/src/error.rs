@@ -253,8 +253,30 @@ fn credentials_hint(provider: Provider) -> &'static str {
     }
 }
 
-/// Hints about a remote provider: credentials, reachability, a build without
-/// the provider. `None` when the error is not about one.
+/// What a denied read on `provider` needs: the permission in the provider's
+/// own policy language, granted by whoever administers it, and the command
+/// that shows which identity was refused.
+fn permission_hint(provider: Provider) -> &'static str {
+    match provider {
+        Provider::HashicorpVault => {
+            "The Vault policy of this token does not allow the operation. Grant `read` on the \
+             secret's `<mount>/data/<name>` path (and `<mount>/metadata/<name>` for its \
+             properties) with `vault policy write`, attach the policy to the role this process \
+             logs in with, and compare with `vault read sys/capabilities-self <path>`"
+        }
+        Provider::AwsSecretsManager => {
+            "The IAM policy of this identity does not allow the operation. Allow \
+             `secretsmanager:GetSecretValue` (and `secretsmanager:DescribeSecret`, \
+             `secretsmanager:ListSecretVersionIds` for its properties) on the secret's ARN for the \
+             role this process assumes; `aws sts get-caller-identity` shows which identity was \
+             refused"
+        }
+    }
+}
+
+/// Hints about a remote provider: credentials, reachability, a denied
+/// read, a build without the provider. `None` when the error is not about
+/// one.
 fn remote_hint(err: &SecretError, ctx: &Context<'_>) -> Option<String> {
     match err {
         SecretError::Unsupported(_) => ctx.provider.map(|provider| {
@@ -272,6 +294,7 @@ fn remote_hint(err: &SecretError, ctx: &Context<'_>) -> Option<String> {
                     .to_owned(),
             })
         }
+        SecretError::PermissionDenied(_) => ctx.provider.map(permission_hint).map(str::to_owned),
         SecretError::ProviderUnavailable { provider, .. } => {
             let table = ctx
                 .vault
@@ -540,6 +563,53 @@ mod tests {
             &Context::default(),
         );
         assert!(local.hint().contains("credential store"));
+    }
+
+    #[test]
+    fn a_denied_read_names_the_permission_in_the_providers_own_terms() {
+        let denied = SecretError::PermissionDenied("forbidden".into());
+        let vault = Error::new(
+            &denied,
+            &Context {
+                provider: Some(Provider::HashicorpVault),
+                ..Context::default()
+            },
+        );
+        assert_eq!(vault.kind(), ErrorKind::PermissionDenied);
+        assert!(
+            vault.hint().contains("vault policy write"),
+            "{}",
+            vault.hint()
+        );
+        assert!(
+            vault.hint().contains("sys/capabilities-self"),
+            "{}",
+            vault.hint()
+        );
+
+        let aws = Error::new(
+            &denied,
+            &Context {
+                provider: Some(Provider::AwsSecretsManager),
+                ..Context::default()
+            },
+        );
+        assert!(
+            aws.hint().contains("secretsmanager:GetSecretValue"),
+            "{}",
+            aws.hint()
+        );
+        assert!(
+            aws.hint().contains("aws sts get-caller-identity"),
+            "{}",
+            aws.hint()
+        );
+
+        let local = Error::new(&denied, &Context::default());
+        assert_eq!(
+            local.hint(),
+            "This identity is not allowed to read the secret"
+        );
     }
 
     #[test]

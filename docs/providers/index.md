@@ -56,8 +56,12 @@ from where the provider's own tools find them:
 
 | Provider | Credentials |
 |----------|-------------|
-| HashiCorp Vault | `VAULT_TOKEN`, or `vault login` for the identity the process runs as |
+| HashiCorp Vault | `VAULT_TOKEN`, `~/.vault-token` from `vault login`, an AppRole, a JWT or the pod's service account token |
 | AWS Secrets Manager | the AWS default credential chain: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, an instance or task role, or a web identity |
+
+[enterprise.md](../enterprise.md) covers the workload identity set-up per
+platform (GitHub Actions, Kubernetes, VMs), who decides what, and what a
+revocation reaches.
 
 ## Opening a remote vault
 

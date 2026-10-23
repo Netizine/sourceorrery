@@ -332,7 +332,8 @@ pub fn check(ctx: &Ctx, args: &CheckArgs) -> anyhow::Result<()> {
                     Err(other) => SecretError::Locked(other.to_string()),
                 }
             })?;
-            // Metadata only: no value is read and no secret_get audit event is written.
+            // Metadata only: no value is read and no secret_get audit event is
+            // written, unless --access asks for the read that proves access.
             let versions = vault.list_properties_of_secret_versions(&entry.reference.name)?;
             let chosen = match &entry.reference.version {
                 Some(v) => versions
@@ -345,6 +346,10 @@ pub fn check(ctx: &Ctx, args: &CheckArgs) -> anyhow::Result<()> {
                     .and_then(|p| policy::evaluate_access(p, now).map(|()| p))?,
                 None => policy::select_latest_accessible(&entry.reference.name, &versions, now)?,
             };
+            if args.access {
+                // The value is dropped at once; only the outcome is kept.
+                drop(vault.get_secret(&entry.reference.name, Some(&chosen.version))?);
+            }
             Ok(chosen.version.clone())
         })();
         let (status, version) = match outcome {
@@ -392,8 +397,13 @@ pub fn check(ctx: &Ctx, args: &CheckArgs) -> anyhow::Result<()> {
     }
     if !ctx.json() {
         output::success(&format!(
-            "{} secret(s) ready ({})",
+            "{} secret(s) {} ({})",
             rows.len(),
+            if args.access {
+                "ready and readable by this identity"
+            } else {
+                "ready"
+            },
             path.display()
         ));
     }

@@ -264,6 +264,20 @@ fn manifest_driven_check_and_run() {
     let out = env.run(&["check"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(stdout(&out).contains("ok"));
+    // --access reads the value too (and discards it), which the audit log
+    // records as a secret_get; plain check leaves no such row.
+    let gets = |label: &str| {
+        let out = env.run(&["audit", "--vault", "development", "-o", "json"]);
+        assert!(out.status.success(), "{label}: {}", stderr(&out));
+        stdout(&out).matches("\"secret_get\"").count()
+    };
+    let before = gets("before");
+    let out = env.run(&["check", "--access"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(text.contains("readable by this identity"), "{text}");
+    assert!(!text.contains(CANARY));
+    assert_eq!(gets("after"), before + 1);
 
     let echo: &[&str] = if cfg!(windows) {
         &["run", "--", "cmd", "/C", "echo %DATABASE_PASSWORD%"]

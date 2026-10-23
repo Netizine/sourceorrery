@@ -9,6 +9,10 @@
 /reference/vault-format.md
 /roadmap.md
 /reference/release.md
+/providers/index.md
+/providers/hashicorp-vault.md
+/providers/aws-secrets-manager.md
+/guides/enterprise.md
 /sdks/index.md
 /sdks/python.mdx
 /sdks/javascript.mdx
@@ -25,5 +29,7 @@
 /decisions/0004-latest-accessible-version.md
 /decisions/0005-read-only-sdks.md
 /decisions/0006-binding-technologies.md
+/decisions/0007-versioning-and-compatibility.md
+/decisions/0008-remote-providers.md
 /decisions/index.md
 /reference/error-codes.md
