@@ -94,8 +94,8 @@ ob_start();
 var_dump($secret->value);
 check(!str_contains((string) ob_get_clean(), LATEST), 'var_dump');
 try {
-    serialize($secret->value);
-    check(false, 'serialize must refuse');
+    $serialized = serialize($secret->value);
+    check(false, 'serialize must refuse, it returned ' . strlen($serialized) . ' bytes');
 } catch (LogicException) {
 }
 try {
