@@ -103,7 +103,7 @@ bindings/{java,dotnet,go,cpp,php} ──► sourceorrery-ffi (C ABI) foreign-fun
 | `SecretError` | Typed errors with stable, append-only string codes for SDKs. |
 | `Principal` | Who is asking (`user`, `workload`, `agent`, `system`). Today it labels the OS user; it is not verified identity. |
 | `AuditEvent` | Metadata-only record: actor, operation, secret, version, outcome, detail (error code). |
-| `Manifest` | `sourceorrery.toml`: project name, default vault, required secrets. Rejects unknown fields, so it cannot hold a value. |
+| `Manifest` | `sourceorrery.toml`: project name, default vault, required secrets, and the remote vaults (`[vaults.<name>]`: a `RemoteVault`, the provider and its addressing keys only). Rejects unknown fields, so it cannot hold a value or a credential. |
 
 ### The `SecretClient` contract
 

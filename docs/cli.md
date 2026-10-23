@@ -50,11 +50,16 @@ limit. Failed attempts are audited.
 > makes `secret delete` immediate and irreversible. Use the default
 > recoverable vault unless you deliberately need permanent deletion.
 
+`vault create`, `vault protector`, `vault destroy`, `vault migrate`,
+`audit`, `backup`, `restore` and `ui` are about the vault file and refuse
+a [remote vault](providers/index.md) by name; the `secret` commands,
+`check`, `run` and `import` work against either kind.
+
 | Command | Description |
 |---------|-------------|
 | `vault create NAME [--protector os-keyring\|passphrase] [--retention-days 7-90] [--purgeable]` | Create a vault. Default protector: OS keyring when available, otherwise passphrase (prompted twice). `--purgeable` disables soft delete. |
-| `vault list` | Vaults in the home directory. |
-| `vault info` | Metadata and protectors of the selected vault. |
+| `vault list` | Vaults in the home directory, and the remote vaults the nearest `sourceorrery.toml` declares with their provider and location. JSON output is one object per vault (`name`, `kind`, and `path` or `provider` and `location`). |
+| `vault info` | Metadata and protectors of the selected vault; for a remote vault, what its provider reports. |
 | `vault protector list` | Installed protectors. |
 | `vault protector add --kind passphrase\|os-keyring [--label L]` | Add another way to unlock (e.g. a passphrase for WSL/Docker/CI). At most 8 passphrase protectors: unlock tries no more than that, so a ninth is refused rather than installed and never tried. |
 | `vault protector remove ID_OR_LABEL` | Remove a protector. The last one cannot be removed. The OS-keyring entry is deleted after the change is committed, and only if it is provably this vault's. |
@@ -186,6 +191,24 @@ Any other key — in particular `value` — is a parse error, reported by key
 name and position without repeating the offending text. `env` names must be
 unique ignoring case (Windows environments are case-insensitive) and may not
 start with `SOURCEORRERY_`.
+
+A vault that is not a local file is a `[vaults.<name>]` table naming its
+provider and how to reach it, and nothing else; `payments-sandbox` above
+could be:
+
+```toml
+[vaults.payments-sandbox]
+provider = "hashicorp-vault"                 # or aws-secrets-manager, azure-key-vault
+address = "https://vault.example.com:8200"
+mount = "secret"
+```
+
+There is no key for a credential, so `token = "..."` is a parse error like
+`value`; credentials come from the provider's own environment. A vault
+name without a table is a local vault file, as before. The providers, their
+keys and the commands that work against a remote vault are in
+[providers](providers/index.md); until a provider ships, opening a remote
+vault fails with `unsupported`.
 
 | Command | Description |
 |---------|-------------|

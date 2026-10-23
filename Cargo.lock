@@ -1896,6 +1896,7 @@ version = "0.1.4"
 dependencies = [
  "sourceorrery-core",
  "sourceorrery-crypto",
+ "sourceorrery-provider",
  "sourceorrery-storage",
  "tempfile",
  "thiserror",
@@ -1918,6 +1919,7 @@ dependencies = [
  "serde_json",
  "sourceorrery-core",
  "sourceorrery-crypto",
+ "sourceorrery-provider",
  "sourceorrery-storage",
  "tempfile",
  "time",

@@ -32,7 +32,8 @@ pub struct ProjectSecret {
 /// fails before any value is handed out; an optional secret that is missing,
 /// blocked by policy or whose vault does not exist is left out. A vault that
 /// exists but cannot be unlocked fails the load even for optional secrets,
-/// because that is a problem the user must see.
+/// because that is a problem the user must see. A vault the manifest
+/// declares in `[vaults.<name>]` is read from its remote provider.
 #[derive(Debug)]
 pub struct Project {
     name: String,
@@ -60,6 +61,14 @@ impl Project {
         let entries = parsed
             .entries()
             .map_err(|err| Error::new(&err, &Context::default()))?;
+
+        // Remote vaults resolve through this manifest, whatever the options
+        // say and wherever the process runs.
+        let options = OpenOptions {
+            manifest: Some(path.clone()),
+            ..options.clone()
+        };
+        let options = &options;
 
         let mut readers: BTreeMap<String, SecretReader> = BTreeMap::new();
         let mut secrets = Vec::with_capacity(entries.len());

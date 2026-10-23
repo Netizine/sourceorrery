@@ -68,7 +68,8 @@ in `bindings/go`). Never edit it by hand.
 
   ```json
   // so_reader_open / so_project_load options_json (every field optional)
-  {"home": "/path/to/home", "passphrase_file": "/run/secrets/vault", "environment": true}
+  {"home": "/path/to/home", "passphrase_file": "/run/secrets/vault", "environment": true,
+   "manifest": "/path/to/sourceorrery.toml"}
 
   // so_vault_create options_json (every field optional)
   {"recovery_level": "recoverable", "retention_days": 90,
@@ -118,7 +119,7 @@ in `bindings/go`). Never edit it by hand.
 
 | C function | Client method | Notes |
 |------------|---------------|-------|
-| `so_reader_open(name, options_json, passphrase, out_reader)` | `SecretReader::open_with` | OS credential store, then `passphrase`, then `SOURCEORRERY_PASSPHRASE`, then the passphrase file; never a prompt |
+| `so_reader_open(name, options_json, passphrase, out_reader)` | `SecretReader::open_with` | OS credential store, then `passphrase`, then `SOURCEORRERY_PASSPHRASE`, then the passphrase file; never a prompt. A vault that `manifest` (default: the nearest `sourceorrery.toml`) declares in `[vaults.<name>]` is opened at its remote provider instead |
 | `so_reader_close(reader)` | drop | zeroises the vault key |
 | `so_reader_descriptor(reader, out_json)` | `descriptor` | name, id, path, protectors |
 | `so_reader_get(reader, name, version?, out_props, out_value)` | `get` / `get_version` | `NULL` version → newest accessible |

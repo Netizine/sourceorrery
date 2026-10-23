@@ -173,11 +173,13 @@ void so_last_error_clear(void);
  * Open a vault for reading, the way the CLI does.
  *
  * `name` is the vault name. `options_json` (nullable) is a
- * [`ReaderOptions`] document. Unlock order: the OS credential store, then
- * `passphrase` if non-null, then `SOURCEORRERY_PASSPHRASE`, then the
- * passphrase file from the options or `SOURCEORRERY_PASSPHRASE_FILE`.
- * There is no prompt. A vault in an older on-disk format is refused with
- * `migration_required`.
+ * [`ReaderOptions`] document. A vault the manifest declares as remote
+ * (`[vaults.<name>]`) is opened at its provider with the credentials the
+ * provider's own environment supplies. Otherwise the vault file is
+ * unlocked in this order: the OS credential store, then `passphrase` if
+ * non-null, then `SOURCEORRERY_PASSPHRASE`, then the passphrase file from
+ * the options or `SOURCEORRERY_PASSPHRASE_FILE`. There is no prompt. A
+ * vault in an older on-disk format is refused with `migration_required`.
  *
  * On success `*out_handle` holds the handle; on failure it is `NULL` and
  * `so_last_error_hint()` says what to do.

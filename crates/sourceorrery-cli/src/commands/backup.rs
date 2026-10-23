@@ -88,7 +88,7 @@ pub fn backup(ctx: &Ctx, args: &BackupArgs) -> anyhow::Result<()> {
             args.out.display()
         ));
     }
-    let vault = ctx.open_default()?;
+    let vault = ctx.open_local_default("backup")?;
     let passphrase = new_backup_passphrase()?;
     let snapshot = vault.export(&ExportOptions {
         secrets: (!args.secret.is_empty()).then(|| args.secret.clone()),
@@ -170,7 +170,7 @@ pub fn restore(ctx: &Ctx, args: &RestoreArgs) -> anyhow::Result<()> {
     let bytes = std::fs::read(&args.file)
         .with_context(|| format!("cannot read {}", args.file.display()))?;
     let info = backup::inspect(&bytes)?;
-    let vault = ctx.open_default()?;
+    let vault = ctx.open_local_default("restore")?;
     let passphrase = existing_backup_passphrase()?;
     let snapshot = backup::open(&bytes, &passphrase)?;
     drop(passphrase);

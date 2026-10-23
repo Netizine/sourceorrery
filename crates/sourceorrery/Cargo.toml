@@ -20,6 +20,7 @@ os-keyring = ["sourceorrery-storage/os-keyring"]
 
 [dependencies]
 sourceorrery-core.workspace = true
+sourceorrery-provider.workspace = true
 sourceorrery-storage.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true

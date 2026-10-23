@@ -33,6 +33,7 @@ ui = ["dep:ratatui"]
 
 [dependencies]
 sourceorrery-core.workspace = true
+sourceorrery-provider.workspace = true
 sourceorrery-storage.workspace = true
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.6"

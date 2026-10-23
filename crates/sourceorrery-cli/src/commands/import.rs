@@ -18,12 +18,11 @@ use sourceorrery_core::manifest::{explicit_env_for, secret_name_for_env};
 use sourceorrery_core::{
     MANIFEST_FILE_NAME, Manifest, SecretClient, SecretError, SetSecretOptions,
 };
-use sourceorrery_storage::SqliteVault;
 use zeroize::Zeroizing;
 
 use crate::cli::ImportArgs;
 use crate::commands::project::MANIFEST_HEADER;
-use crate::context::Ctx;
+use crate::context::{Ctx, Opened};
 use crate::dotenv::{self, Assignment};
 use crate::output::{self, Table};
 
@@ -290,7 +289,7 @@ fn check_secret_collisions(rows: &[Row]) -> anyhow::Result<()> {
 }
 
 /// Open the vault; in a dry run a vault that does not exist yet is not an error.
-fn open_vault(ctx: &Ctx, name: &str, dry_run: bool) -> anyhow::Result<Option<SqliteVault>> {
+fn open_vault(ctx: &Ctx, name: &str, dry_run: bool) -> anyhow::Result<Option<Opened>> {
     match ctx.open(name) {
         Ok(vault) => Ok(Some(vault)),
         Err(err) => match err.downcast_ref::<SecretError>() {
@@ -311,7 +310,7 @@ fn open_vault(ctx: &Ctx, name: &str, dry_run: bool) -> anyhow::Result<Option<Sql
 fn store(
     row: &mut Row,
     assignment: &Assignment,
-    vault: Option<&SqliteVault>,
+    vault: Option<&Opened>,
     args: &ImportArgs,
     vault_name: &str,
     source: &str,

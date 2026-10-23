@@ -22,6 +22,10 @@ client. To create vaults and store secrets, install the CLI:
   `SecretClient`, each call run on Tokio's blocking pool, so async
   applications reach the local vault without blocking their executor.
 
+* `open_remote`: opens the vault a `[vaults.<name>]` table of
+  `sourceorrery.toml` describes (a `RemoteVault` from `sourceorrery-core`),
+  choosing the provider the table names and wrapping it in `Blocking`.
+
 Both adapters pass every operation and every error through untouched: the
 error code an application sees is the backend's, whichever shape it called.
 The remote providers themselves (HashiCorp Vault, AWS Secrets Manager,

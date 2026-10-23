@@ -24,6 +24,7 @@ pub fn run(ctx: &Ctx, cmd: &VaultCommand) -> anyhow::Result<()> {
 }
 
 fn migrate(ctx: &Ctx, args: &VaultMigrateArgs) -> anyhow::Result<()> {
+    Ctx::refuse_remote(&args.name, "vault migrate")?;
     let unlocker = ctx.unlocker();
     let vault = ctx.registry.migrate(&args.name, &unlocker)?;
     let descriptor = vault.descriptor()?;
@@ -101,22 +102,66 @@ fn create(ctx: &Ctx, args: &VaultCreateArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One line of `vault list`: a vault file in the home directory, or a
+/// remote vault the nearest manifest declares.
+#[derive(serde::Serialize)]
+struct VaultRow {
+    name: String,
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<std::path::PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<sourceorrery_core::Provider>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    location: Option<String>,
+}
+
 fn list(ctx: &Ctx) -> anyhow::Result<()> {
-    let names = ctx.registry.list()?;
-    if ctx.json() {
-        return output::json(&names);
+    let mut rows: Vec<VaultRow> = ctx
+        .registry
+        .list()?
+        .into_iter()
+        .map(|name| {
+            Ok(VaultRow {
+                path: Some(ctx.registry.vault_path(&name)?),
+                name,
+                kind: "local",
+                provider: None,
+                location: None,
+            })
+        })
+        .collect::<anyhow::Result<_>>()?;
+    for (name, remote) in Ctx::remote_vaults()? {
+        rows.push(VaultRow {
+            name,
+            kind: "remote",
+            path: None,
+            provider: Some(remote.provider()),
+            location: Some(remote.location()),
+        });
     }
-    if names.is_empty() {
+    if ctx.json() {
+        return output::json(&rows);
+    }
+    if rows.is_empty() {
         eprintln!(
             "no vaults in {}\ncreate one with: sourceorrery vault create development",
             ctx.registry.root().display()
         );
         return Ok(());
     }
-    let mut table = Table::new(["NAME", "PATH"]);
-    for name in names {
-        let path = ctx.registry.vault_path(&name)?;
-        table.row([name, path.display().to_string()]);
+    let mut table = Table::new(["NAME", "KIND", "LOCATION"]);
+    for row in rows {
+        let kind = match row.provider {
+            Some(provider) => provider.name().to_owned(),
+            None => row.kind.to_owned(),
+        };
+        let location = row
+            .path
+            .map(|p| p.display().to_string())
+            .or(row.location)
+            .unwrap_or_default();
+        table.row([row.name, kind, location]);
     }
     table.print()
 }
@@ -124,7 +169,10 @@ fn list(ctx: &Ctx) -> anyhow::Result<()> {
 fn info(ctx: &Ctx) -> anyhow::Result<()> {
     let vault = ctx.open_default()?;
     let descriptor = vault.descriptor()?;
-    let protectors = vault.protectors()?;
+    let protectors = match vault.local() {
+        Some(local) => local.protectors()?,
+        None => Vec::new(),
+    };
     if ctx.json() {
         return output::json(&serde_json::json!({
             "vault": descriptor,
@@ -153,6 +201,9 @@ fn info(ctx: &Ctx) -> anyhow::Result<()> {
         format!("{} days", descriptor.retention_days),
     ]);
     table.print()?;
+    if vault.local().is_none() {
+        return Ok(());
+    }
     println!();
     protector_table(&protectors)
 }
@@ -173,7 +224,7 @@ fn protector_table(protectors: &[sourceorrery_storage::ProtectorInfo]) -> anyhow
 fn protector(ctx: &Ctx, cmd: &ProtectorCommand) -> anyhow::Result<()> {
     match cmd {
         ProtectorCommand::List => {
-            let vault = ctx.open_default()?;
+            let vault = ctx.open_local_default("vault protector")?;
             let protectors = vault.protectors()?;
             if ctx.json() {
                 return output::json(&protectors);
@@ -181,7 +232,7 @@ fn protector(ctx: &Ctx, cmd: &ProtectorCommand) -> anyhow::Result<()> {
             protector_table(&protectors)
         }
         ProtectorCommand::Add(ProtectorAddArgs { kind, label }) => {
-            let vault = ctx.open_default()?;
+            let vault = ctx.open_local_default("vault protector")?;
             let spec = match kind {
                 ProtectorChoice::OsKeyring => ProtectorSpec::OsKeyring,
                 ProtectorChoice::Passphrase => {
@@ -201,7 +252,7 @@ fn protector(ctx: &Ctx, cmd: &ProtectorCommand) -> anyhow::Result<()> {
             Ok(())
         }
         ProtectorCommand::Remove(ProtectorRemoveArgs { protector }) => {
-            let vault = ctx.open_default()?;
+            let vault = ctx.open_local_default("vault protector")?;
             let note = vault.remove_protector(protector)?;
             if ctx.json() {
                 return output::json(&serde_json::json!({ "removed": protector, "note": note }));
@@ -216,6 +267,7 @@ fn protector(ctx: &Ctx, cmd: &ProtectorCommand) -> anyhow::Result<()> {
 }
 
 fn destroy(ctx: &Ctx, args: &VaultDestroyArgs) -> anyhow::Result<()> {
+    Ctx::refuse_remote(&args.name, "vault destroy")?;
     if !ctx.registry.exists(&args.name) {
         return Err(sourceorrery_core::SecretError::VaultNotFound {
             name: args.name.clone(),

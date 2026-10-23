@@ -715,3 +715,92 @@ fn run_passes_the_child_exit_status_through_whole() {
         assert_eq!(out.status.code(), Some(137), "{}", stderr(&out));
     }
 }
+
+#[test]
+fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.set("development", "database-password", CANARY);
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
+         [secrets.database-password]\n\n\
+         [secrets.api-key]\nvault = \"prod\"\n\n\
+         [vaults.prod]\nprovider = \"hashicorp-vault\"\n\
+         address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n",
+    )
+    .unwrap();
+
+    // The listing shows both kinds.
+    let out = env.ok(&["vault", "list"]);
+    assert!(
+        out.contains("development") && out.contains("local"),
+        "{out}"
+    );
+    assert!(
+        out.contains("prod")
+            && out.contains("hashicorp-vault")
+            && out.contains("vault.example.com"),
+        "{out}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&env.ok(&["vault", "list", "-o", "json"])).unwrap();
+    let rows = json.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["name"], "development");
+    assert_eq!(rows[0]["kind"], "local");
+    assert_eq!(rows[1]["name"], "prod");
+    assert_eq!(rows[1]["kind"], "remote");
+    assert_eq!(rows[1]["provider"], "hashicorp-vault");
+
+    // Contract commands reach the provider layer, which this build lacks.
+    let out = env.run(&["secret", "get", "api-key", "--vault", "prod", "-o", "json"]);
+    assert!(!out.status.success());
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert_eq!(err["error"]["code"], "unsupported");
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("HashiCorp Vault"),
+        "{err}"
+    );
+    let out = env.run(&["check"]);
+    assert!(!out.status.success());
+    assert!(stdout(&out).contains("unsupported"), "{}", stdout(&out));
+    // The local vault is still read as before.
+    assert!(stdout(&out).contains("ok"), "{}", stdout(&out));
+
+    // Local-only commands refuse the remote vault by name, before any
+    // network or unlock attempt.
+    for args in [
+        vec!["vault", "protector", "list", "--vault", "prod"],
+        vec!["vault", "destroy", "prod", "--yes"],
+        vec!["vault", "migrate", "prod"],
+        vec!["audit", "--vault", "prod"],
+        vec!["backup", "--vault", "prod", "--out", "x.sobackup"],
+    ] {
+        let out = env.run(&args);
+        assert!(!out.status.success(), "{args:?}");
+        let text = stderr(&out);
+        assert!(
+            text.contains("remote vault") && text.contains("local vaults only"),
+            "{args:?}: {text}"
+        );
+    }
+    assert!(!env.project.path().join("x.sobackup").exists());
+
+    // A credential in the manifest is a parse error that never echoes it.
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
+         [vaults.prod]\nprovider = \"hashicorp-vault\"\n\
+         address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n\
+         token = \"hvs.SMUGGLED-TOKEN-CANARY\"\n",
+    )
+    .unwrap();
+    let out = env.run(&["vault", "list"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("token"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("SMUGGLED"), "{}", stderr(&out));
+}

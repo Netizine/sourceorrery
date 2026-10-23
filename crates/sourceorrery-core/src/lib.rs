@@ -31,6 +31,7 @@ pub mod identity;
 pub mod listing;
 pub mod manifest;
 pub mod policy;
+pub mod remote;
 pub mod secret;
 pub mod timestamp;
 pub mod traits;
@@ -47,6 +48,7 @@ pub use identity::{Principal, PrincipalKind};
 pub use listing::{ContinuationToken, ListOptions, Page};
 pub use manifest::{MANIFEST_FILE_NAME, Manifest, ProjectSection, SecretRequirement};
 pub use policy::{AccessPolicy, AllowAll, Decision, SoftDeletePolicy};
+pub use remote::{Provider, RemoteVault, VaultConfig};
 pub use secret::{
     DeletedSecret, RecoveryLevel, Secret, SecretBytes, SecretProperties, SecretReference,
     SetSecretOptions, UpdateSecretProperties, validate_secret_name, validate_version_id,

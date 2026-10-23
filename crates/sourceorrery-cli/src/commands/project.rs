@@ -10,10 +10,9 @@ use sourceorrery_core::manifest::ManifestEntry;
 use sourceorrery_core::{
     MANIFEST_FILE_NAME, Manifest, Secret, SecretBytes, SecretClient, SecretError, policy, timestamp,
 };
-use sourceorrery_storage::SqliteVault;
 
 use crate::cli::{CheckArgs, InitArgs, IntegrationChoice, RunArgs, SkillScope};
-use crate::context::Ctx;
+use crate::context::{Ctx, Opened};
 use crate::integrations::{self, Agent, Outcome};
 use crate::output::{self, Table};
 
@@ -271,7 +270,7 @@ fn load_manifest(explicit: Option<&Path>) -> anyhow::Result<(PathBuf, Manifest)>
 /// Opens each distinct vault once.
 struct VaultCache<'a> {
     ctx: &'a Ctx,
-    vaults: BTreeMap<String, SqliteVault>,
+    vaults: BTreeMap<String, Opened>,
 }
 
 impl<'a> VaultCache<'a> {
@@ -282,7 +281,7 @@ impl<'a> VaultCache<'a> {
         }
     }
 
-    fn get(&mut self, name: &str) -> anyhow::Result<&SqliteVault> {
+    fn get(&mut self, name: &str) -> anyhow::Result<&Opened> {
         if !self.vaults.contains_key(name) {
             let vault = self.ctx.open(name)?;
             self.vaults.insert(name.to_owned(), vault);
@@ -324,9 +323,15 @@ pub fn check(ctx: &Ctx, args: &CheckArgs) -> anyhow::Result<()> {
 
     for entry in &entries {
         let outcome: Result<String, SecretError> = (|| {
-            let vault = cache
-                .get(&entry.reference.vault)
-                .map_err(|err| SecretError::Locked(err.to_string()))?;
+            // A vault that cannot be opened reports its own code (a remote
+            // vault this build lacks, an older on-disk format); anything
+            // else that stops the unlock is `locked`.
+            let vault = cache.get(&entry.reference.vault).map_err(|err| {
+                match err.downcast::<SecretError>() {
+                    Ok(core) => core,
+                    Err(other) => SecretError::Locked(other.to_string()),
+                }
+            })?;
             // Metadata only: no value is read and no secret_get audit event is written.
             let versions = vault.list_properties_of_secret_versions(&entry.reference.name)?;
             let chosen = match &entry.reference.version {

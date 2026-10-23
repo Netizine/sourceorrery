@@ -8,6 +8,21 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* Remote vaults in the manifest: a `[vaults.<name>]` table in
+  `sourceorrery.toml` names a provider (`hashicorp-vault`,
+  `aws-secrets-manager`, `azure-key-vault`) and its addressing keys, and
+  nothing else: there is no credential key, and an unknown key is a parse
+  error. `SecretReader::open` resolves a vault name through the nearest
+  manifest or the one `OpenOptions::manifest` names, `so_reader_open`
+  through the `manifest` key of `options_json`, and every SDK through a
+  `manifest` option; `Project::load` always uses the manifest it loads.
+  `vault list` shows remote vaults with their provider and location, and
+  the commands about the vault file (`vault create`, `vault protector`,
+  `vault destroy`, `vault migrate`, `audit`, `backup`, `restore`, `ui`)
+  refuse a remote vault by name. The error codes `unauthenticated` and
+  `provider_unavailable` (transient) are new. No provider is built in yet,
+  so opening a remote vault fails with `unsupported`, naming the provider
+  (`docs/providers/index.md`).
 * `AsyncSecretClient`, the asynchronous shape of the contract, in
   `sourceorrery-core` (ADR 0008): the same methods and semantics as
   `SecretClient`, object safe, for the remote providers of milestone 4.
@@ -72,6 +87,9 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+* `vault list -o json` prints one object per vault (`name`, `kind`, and
+  `path` for a local vault or `provider` and `location` for a remote one)
+  instead of an array of names, so that remote vaults can be listed.
 * Listing a vault no longer costs one audit-chain scan and two queries per
   secret: the SQLite backend reads the checkpoints of every secret in one
   statement and the names, `secrets` rows and version rows of the listing

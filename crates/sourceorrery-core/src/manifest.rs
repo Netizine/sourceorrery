@@ -1,9 +1,11 @@
 //! The no-secret project manifest (`sourceorrery.toml`).
 //!
-//! A manifest declares which secrets a project needs and how they are
-//! delivered to the runtime. It is safe to commit because it *cannot* hold a
-//! value: every section rejects unknown fields, so `value = "..."` is a parse
-//! error, not a leak.
+//! A manifest declares which secrets a project needs, how they are
+//! delivered to the runtime and, for a vault that is not a local file, which
+//! remote provider serves it and where (`[vaults.<name>]`, see
+//! [`RemoteVault`]). It is safe to commit because it *cannot* hold a value
+//! or a credential: every section rejects unknown fields, so `value = "..."`
+//! or `token = "..."` is a parse error, not a leak.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -11,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, SecretError};
+use crate::remote::{RemoteVault, VaultConfig};
 use crate::secret::{SecretReference, validate_secret_name, validate_version_id};
 use crate::vault::validate_vault_name;
 
@@ -26,6 +29,10 @@ pub struct Manifest {
     /// Secrets the project requires, keyed by secret name.
     #[serde(default)]
     pub secrets: BTreeMap<String, SecretRequirement>,
+    /// Remote vaults, keyed by vault name. A vault name that has no table
+    /// here is a local vault file.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub vaults: BTreeMap<String, RemoteVault>,
 }
 
 /// `[project]` section.
@@ -144,7 +151,21 @@ impl Manifest {
                 vault: vault.to_owned(),
             },
             secrets,
+            vaults: BTreeMap::new(),
         }
+    }
+
+    /// How `vault` is reached: a `[vaults.<vault>]` table, or the local
+    /// vault file of that name.
+    pub fn vault_config(&self, vault: &str) -> VaultConfig {
+        self.vaults.get(vault).map_or(VaultConfig::Local, |remote| {
+            VaultConfig::Remote(remote.clone())
+        })
+    }
+
+    /// The `[vaults.<vault>]` table, when `vault` is remote.
+    pub fn remote_vault(&self, vault: &str) -> Option<&RemoteVault> {
+        self.vaults.get(vault)
     }
 
     /// Check names, vaults, versions and environment variable names.
@@ -156,6 +177,16 @@ impl Manifest {
         }
         validate_vault_name(&self.project.vault)
             .map_err(|err| SecretError::Manifest(format!("[project].vault: {err}")))?;
+        for (name, remote) in &self.vaults {
+            validate_vault_name(name)
+                .map_err(|err| SecretError::Manifest(format!("[vaults.{name}]: {err}")))?;
+            remote.validate().map_err(|err| match err {
+                SecretError::Manifest(inner) => {
+                    SecretError::Manifest(format!("[vaults.{name}].{inner}"))
+                }
+                other => other,
+            })?;
+        }
         let mut seen_env = BTreeMap::new();
         for (name, requirement) in &self.secrets {
             validate_secret_name(name)
@@ -283,6 +314,18 @@ fn redact_toml_error(text: &str, err: &toml::de::Error) -> String {
         })
         .unwrap_or_default();
     let message = err.message();
+    if message.starts_with("unknown variant") {
+        // The value of `provider`: named by what it should have been, not by
+        // what it was.
+        let known: Vec<&str> = crate::remote::Provider::ALL
+            .iter()
+            .map(|p| p.name())
+            .collect();
+        return format!(
+            "unknown provider{location}; expected one of {}",
+            known.join(", ")
+        );
+    }
     if KEYS_ONLY_MESSAGES
         .iter()
         .any(|prefix| message.starts_with(prefix))
@@ -353,6 +396,134 @@ vault = "payments-sandbox"
             entries[1].reference.to_string(),
             "sourceorrery://payments-sandbox/payment-api-key/abc123"
         );
+    }
+
+    const REMOTE: &str = r#"
+[project]
+name = "x"
+vault = "development"
+
+[secrets.database-password]
+
+[secrets.api-key]
+vault = "prod-secrets"
+
+[vaults.prod-secrets]
+provider = "hashicorp-vault"
+address = "https://vault.example.com:8200"
+mount = "secret"
+namespace = "platform"
+
+[vaults.aws]
+provider = "aws-secrets-manager"
+region = "eu-west-1"
+prefix = "myapp/"
+
+[vaults.azure]
+provider = "azure-key-vault"
+vault_url = "https://myapp-kv.vault.azure.net"
+"#;
+
+    #[test]
+    fn remote_vaults_are_parsed_and_resolved_by_name() {
+        let manifest = Manifest::parse(REMOTE).unwrap();
+        assert_eq!(manifest.vaults.len(), 3);
+        assert_eq!(manifest.vault_config("development"), VaultConfig::Local);
+        let prod = manifest.remote_vault("prod-secrets").unwrap();
+        assert_eq!(prod.provider(), crate::remote::Provider::HashicorpVault);
+        assert_eq!(
+            manifest.vault_config("prod-secrets"),
+            VaultConfig::Remote(prod.clone())
+        );
+        assert_eq!(
+            manifest.remote_vault("aws").unwrap().provider().name(),
+            "aws-secrets-manager"
+        );
+        assert_eq!(
+            manifest.remote_vault("azure").unwrap().location(),
+            "https://myapp-kv.vault.azure.net"
+        );
+        // References are unchanged: the vault name resolves through the manifest.
+        let entries = manifest.entries().unwrap();
+        assert_eq!(
+            entries[0].reference.to_string(),
+            "sourceorrery://prod-secrets/api-key"
+        );
+        // Round trip keeps the tables.
+        let again = Manifest::parse(&manifest.to_toml().unwrap()).unwrap();
+        assert_eq!(again, manifest);
+        // A manifest without the section is unchanged in meaning.
+        assert!(Manifest::parse(EXAMPLE).unwrap().vaults.is_empty());
+    }
+
+    #[test]
+    fn a_manifest_cannot_carry_a_credential() {
+        const CANARY: &str = "hvs.CAESIJ_SMUGGLED_TOKEN_CANARY";
+        let head = "[project]\nname = \"x\"\nvault = \"dev\"\n\n";
+        let cases = [
+            // A token next to the address.
+            format!(
+                "{head}[vaults.v]\nprovider = \"hashicorp-vault\"\naddress = \"https://v\"\n\
+                 mount = \"secret\"\ntoken = \"{CANARY}\"\n"
+            ),
+            // AWS keys.
+            format!(
+                "{head}[vaults.v]\nprovider = \"aws-secrets-manager\"\nregion = \"eu-west-1\"\n\
+                 access_key_id = \"AKIA\"\nsecret_access_key = \"{CANARY}\"\n"
+            ),
+            // An Azure client secret in a sub-table.
+            format!(
+                "{head}[vaults.v]\nprovider = \"azure-key-vault\"\n\
+                 vault_url = \"https://x.vault.azure.net\"\n\n[vaults.v.credential]\n\
+                 client_secret = \"{CANARY}\"\n"
+            ),
+            // A key from another provider's table.
+            format!(
+                "{head}[vaults.v]\nprovider = \"azure-key-vault\"\n\
+                 vault_url = \"https://x.vault.azure.net\"\nregion = \"{CANARY}\"\n"
+            ),
+            // Credentials in the URL.
+            format!(
+                "{head}[vaults.v]\nprovider = \"hashicorp-vault\"\n\
+                 address = \"https://root:{CANARY}@v\"\nmount = \"secret\"\n"
+            ),
+            // An unknown provider whose name is the canary.
+            format!("{head}[vaults.v]\nprovider = \"{CANARY}\"\naddress = \"https://v\"\n"),
+            // No provider at all.
+            format!("{head}[vaults.v]\naddress = \"https://{CANARY}\"\n"),
+        ];
+        for text in cases {
+            let err = Manifest::parse(&text).unwrap_err();
+            assert_eq!(err.code(), "manifest", "{text}");
+            let shown = err.to_string();
+            assert!(!shown.contains(CANARY), "echoed the credential: {shown}");
+        }
+        let err = Manifest::parse(&format!(
+            "{head}[vaults.v]\nprovider = \"nope\"\naddress = \"https://v\"\n"
+        ))
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("expected one of hashicorp-vault"),
+            "{err}"
+        );
+        assert!(!err.to_string().contains("nope"), "{err}");
+    }
+
+    #[test]
+    fn remote_vault_tables_are_validated() {
+        let head = "[project]\nname = \"x\"\nvault = \"dev\"\n\n";
+        let bad_name = format!(
+            "{head}[vaults.Bad_Name]\nprovider = \"azure-key-vault\"\n\
+             vault_url = \"https://x.vault.azure.net\"\n"
+        );
+        let err = Manifest::parse(&bad_name).unwrap_err();
+        assert!(err.to_string().contains("[vaults.Bad_Name]"), "{err}");
+        let bad_mount = format!(
+            "{head}[vaults.v]\nprovider = \"hashicorp-vault\"\naddress = \"https://v\"\n\
+             mount = \"/secret/\"\n"
+        );
+        let err = Manifest::parse(&bad_mount).unwrap_err();
+        assert!(err.to_string().contains("[vaults.v].mount"), "{err}");
     }
 
     #[test]

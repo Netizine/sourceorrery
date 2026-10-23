@@ -728,22 +728,32 @@ it can never hold a value.
 
 **Steps.**
 
-- [ ] Core: `[vaults.<name>]`, `VaultConfig`, validation, the two error
+- [x] Core: `[vaults.<name>]`, `VaultConfig`, validation, the two error
       codes, `Manifest::entries` carrying the config; tests including a
       manifest that tries to smuggle a credential (rejected).
-- [ ] `sourceorrery-provider`: `open(config, options) ->
+- [x] `sourceorrery-provider`: `open(config, options) ->
       Box<dyn SecretClient>` choosing local or `Blocking<provider>`.
-- [ ] `sourceorrery` crate and the C ABI: `OpenOptions::manifest`,
+- [x] `sourceorrery` crate and the C ABI: `OpenOptions::manifest`,
       `options_json.manifest`; the SDK harness gains a scenario with a
       remote vault in the manifest once M4.3 exists.
-- [ ] CLI: the listing and info changes; local-only commands refuse a
+- [x] CLI: the listing and info changes; local-only commands refuse a
       remote vault with a clear message.
-- [ ] Docs: `docs/cli.md` manifest section, `docs/sdks/index.md`
+- [x] Docs: `docs/cli.md` manifest section, `docs/sdks/index.md`
       (opening a remote vault), a new `docs/providers/index.md`.
 
-**Decision for you.** The manifest shape above, in particular that
-credentials are never in it (the environment, the platform identity or a
-credential file the provider's own SDK reads).
+**Decision taken** (your "go with your recommendations"): the manifest
+shape above, with no credential key of any kind; credentials come from the
+provider's own environment, platform identity or credential file.
+
+**Done, with notes.** `sourceorrery_provider::open_remote(name, &RemoteVault)`
+opens the remote side only (the local side stays in the client crate and
+the CLI, so the provider crate does not depend on storage); with no
+provider built in it returns `unsupported` naming the provider, and the
+plumbing from manifest to that call is tested in core, the client crate,
+the C ABI and the CLI. The SDK harness scenario with a remote vault waits
+for M4.3, when there is a provider to observe. `vault list -o json` now
+prints one object per vault (a minor-release change under ADR 0007, in the
+changelog).
 
 ---
 

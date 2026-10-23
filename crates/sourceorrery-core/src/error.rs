@@ -125,6 +125,17 @@ pub enum SecretError {
     /// The backup was written in a newer format than this build reads.
     #[error("backup format {version} is newer than this build understands; upgrade sourceorrery")]
     BackupFormat { version: u16 },
+
+    /// A remote provider has no credentials for this process, or they have
+    /// expired. `reason` is the provider's own description of what is
+    /// missing: never a credential, nor any part of one.
+    #[error("not authenticated to {provider}: {reason}")]
+    Unauthenticated { provider: String, reason: String },
+
+    /// A remote provider could not be reached or answered with a server
+    /// error. Transient: the same call may succeed later.
+    #[error("{provider} is unavailable: {reason}")]
+    ProviderUnavailable { provider: String, reason: String },
 }
 
 impl SecretError {
@@ -157,13 +168,18 @@ impl SecretError {
             Self::BackupPassphrase => "backup_passphrase",
             Self::BackupFormat { .. } => "backup_format",
             Self::VaultMismatch { .. } => "vault_mismatch",
+            Self::Unauthenticated { .. } => "unauthenticated",
+            Self::ProviderUnavailable { .. } => "provider_unavailable",
         }
     }
 
     /// True when retrying the same call later could succeed without
     /// administrative action (e.g. a `not_yet_valid` secret).
     pub fn is_transient(&self) -> bool {
-        matches!(self, Self::NotYetValid { .. })
+        matches!(
+            self,
+            Self::NotYetValid { .. } | Self::ProviderUnavailable { .. }
+        )
     }
 }
 
@@ -226,6 +242,14 @@ mod tests {
             },
             SecretError::BackupPassphrase,
             SecretError::BackupFormat { version: 2 },
+            SecretError::Unauthenticated {
+                provider: "p".into(),
+                reason: "r".into(),
+            },
+            SecretError::ProviderUnavailable {
+                provider: "p".into(),
+                reason: "r".into(),
+            },
         ];
         let mut codes: Vec<_> = errors.iter().map(SecretError::code).collect();
         let total = codes.len();

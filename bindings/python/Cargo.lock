@@ -1289,6 +1289,7 @@ name = "sourceorrery"
 version = "0.1.4"
 dependencies = [
  "sourceorrery-core",
+ "sourceorrery-provider",
  "sourceorrery-storage",
  "thiserror",
  "zeroize",
@@ -1321,6 +1322,15 @@ dependencies = [
  "sha2",
  "thiserror",
  "zeroize",
+]
+
+[[package]]
+name = "sourceorrery-provider"
+version = "0.1.4"
+dependencies = [
+ "async-trait",
+ "sourceorrery-core",
+ "tokio",
 ]
 
 [[package]]
@@ -1455,6 +1465,15 @@ checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "tokio"
+version = "1.54.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
+dependencies = [
+ "pin-project-lite",
 ]
 
 [[package]]

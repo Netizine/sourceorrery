@@ -38,6 +38,8 @@ const CODES: &[&str] = &[
     "backup_passphrase",
     "backup_format",
     "vault_mismatch",
+    "unauthenticated",
+    "provider_unavailable",
 ];
 
 fn error_for(code: &str) -> SecretError {
@@ -80,6 +82,14 @@ fn error_for(code: &str) -> SecretError {
         "vault_mismatch" => SecretError::VaultMismatch {
             requested: name,
             found: version,
+        },
+        "unauthenticated" => SecretError::Unauthenticated {
+            provider: name,
+            reason: version,
+        },
+        "provider_unavailable" => SecretError::ProviderUnavailable {
+            provider: name,
+            reason: version,
         },
         other => panic!("no constructor for code {other}"),
     }
