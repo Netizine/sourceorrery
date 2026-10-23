@@ -94,11 +94,18 @@ exactly as for a local vault.
   and removes the oldest beyond that, after which the version is
   `version_not_found`.
 * **Recovery is 30 days.** `delete_secret` schedules deletion with the
-  longest window the service offers; `scheduled_purge_on` is that date, and
-  Secrets Manager really does purge the secret then. A name is reusable
-  only after the purge, or at once after `purge_deleted_secret`.
+  longest window the service offers. `scheduled_purge_on` is AWS's recovery
+  deadline. Permanent deletion is asynchronous and can happen later; a name
+  is reusable after deletion completes, including after `purge_deleted_secret`. See
+  [AWS's deletion semantics](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DeleteSecret.html).
+* **The deletion start is unknown.** AWS returns the recovery deadline,
+  not the original deletion-request time. The provider uses the Unix
+  epoch (`1970-01-01T00:00:00Z`) as the unknown sentinel for `deleted_on`;
+  consult CloudTrail for the actual request time. It does not subtract
+  30 days, because another tool may have requested a shorter recovery window.
 * **Timestamps come from the service** except `updated_on`, which the
-  provider writes into a tag when it changes properties.
+  provider writes into a tag when it changes properties, and the unknown
+  `deleted_on` sentinel above.
 * **Listing costs one request per secret**, after the `ListSecrets` pages.
   The paged methods cut pages out of that listing.
 * **No audit log of SourceOrrery's own.** `audit_events` is `unsupported`;

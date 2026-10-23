@@ -509,6 +509,7 @@ jobs:
       - run: python3 -m unittest -v scripts/release/set_version_test.py
       - run: python3 -m unittest -v scripts/release/test_publish_crates.py
       - run: python3 -m unittest -v scripts/ci/abi_check_test.py
+      - run: python3 -m unittest -v scripts/ci/moto_version_timestamps_test.py
 
   # ADR 0007: the library built from this commit must still pass the
   # conformance contract of the latest release: its C runner, compiled
@@ -712,6 +713,10 @@ jobs:
       AWS_REGION: us-east-1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Correct Moto's stored version timestamps
+        env:
+          MOTO_CONTAINER_ID: ${{ job.services.moto.id }}
+        run: python3 scripts/ci/moto-version-timestamps.py --container "$MOTO_CONTAINER_ID"
       - name: Wait for the emulator
         run: |
           for _ in $(seq 1 60); do

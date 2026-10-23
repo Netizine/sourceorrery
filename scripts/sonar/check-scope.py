@@ -49,6 +49,8 @@ def main() -> None:
         "site/scripts/docs-tooling.test.mjs", "scripts/coverage/test_php_report.py",
         "scripts/release/set_version_test.py", "scripts/release/test_publish_crates.py",
         "scripts/release/package_managers_test.py", "scripts/ci/abi_check_test.py",
+        "scripts/ci/moto_version_timestamps_test.py", "scripts/coverage/test_native_env.py",
+        "scripts/ci/fixtures/moto_5_2_4_version_listing.py",
     }
     for label, expected, actual in [("production", expected_sources, sources), ("test", expected_tests, tests)]:
         if missing := expected - actual:

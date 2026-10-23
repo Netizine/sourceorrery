@@ -385,7 +385,12 @@ impl AwsClient {
         name: &str,
         described: &DescribeSecretOutput,
     ) -> Result<DeletedSecret> {
-        let deleted_on = mapping::from_aws(described.deleted_date());
+        let scheduled_purge_on = described
+            .deleted_date()
+            .and_then(|date| OffsetDateTime::from_unix_timestamp_nanos(date.as_nanos()).ok())
+            .ok_or_else(|| {
+                SecretError::Storage(format!("'{name}' carries no valid deletion deadline"))
+            })?;
         let props = SecretProps::from_tags(described.tags())?;
         // The versions of a secret scheduled for deletion can still be
         // listed; should that be refused, the current version named by the
@@ -408,16 +413,10 @@ impl AwsClient {
         .ok_or_else(|| SecretError::Storage(format!("'{name}' has no versions")))?;
         Ok(DeletedSecret {
             properties: props.properties(&self.vault_name, name, &newest.id, newest.created_on),
-            deleted_on,
-            scheduled_purge_on: Some(
-                deleted_on
-                    .checked_add(time::Duration::days(i64::from(RECOVERY_WINDOW_DAYS)))
-                    .ok_or_else(|| {
-                        SecretError::Storage(format!(
-                            "'{name}' carries a deletion date out of range"
-                        ))
-                    })?,
-            ),
+            // AWS exposes the recovery deadline, not the request time. Do
+            // not infer the start: other clients can use shorter windows.
+            deleted_on: OffsetDateTime::UNIX_EPOCH,
+            scheduled_purge_on: Some(scheduled_purge_on),
             recovery_id: format!("sourceorrery://{}/deletedsecrets/{name}", self.vault_name),
         })
     }

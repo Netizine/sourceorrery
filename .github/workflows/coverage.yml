@@ -51,6 +51,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Correct Moto's stored version timestamps
+        env:
+          MOTO_CONTAINER_ID: ${{ job.services.moto.id }}
+        run: python3 scripts/ci/moto-version-timestamps.py --container "$MOTO_CONTAINER_ID"
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24

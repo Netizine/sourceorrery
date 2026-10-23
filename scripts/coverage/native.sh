@@ -51,7 +51,10 @@ fi
 
 coverage="$repo/coverage"
 mkdir -p "$coverage" "$repo/target"
-export CARGO_LLVM_COV_TARGET_DIR="$repo/target/coverage-rust-$mode"
+# show-env reads Cargo metadata and exports its target directory for reporting.
+# Ordinary cargo/napi builds read CARGO_TARGET_DIR, not CARGO_LLVM_COV_TARGET_DIR.
+export CARGO_TARGET_DIR="$repo/target/coverage-rust-$mode"
+export CARGO_LLVM_COV_TARGET_DIR="$CARGO_TARGET_DIR"
 # Do not let cargo-llvm-cov download missing toolchain components in this script.
 export CARGO_LLVM_COV_SETUP=no
 # Coverage requires symbols even if a caller sets release-profile overrides.

@@ -1,0 +1,101 @@
+"""Exercise native.sh's external-build environment without compiling the SDKs."""
+
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+
+REPO = Path(__file__).resolve().parents[2]
+BASH = (
+    str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
+    if os.name == "nt" else shutil.which("bash")
+)
+
+
+class NativeCoverageEnvironmentTests(unittest.TestCase):
+    def test_external_builds_and_reports_share_the_isolated_target_for_every_mode(self):
+        coverage_root = REPO / "coverage"
+        coverage_root.mkdir(exist_ok=True)
+        for mode in ("workspace", "python", "node"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(
+                prefix="native-env-", dir=coverage_root
+            ) as directory:
+                self.assertEqual(Path(directory).resolve().parent, coverage_root.resolve())
+                root = Path(directory) / "fixture repo"
+                script = root / "scripts/coverage/native.sh"
+                script.parent.mkdir(parents=True)
+                shutil.copyfile(REPO / "scripts/coverage/native.sh", script)
+                stub_dir = root / "bin"
+                stub_dir.mkdir()
+
+                def stub(name, body):
+                    path = stub_dir / name
+                    path.write_text("#!/usr/bin/env bash\nset -eu\n" + body, encoding="utf-8", newline="\n")
+                    path.chmod(0o755)
+
+                # Model cargo-llvm-cov 0.9.1: show-env reports the directory
+                # selected by Cargo metadata, but does not set CARGO_TARGET_DIR.
+                stub("cargo", '''case "$*" in
+  'llvm-cov --version') exit 0 ;;
+  'llvm-cov show-env --sh'*)
+    printf 'cwd=%s\nshow-args=%s\n' "$PWD" "$*" >> "$COVERAGE_ENV_LOG"
+    printf "export CARGO_LLVM_COV_TARGET_DIR='%s'\\n" "${CARGO_TARGET_DIR:-$PWD/target}"
+    printf "export LLVM_PROFILE_FILE='%s/test-%%p.profraw'\\n" "${CARGO_TARGET_DIR:-$PWD/target}"
+    ;;
+  'llvm-cov clean --workspace') exit 0 ;;
+  *)
+    printf 'build=%s\nreport=%s\nprofile=%s\n' "${CARGO_TARGET_DIR:-unset}" "$CARGO_LLVM_COV_TARGET_DIR" "$LLVM_PROFILE_FILE" >> "$COVERAGE_ENV_LOG"
+    exit 73 ;;
+esac
+''')
+                stub("npm", '''printf 'build=%s\nreport=%s\nprofile=%s\n' "${CARGO_TARGET_DIR:-unset}" "$CARGO_LLVM_COV_TARGET_DIR" "$LLVM_PROFILE_FILE" >> "$COVERAGE_ENV_LOG"
+exit 73
+''')
+                stub("uname", "echo Linux\n")
+                stub("rustc", "echo 'host: x86_64-unknown-linux-gnu'\n")
+                for command in ("python3", "node", "gcc", "g++", "gcov", "gcovr"):
+                    stub(command, "exit 0\n")
+                for binding in ("python", "node"):
+                    (root / "bindings" / binding).mkdir(parents=True)
+                napi = root / "bindings/node/node_modules/.bin/napi"
+                napi.parent.mkdir(parents=True)
+                napi.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
+                napi.chmod(0o755)
+                fixture = root / "fixture"
+                fixture.mkdir()
+                manifest = fixture / "sourceorrery.toml"
+                manifest.touch()
+                log = root / "environment.log"
+                env = os.environ.copy()
+                env.update({
+                    "COVERAGE_STUB_DIR": stub_dir.as_posix(),
+                    "COVERAGE_ENV_LOG": log.as_posix(),
+                    "CARGO_TARGET_DIR": "unrelated-caller-target",
+                    "CARGO_LLVM_COV_TARGET_DIR": "unrelated-caller-report",
+                    "SOURCEORRERY_COVERAGE_PYTHON": "python3",
+                    "SOURCEORRERY_HOME": fixture.as_posix(),
+                    "SOURCEORRERY_PASSPHRASE": "fixture-only",
+                    "SOURCEORRERY_TEST_VAULT": "ci",
+                    "SOURCEORRERY_TEST_MANIFEST": manifest.as_posix(),
+                    "SOURCEORRERY_TEST_OLD_VERSION": "fixture-only",
+                })
+                command = [BASH, "--noprofile", "--norc", "-c",
+                           'export PATH="$(cd "$COVERAGE_STUB_DIR" && pwd):$PATH"; source "$@"',
+                           "coverage-env-test", script.as_posix(), mode]
+                result = subprocess.run(command, env=env,
+                                        capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 73, result.stdout + result.stderr)
+                values = dict(line.split("=", 1) for line in log.read_text().splitlines())
+                repository = values["cwd"] if mode == "workspace" else values["cwd"].rsplit("/bindings/", 1)[0]
+                expected = f"{repository}/target/coverage-rust-{mode}"
+                self.assertEqual(values["build"], expected)
+                self.assertEqual(values["report"], expected)
+                self.assertEqual(values["profile"], expected + "/test-%p.profraw")
+                self.assertEqual("--target x86_64-unknown-linux-gnu" in values["show-args"], mode == "node")
+
+
+if __name__ == "__main__":
+    unittest.main()

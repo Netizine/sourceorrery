@@ -14,6 +14,13 @@ and `AuditOperation` gains variants and a larger `ALL` array. Existing Rust
 struct literals and exhaustive matches may need changes. The C ABI and
 vault-file compatibility rules remain separate (ADR 0007).
 
+### Fixed
+
+* AWS Secrets Manager deleted-secret metadata uses AWS's scheduled deletion
+  date as the purge deadline, without adding a second recovery window.
+  AWS does not expose the deletion request time; `deleted_on` is the Unix
+  epoch to indicate that it is unknown.
+
 ### Security
 
 The engineering pass of the milestone 4 security review
