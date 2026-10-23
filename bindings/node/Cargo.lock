@@ -2517,7 +2517,7 @@ name = "sourceorrery-provider-vault"
 version = "0.1.4"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "reqwest",
  "serde",
  "serde_json",
