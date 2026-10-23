@@ -6,6 +6,15 @@
 # Compiled C/C++ examples and conformance runners
 /build/
 
+# Test coverage and local SonarScanner/MSBuild analysis output
+/coverage/
+/.sonarqube/
+/.scannerwork/
+
+# Python test/coverage tooling
+__pycache__/
+.pytest_cache/
+
 # Local vaults must never be committed
 *.sqlite
 *.sqlite-wal

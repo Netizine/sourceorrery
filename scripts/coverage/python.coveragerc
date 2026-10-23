@@ -1,0 +1,11 @@
+[run]
+branch = True
+relative_files = True
+source = bindings/python/python/sourceorrery
+data_file = coverage/python/.coverage
+
+[xml]
+output = coverage/python.xml
+
+[report]
+show_missing = True

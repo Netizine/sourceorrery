@@ -293,6 +293,10 @@ The engineering pass of the milestone 4 security review
 
 ### Added
 
+* A CI coverage workflow for the Rust workspace and all SDK implementations,
+  plus JavaScript documentation tooling, with one SonarCloud analysis.
+  Python targets and source/test classification are explicit; Node and Astro
+  dependencies are installed before TypeScript analysis.
 * `sourceorrery import <file>` moves a `.env` file into a vault: each value
   is stored as a secret (`DATABASE_URL` → `database-url`, tagged
   `imported-from`) and each key declared in `sourceorrery.toml`, appended

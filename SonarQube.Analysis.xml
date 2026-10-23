@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Loaded explicitly by scripts/sonar/scan.sh. No credentials belong here.
+     The .NET scanner obtains sources/tests from the two analysis projects;
+     it does not support setting sonar.sources or sonar.tests by hand. -->
+<SonarQubeAnalysisProperties xmlns="http://www.sonarsource.com/msbuild/integration/2015/1">
+  <Property Name="sonar.host.url">https://sonarcloud.io</Property>
+  <Property Name="sonar.sourceEncoding">UTF-8</Property>
+  <Property Name="sonar.scanner.scanAll">false</Property>
+  <Property Name="sonar.python.version">3.11,3.12,3.13,3.14</Property>
+  <Property Name="sonar.typescript.tsconfigPaths">bindings/node/tsconfig.json,site/tsconfig.json</Property>
+
+  <Property Name="sonar.rust.lcov.reportPaths">coverage/rust-combined.lcov</Property>
+  <Property Name="sonar.python.coverage.reportPaths">coverage/python.xml</Property>
+  <Property Name="sonar.javascript.lcov.reportPaths">coverage/node/lcov.info,coverage/site/lcov.info</Property>
+  <Property Name="sonar.go.coverage.reportPaths">coverage/go.out</Property>
+  <Property Name="sonar.coverage.jacoco.xmlReportPaths">bindings/java/target/site/jacoco/jacoco.xml</Property>
+  <Property Name="sonar.cs.opencover.reportsPaths">coverage/dotnet.xml</Property>
+  <Property Name="sonar.coverageReportPaths">coverage/cpp.xml,coverage/php.xml</Property>
+
+  <Property Name="sonar.cfamily.compile-commands">coverage/compile_commands.json</Property>
+  <Property Name="sonar.java.source">22</Property>
+  <Property Name="sonar.java.binaries">bindings/java/target/classes</Property>
+  <Property Name="sonar.java.test.binaries">bindings/java/target/test-classes</Property>
+  <Property Name="sonar.java.test.libraries">bindings/java/target/sonar-libraries/*.jar</Property>
+</SonarQubeAnalysisProperties>

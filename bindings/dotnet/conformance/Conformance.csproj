@@ -6,6 +6,8 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <AssemblyName>Conformance</AssemblyName>
+    <!-- Classify this runner locally so production project references stay main code. -->
+    <SonarQubeTestProject>true</SonarQubeTestProject>
   </PropertyGroup>
 
   <ItemGroup>

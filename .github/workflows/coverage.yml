@@ -1,0 +1,187 @@
+name: Coverage and SonarCloud
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: All-language coverage
+    # The private Font Awesome package and Sonar analysis need repository secrets.
+    # Fork contributions still run the normal CI; analyze after a trusted merge.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      ASTRO_TELEMETRY_DISABLED: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            bindings/node/package-lock.json
+            site/package-lock.json
+            scripts/coverage/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: ffi, json
+          ini-values: ffi.enable=true
+          coverage: xdebug
+
+      - name: Install native and coverage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libdbus-1-dev lcov
+          python -m pip install 'coverage==7.17.0' 'pytest>=8,<9' 'gcovr==8.4'
+          dotnet tool restore
+
+      - uses: ./.github/actions/sdk-fixture
+
+      - name: Install LLVM coverage support
+        run: rustup component add llvm-tools-preview
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+
+      - name: Install Node SDK and coverage dependencies
+        run: |
+          npm ci --prefix bindings/node
+          npm ci --prefix scripts/coverage
+
+      - name: Install site dependencies
+        working-directory: site
+        env:
+          FONTAWESOME_NPM_AUTH_TOKEN: ${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
+        run: npm ci
+
+      - name: Generate Astro content and types
+        working-directory: site
+        run: |
+          npm run sync
+          npm run astro -- sync
+
+      - name: Check report conversion and analysis scopes
+        run: |
+          python -m unittest discover -s scripts/coverage -p 'test_*.py'
+          python scripts/sonar/check-scope.py
+
+      - name: Rust workspace, C ABI and C++ coverage
+        run: bash scripts/coverage/native.sh
+
+      - name: Python and PyO3 coverage
+        run: bash scripts/coverage/native.sh python
+
+      - name: JavaScript and N-API coverage
+        run: |
+          bash scripts/coverage/native.sh node
+          npm run typecheck --prefix bindings/node
+
+      - name: Merge Rust execution across native runtimes
+        run: |
+          lcov --add-tracefile coverage/rust.lcov \
+            --add-tracefile coverage/rust-python.lcov \
+            --add-tracefile coverage/rust-node.lcov \
+            --output-file coverage/rust-combined.lcov
+
+      - name: Site, Go and PHP coverage
+        run: |
+          bash scripts/coverage/sdk.sh site
+          bash scripts/coverage/sdk.sh go
+          bash scripts/coverage/sdk.sh php
+
+      - name: Java coverage and semantic-analysis dependencies
+        run: |
+          mvn --batch-mode --no-transfer-progress -f bindings/java/pom.xml -Pcoverage clean verify
+          mvn --batch-mode --no-transfer-progress -f bindings/java/pom.xml \
+            org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies \
+            -DincludeScope=test -DoutputDirectory=target/sonar-libraries
+
+      - name: Select Sonar analysis
+        id: sonar
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo '::warning::SONAR_TOKEN is missing. Coverage will be generated, but not uploaded to SonarCloud.'
+            echo 'Coverage reports only: add the SONAR_TOKEN repository secret and disable Automatic Analysis in SonarCloud to enable CI analysis.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Begin SonarCloud analysis
+        if: steps.sonar.outputs.enabled == 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: bash scripts/sonar/scan.sh begin
+
+      - name: Build all analysis projects
+        run: dotnet build SourceOrrery.Analysis.Source.csproj -c Release --no-incremental --disable-build-servers
+
+      - name: .NET coverage
+        run: >-
+          dotnet test bindings/dotnet/SourceOrrery.Tests/SourceOrrery.Tests.csproj
+          -c Release --no-build --no-restore -p:CollectCoverage=true
+
+      - name: Verify every coverage report
+        run: python scripts/sonar/check-reports.py
+
+      - name: Upload analysis to SonarCloud
+        if: steps.sonar.outputs.enabled == 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: bash scripts/sonar/scan.sh end
+
+      - name: Keep coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage/*.lcov
+            coverage/*.xml
+            coverage/go.out
+            coverage/node/lcov.info
+            coverage/site/lcov.info
+            bindings/java/target/site/jacoco/jacoco.xml
+          if-no-files-found: warn
+          retention-days: 14

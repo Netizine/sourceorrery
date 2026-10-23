@@ -16,8 +16,10 @@
 import { Image } from 'astro:assets';
 import { LinkButton } from '@astrojs/starlight/components';
 import FAIcon from './FAIcon.astro';
+import BrandText from './BrandText.astro';
 
 const { data } = Astro.locals.starlightRoute.entry;
+const isHome = Astro.locals.starlightRoute.id === '';
 const { title = data.title, tagline, image, actions = [] } = data.hero || {};
 const actionIcons: Record<string, string> = {
 	'right-arrow': 'arrow-right', 'external': 'arrow-up-right', 'padlock': 'shield-keyhole',
@@ -53,6 +55,14 @@ const meta = [
 		<p class="so-kicker">Open source · Rust-native · Local-first</p>
 		<h1 id="_top" data-page-title set:html={title} />
 		{tagline && <p class="so-cover__deck" set:html={tagline} />}
+		{isHome && (
+			<p class="so-cover__rationale">
+				<a href="/why-sourceorrery/">
+					<span>Why <BrandText text="SourceOrrery" />?</span>
+					<FAIcon name="arrow-right" />
+				</a>
+			</p>
+		)}
 		{
 			actions.length > 0 && (
 				<div class="so-cover__actions">
@@ -168,6 +178,21 @@ const meta = [
 	.so-cover__deck :global(em) {
 		font-style: normal;
 		font-weight: 600;
+	}
+
+	.so-cover__rationale {
+		margin: 1rem 0 0;
+		font-family: var(--so-font-ui);
+		font-size: 0.9rem;
+		line-height: 1.6;
+	}
+
+	.so-cover__rationale a {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		color: var(--sl-color-text-accent);
+		text-underline-offset: 0.2em;
 	}
 
 	.so-cover__actions {

@@ -44,6 +44,10 @@ comment, and give `dtolnay/rust-toolchain` an explicit `toolchain:`. The
 `workflows` CI job (zizmor) rejects an unpinned action and a `run:` step
 that expands an expression; put the value in `env:` instead.
 
+The [coverage guide](docs/coverage.md) explains the multi-language coverage
+workflow, local report commands and SonarCloud setup. Coverage uses the
+existing SDK fixture and supplements the cross-platform CI tests.
+
 ## Pull requests
 
 * One logical change per PR, with tests. Behavioural changes to the

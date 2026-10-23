@@ -1,0 +1,22 @@
+<Project>
+  <!-- Keep these paths ahead of SDK props so NuGet and compilation agree.
+       Each root analysis project must have its own generated files. -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>build/sonar/source/obj/</BaseIntermediateOutputPath>
+    <BaseOutputPath>build/sonar/source/bin/</BaseOutputPath>
+  </PropertyGroup>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="scripts/sonar/Analysis.props" />
+  <PropertyGroup>
+    <SonarQubeTestProject>false</SonarQubeTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The scanner keeps files under this project's directory in its module.
+         A root project preserves source/test classification for every language. -->
+    <Content Include="@(AnalysisFile)" Exclude="@(AnalysisTestFile)" />
+    <ProjectReference Include="bindings/dotnet/SourceOrrery/SourceOrrery.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="bindings/dotnet/examples/GetSecret/GetSecret.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="SourceOrrery.Analysis.Tests.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>
