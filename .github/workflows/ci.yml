@@ -210,7 +210,9 @@ jobs:
         run: |
           python -m pip install --require-hashes --only-binary :all: -r bindings/python/ci-requirements.txt
           maturin build --release --locked -m bindings/python/Cargo.toml -o dist/python
-          python -m pip install --no-index --no-deps dist/python/sourceorrery-*.whl
+          # The SDK wheel just built, pinned by its own hash like the tools above.
+          python -c 'import hashlib, pathlib; w = next(pathlib.Path("dist/python").glob("sourceorrery-*.whl")).resolve(); print(f"sourceorrery @ {w.as_uri()} --hash=sha256:{hashlib.sha256(w.read_bytes()).hexdigest()}")' > dist/python/requirements.txt
+          python -m pip install --require-hashes --only-binary :all: --no-index --no-deps -r dist/python/requirements.txt
       - name: Tests
         shell: bash
         run: python -m pytest bindings/python/tests -v
