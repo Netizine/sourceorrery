@@ -67,9 +67,13 @@ The engineering pass of the milestone 4 security review
   Python targets and source/test classification are explicit; Node and Astro
   dependencies are installed before TypeScript analysis.
   Local PowerShell and Ubuntu runners generate reports without uploading.
-* A provider bootstrap mode in the release workflow packages the real core
-  and three new provider crates before their first publication. Subsequent
-  release runs skip versions already published to crates.io.
+* The full 0.2.0 release can publish the three new provider crates with a
+  temporary token while the six existing crates keep using trusted
+  publishing. Core is published first, then the providers, then the
+  remaining workspace crates; ordinary SDK and release jobs still run.
+  The existing-release recovery workflow supports the same option and
+  skips exact versions already published. Configuring provider trusted
+  publishing afterward requires no new release.
 * A vault passphrase typed at the prompt must rate at least "good" on a
   strength estimate (a score 0 to 4 from the character runs, with common
   passwords, dictionary-style words, repeated characters, keyboard and

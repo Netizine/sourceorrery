@@ -10,8 +10,10 @@ so the pipeline can be exercised without touching a registry.
 The next release is **0.2.0**. The new public manifest fields and audit
 operations change the Rust API compared with 0.1.4, so these features
 cannot ship as a compatible 0.1.5 patch. The existing compatibility gate
-remains enabled. Before the first full 0.2.0 release, complete the
-[provider bootstrap](#first-provider-publication-for-020) below.
+remains enabled. The [first provider publication](#first-provider-publication-for-020)
+is part of the same full release run: every crate, SDK and release asset
+uses **0.2.0**. Enabling trusted publishing for the new providers afterward
+does not require a 0.2.1 release.
 
 ## Procedure
 
@@ -23,13 +25,18 @@ remains enabled. Before the first full 0.2.0 release, complete the
    Rust API against crates.io for the version you type and fails the run
    when a bigger bump is needed. Update `CHANGELOG.md`: move the
    `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading and
-   commit to `main`.
+   commit to `main`, then push the complete release candidate once. A Git
+   push makes that commit available to Actions; it does not start a release.
 2. In GitHub, open *Actions → Release → Run workflow*, enter the version
-   (`X.Y.Z`, no `v`) and leave **dry_run** ticked. Wait for green. The
+   (`X.Y.Z`, no `v`) and leave **dry_run** ticked. For the first provider
+   publication, also tick **bootstrap_providers** as described below.
+   Wait for green. The
    `release-dry-run-X.Y.Z` artifact holds everything the real run would
    attach, plus `SHA256SUMS` and the release notes; download it and try a
    package or two.
-3. Run the workflow again with **dry_run** unticked. It creates the tag
+3. Manually dispatch the workflow again from the same reviewed commit,
+   with the same version and provider option, and **dry_run** unticked.
+   It creates the tag
    `vX.Y.Z` on the chosen commit, the GitHub Release with every archive and
    package and `SHA256SUMS`, then the publish jobs run (or are skipped,
    see below).
@@ -43,8 +50,9 @@ remains enabled. Before the first full 0.2.0 release, complete the
    version in every file name and tag.
 
 The workflow refuses a version that is not semver and, outside a dry run,
-a tag that already exists. Releases are immutable: a mistake is fixed by
-the next patch version.
+a tag that already exists. Published package contents are immutable; code
+changes require a new version. A failed registry upload can instead be
+retried for the same version with [Release packages](#publishing-an-existing-release).
 
 ## What one run produces
 
@@ -58,7 +66,7 @@ the next patch version.
 | `java` | `sourceorrery-X.Y.Z.jar` with the native libraries embedded per platform. |
 | `dotnet` | `SourceOrrery.X.Y.Z.nupkg` with `runtimes/<rid>/native`. |
 | `crates` | `scripts/release/publish-crates.py X.Y.Z` runs Cargo's dry-run verification for every publishable workspace crate in dependency order. |
-| `bootstrap-providers` | only when `bootstrap_providers` is ticked: the real core and three provider `.crate` archives (`provider-bootstrap-X.Y.Z`), with no GitHub Release or tag. A real bootstrap uploads core through OIDC, then the three new names through the temporary bootstrap credential. |
+| `publish-crates` | in a real release, publishes the workspace crates through OIDC. With `bootstrap_providers` ticked, core is published through OIDC first, the three new providers use the temporary credential, and the remaining workspace crates use OIDC. Exact versions already published are skipped. All ordinary release and SDK jobs still run. |
 | `php` | `composer validate --strict` on the root `composer.json` and a Composer install of the version from a local tag (`scripts/ci/php-package-install.sh`); nothing is uploaded, the package Packagist serves is the git tag itself. |
 | `release` | the GitHub Release (or the dry-run artifact) with `SHA256SUMS`, and a build provenance attestation for every file in a real release. |
 | `package-managers` | the Homebrew formula, the Scoop manifest and the three WinGet manifests, rendered from `SHA256SUMS` by `scripts/release/package-managers.py` (artifact `package-managers`); every URL is a release archive and every hash comes from the release. |
@@ -84,8 +92,9 @@ published by **trusted publishing**: the job presents the identity token
 GitHub signs for that workflow run, and the registry exchanges it for a
 short-lived credential, granted only if the package's trusted-publisher
 settings name `Netizine/sourceorrery` and the workflow file. No token for
-them is stored for normal releases. The one-time crates.io provider
-bootstrap uses a temporary token, revoked immediately afterwards. Maven
+them is stored for normal releases. The first publication of the three
+crates.io providers uses a temporary token in the same full release run;
+revoke it after configuring their trusted publishers. Maven
 Central and Packagist still use stored
 secrets (*Settings → Secrets and variables → Actions*); their jobs are
 skipped, not failed, while the secrets are absent. The **Release
@@ -94,7 +103,7 @@ same settings, with its own file name, `ReleasePackages.yaml`.
 
 | Registry | Release job | Runs when | Stored credential |
 |----------|-------------|-----------|-------------------|
-| crates.io | `publish-crates` | every real release | none (trusted publishing) |
+| crates.io | `publish-crates` | every real release | none for normal releases; temporary `CRATES_BOOTSTRAP_TOKEN` for the three new providers when `bootstrap_providers` is ticked |
 | PyPI | `publish-pypi` | every real release | none (trusted publishing) |
 | npm | `publish-npm` | the repository variable `NPM_TRUSTED_PUBLISHING` is `true` | none (trusted publishing) |
 | NuGet | `publish-nuget` | the secret `NUGET_USER` exists | none besides the profile name (trusted publishing) |
@@ -174,7 +183,8 @@ before its Trusted Publishing configuration can be created. The
 [crates.io rollout documentation](https://blog.rust-lang.org/2025/07/11/crates-io-development-update-2025-07/)
 requires an initial token-authenticated publication; pending publishers
 for names that do not exist are not available. The three providers are
-new in 0.2.0 and need the bootstrap below.
+new in 0.2.0 and use the initial-publication option below. The six existing
+crates, including core, continue to use OIDC throughout that release.
 
 1. For each crate, *Settings → Trusted Publishing → Add →
    GitHub*: Repository owner `Netizine`, Repository name `sourceorrery`,
@@ -190,23 +200,27 @@ new in 0.2.0 and need the bootstrap below.
 
 The real providers use `AsyncSecretClient`, `Provider` and `RemoteVault`
 from the new core. Published core 0.1.4 does not contain those APIs, so
-publishing providers against it would produce unusable packages. Bootstrap
-the actual release sources in this order: `sourceorrery-core` 0.2.0, then
+publishing providers against it would produce unusable packages. The full
+release publishes the actual sources in this order: `sourceorrery-core` 0.2.0, then
 `sourceorrery-provider-vault` and `sourceorrery-provider-aws` 0.2.0, then
 `sourceorrery-provider` 0.2.0. The two concrete providers' test-only
 dependency on the adapter is path-only, so Cargo strips that back edge
 from their published manifests; local tests still exercise the adapter.
+The remaining workspace crates follow, and the ordinary SDK and GitHub
+Release jobs run too. **bootstrap_providers** changes how those three new
+crate names are authenticated; it is not a provider-only release mode.
 
-1. Commit the complete release candidate and ensure normal CI is green.
+1. Commit and push the complete release candidate and ensure normal CI is green.
    In *Actions → Release → Run workflow*, select that commit's branch,
    enter `0.2.0`, tick **bootstrap_providers**, and leave **dry_run** ticked.
-   This runs the unchanged Rust compatibility gate, provider unit tests,
-   and Cargo's packaging/build verification for all four real crates.
-   Review the `provider-bootstrap-0.2.0` artifact and its source commit.
-   It creates no registry version, tag or GitHub Release.
-2. Confirm `sourceorrery-core` already trusts `Netizine/sourceorrery`,
-   workflow `release.yml`, with the environment field empty. Core uses
-   OIDC even if its *Only allow trusted publishing* setting is enabled.
+   This is the full dry run: the Rust compatibility gate, Cargo's
+   packaging/build verification for every publishable workspace crate,
+   and the ordinary native and SDK build jobs remain enabled. Review the
+   `release-dry-run-0.2.0` artifact and its source commit. It creates no
+   registry version, tag or GitHub Release.
+2. Confirm all six existing crates already trust `Netizine/sourceorrery`,
+   workflow `release.yml`, with the environment field empty. They use
+   OIDC even if their *Only allow trusted publishing* setting is enabled.
 3. In [crates.io API tokens](https://crates.io/settings/tokens), create a
    short-lived token restricted to creating new crates (`publish-new`),
    scoped to exactly `sourceorrery-provider-vault`,
@@ -216,19 +230,25 @@ from their published manifests; local tests still exercise the adapter.
    committed file or chat. It does not need access to publish core.
 4. Run **Release** again from the same reviewed commit, version `0.2.0`,
    **bootstrap_providers** ticked and **dry_run** unticked. After the same
-   checks, core is published through its existing OIDC trust, then Cargo
-   publishes the three real provider crates using the temporary token.
-   Already-published exact versions are skipped, so a partial run can be
-   resumed from the same commit. This mode never creates a GitHub Release.
+   full build and checks, the workflow creates the `v0.2.0` tag and GitHub
+   Release and runs the ordinary registry jobs. The crates.io job publishes
+   core through its existing OIDC trust, the three real provider crates
+   using the temporary token, then the remaining workspace crates through
+   OIDC. Already-published exact versions are skipped. All packages retain
+   version **0.2.0**; no second full release is needed to finish this flow.
 5. Add both trusted-publisher configurations listed above to each new
    provider crate. Revoke the temporary token on crates.io and delete
    **CRATES_BOOTSTRAP_TOKEN** from the repository. Optionally enable
-   *Only allow trusted publishing* on all three.
-6. Return to the normal release procedure with **bootstrap_providers**
-   unticked, first as a dry run. Keep the same source commit and version:
-   the full release will reuse the four published versions and publish
-   the remaining workspace crates. Registry versions are immutable; if
-   a published package needs code changes, choose a new release version.
+   *Only allow trusted publishing* on all three. These are registry
+   settings: enabling them requires no new package version or release.
+   Leave **bootstrap_providers** unticked on future ordinary releases.
+
+The Git push, dry-run dispatch and real dispatch are separate actions;
+only the real dispatch publishes. If a registry job fails after the GitHub
+Release exists, use **Release packages** for `v0.2.0` as described below,
+first with **dry_run** ticked. That workflow has the same initial-provider
+option for any provider publication still missing. Do not change already
+published package contents or move the tag to resume an upload.
 
 For a local packaging check, with no credentials or uploads:
 
@@ -343,12 +363,23 @@ It builds no new release:
   the renderer can be applied to an existing release.
 
 Inputs: the tag (empty means the latest release), **dry_run** (on by
-default) and one tick box per registry. Every registry's files are
+default), one tick box per registry, and **bootstrap_providers** for the
+initial publication of the three provider crates. Every registry's files are
 checked before anything is uploaded, a version a registry already has is
 skipped, and npm, NuGet, Maven Central and Packagist are skipped while
 their variable or secrets are missing; a ticked crates.io or PyPI box
-always publishes, by trusted publishing. A dry run checks every ticked
+publishes using its configured trust (with the temporary provider-token
+exception above). A dry run checks every ticked
 registry, with or without secrets, and uploads nothing.
+
+For a partially completed 0.2.0 release, select `v0.2.0` and the failed
+registries, run a dry run, then dispatch again with **dry_run** unticked.
+If new provider crates still need their first publication, tick both
+**crates** and **bootstrap_providers**, retaining the temporary
+**CRATES_BOOTSTRAP_TOKEN** until those uploads finish. If the providers
+are already published and configured for trusted publishing, leave the
+provider option unticked. The job uses the release tag's sources and skips
+existing exact versions, so recovery does not require 0.2.1.
 
 ## What each registry page shows
 

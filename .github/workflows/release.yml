@@ -20,7 +20,7 @@ on:
         type: boolean
         default: true
       bootstrap_providers:
-        description: "Only bootstrap core and the three new provider crates; no GitHub Release"
+        description: "First-publish the three new providers during this full release using CRATES_BOOTSTRAP_TOKEN"
         required: true
         type: boolean
         default: false
@@ -66,7 +66,6 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
-          BOOTSTRAP_PROVIDERS: ${{ inputs.bootstrap_providers }}
         run: |
           set -euo pipefail
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
@@ -77,7 +76,16 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-          if [ "$DRY_RUN" = "true" ] || [ "$BOOTSTRAP_PROVIDERS" = "true" ]; then echo "publish=false" >> "$GITHUB_OUTPUT"; else echo "publish=true" >> "$GITHUB_OUTPUT"; fi
+          if [ "$DRY_RUN" = "true" ]; then echo "publish=false" >> "$GITHUB_OUTPUT"; else echo "publish=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Require the first-publication credential before building a real release
+        if: ${{ inputs.bootstrap_providers && !inputs.dry_run }}
+        env:
+          CRATES_BOOTSTRAP_TOKEN: ${{ secrets.CRATES_BOOTSTRAP_TOKEN }}
+        run: |
+          if [ -z "$CRATES_BOOTSTRAP_TOKEN" ]; then
+            echo "::error::Set CRATES_BOOTSTRAP_TOKEN for the three new provider names, or disable bootstrap_providers once they use Trusted Publishing. See docs/release.md."
+            exit 1
+          fi
       # crates.io and PyPI use trusted publishing with no switch: their jobs
       # run in every real release and fail loudly if a registry does not
       # trust this workflow.
@@ -138,68 +146,6 @@ jobs:
           package: sourceorrery,sourceorrery-core
           rust-toolchain: manual
 
-  # First publication of a crate cannot use crates.io Trusted Publishing.
-  # Keep this in release.yml so the existing core publisher identity works.
-  # The new provider names use a temporary, narrowly scoped API token only
-  # after all validation. The normal release later skips these versions.
-  bootstrap-providers:
-    name: bootstrap provider crates
-    needs: [preflight, semver]
-    if: inputs.bootstrap_providers
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      VERSION: ${{ needs.preflight.outputs.version }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: Stamp the chosen release version
-        run: python3 scripts/release/set-version.py "$VERSION"
-      - name: Verify publishing decisions and provider unit tests
-        run: |
-          python3 -m unittest discover -s scripts/release -p 'test_publish_crates.py'
-          cargo test --locked --lib -p sourceorrery-core -p sourceorrery-provider-vault -p sourceorrery-provider-aws -p sourceorrery-provider
-      - name: Package and verify the real core and provider crates without uploading
-        run: python3 scripts/release/publish-crates.py "$VERSION" --group bootstrap
-      - name: Keep the reviewed crate archives
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: provider-bootstrap-${{ needs.preflight.outputs.version }}
-          path: |
-            target/package/sourceorrery-core-${{ needs.preflight.outputs.version }}.crate
-            target/package/sourceorrery-provider-vault-${{ needs.preflight.outputs.version }}.crate
-            target/package/sourceorrery-provider-aws-${{ needs.preflight.outputs.version }}.crate
-            target/package/sourceorrery-provider-${{ needs.preflight.outputs.version }}.crate
-          if-no-files-found: error
-      - name: Require the temporary first-publication credential
-        if: ${{ !inputs.dry_run }}
-        env:
-          CRATES_BOOTSTRAP_TOKEN: ${{ secrets.CRATES_BOOTSTRAP_TOKEN }}
-        run: |
-          if [ -z "$CRATES_BOOTSTRAP_TOKEN" ]; then
-            echo "::error::Set CRATES_BOOTSTRAP_TOKEN for the three new provider names, then rerun. See docs/release.md."
-            exit 1
-          fi
-      - name: Core publishing token (existing GitHub OIDC trust)
-        id: crates-io-auth
-        if: ${{ !inputs.dry_run }}
-        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
-      - name: Publish the core contract required by the providers
-        if: ${{ !inputs.dry_run }}
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
-        run: python3 scripts/release/publish-crates.py "$VERSION" --group core --publish
-      - name: First publication of the three real provider crates
-        if: ${{ !inputs.dry_run }}
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_BOOTSTRAP_TOKEN }}
-        run: python3 scripts/release/publish-crates.py "$VERSION" --group providers --publish
-
   # ---------------------------------------------------------------------
   # Software bill of materials: one CycloneDX 1.5 document per shipped
   # binary and target, from the lock files alone (no build), so one runner
@@ -211,7 +157,6 @@ jobs:
   sbom:
     name: software bill of materials
     needs: preflight
-    if: ${{ !inputs.bootstrap_providers }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -269,7 +214,6 @@ jobs:
   native:
     name: native (${{ matrix.target }})
     needs: preflight
-    if: ${{ !inputs.bootstrap_providers }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -374,7 +318,6 @@ jobs:
   python:
     name: python (${{ matrix.target }})
     needs: preflight
-    if: ${{ !inputs.bootstrap_providers }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -430,7 +373,6 @@ jobs:
   node-build:
     name: node (${{ matrix.target }})
     needs: preflight
-    if: ${{ !inputs.bootstrap_providers }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -634,7 +576,6 @@ jobs:
   crates:
     name: crates.io (dry run)
     needs: preflight
-    if: ${{ !inputs.bootstrap_providers }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -651,7 +592,6 @@ jobs:
   php:
     name: php
     needs: preflight
-    if: ${{ !inputs.bootstrap_providers }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -778,7 +718,8 @@ jobs:
   # ---------------------------------------------------------------------
   # Registry publishing: skipped in a dry run. crates.io, PyPI, npm and
   # NuGet are published by trusted publishing (GitHub OIDC, no stored
-  # token). npm also needs the variable NPM_TRUSTED_PUBLISHING and NuGet the
+  # token), except the opted-in first provider publication below. npm also
+  # needs the variable NPM_TRUSTED_PUBLISHING and NuGet the
   # secret NUGET_USER; Maven Central and Packagist are skipped while their
   # secrets are absent; pkg.go.dev needs nothing.
   # ---------------------------------------------------------------------
@@ -808,6 +749,22 @@ jobs:
       - name: crates.io token (GitHub OIDC, 30 minutes)
         id: crates-io-auth
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      # Core's new API must exist before the providers. Established crates
+      # retain OIDC; only the three first publications use the temporary token.
+      - name: Publish core for the first provider release (OIDC)
+        if: inputs.bootstrap_providers
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+        run: python3 scripts/release/publish-crates.py "$VERSION" --group core --publish
+      - name: First-publish the three providers (temporary token)
+        if: inputs.bootstrap_providers
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_BOOTSTRAP_TOKEN }}
+        run: python3 scripts/release/publish-crates.py "$VERSION" --group providers --publish
+      # Exact versions published above are skipped, so configuring the new
+      # providers' Trusted Publishers can wait until after this release.
       - name: Publish missing workspace versions in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}

@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish, e.g. v0.1.1 (empty: the latest release)"
+        description: "Release tag to publish, e.g. v0.2.0 (empty: the latest release)"
         required: false
         type: string
         default: ""
@@ -50,6 +50,10 @@ on:
         description: "crates.io: all publishable workspace crates (nine from 0.2.0)"
         type: boolean
         default: true
+      bootstrap_providers:
+        description: "First-publish missing provider versions using CRATES_BOOTSTRAP_TOKEN (requires crates)"
+        type: boolean
+        default: false
       maven:
         description: "Maven Central: ai.sourceorrery:sourceorrery"
         type: boolean
@@ -102,6 +106,20 @@ jobs:
       has_winget: ${{ steps.secrets.outputs.has_winget }}
       published: ${{ steps.release.outputs.published }}
     steps:
+      - name: Validate first-provider-publication inputs
+        if: inputs.bootstrap_providers
+        env:
+          PUBLISH_CRATES: ${{ inputs.crates }}
+          CRATES_BOOTSTRAP_TOKEN: ${{ secrets.CRATES_BOOTSTRAP_TOKEN }}
+        run: |
+          if [ "$PUBLISH_CRATES" != true ]; then
+            echo '::error::bootstrap_providers requires crates to be selected.'
+            exit 1
+          fi
+          if [ "$DRY_RUN" != true ] && [ -z "$CRATES_BOOTSTRAP_TOKEN" ]; then
+            echo '::error::Set CRATES_BOOTSTRAP_TOKEN for the three new provider names, or disable bootstrap_providers once they use Trusted Publishing. See docs/release.md.'
+            exit 1
+          fi
       - name: Resolve the release
         id: release
         env:
@@ -364,6 +382,16 @@ jobs:
         id: crates-io-auth
         if: ${{ !inputs.dry_run }}
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - name: Publish core for the first provider release (OIDC)
+        if: ${{ inputs.bootstrap_providers && !inputs.dry_run }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+        run: python3 .release-tools/scripts/release/publish-crates.py "$VERSION" --group core --publish
+      - name: First-publish missing providers (temporary token)
+        if: ${{ inputs.bootstrap_providers && !inputs.dry_run }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_BOOTSTRAP_TOKEN }}
+        run: python3 .release-tools/scripts/release/publish-crates.py "$VERSION" --group providers --publish
       - name: Publish
         if: ${{ !inputs.dry_run }}
         env:

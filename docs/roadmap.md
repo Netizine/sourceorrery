@@ -78,9 +78,12 @@ The 0.1.4 build includes these changes alongside milestones 1 and 2:
 Alongside the 0.1.4 features above, this build includes remote providers
 (milestone 4 below), encrypted backup and restore, paged listings, ABI
 compatibility checks, release provenance and software bills of materials,
-and multi-language coverage reports for SonarCloud. The provider crates
-require their first publication before their trusted publishers can be set
-up; see the [release procedure](release.md).
+and multi-language coverage reports for SonarCloud. The full release can
+publish the three new provider crates with a temporary credential while
+existing crates use trusted publishing; all packages stay on **0.2.0**.
+Configure the providers' trusted publishers afterward and revoke the
+temporary credential. Enabling trusted publishing does not require another
+release; see the [release procedure](release.md).
 
 ### Onboarding, a strong passphrase and a second factor
 
