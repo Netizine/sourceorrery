@@ -44,8 +44,9 @@ and `docs/threat-model.md` before changing anything security-relevant.
   `AsyncSecretClient` over the official SDK (`docs/providers/aws-secrets-manager.md`).
   Properties are per secret there, so the lifecycle suite runs with
   `lifecycle_with(&[], ..)` (no `PerVersionProperties`); its `live` test
-  needs `SOURCEORRERY_AWS_TEST_ENDPOINT` (CI: LocalStack in the
-  `provider-aws` job; locally `moto_server`). A new provider follows the
+  needs `SOURCEORRERY_AWS_TEST_ENDPOINT` (the `motoserver/moto` container
+  in the `provider-aws` job, `moto_server` locally; LocalStack's image
+  needs a licence token since 2026). A new provider follows the
   same shape: a crate over core, a feature in `sourceorrery-provider`, a
   `docs/providers/<name>.md`, a CI job in the gate, and a `Capability` in
   the conformance suite for anything its service cannot express.

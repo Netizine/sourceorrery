@@ -108,12 +108,14 @@ anything), the `live` test runs the lifecycle conformance suite without
 per-secret behaviour above:
 
 ```bash
-pip install 'moto[server]' && moto_server -p 4566 &     # or: docker run -p 4566:4566 localstack/localstack
+pip install 'moto[server]' && moto_server -p 4566 &     # or: docker run -p 4566:5000 motoserver/moto
 SOURCEORRERY_AWS_TEST_ENDPOINT=http://127.0.0.1:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
   cargo test -p sourceorrery-provider-aws --test live
 ```
 
-The `provider-aws` CI job does the same against the LocalStack container,
-then writes secrets into a Secrets-Manager-backed vault with the CLI and
+The `provider-aws` CI job does the same against the `motoserver/moto`
+container (the LocalStack image needs a licence token since its 2026
+releases), then writes secrets into a Secrets-Manager-backed vault with
+the CLI and
 reads them back through the Rust and C conformance runners with the SDK
 harness's `--remote` scenarios (without `--remote-per-version`).

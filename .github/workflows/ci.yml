@@ -682,13 +682,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    # moto's server mode emulates Secrets Manager with no licence; the
+    # LocalStack image needs an auth token since its 2026 releases.
     services:
-      localstack:
-        image: localstack/localstack:2026.10.2
-        env:
-          SERVICES: secretsmanager
+      moto:
+        image: motoserver/moto:5.2.4
         ports:
-          - 4566:4566
+          - 4566:5000
     env:
       SOURCEORRERY_AWS_TEST_ENDPOINT: http://127.0.0.1:4566
       AWS_ACCESS_KEY_ID: test
@@ -696,13 +696,13 @@ jobs:
       AWS_REGION: us-east-1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Wait for LocalStack
+      - name: Wait for the emulator
         run: |
           for _ in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:4566/_localstack/health | grep -q '"secretsmanager": *"\(running\|available\)"'; then exit 0; fi
+            if curl -sf http://127.0.0.1:4566/moto-api/ > /dev/null; then exit 0; fi
             sleep 2
           done
-          echo "LocalStack did not come up"; curl -s http://127.0.0.1:4566/_localstack/health || true; exit 1
+          echo "the emulator did not come up"; exit 1
       - uses: ./.github/actions/sdk-fixture
       - name: Lifecycle conformance (without per-version properties) and the provider's own tests
         run: cargo test --locked -p sourceorrery-provider-aws

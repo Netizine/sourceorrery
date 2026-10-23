@@ -834,12 +834,14 @@ the provider writes get time-ordered 32-hex ids as the
 `ClientRequestToken`, so version order does not depend on the service's
 timestamp resolution. The SDK's default features were trimmed to the
 Tokio and rustls stack; the CLI still grows by 7.7 MB (ADR 0008). Tested
-locally against `moto_server` (no Docker here); CI uses LocalStack.
+locally against `moto_server` (no Docker here); CI uses the
+`motoserver/moto` container rather than LocalStack, whose image now exits
+without a paid licence token.
 
 **Steps.**
 
 - [x] Crate `sourceorrery-provider-aws` (behind `provider-aws`).
-- [x] CI job `provider-aws`: LocalStack in Docker, conformance through the
+- [x] CI job `provider-aws`: an emulator in Docker (moto), conformance through the
       adapter with the documented differences excluded by a capability
       flag the suite reads, canaries, SDK harness scenario. In the gate.
 - [x] Docs: `docs/providers/aws-secrets-manager.md`.

@@ -20,8 +20,9 @@ uses [Semantic Versioning](https://semver.org/).
   exactly the scenario that needs it. The crate `sourceorrery-provider-aws`
   (the official SDK, trimmed to its Tokio and rustls stack) is on by
   default everywhere (feature `provider-aws`, part of `remote`). The
-  `provider-aws` CI job runs the suite against LocalStack and the SDK
-  harness's remote scenarios through the CLI, the Rust and the C runners.
+  `provider-aws` CI job runs the suite against the moto emulator and the
+  SDK harness's remote scenarios through the CLI, the Rust and the C
+  runners.
 * HashiCorp Vault is the first remote provider: `provider =
   "hashicorp-vault"` in a `[vaults.<name>]` table serves a KV version 2
   mount behind the same contract as a local vault (versions, per-version
