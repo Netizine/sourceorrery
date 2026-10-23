@@ -67,6 +67,18 @@ says what to do. A value is a `SecretValue`: it prints, encodes and dumps
 as `[REDACTED]`, refuses `serialize()` and `clone`, gives its bytes only
 through `expose()`, and `close()` zeroises them.
 
+## Remote vaults
+
+`OpenOptions(manifest: ..)` names the `sourceorrery.toml` whose
+`[vaults.<name>]` tables say which vaults are remote and at which provider;
+by default the nearest one above the current directory is used. A vault
+with such a table is opened at its provider instead of as a local file, and
+`UnauthenticatedException` / `ProviderUnavailableException` (transient)
+report its failures. Credentials come from the provider's own environment,
+never from the manifest: HashiCorp Vault is the first provider, and its
+credential comes from `VAULT_TOKEN` or the other sources
+[the provider documents](../../docs/providers/hashicorp-vault.md).
+
 ## How the package is published
 
 The Composer manifest is `composer.json` at the repository root, because

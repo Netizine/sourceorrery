@@ -1,8 +1,42 @@
 // The .NET SDK against the vault created by scripts/ci/fixture-vault.sh.
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Xunit;
 
+// Environment variables are process-wide and the native library reads them: the remote-vault test
+// changes VAULT_TOKEN, so no other test may run while it does.
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
+
 namespace SourceOrrery.Tests;
+
+/// <summary>
+/// Sets an environment variable where the native library reads it. On Unix,
+/// <see cref="Environment.SetEnvironmentVariable(string, string?)"/> changes only the runtime's
+/// managed copy of the environment, while the C ABI reads the process's with <c>getenv</c>, so
+/// both are set; on Windows the managed call writes through to the process block.
+/// </summary>
+internal static class ProcessEnvironment
+{
+    public static void Set(string name, string? value)
+    {
+        Environment.SetEnvironmentVariable(name, value);
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        var result = value is null ? unsetenv(name) : setenv(name, value, 1);
+        if (result != 0)
+        {
+            throw new InvalidOperationException($"could not set {name} in the process environment");
+        }
+    }
+
+    [DllImport("libc")]
+    private static extern int setenv(string name, string value, int overwrite);
+
+    [DllImport("libc")]
+    private static extern int unsetenv(string name);
+}
 
 public sealed class Fixture
 {
@@ -209,6 +243,96 @@ public sealed class ReaderTests : IClassFixture<Fixture>
         Assert.Throws<VaultLockedException>(() => Project.Load(fx.Manifest, new OpenOptions { Passphrase = "wrong", Environment = false }));
     }
 
+    /// <summary>
+    /// A vault the manifest declares in [vaults.name] goes to its provider, whose credential comes
+    /// from the environment, never the manifest.
+    /// </summary>
+    [Fact]
+    public void ManifestDeclaresRemoteVaults()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "sourceorrery-dotnet-" + Path.GetRandomFileName());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var remoteManifest = Path.Combine(dir, "sourceorrery.toml");
+            File.WriteAllText(remoteManifest, string.Join("\n",
+                "[project]",
+                "name = \"demo\"",
+                $"vault = \"{fx.Vault}\"",
+                "",
+                "[vaults.remote-x]",
+                "provider = \"hashicorp-vault\"",
+                "address = \"http://127.0.0.1:1\"",
+                "mount = \"secret\"",
+                ""));
+            var options = new OpenOptions { Manifest = remoteManifest };
+            Assert.Contains("\"manifest\":", options.ToJson());
+
+            var previousToken = Environment.GetEnvironmentVariable("VAULT_TOKEN");
+            try
+            {
+                // With a credential the provider connects, and nothing listens on port 1: transient.
+                // The value is not a secret; the connection fails before it is ever sent.
+                ProcessEnvironment.Set("VAULT_TOKEN", "not-a-real-token");
+                var unavailable = Assert.Throws<ProviderUnavailableException>(() => SecretReader.Open("remote-x", options));
+                Assert.Equal("provider_unavailable", unavailable.Code);
+                Assert.True(unavailable.IsTransient);
+                Assert.Contains("hashicorp-vault is unavailable", unavailable.Detail);
+                Assert.Contains("[vaults.remote-x]", unavailable.Hint);
+
+                // Without VAULT_TOKEN the provider refuses before any request, unless the developer running
+                // this has another credential (~/.vault-token, AppRole, ...), in which case it connects again.
+                ProcessEnvironment.Set("VAULT_TOKEN", null);
+                var err = Assert.ThrowsAny<SourceOrreryException>(() => SecretReader.Open("remote-x", options));
+                Assert.Contains("hashicorp-vault", err.Detail);
+                switch (err)
+                {
+                    case UnauthenticatedException:
+                        Assert.Equal("unauthenticated", err.Code);
+                        Assert.False(err.IsTransient);
+                        Assert.Contains("not authenticated to hashicorp-vault", err.Detail);
+                        Assert.Contains("VAULT_TOKEN", err.Hint);
+                        break;
+                    case ProviderUnavailableException:
+                        Assert.Equal("provider_unavailable", err.Code);
+                        Assert.True(err.IsTransient);
+                        Assert.Contains("[vaults.remote-x]", err.Hint);
+                        break;
+                    default:
+                        Assert.Fail($"expected UnauthenticatedException or ProviderUnavailableException, got {err.GetType().Name} ({err.Code}): {err.Message}");
+                        break;
+                }
+            }
+            finally
+            {
+                ProcessEnvironment.Set("VAULT_TOKEN", previousToken);
+            }
+
+            // A vault without a table is still the local file.
+            using var reader = SecretReader.Open(fx.Vault, options);
+            using var secret = reader.Get("database-password");
+            Assert.Equal(fx.Vault, reader.VaultName);
+            Assert.Equal(Fixture.Latest, secret.Value.ExposeText());
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void RemoteCodesMapToTheirExceptions()
+    {
+        var unauthenticated = SourceOrreryException.ForCode("unauthenticated", "m", "h");
+        Assert.IsType<UnauthenticatedException>(unauthenticated);
+        Assert.Equal("unauthenticated", unauthenticated.Code);
+        Assert.False(unauthenticated.IsTransient);
+        var unavailable = SourceOrreryException.ForCode("provider_unavailable", "m", "h");
+        Assert.IsType<ProviderUnavailableException>(unavailable);
+        Assert.Equal("provider_unavailable", unavailable.Code);
+        Assert.True(unavailable.IsTransient);
+    }
+
     [Fact]
     public void UnknownCodesKeepTheirCode()
     {
@@ -216,5 +340,20 @@ public sealed class ReaderTests : IClassFixture<Fixture>
         Assert.Equal(typeof(SourceOrreryException), err.GetType());
         Assert.Equal("brand_new_code", err.Code);
         Assert.Equal("m. h", err.Message);
+    }
+}
+
+/// <summary>An SDK refuses a library built for another C ABI version with a typed exception (ADR 0007).</summary>
+public sealed class AbiTests
+{
+    [Fact]
+    public void AbiMismatchIsATypedException()
+    {
+        Assert.Equal(Interop.AbiVersion, SourceOrreryNative.AbiVersion);
+        Assert.Null(Interop.AbiMismatch(Interop.AbiVersion));
+        var err = Interop.AbiMismatch(Interop.AbiVersion + 1)!;
+        Assert.Equal("abi_mismatch", err.Code);
+        Assert.Contains((Interop.AbiVersion + 1).ToString(), err.Message);
+        Assert.Contains("sourceorrery-ffi", err.Message + err.Hint);
     }
 }

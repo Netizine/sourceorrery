@@ -16,8 +16,8 @@ agents can trust. A few rules keep that trust intact.
    contract with every SDK. Add new ones; never rename or reuse.
 4. **No cryptography of our own.** Audited primitives only, wrapped in
    `sourceorrery-crypto`. Changes there need a second reviewer.
-5. **Names are Azure Key Vault compatible** so vaults can be mirrored to a
-   managed service later.
+5. **Names are portable** (letters, digits, hyphens; at most 127) so vaults
+   can be mirrored to a managed secrets service.
 
 ## Development
 
@@ -31,7 +31,18 @@ CI runs the same on Ubuntu, Windows and macOS, plus a build with
 `--no-default-features` (no OS keyring) for headless servers.
 
 Tests must not touch the real OS credential store: use passphrase
-protectors with `Argon2Params::TESTING` (see `tests/conformance`).
+protectors with `Argon2Params::TESTING` (see `tests/conformance`). The one
+exception is `scripts/dev/keyring-smoke.sh` / `.ps1`, run by hand or by the
+`keyring` CI job against a temporary store, which creates and removes its
+own entries only ([Building](docs/building.md#the-os-keyring-path)).
+
+Third-party GitHub Actions are pinned to a commit, with the version as a
+comment (`uses: actions/checkout@<sha> # v4.4.0`). Dependabot moves the
+pins; to add or bump one by hand, resolve the release tag to its commit
+(`git ls-remote --tags https://github.com/<owner>/<action>`) and keep the
+comment, and give `dtolnay/rust-toolchain` an explicit `toolchain:`. The
+`workflows` CI job (zizmor) rejects an unpinned action and a `run:` step
+that expands an expression; put the value in `env:` instead.
 
 ## Pull requests
 

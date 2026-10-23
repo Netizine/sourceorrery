@@ -25,9 +25,12 @@ class SourceOrreryError extends Error {
 
   /** True when retrying later could succeed without administrative action. */
   get transient() {
-    return this.code === 'not_yet_valid';
+    return TRANSIENT_CODES.has(this.code);
   }
 }
+
+/** Codes for which `transient` is true (mirrors `SecretError::is_transient` in the core). */
+const TRANSIENT_CODES = new Set(['not_yet_valid', 'provider_unavailable']);
 
 class VaultNotFoundError extends SourceOrreryError {}
 class VaultLockedError extends SourceOrreryError {}
@@ -47,6 +50,10 @@ class InvalidNameError extends InvalidArgumentError {}
 class ManifestError extends SourceOrreryError {}
 class PermissionDeniedError extends SourceOrreryError {}
 class StorageError extends SourceOrreryError {}
+/** `unauthenticated`: the remote provider has no credentials for this process, or they expired. */
+class UnauthenticatedError extends SourceOrreryError {}
+/** `provider_unavailable`: the remote provider could not be reached. Transient. */
+class ProviderUnavailableError extends SourceOrreryError {}
 
 const ERRORS_BY_CODE = {
   vault_not_found: VaultNotFoundError,
@@ -67,6 +74,8 @@ const ERRORS_BY_CODE = {
   permission_denied: PermissionDeniedError,
   storage: StorageError,
   io: StorageError,
+  unauthenticated: UnauthenticatedError,
+  provider_unavailable: ProviderUnavailableError,
 };
 
 /** The error instance for a stable code; unknown codes keep their code. */
@@ -162,13 +171,23 @@ function passphraseBytes(passphrase) {
  * A read-only handle on one vault, unlocked the way the CLI unlocks it: OS
  * credential store, then `options.passphrase`, `SOURCEORRERY_PASSPHRASE`,
  * then `options.passphraseFile` / `SOURCEORRERY_PASSPHRASE_FILE`. Never
- * prompts.
+ * prompts. A vault that `options.manifest` (default: the nearest
+ * `sourceorrery.toml`) declares in a `[vaults.<name>]` table is opened at
+ * its remote provider instead of as a local file.
  */
 class SecretReader {
   constructor(vault, options = {}) {
-    const { home, passphrase, passphraseFile, environment } = options;
+    const { home, passphrase, passphraseFile, environment, manifest } = options;
     this._native = guarded(
-      () => new native.NativeReader(vault, home ?? null, passphraseBytes(passphrase), passphraseFile ?? null, environment ?? true),
+      () =>
+        new native.NativeReader(
+          vault,
+          home ?? null,
+          passphraseBytes(passphrase),
+          passphraseFile ?? null,
+          environment ?? true,
+          manifest ?? null,
+        ),
     );
     this._vault = vault;
   }
@@ -323,4 +342,6 @@ module.exports = {
   ManifestError,
   PermissionDeniedError,
   StorageError,
+  UnauthenticatedError,
+  ProviderUnavailableError,
 };

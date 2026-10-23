@@ -78,11 +78,21 @@ with SecretReader("development") as reader, reader.get("database-password") as s
 # the SDK's native buffer is zeroised when the `with` block ends
 ```
 
-`SecretReader(vault, *, home=None, passphrase=None, passphrase_file=None, environment=True)`
+`SecretReader(vault, *, home=None, passphrase=None, passphrase_file=None, environment=True, manifest=None)`
 opens the vault. With the default options, `SOURCEORRERY_HOME` locates the
 vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`, then
 `SOURCEORRERY_PASSPHRASE_FILE` unlock it. Pass `environment=False` to
 ignore the two passphrase variables. The SDK never prompts interactively.
+
+`manifest` is the `sourceorrery.toml` whose `[vaults.<name>]` tables say
+which vaults are remote and where; the default is the nearest one above
+the current directory, as `sourceorrery run` finds it. A vault declared
+there is opened at its provider rather than as a local file, with the
+credentials the provider's own tools expect from the environment: the
+manifest never holds any. [HashiCorp Vault](../providers/hashicorp-vault.md) takes
+`VAULT_TOKEN` or the other sources it documents,
+[AWS Secrets Manager](../providers/aws-secrets-manager.md) the AWS default
+credential chain, never the manifest. A vault without a table stays local.
 
 > [!IMPORTANT]
 > `expose_text()` returns a Python `str` copy. Leaving the `with` block
@@ -141,8 +151,10 @@ Classes: `VaultNotFoundError`, `VaultLockedError`,
 `SecretDisabledError`, `SecretNotYetValidError` (`.transient` is true),
 `SecretExpiredError`, `IntegrityError`, `UnsupportedError`,
 `InvalidArgumentError`, `InvalidNameError`, `ManifestError`,
-`PermissionDeniedError`, `StorageError`. See [the SDK
-overview](index.md#errors) for what each hint says.
+`PermissionDeniedError`, `StorageError`, and for remote vaults
+`UnauthenticatedError` (the provider has no credentials for this process)
+and `ProviderUnavailableError` (it could not be reached; `.transient` is
+true). See [the SDK overview](index.md#errors) for what each hint says.
 
 ## Load a project
 

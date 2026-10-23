@@ -27,15 +27,18 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `created_on` | Unix nanoseconds |
 | `recovery_level` | `"recoverable"` or `"purgeable"` (JSON string) |
 | `retention_days` | 7–90 |
-| `audit_head` | `<id>:<hex HMAC>` — the newest keyed audit row; see *Audit chain* |
-| `settings_tag` | hex HMAC-SHA256 over the settings record (`schema_version`, `name`, `id`, `created_on`, `recovery_level`, `retention_days`); verified on every unlock |
+| `audit_head` | `<id>:<keyed>:<hex HMAC>` — the newest keyed audit row and the number of keyed rows; see *Audit chain* (a head written by an earlier build has no count, `<id>:<hex HMAC>`, and is replaced at the next keyed write) |
+| `settings_tag` | hex HMAC-SHA256 over the settings record (`schema_version`, `name`, `id`, `created_on`, `recovery_level`, `retention_days`, and `second_factor` and `reveal_guard` when present); verified on every unlock |
+| `second_factor` | present once a second factor is enrolled: JSON `{"nonce", "ciphertext", "enrolled_on", "verified", "last_counter"}`; the TOTP secret sealed with the vault key under the AAD `sourceorrery/v3/second-factor/<id>`, whether one code has been accepted since enrolment, and the last accepted step (a code for it or an earlier step is refused). Covered by `settings_tag` |
+| `reveal_guard` | present when a reveal or export must present something again: JSON `{"passphrase", "second_factor"}`. Covered by `settings_tag`, so a file edit cannot switch it off |
+| `passphrase_hint` | the hint shown at the passphrase prompt, in clear, **not** covered by any tag: nothing can authenticate it before unlock, so it is whatever the file says. At most 120 characters; a hint that itself unlocks the vault is refused when set |
 
 ### `key_protectors`
 
 | column | meaning |
 |--------|---------|
 | `id` | 16 hex chars, random |
-| `label` | unique human label (`os-keyring`, `passphrase`, `ci`, …) |
+| `label` | unique human label (`os-keyring`, `passphrase`, `ci`, …); recovery codes are passphrase protectors labelled `recovery-1..N`, replaced as a set by `vault recovery codes` |
 | `kind_json` | `{"kind":"os-keyring","service":"sourceorrery","account":"vault/<vault id>/<id>"}` or `{"kind":"passphrase","salt":"<hex 16 bytes>","params":{"memory_kib":65536,"iterations":3,"parallelism":1}}` |
 | `wrapped_nonce` | 24-byte XChaCha20 nonce |
 | `wrapped_dek` | DEK encrypted under the protector's KEK; AAD `sourceorrery/v<schema>/protector/<vault id>/<protector id>`, so the wrapped key is bound to the on-disk format it was written for (`v3` now; an older `v<n>` only on protectors not yet re-wrapped since a migration) |
@@ -45,7 +48,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 
 | column | meaning |
 |--------|---------|
-| `name` | primary key, Azure Key Vault naming rules |
+| `name` | primary key, the secret naming rules (letters, digits, hyphens; at most 127) |
 | `created_on` | first version's time |
 | `deleted_on` | NULL while live |
 | `scheduled_purge_on` | `deleted_on + retention` |
@@ -167,6 +170,19 @@ absent must be present, so removing the newest version does not make an
 older value current. Listings visit every name the chain records, not only
 the rows left in the table.
 
+A listing reads every keyed checkpoint row once per page (authenticated
+once, folded per name) and then each window of names in three statements
+whatever it holds: the names in `secrets` after the cursor, and the
+`secrets` and `secret_versions` rows of those names. A page walks windows
+until it has `max_results` items, skipping the names the other listing
+owns (deleted names in a live listing and the reverse), so its token is
+the name of its last item. The token is present while candidate names
+remain; whether any of them is an item is not decided ahead (that would
+verify rows beyond the page), so the page after the last item can be empty.
+Pages cut the set of *names*; a secret's versions are always judged
+together, since which one is newest can only be decided against the
+complete set.
+
 Because the newest checkpoint is what matters, every operation first checks
 that the chain head still names the newest keyed row; a shortened chain is
 not consulted (see *Audit chain*).
@@ -186,7 +202,7 @@ from one kind of row, or another vault, never verifies for a different one.
 | secret | `sourceorrery/v2/secret` | vault id, name, created_on, deleted_on?, scheduled_purge_on?, recovery_id? |
 | audit row | `sourceorrery/v3/audit` | vault id, prev_hash, id, occurred_on, actor, operation, secret_name?, version?, outcome, detail?, keyed, state_tag?, version_tag? |
 | audit head | `sourceorrery/v2/audit-head` | vault id, id, hash |
-| settings | `sourceorrery/v2/settings` | vault id, schema_version, name, created_on, recovery_level, retention_days |
+| settings | `sourceorrery/v2/settings` | vault id, schema_version, name, created_on, recovery_level, retention_days, then `"second_factor"` and its JSON when enrolled, then `"reveal_guard"` and its JSON when set (each keyed and appended only when present, so a vault without them keeps the tag it always had) |
 
 `?` marks an optional field (`state_tag?` and `version_tag?` are optional
 byte strings); timestamps are their stored Unix-nanosecond integers. The
@@ -209,11 +225,19 @@ the chain, so removing or inserting one ahead of a keyed row is detected.
 
 Removing rows from the **end** of the log leaves a valid chain, so the
 newest keyed row is also pinned by `vault_meta.audit_head =
-"<id>:<hex HMAC-SHA256(metadata key, canonical(audit-head, vault id, id, hash))>"`,
-rewritten on every keyed append. Before every keyed append the vault checks
-that the head still names the newest keyed row; if it does not — rows were
-removed after it, or the head record is missing or invalid — it first
-appends an `audit_verify` / `failure` row saying so (for example
+"<id>:<keyed>:<hex HMAC-SHA256(metadata key, canonical(audit-head, vault id, id, hash, "keyed", keyed))>"`,
+where `keyed` is the number of rows flagged `keyed = 1`, rewritten on every
+keyed append. Removing a row from the **middle** leaves the head naming
+the newest row, so two more checks exist: every unlock walks the chain
+from the newest acknowledgement to the end and refuses on the first row
+that does not follow its predecessor or whose hash does not verify, and
+the keyed count under the head's MAC lets every operation notice a keyed
+row removed or demoted since the head was written without walking the
+log. Before every keyed append the vault checks that the head still names
+the newest keyed row and counts what the log holds; if it does not — rows
+were removed after it, a keyed row is missing, or the head record is
+missing or invalid — it first appends an `audit_verify` / `failure` row
+saying so (for example
 `rows removed after event 41 (head was event 44)`), and only then the
 requested row. The evidence is itself part of the chain; removing it is
 another truncation and is detected the same way at the next keyed write.
@@ -321,6 +345,14 @@ anything is written to it, so of several processes creating the same name
 at once exactly one owns the file; the others fail with `vault_exists` and
 never touch it. Only the owner removes the file again if the rest of
 creation (for example installing an OS-keyring protector) fails.
+
+## Backups
+
+A vault file can be copied as it is: it is encrypted, and it unlocks
+wherever one of its protectors is available, which for an OS-keyring
+protector means the same machine and user. `sourceorrery backup` writes a
+portable alternative, every secret and version sealed under a passphrase
+of its own, in the format described in [Backup file format](backup-format.md).
 
 ## Deleting a vault
 

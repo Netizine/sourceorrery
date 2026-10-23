@@ -334,3 +334,102 @@ fn reader_is_shared_between_threads() {
         worker.join().unwrap();
     }
 }
+
+/// A manifest whose `[vaults.<name>]` table makes `name` remote; the other
+/// vaults stay local files.
+fn manifest_with_remote(home: &Home, remote: &str) -> std::path::PathBuf {
+    let dir = home.path().join("project");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sourceorrery.toml");
+    std::fs::write(
+        &path,
+        format!(
+            "[project]\nname = \"demo\"\nvault = \"dev\"\n\n\
+             [secrets.database-password]\n\n\
+             [secrets.api-key]\nvault = \"{remote}\"\n\n\
+             [vaults.{remote}]\nprovider = \"hashicorp-vault\"\n\
+             address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n"
+        ),
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn a_vault_the_manifest_declares_remote_is_opened_at_its_provider() {
+    let home = Home::new();
+    let vault = home.create_vault("dev");
+    set(
+        &vault,
+        "database-password",
+        "pw",
+        SetSecretOptions::default(),
+    );
+    drop(vault);
+    // A local vault file of the same name must not be reached once the
+    // manifest says the name is remote.
+    let shadow = home.create_vault("prod");
+    set(&shadow, "api-key", CANARY, SetSecretOptions::default());
+    drop(shadow);
+    let manifest = manifest_with_remote(&home, "prod");
+
+    // Without the manifest both names are local files.
+    let reader = SecretReader::open_with("prod", &home.options()).unwrap();
+    assert_eq!(reader.provider(), None);
+    assert_eq!(
+        reader.get("api-key").unwrap().value.expose(),
+        CANARY.as_bytes()
+    );
+
+    // With it, `prod` goes to the HashiCorp Vault provider: without a token
+    // in this environment that is `unauthenticated`; with one (a developer's
+    // VAULT_TOKEN or ~/.vault-token) nothing listens on port 1, so it is
+    // `provider_unavailable`. Either way the local file of that name is not
+    // touched.
+    let options = home.options().manifest(&manifest);
+    let err = SecretReader::open_with("prod", &options).unwrap_err();
+    assert!(
+        matches!(
+            err.kind(),
+            ErrorKind::Unauthenticated | ErrorKind::ProviderUnavailable
+        ),
+        "{err}"
+    );
+    assert!(
+        err.message().contains("hashicorp-vault"),
+        "{}",
+        err.message()
+    );
+    assert!(
+        err.hint().contains("VAULT_TOKEN") || err.hint().contains("[vaults.prod]"),
+        "{}",
+        err.hint()
+    );
+    assert!(!err.to_string().contains(CANARY));
+    // `dev` has no table and is still the local file.
+    let reader = SecretReader::open_with("dev", &options).unwrap();
+    assert_eq!(reader.provider(), None);
+    assert_eq!(
+        reader.get("database-password").unwrap().value.expose(),
+        b"pw"
+    );
+
+    // `Project::load` resolves vault names through the manifest it loads,
+    // whatever the options say, so the remote vault fails the load.
+    let err = Project::load(Some(&manifest), &home.options()).unwrap_err();
+    assert!(
+        matches!(
+            err.kind(),
+            ErrorKind::Unauthenticated | ErrorKind::ProviderUnavailable
+        ),
+        "{err}"
+    );
+
+    // An explicit manifest path that cannot be read is a manifest error.
+    let err = SecretReader::open_with(
+        "dev",
+        &home.options().manifest(home.path().join("nope.toml")),
+    )
+    .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Manifest);
+}

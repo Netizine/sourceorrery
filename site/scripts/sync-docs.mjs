@@ -41,10 +41,20 @@ const PAGES = {
 		description:
 			'The three guarantees SourceOrrery keeps separate — at-rest protection, access control and agent isolation — with the adversaries, controls and known gaps of the CLI, the vault and the read-only SDKs.',
 	},
+	'docs/security-review.md': {
+		dest: 'security/review.md',
+		description:
+			'The engineering pass of the milestone 4 security review: every threat-model claim checked against the code, what was found and fixed, what holds, and what is still untested.',
+	},
 	'docs/supply-chain.md': {
 		dest: 'security/supply-chain.md',
 		description:
 			'How SourceOrrery is built and published: one release workflow, locked dependencies, trusted publishing and provenance, how to check what you installed, and what is not done yet.',
+	},
+	'docs/getting-started.md': {
+		dest: 'guides/first-run.md',
+		description:
+			'The guided first run, sourceorrery setup, and the same six steps as commands: a vault with a strong passphrase, a first database password, recovery codes and a hint, an authenticator app, the reveal guard and the project manifest.',
 	},
 	'docs/ai-agents.md': {
 		dest: 'guides/ai-agents.md',
@@ -59,7 +69,7 @@ const PAGES = {
 	'docs/cli.md': {
 		dest: 'reference/cli.md',
 		description:
-			'Every sourceorrery command and option: vault, secret, audit, init, import, check, run, ui and completions, plus global options, unlocking and exit codes.',
+			'Every sourceorrery command and option: setup, vault, secret, audit, init, import, check, run, backup, restore, ui and completions, plus global options, unlocking, the reveal guard and exit codes.',
 	},
 	'docs/vault-format.md': {
 		dest: 'reference/vault-format.md',
@@ -75,6 +85,31 @@ const PAGES = {
 		dest: 'reference/release.md',
 		description:
 			'How a release is cut: the manual workflow, what one run builds for six targets and ten languages, trusted publishing and the setup each registry needs, dry runs, and where each registry page gets its text.',
+	},
+	'docs/providers/index.md': {
+		dest: 'providers/index.md',
+		description:
+			'Remote vaults: a secrets service of another vendor behind the same contract as a local vault, declared in sourceorrery.toml without a credential, opened by the CLI and every SDK with the same calls and error codes.',
+	},
+	'docs/providers/hashicorp-vault.md': {
+		dest: 'providers/hashicorp-vault.md',
+		description:
+			'The HashiCorp Vault provider: a KV version 2 mount as a SourceOrrery vault, the credential sources it tries, how names, versions, properties and deletion map onto KV, and what differs from a local vault.',
+	},
+	'docs/providers/aws-secrets-manager.md': {
+		dest: 'providers/aws-secrets-manager.md',
+		description:
+			'The AWS Secrets Manager provider: secrets under a prefix as a SourceOrrery vault, the default credential chain, how versions, tags and deletion map onto the service, and what differs from a local vault.',
+	},
+	'docs/rotation.md': {
+		dest: 'guides/rotation.md',
+		description:
+			'Rotating a credential with sourceorrery secret rotate: issue, validate, activate and retire, the hook commands the manifest names, the grace period, what is recorded in the versions, and where it does not work.',
+	},
+	'docs/enterprise.md': {
+		dest: 'guides/enterprise.md',
+		description:
+			'Identity, policy and revocation through the remote providers: who decides what, the workload identity set-up for GitHub Actions, Kubernetes and VMs, what a revocation reaches, and checking what an identity may read.',
 	},
 	'docs/sdks/index.md': {
 		dest: 'sdks/index.md',
@@ -132,6 +167,7 @@ const PAGES = {
 const DIRECTORIES = {
 	'docs/adr': '/decisions/',
 	'docs/sdks': '/sdks/',
+	'docs/providers': '/providers/',
 };
 
 const ADR_SOURCE_DIR = 'docs/adr';

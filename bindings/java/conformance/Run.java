@@ -52,7 +52,8 @@ public class Run {
                 Optional.ofNullable(kv.get("home")),
                 Optional.ofNullable(kv.get("passphrase")),
                 Optional.ofNullable(kv.get("passphrase_file")),
-                !"false".equals(kv.get("environment")));
+                !"false".equals(kv.get("environment")),
+                Optional.empty());
         try {
             if (op.equals("load")) {
                 try (Project project = Project.load(Optional.ofNullable(kv.get("manifest")), options)) {

@@ -567,3 +567,79 @@ fn project_load_resolves_the_manifest() {
 fn close_accepts_null() {
     close_reader(ptr::null_mut());
 }
+
+#[test]
+fn reader_options_take_a_manifest_that_declares_remote_vaults() {
+    let scene = Scene::new();
+    close_vault(scene.create_vault("dev"));
+    let manifest = scene.home.path().join("sourceorrery.toml");
+    std::fs::write(
+        &manifest,
+        "[project]\nname = \"demo\"\nvault = \"dev\"\n\n[vaults.prod]\n\
+         provider = \"hashicorp-vault\"\naddress = \"http://127.0.0.1:1\"\n\
+         mount = \"secret\"\n",
+    )
+    .unwrap();
+    let options = format!(
+        r#"{{"home":{},"environment":false,"manifest":{}}}"#,
+        serde_json::to_string(&scene.home()).unwrap(),
+        serde_json::to_string(manifest.to_str().unwrap()).unwrap()
+    );
+    let open = |name: &str| {
+        let mut handle: *mut so_reader = ptr::null_mut();
+        // SAFETY: every pointer is backed by a live Rust value for the call.
+        let status = unsafe {
+            so_reader_open(
+                name.as_ptr(),
+                name.len(),
+                options.as_ptr(),
+                options.len(),
+                PASSPHRASE.as_ptr(),
+                PASSPHRASE.len(),
+                &raw mut handle,
+            )
+        };
+        (status, handle)
+    };
+
+    // The local vault opens as before.
+    let (status, handle) = open("dev");
+    assert_eq!(status, so_status::SO_STATUS_OK, "{}", last_code());
+    close_reader(handle);
+
+    // The remote one reaches the HashiCorp Vault provider: `unauthenticated`
+    // without a token in the environment, `provider_unavailable` with one
+    // (nothing listens on port 1).
+    let (status, handle) = open("prod");
+    assert_eq!(status, so_status::SO_STATUS_ERROR);
+    assert!(handle.is_null());
+    let code = last_code();
+    assert!(
+        code == "unauthenticated" || code == "provider_unavailable",
+        "{code}: {}",
+        last_hint()
+    );
+    assert!(
+        last_hint().contains("VAULT_TOKEN") || last_hint().contains("[vaults.prod]"),
+        "{}",
+        last_hint()
+    );
+
+    // An unknown option key is still refused.
+    let bad = r#"{"manifest_path":"x"}"#;
+    let mut handle: *mut so_reader = ptr::null_mut();
+    // SAFETY: every pointer is backed by a live Rust value for the call.
+    let status = unsafe {
+        so_reader_open(
+            "dev".as_ptr(),
+            3,
+            bad.as_ptr(),
+            bad.len(),
+            ptr::null(),
+            0,
+            &raw mut handle,
+        )
+    };
+    assert_eq!(status, so_status::SO_STATUS_ERROR);
+    assert_eq!(last_code(), "invalid_argument");
+}

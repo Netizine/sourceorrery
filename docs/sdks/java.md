@@ -87,6 +87,17 @@ then `SOURCEORRERY_PASSPHRASE_FILE` unlock it. `SecretReader.open(vault,
 OpenOptions.defaults().withHome(..).withPassphrase(..).withPassphraseFile(..).withEnvironment(false))`
 overrides any of that.
 
+A vault that `sourceorrery.toml` declares in a `[vaults.<name>]` table
+([providers](../providers/index.md)) is opened at its remote provider by
+the same call; `withManifest(path)` names the manifest to resolve through
+(default: the nearest `sourceorrery.toml` above the current directory;
+`Project.load` always uses the manifest it loads). Credentials come from
+the provider's own environment, never from the manifest, which holds the
+address only. [HashiCorp Vault](../providers/hashicorp-vault.md) takes
+`VAULT_TOKEN` or the other sources it documents,
+[AWS Secrets Manager](../providers/aws-secrets-manager.md) the AWS default
+credential chain.
+
 | Call | Returns |
 |------|---------|
 | `reader.get(name)` | `Secret` for the newest accessible version |
@@ -133,8 +144,10 @@ Classes: `VaultNotFoundException`, `VaultLockedException`,
 `SecretDisabledException`, `SecretNotYetValidException` (`isTransient()`),
 `SecretExpiredException`, `IntegrityException`, `UnsupportedException`,
 `InvalidArgumentException`, `InvalidNameException`, `ManifestException`,
-`PermissionDeniedException`, `StorageException`. See [the SDK
-overview](index.md#errors).
+`PermissionDeniedException`, `StorageException`,
+`UnauthenticatedException` (the remote provider refused the process's
+credentials), `ProviderUnavailableException` (the provider could not be
+reached; `isTransient()`). See [the SDK overview](index.md#errors).
 
 ## Load a project
 

@@ -115,6 +115,34 @@ pub enum SecretError {
     /// served under another vault's name.
     #[error("the file for vault '{requested}' holds the vault '{found}'")]
     VaultMismatch { requested: String, found: String },
+
+    /// The passphrase does not open the backup file. Distinct from
+    /// [`Self::Locked`] (a vault) and from [`Self::Crypto`] (a file that
+    /// was altered): the file's key check failed, nothing else was read.
+    #[error("the passphrase does not open this backup")]
+    BackupPassphrase,
+
+    /// The backup was written in a newer format than this build reads.
+    #[error("backup format {version} is newer than this build understands; upgrade sourceorrery")]
+    BackupFormat { version: u16 },
+
+    /// A remote provider has no credentials for this process, or they have
+    /// expired. `reason` is the provider's own description of what is
+    /// missing: never a credential, nor any part of one.
+    #[error("not authenticated to {provider}: {reason}")]
+    Unauthenticated { provider: String, reason: String },
+
+    /// A remote provider could not be reached or answered with a server
+    /// error. Transient: the same call may succeed later.
+    #[error("{provider} is unavailable: {reason}")]
+    ProviderUnavailable { provider: String, reason: String },
+
+    /// A rotation step was asked for in a state that does not allow it: a
+    /// validated candidate is already waiting, there is nothing to activate
+    /// or retire, or the grace period has not ended. The message carries
+    /// versions and times only.
+    #[error("rotation of '{name}': {reason}")]
+    Rotation { name: String, reason: String },
 }
 
 impl SecretError {
@@ -144,14 +172,22 @@ impl SecretError {
             Self::Io(_) => "io",
             Self::Unsupported(_) => "unsupported",
             Self::MigrationRequired { .. } => "migration_required",
+            Self::BackupPassphrase => "backup_passphrase",
+            Self::BackupFormat { .. } => "backup_format",
             Self::VaultMismatch { .. } => "vault_mismatch",
+            Self::Unauthenticated { .. } => "unauthenticated",
+            Self::ProviderUnavailable { .. } => "provider_unavailable",
+            Self::Rotation { .. } => "rotation",
         }
     }
 
     /// True when retrying the same call later could succeed without
     /// administrative action (e.g. a `not_yet_valid` secret).
     pub fn is_transient(&self) -> bool {
-        matches!(self, Self::NotYetValid { .. })
+        matches!(
+            self,
+            Self::NotYetValid { .. } | Self::ProviderUnavailable { .. }
+        )
     }
 }
 
@@ -211,6 +247,20 @@ mod tests {
             SecretError::VaultMismatch {
                 requested: "a".into(),
                 found: "b".into(),
+            },
+            SecretError::BackupPassphrase,
+            SecretError::BackupFormat { version: 2 },
+            SecretError::Unauthenticated {
+                provider: "p".into(),
+                reason: "r".into(),
+            },
+            SecretError::ProviderUnavailable {
+                provider: "p".into(),
+                reason: "r".into(),
+            },
+            SecretError::Rotation {
+                name: "a".into(),
+                reason: "r".into(),
             },
         ];
         let mut codes: Vec<_> = errors.iter().map(SecretError::code).collect();

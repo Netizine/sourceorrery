@@ -69,6 +69,38 @@ final class Native
         return self::$ffi ??= FFI::cdef(self::DECLARATIONS, self::libraryPath());
     }
 
+    /**
+     * C ABI version the declarations above follow: `SO_ABI_VERSION` in the
+     * `sourceorrery.h` this package was written against.
+     */
+    public const ABI_VERSION = 1;
+
+    /** Refuse a library built for another C ABI version before anything is opened (ADR 0007). */
+    public static function requireAbi(): void
+    {
+        $mismatch = self::abiMismatch(self::ffi()->so_abi_version());
+        if ($mismatch !== null) {
+            throw $mismatch;
+        }
+    }
+
+    /**
+     * The exception for a library whose C ABI version is `$found`, or null
+     * when it matches {@see ABI_VERSION}. Its code, `abi_mismatch`, is
+     * produced by the SDK itself, never by the core.
+     */
+    public static function abiMismatch(int $found): ?SourceOrreryException
+    {
+        if ($found === self::ABI_VERSION) {
+            return null;
+        }
+        return new SourceOrreryException(
+            "the SourceOrrery native library implements C ABI version $found; this SDK was built for version " . self::ABI_VERSION,
+            'abi_mismatch',
+            'install the sourceorrery-ffi library of the release this SDK version belongs to',
+        );
+    }
+
     private static function libraryPath(): string
     {
         $file = self::fileName();

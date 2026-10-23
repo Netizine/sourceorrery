@@ -50,6 +50,18 @@ pub enum AuditOperation {
     /// Secret metadata was read without disclosing a value: properties, the
     /// version list, or a deleted secret's details.
     SecretInspect,
+    /// Every version of a secret, disabled and expired ones included, was
+    /// read for an encrypted backup (`VaultBackup::export`); one event per
+    /// secret, with the version count as detail.
+    VaultBackup,
+    /// A version was written from a backup (`VaultBackup::restore`); one
+    /// event per version, checkpointed like `secret_set`.
+    SecretRestore,
+    /// The reveal guard: a passphrase re-check or a second-factor code
+    /// (`success` / `denied`), the second factor enrolled, verified or
+    /// disabled, the guard or the passphrase hint changed. The detail names
+    /// which; never a code, a secret or a hint.
+    Guard,
 }
 
 impl AuditOperation {
@@ -70,11 +82,14 @@ impl AuditOperation {
             Self::VaultMigrate => "vault_migrate",
             Self::AuditVerify => "audit_verify",
             Self::SecretInspect => "secret_inspect",
+            Self::VaultBackup => "vault_backup",
+            Self::SecretRestore => "secret_restore",
+            Self::Guard => "guard",
         }
     }
 
     /// Every operation, for documentation and exhaustive tests.
-    pub const ALL: [AuditOperation; 14] = [
+    pub const ALL: [AuditOperation; 17] = [
         Self::VaultCreate,
         Self::VaultOpen,
         Self::ProtectorAdd,
@@ -89,6 +104,9 @@ impl AuditOperation {
         Self::VaultMigrate,
         Self::AuditVerify,
         Self::SecretInspect,
+        Self::VaultBackup,
+        Self::SecretRestore,
+        Self::Guard,
     ];
 }
 

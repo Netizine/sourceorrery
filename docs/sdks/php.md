@@ -88,8 +88,15 @@ $reader->close();
 `SecretReader::open($vault)` behaves like the CLI: `SOURCEORRERY_HOME`
 locates the vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`,
 then `SOURCEORRERY_PASSPHRASE_FILE` unlock it.
-`SecretReader::open($vault, new OpenOptions(home: .., passphrase: .., passphraseFile: .., environment: false))`
-overrides any of that.
+`SecretReader::open($vault, new OpenOptions(home: .., passphrase: .., passphraseFile: .., environment: false, manifest: ..))`
+overrides any of that. `manifest` names the `sourceorrery.toml` whose
+`[vaults.<name>]` tables say which vaults are remote and at which provider
+(default: the nearest one above the current directory); a vault with such
+a table is opened at its provider instead of as a local file. Credentials
+come from the provider's own environment, never from the manifest: [HashiCorp
+Vault](../providers/hashicorp-vault.md) takes `VAULT_TOKEN` or the other
+sources it documents, [AWS Secrets Manager](../providers/aws-secrets-manager.md)
+the AWS default credential chain.
 
 | Call | Returns |
 |------|---------|
@@ -139,8 +146,10 @@ Classes: `VaultNotFoundException`, `VaultLockedException`,
 `SecretDisabledException`, `SecretNotYetValidException` (`isTransient()`),
 `SecretExpiredException`, `IntegrityException`, `UnsupportedException`,
 `InvalidArgumentException`, `InvalidNameException`, `ManifestException`,
-`PermissionDeniedException`, `StorageException`. See [the SDK
-overview](index.md#errors).
+`PermissionDeniedException`, `StorageException`,
+`UnauthenticatedException` (the remote provider has no credentials for
+this process), `ProviderUnavailableException` (it could not be reached;
+`isTransient()`). See [the SDK overview](index.md#errors).
 
 ## Load a project
 

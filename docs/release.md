@@ -9,8 +9,15 @@ so the pipeline can be exercised without touching a registry.
 
 ## Procedure
 
-1. Update `CHANGELOG.md`: move the `[Unreleased]` entries under a new
-   `## [X.Y.Z] - YYYY-MM-DD` heading and commit to `main`.
+1. Choose the version by [ADR 0007](adr/0007-versioning-and-compatibility.md):
+   before 1.0 a patch may add but never breaks any surface (CLI, Rust
+   API, C ABI, contract, SDKs, vault file); anything else is a minor
+   release. A C ABI change needs `SO_ABI_VERSION` bumped, a contract
+   change `CONTRACT_VERSION`. The `semver` job of the workflow checks the
+   Rust API against crates.io for the version you type and fails the run
+   when a bigger bump is needed. Update `CHANGELOG.md`: move the
+   `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading and
+   commit to `main`.
 2. In GitHub, open *Actions → Release → Run workflow*, enter the version
    (`X.Y.Z`, no `v`) and leave **dry_run** ticked. Wait for green. The
    `release-dry-run-X.Y.Z` artifact holds everything the real run would
@@ -37,6 +44,8 @@ the next patch version.
 
 | Job | Output |
 |-----|--------|
+| `sbom` | `sourceorrery-X.Y.Z-<target>.cdx.json`, `sourceorrery-ffi-X.Y.Z-<target>.cdx.json`, `sourceorrery-python-X.Y.Z-<target>.cdx.json`, `sourceorrery-node-X.Y.Z-<target>.cdx.json`: CycloneDX 1.5 bills of materials for the six targets, rendered from the lock files by `cargo cyclonedx` on one runner (artifact `sbom`). The `native` job builds the CLI and the C ABI with `cargo auditable`, which embeds the dependency list in the binaries. |
+| `semver` | nothing: `cargo semver-checks` on `sourceorrery` and `sourceorrery-core` against the crates.io baseline, with the version you typed; the release waits for it. |
 | `native` (six targets) | `sourceorrery-X.Y.Z-<target>.{tar.gz,zip}`: the CLI. `sourceorrery-ffi-X.Y.Z-<target>.{tar.gz,zip}`: the shared and static C ABI libraries, `sourceorrery.h`, `sourceorrery.hpp`, licences. |
 | `python` (six targets + sdist) | abi3 wheels for Python 3.11+ (`manylinux_2_28` on Linux) and the sdist. |
 | `node-build`, `node-package` | `@sourceorreryai/sdk` and the six `@sourceorreryai/sdk-<platform>` tarballs. `node-build` compiles the addon per target and, on `x86_64-unknown-linux-gnu`, keeps the `index.js` loader and `index.d.ts` that `napi build` generates (artifact `npm-loader`); `node-package` lays out the platform packages around the addons, adds the loader, packs, then installs the main and `linux-x64-gnu` tarballs into a scratch project and requires `@sourceorreryai/sdk`, so a main package that cannot be loaded fails the run. |
@@ -44,7 +53,8 @@ the next patch version.
 | `dotnet` | `SourceOrrery.X.Y.Z.nupkg` with `runtimes/<rid>/native`. |
 | `crates` | a `cargo publish --workspace --dry-run` proving every crate packages in dependency order. |
 | `php` | `composer validate --strict` on the root `composer.json` and a Composer install of the version from a local tag (`scripts/ci/php-package-install.sh`); nothing is uploaded, the package Packagist serves is the git tag itself. |
-| `release` | the GitHub Release (or the dry-run artifact) with `SHA256SUMS`. |
+| `release` | the GitHub Release (or the dry-run artifact) with `SHA256SUMS`, and a build provenance attestation for every file in a real release. |
+| `package-managers` | the Homebrew formula, the Scoop manifest and the three WinGet manifests, rendered from `SHA256SUMS` by `scripts/release/package-managers.py` (artifact `package-managers`); every URL is a release archive and every hash comes from the release. |
 
 Targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
 `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`,
@@ -82,6 +92,8 @@ same settings, with its own file name, `ReleasePackages.yaml`.
 | Maven Central | `publish-maven` | its secrets exist | `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`, `MAVEN_GPG_PASSPHRASE` |
 | Packagist | `publish-packagist` | its secrets exist | `PACKAGIST_USERNAME`, `PACKAGIST_API_TOKEN` |
 | pkg.go.dev | `publish-go` | every real release | none (uses `GITHUB_TOKEN`) |
+| Homebrew tap, Scoop bucket | `publish-homebrew-scoop` | the secret `PACKAGING_TOKEN` exists | `PACKAGING_TOKEN` |
+| WinGet | `publish-winget` | the secret `WINGET_TOKEN` exists | `WINGET_TOKEN` |
 
 crates.io and PyPI have no switch: a registry that does not trust the
 workflow fails the job loudly instead of skipping it. No secret is needed
@@ -136,15 +148,22 @@ token for a short-lived upload token and uploads a signed attestation
    pypi.org; nothing reads it any more.
 
 **crates.io** (`sourceorrery-core`, `sourceorrery-crypto`,
-`sourceorrery-storage`, `sourceorrery`, `sourceorrery-ffi`,
-`sourceorrery-cli`, published in that order), with trusted publishing, so
-no token is stored anywhere. `rust-lang/crates-io-auth-action` trades the
+`sourceorrery-storage`, `sourceorrery-provider-vault`,
+`sourceorrery-provider-aws`, `sourceorrery-provider`, `sourceorrery`,
+`sourceorrery-ffi`, `sourceorrery-cli`, published in dependency order by
+`cargo publish --workspace`), with trusted publishing, so no token is
+stored anywhere. `rust-lang/crates-io-auth-action` trades the
 job's GitHub identity token for a crates.io token that lives 30 minutes
 and revokes it when the job ends. crates.io grants it only for crates
-whose settings name the workflow, so all six need the setting, or the
-publish stops at the first crate without it.
+whose settings name the workflow, so every crate needs the setting, or the
+publish stops at the first crate without it. A crate that does not exist
+on crates.io yet cannot have the setting: `sourceorrery-provider-vault`,
+`sourceorrery-provider-aws` and `sourceorrery-provider` (new in 0.3.0) are
+published once by hand from the release commit (`cargo publish -p <crate>`,
+in that order, with a crates.io token that is then revoked) before the
+workflow can publish the rest.
 
-1. For each of the six crates, *Settings → Trusted Publishing → Add →
+1. For each crate, *Settings → Trusted Publishing → Add →
    GitHub*: Repository owner `Netizine`, Repository name `sourceorrery`,
    Workflow filename `release.yml`, Environment empty. Then a second
    configuration with `ReleasePackages.yaml`.
@@ -212,6 +231,37 @@ repository was never submitted, and waits for the version to appear.
 `bindings/go/vX.Y.Z` and fetches the version through `proxy.golang.org`,
 which indexes it.
 
+**Homebrew tap and Scoop bucket** (`Netizine/homebrew-sourceorrery`,
+`Netizine/scoop-sourceorrery`): the release job commits
+`Formula/sourceorrery.rb` to the tap and `bucket/sourceorrery.json` to the
+bucket, both rendered from the release's `SHA256SUMS`. Users run
+`brew install Netizine/sourceorrery/sourceorrery` and
+`scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery`
+then `scoop install sourceorrery`. The manifest also carries `checkver` and
+`autoupdate`, so a bucket that runs Scoop's Excavator would follow releases
+by itself; the job keeps it current either way.
+
+1. The two repositories, each with a licence and nothing else needed.
+2. A fine-grained personal access token (*Settings → Developer settings →
+   Fine-grained tokens*) limited to those two repositories with
+   *Contents: read and write*, saved as the repository secret
+   `PACKAGING_TOKEN`. Set an expiry and note it: the job is skipped, not
+   failed, once the token has expired.
+
+**WinGet** (`Netizine.SourceOrrery`): the release job renders the three
+manifests (`version`, `installer`, `defaultLocale`, manifest schema 1.10,
+installer type `zip` with a `portable` nested installer) and runs
+`wingetcreate submit`, which forks `microsoft/winget-pkgs` under the
+token's account and opens a pull request there. The first submission of a
+package and every version after it go through that repository's automated
+validation and, for a new package, a moderator; a version is installable
+once its pull request is merged, usually within a few days.
+
+1. A classic personal access token with the `public_repo` scope (a
+   fine-grained token cannot open a pull request on a repository you do not
+   own), saved as the repository secret `WINGET_TOKEN`.
+2. Nothing else: `wingetcreate` creates the fork on first use.
+
 ## Publishing an existing release
 
 `.github/workflows/ReleasePackages.yaml` (*Actions → Release packages →
@@ -225,6 +275,9 @@ It builds no new release:
   out of the release's jar, because Central needs sources, javadoc and
   signatures, which the release does not carry.
 - Packagist and pkg.go.dev upload nothing; they are pointed at the tag.
+- The Homebrew tap, the Scoop bucket and WinGet get manifests rendered from
+  the release's `SHA256SUMS` with the renderer in the checkout, so a fix to
+  the renderer can be applied to an existing release.
 
 Inputs: the tag (empty means the latest release), **dry_run** (on by
 default) and one tick box per registry. Every registry's files are
@@ -315,9 +368,15 @@ What the Packagist submission needs, once and by hand:
 curl -LO https://github.com/Netizine/sourceorrery/releases/download/vX.Y.Z/SHA256SUMS
 curl -LO https://github.com/Netizine/sourceorrery/releases/download/vX.Y.Z/sourceorrery-X.Y.Z-x86_64-unknown-linux-gnu.tar.gz
 sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify sourceorrery-X.Y.Z-x86_64-unknown-linux-gnu.tar.gz --repo Netizine/sourceorrery
 ```
 
+The `release` job attests the build provenance of every file it attaches
+(`actions/attest-build-provenance`, with `id-token` and `attestations`
+permissions on that job only), in real releases only: an attestation is
+public and permanent, so a dry run makes none. **Release packages**
+re-uploads files the release already carries and attests nothing new.
 What each registry adds on top (npm provenance, the Maven Central
 signatures, nuget.org's repository signature) and how a user checks it is
-in [Supply chain](supply-chain.md); signing the archives themselves is on
+in [Supply chain](supply-chain.md); signing the binaries themselves is on
 the [roadmap](roadmap.md#supply-chain).

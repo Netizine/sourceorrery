@@ -6,7 +6,7 @@
 > `sourceorrery --version`.
 
 ```
-sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--passphrase-file FILE] [-v] <command>
+sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--passphrase-file FILE] [--code CODE] [-v] <command>
 ```
 
 | Global option | Env | Meaning |
@@ -16,6 +16,7 @@ sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--passphrase-file FILE
 | `-o, --output table\|json` | | Output format. Errors in JSON mode are `{"error":{"code","message"}}` on stderr. In table mode, control and bidi formatting characters in stored text (labels, audit actors and details) are shown as `\u{..}` escapes. |
 | `--passphrase-file FILE` | `SOURCEORRERY_PASSPHRASE_FILE` | Read the vault passphrase from a file (automation). |
 | | `SOURCEORRERY_PASSPHRASE` | Passphrase from the environment. CI only; environment variables are visible to process inspection. |
+| `--code CODE` | `SOURCEORRERY_TOTP` | A six-digit code from the authenticator app, for a command the [reveal guard](#the-reveal-guard) asks one of (automation). Without it the code is asked for on the terminal; a code is never read from a pipe. |
 | `-v` | `SOURCEORRERY_LOG` | Diagnostics on stderr. Never prints values. |
 
 Exit status: `0` success, `1` any error (code in JSON mode), `2` usage error.
@@ -29,6 +30,28 @@ Unicode half blocks in colours chosen to read on dark and light
 backgrounds; when piped it is plain text. `SOURCEORRERY_BANNER=unicode|plain`
 forces a style.
 
+## `setup`: the guided first run
+
+```
+sourceorrery setup [--secret NAME] [--project-name NAME] [--path FILE] [--guide] [--theme dark|light|terminal]
+```
+
+Six screens on the terminal, from the first vault to the first `run`: the
+vault (a passphrase typed with a live strength meter, or generated and
+shown once; the OS credential store as a second key where it exists, or
+an existing vault used as it is), the first secret (`database-password` by
+default, typed against the same meter or generated and stored unseen),
+recovery (five recovery codes shown once behind a "written down" tick box,
+an optional hint), the second factor (a QR code to scan, kept once a code
+matched), the [reveal guard](#the-reveal-guard), and the project (the
+manifest written unless one exists, checked, and the `run` line). Every
+step is an ordinary command, which the last screen and
+[First run](getting-started.md) list; `--guide`, or no terminal, prints
+those steps instead (`-o json`: `vault`, `steps`). `--vault` names the
+vault (default `development`). Hidden fields are drawn as dots from their
+length; nothing typed as a secret is kept by the screens. Cargo feature
+`ui`; without it only the guide is printed.
+
 ## Unlocking
 
 The CLI tries OS-keyring protectors first (Windows Credential Manager,
@@ -37,6 +60,14 @@ protectors it selects the non-empty `SOURCEORRERY_PASSPHRASE` variable,
 otherwise `--passphrase-file` / `SOURCEORRERY_PASSPHRASE_FILE`. If needed,
 it prompts on stderr when stdin is a terminal, up to the three-attempt
 limit. Failed attempts are audited.
+
+A **recovery code** (`vault recovery codes`) unlocks a vault in place of
+its passphrase, wherever a passphrase is accepted: typed at the prompt or
+supplied through `SOURCEORRERY_PASSPHRASE` or a file. Case, hyphens and
+the look-alike letters (`I`/`L` for `1`, `O` for `0`) do not matter. If the
+vault has a **passphrase hint** (`vault passphrase hint`) the prompt shows
+it first; the hint is stored in clear and is not authenticated, so it is
+only ever a reminder for the person reading it.
 
 > [!TIP]
 > The CLI does not fall back from an incorrect environment passphrase to a
@@ -50,29 +81,85 @@ limit. Failed attempts are audited.
 > makes `secret delete` immediate and irreversible. Use the default
 > recoverable vault unless you deliberately need permanent deletion.
 
+`setup`, `vault create`, `vault protector`, `vault destroy`, `vault migrate`,
+`audit --verify`, `audit --acknowledge`, `audit export`, `backup`,
+`restore` and `ui` are about the vault file and refuse a
+[remote vault](providers/index.md) by name; plain `audit` on one prints
+where the provider keeps its trail; the `secret` commands, `check`, `run`
+and `import` work against either kind.
+
 | Command | Description |
 |---------|-------------|
-| `vault create NAME [--protector os-keyring\|passphrase] [--retention-days 7-90] [--purgeable]` | Create a vault. Default protector: OS keyring when available, otherwise passphrase (prompted twice). `--purgeable` disables soft delete. |
-| `vault list` | Vaults in the home directory. |
-| `vault info` | Metadata and protectors of the selected vault. |
+| `vault create NAME [--protector os-keyring\|passphrase] [--retention-days 7-90] [--purgeable] [--allow-weak]` | Create a vault. Default protector: OS keyring when available, otherwise passphrase (prompted twice). A passphrase typed at the prompt must rate at least "good" on the strength estimate (below) unless `--allow-weak`; one from `SOURCEORRERY_PASSPHRASE` or `--passphrase-file` is accepted with a warning on stderr when it rates lower. `--purgeable` disables soft delete. |
+| `vault list` | Vaults in the home directory, and the remote vaults the nearest `sourceorrery.toml` declares with their provider and location. JSON output is one object per vault (`name`, `kind`, and `path` or `provider` and `location`). |
+| `vault info` | Metadata and protectors of the selected vault, what the [reveal guard](#the-reveal-guard) asks for, whether a second factor is enrolled and verified (never its secret), the recovery codes installed (by label) and the passphrase hint; for a remote vault, what its provider reports. |
 | `vault protector list` | Installed protectors. |
-| `vault protector add --kind passphrase\|os-keyring [--label L]` | Add another way to unlock (e.g. a passphrase for WSL/Docker/CI). At most 8 passphrase protectors: unlock tries no more than that, so a ninth is refused rather than installed and never tried. |
+| `vault protector add --kind passphrase\|os-keyring [--label L] [--allow-weak]` | Add another way to unlock (e.g. a passphrase for WSL/Docker/CI). At most 8 passphrase protectors: unlock tries no more than that, so a ninth is refused rather than installed and never tried. The strength rule of `vault create` applies. |
+| `vault passphrase generate [--length N]` | Print a random passphrase (letters, digits and symbols from the OS random source; 20 characters, about 125 bits, by default; at least 12) to stdout, once. It is not stored: pipe it where it is needed or write it down. `-o json` gives `passphrase`, `length`, `bits`. |
+| `vault passphrase check` | Read a passphrase from stdin or a hidden prompt and print the strength estimate: a score 0 (guessable) to 4 (strong), the estimated bits of guessing work and what weakened it (a common password, a dictionary word with the usual substitutions, repeated characters, a keyboard or alphabet sequence, a year, a short length, a capital first letter with a digit or symbol last). It is an estimate from those rules, not a dictionary; nothing is stored or echoed. "good" (score 3) is what a vault passphrase needs. |
 | `vault protector remove ID_OR_LABEL` | Remove a protector. The last one cannot be removed. The OS-keyring entry is deleted after the change is committed, and only if it is provably this vault's. |
+| `vault passphrase set [--new-from-file FILE] [--allow-weak]` | Replace the vault passphrase: the current one is taken from `SOURCEORRERY_PASSPHRASE`, `--passphrase-file` or a hidden prompt and checked, a code too when the guard asks for one, then the new one is prompted twice (strength rule of `vault create`) or read from `--new-from-file`. The protector keeps its label; recovery codes are unchanged. |
+| `vault passphrase hint [TEXT \| --clear]` | Set, show or clear the hint shown at the passphrase prompt. At most 120 characters, no control characters, and never something that itself unlocks the vault. It is stored in clear in the vault file: a reminder, not a secret. |
+| `vault recovery codes [--count N]` | Print N (default 5, at most 7) new recovery codes to stdout, once, and install them as passphrase protectors labelled `recovery-1..N`, replacing every earlier recovery code. Each is 25 characters in five groups (125 bits) from an alphabet without look-alikes and unlocks the vault in place of the passphrase. Guarded. `-o json`: `vault`, `codes`, `labels`, `replaced`. |
+| `vault 2fa enable [--show-uri] [--no-verify]` | Enrol an authenticator app as the second factor: a QR code is drawn on stderr (the `otpauth://` URI itself only with `--show-uri`, for a user who cannot scan), then one code from the app is asked for (`--code`, or on the terminal, three attempts) and the enrolment is kept only when it matches. `--no-verify` keeps it unverified for `vault 2fa verify` later; until verified it counts for nothing and the guard cannot ask for it. Guarded; a verified enrolment must be disabled before another is made. `-o json` prints the base32 `key` and the `uri` once instead of the QR code. |
+| `vault 2fa verify` | Prove an enrolment made with `--no-verify` by entering one code. |
+| `vault 2fa disable` | Remove the second factor. The passphrase is asked for when the guard asks for it, and one code while the enrolment is verified; the guard then stops asking for a code. |
+| `vault 2fa status` | Enrolled or not, verified or not, when, and what the guard asks for. Never the secret. |
+| `vault guard [--reveal passphrase,second-factor\|none]` | Show or set what a reveal or export must present again (below). `passphrase`, `second-factor` (needs a verified enrolment) or both; `none` turns it off. Changing the guard passes the current guard first. |
 | `vault destroy NAME [--yes] [--keep-os-key]` | Delete the vault file and the OS-keyring entries it provably owns (entries another vault file references are kept and reported). Irreversible. |
 | `vault migrate NAME` | Upgrade a vault written by an older release (schema 1 or 2) to the current format. Explicit on purpose: the rows it finds are taken on trust once, so only migrate a file you trust. A file that was already in the current format, or whose audit log was truncated, is refused; a migrated vault with a recorded, unacknowledged truncation stays blocked until `audit --acknowledge`. |
+
+### The reveal guard
+
+Unlocking a vault lets a process read values; the **reveal guard** is a
+second check for the moments a person asks to *see* one. When it is on
+(`vault guard --reveal ...`), these commands ask for the vault passphrase
+again, a code from the authenticator app, or both, before they go on:
+`secret get --reveal`, `backup`, `vault protector add` and `remove`,
+`vault recovery codes`, `vault 2fa enable`, `vault guard` itself and (for
+the code) `vault passphrase set` and `vault 2fa disable`. The passphrase
+is taken from where an unlock takes it (`SOURCEORRERY_PASSPHRASE`,
+`--passphrase-file`, else a hidden prompt) and a recovery code counts;
+the code comes from `--code` / `SOURCEORRERY_TOTP` or a visible prompt on
+the terminal, never from a pipe, so a script that has neither is refused
+rather than hung. A code is accepted once, for the current step or the
+one either side of it (30 seconds each), and never for a step at or
+before the last accepted one.
+
+A refusal is `permission_denied`, prints nothing of the value, and is
+audited under `guard` with what was checked and the outcome. A recovery
+code satisfies the passphrase factor, since it unlocks the vault by
+design. The guard belongs to the local vault file: a reveal from a
+[remote vault](providers/index.md) is governed by the provider's policy.
+The guard is deliberately narrow: `run`, `check`, the `ui` browser (which
+never shows a value) and every SDK are untouched, so an application keeps
+starting with its vault unlocked by the OS keyring while a person at the
+keyboard, or an agent driving the CLI, must present the passphrase and
+the phone to read an API key out. It is not a boundary against code
+running as you with the same credentials in its environment; see the
+[threat model](threat-model.md).
+
+```
+sourceorrery vault 2fa enable --vault development          # scan, then type one code
+sourceorrery vault guard --reveal passphrase,second-factor --vault development
+sourceorrery secret get database-password --vault development --reveal
+Passphrase of vault 'development' to reveal a secret:
+Code from the app: 123456
+```
 
 ## `secret`
 
 | Command | Description |
 |---------|-------------|
-| `secret set NAME [--stdin \| --from-file FILE] [--confirm] [--allow-empty] [--keep-trailing-newline] [--content-type T] [--tag K=V]... [--not-before T] [--expires T] [--disabled]` | Store a **new version**. Value source: `--from-file`, else stdin when piped (`--stdin` to force), else a hidden prompt. One trailing newline from stdin is stripped. There is no `--value` option. |
-| `secret get NAME [--version ID] [--reveal] [--raw]` | Metadata (default). `--reveal` prints the value + newline; `--raw` omits the newline. `-o json --reveal` adds `value` (or `value_hex` for non-UTF-8). Without `--version`, the newest *accessible* version is used. |
-| `secret list [--deleted]` | Live secrets (newest version each), or soft-deleted ones. Metadata only. |
+| `secret set NAME [--stdin \| --from-file FILE] [--confirm] [--allow-empty] [--keep-trailing-newline] [--content-type T] [--tag K=V]... [--not-before T] [--expires T] [--disabled]` | Store a **new version**. Value source: `--from-file`, else stdin when piped (`--stdin` to force), else a hidden prompt. One trailing newline from stdin is stripped. There is no `--value` option. Tag keys under `sourceorrery.` are SourceOrrery's own (rotation and restore state) and refused. |
+| `secret get NAME [--version ID] [--reveal] [--raw]` | Metadata (default). `--reveal` prints the value + newline; `--raw` omits the newline. `-o json --reveal` adds `value` (or `value_hex` for non-UTF-8). Without `--version`, the newest *accessible* version is used. `--reveal` is subject to the [reveal guard](#the-reveal-guard). |
+| `secret list [--deleted] [--limit N] [--after NAME]` | Live secrets (newest version each), or soft-deleted ones, in name order. Metadata only. `--limit N` shows one page of up to N and, while names follow, the `--after NAME` that continues it (the last page can be empty when the names left were deleted ones, or live ones under `--deleted`); `-o json` then prints `{"items": [...], "continuation": "NAME"}` instead of the plain array. Each page is one `secret_list` audit event. |
 | `secret versions NAME` | Every version, newest first, with status. |
 | `secret update NAME [--version ID] [--enable\|--disable] [--content-type T\|--clear-content-type] [--tag K=V...\|--clear-tags] [--not-before T\|--clear-not-before] [--expires T\|--clear-expires]` | Change metadata of one version. Never the value. |
 | `secret delete NAME` | Soft-delete all versions (recoverable until retention ends). Immediate in a purgeable vault. |
 | `secret recover NAME` | Undo a soft delete. |
 | `secret purge NAME [--yes]` | Permanently remove a soft-deleted secret. |
+| `secret rotate NAME [--manifest FILE] [--step rotate\|activate\|retire\|status] [--no-activate] [--retire-after D] [--now] [--stdin \| --from-file FILE] [--keep-trailing-newline] [--allow-empty]` | Rotate a credential: issue a new value (the manifest's `[rotation.NAME]` `issue` command, else stdin, a file or a prompt), validate it with the `validate` command, activate it (enable the new version, then disable the previous one), and retire the previous one with the `retire` command once `retire_after` (or `--retire-after`) has passed, in a later `--step retire` run; without a grace period, in the same run. State lives in `sourceorrery.rotation.*` tags; refusals carry the code `rotation`. `unsupported` on AWS Secrets Manager. See [rotation](rotation.md). |
 
 Status column values: `enabled`, `disabled`, `pending` (before `not_before`),
 `expired`.
@@ -85,16 +172,23 @@ Timestamps are RFC 3339, e.g. `2026-12-31T00:00:00Z`.
 sourceorrery audit [--secret NAME] [--operation OP] [--since TIME] [--limit N]
 sourceorrery audit --verify
 sourceorrery audit --acknowledge [--yes]
+sourceorrery audit export [--format jsonl|otlp] [--since TIME] [--follow] [--interval S] [--endpoint URL] [--header K=V]... [--batch N]
 ```
 
 Newest first, with each event's id. Operations: `vault_create`,
 `vault_open`, `vault_migrate`, `secret_inspect` (metadata reads: properties,
 versions, deleted-secret details), `protector_add`, `protector_remove`,
 `secret_set`, `secret_get`, `secret_list`, `secret_update`,
-`secret_delete`, `secret_recover`, `secret_purge`, `audit_verify`
+`secret_delete`, `secret_recover`, `secret_purge`, `vault_backup` (one
+per secret exported, with the version count), `secret_restore` (one per
+version written from a backup), `audit_verify`
 (a detected truncation with outcome `failure`, its acknowledgement with
-outcome `success`). Outcomes: `success`, `denied` (policy), `failure`.
-Detail holds the error code or a short note — never a value.
+outcome `success`), `guard` (the reveal guard: a passphrase re-check or a
+second-factor code with outcome `success` or `denied`, the second factor
+enrolled, verified or disabled, the guard or the passphrase hint changed;
+the detail names which). Outcomes: `success`, `denied` (policy), `failure`.
+Detail holds the error code or a short note — never a value, a code, a
+secret or the hint.
 
 `--verify` checks the log's keyed hash chain instead of listing it (see
 [vault-format.md](vault-format.md#audit-chain)) and prints:
@@ -113,6 +207,46 @@ Detail holds the error code or a short note — never a value.
 The result is always printed (as JSON with `-o json`); when the chain is not
 intact the command also fails with exit status 1. Verification is read-only,
 but opening the vault to run it writes the usual `vault_open` row.
+
+### `audit export`: the log for a collector
+
+`audit export` writes the whole log, **oldest first**, for the place the
+organisation already collects logs, and ends with the chain verification
+so a collector can tell a complete export from a truncated log:
+
+* `--format jsonl` (default): one JSON object per line on stdout, the
+  event as `audit -o json` shows it plus `"vault"`, then one trailer line
+  `{"vault", "events", "last_id", "intact", "verification": {…}}` with
+  the fields of `audit --verify`. Vector, Fluent Bit and their kind read
+  it without help (`sourceorrery audit export --vault production |
+  vector --config …`, or a `file` source on a redirected file).
+* `--format otlp --endpoint URL`: the same records as OTLP/HTTP log records
+  (JSON encoding, `POST …/v1/logs`) in batches of `--batch` (500), for a
+  collector that speaks OTLP directly. Each event is a log record whose body
+  is `<operation> <outcome> [<secret>]`, severity `INFO`, `WARN` (denied) or
+  `ERROR` (failure), with the fields as attributes (`sourceorrery.vault`,
+  `sourceorrery.event.id`, `sourceorrery.operation`, `sourceorrery.outcome`,
+  `sourceorrery.actor`, `sourceorrery.secret`, `sourceorrery.version`,
+  `sourceorrery.detail`); the verification is the last record, body `audit
+  chain verification: intact|broken`, with `sourceorrery.audit.*`
+  attributes. The endpoint defaults to `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
+  else `OTEL_EXPORTER_OTLP_ENDPOINT` with `/v1/logs` appended; headers come
+  from `--header KEY=VALUE` and `OTEL_EXPORTER_OTLP_HEADERS`. A collector
+  that answers anything but 2xx fails the export, with the status in the
+  error. Built with the Cargo feature `otlp` (on by default); without it the
+  command says so and JSON Lines remains.
+* `--since TIME` starts from that time; `--follow` keeps the vault open and,
+  after the backlog and its trailer, exports each new event as it is
+  recorded (looking every `--interval` seconds, default 2) until stdout
+  closes or the process is stopped. Reading the log is not itself audited,
+  so following adds nothing to it.
+
+Exported records are the metadata the log holds, never a value. A remote
+vault has no local log: `audit --vault <remote>` prints where the
+provider keeps its trail and the query that shows SourceOrrery's
+operations there ([providers](providers/index.md); `-o json` gives
+`provider`, `audit_trail`, `query` and `docs`), and `audit export` on one
+is `unsupported` with the same pointer.
 
 ### A truncated log blocks the vault
 
@@ -140,7 +274,8 @@ Treat a truncation as evidence that the file was edited. Whatever the
 missing events recorded — a change of policy, a deletion, a new version
 — is gone, and an attacker who removed them may also have put back older
 copies of the rows they covered, which the surviving history can no longer
-tell from the truth. Compare the log and the secrets with a backup, then:
+tell from the truth. Compare the log and the secrets with a backup
+([`backup` and `restore`](#backup-and-restore)), then:
 
 ```
 sourceorrery audit --acknowledge --vault development
@@ -160,6 +295,14 @@ recorded and refused. With nothing to acknowledge the command says so and
 exits 0.
 
 ## Project manifest: `init`, `import`, `check`, `run`
+
+Without `--manifest`, the commands look for `sourceorrery.toml` in the
+current directory and its parents, no further than the repository (the
+first directory with a `.git` entry), the home directory, and, on Unix,
+directories and files owned by the home directory's owner: a manifest
+decides which vault a name means and where a remote provider's credential
+is sent, so one planted in `/tmp` or a shared parent is never picked up.
+`--manifest FILE` uses the file it names.
 
 `sourceorrery.toml` is the committed, value-free replacement for `.env`:
 
@@ -184,12 +327,43 @@ name and position without repeating the offending text. `env` names must be
 unique ignoring case (Windows environments are case-insensitive) and may not
 start with `SOURCEORRERY_`.
 
+A vault that is not a local file is a `[vaults.<name>]` table naming its
+provider and how to reach it, and nothing else; `payments-sandbox` above
+could be:
+
+```toml
+[vaults.payments-sandbox]
+provider = "hashicorp-vault"                 # or aws-secrets-manager
+address = "https://vault.example.com:8200"
+mount = "secret"
+```
+
+There is no key for a credential, so `token = "..."` is a parse error like
+`value`; credentials come from the provider's own environment. A vault
+name without a table is a local vault file, as before. The providers, their
+keys and the commands that work against a remote vault are in
+[providers](providers/index.md).
+
+How a secret is rotated is a `[rotation.<name>]` table naming the commands
+`secret rotate` runs (each the program and its arguments, no shell) and the
+grace period; it cannot hold a value either:
+
+```toml
+[rotation.database-password]
+issue = ["./scripts/db-rotate.sh", "issue"]        # stdout is the new value
+validate = ["./scripts/db-rotate.sh", "validate"]  # exit 0 accepts the candidate
+retire = ["./scripts/db-rotate.sh", "retire"]      # revokes the previous credential
+retire_after = "7d"
+```
+
+See [rotation](rotation.md) for what each command receives.
+
 | Command | Description |
 |---------|-------------|
 | `init [--project-name N] [--vault-name V] [--path FILE] [--force]` | Write a starter manifest. |
 | `init --integration AGENT[,AGENT...] [--scope project\|user] [--skills-dir DIR]` | Install the SourceOrrery skills for AI coding agents (below). An existing manifest is kept. |
 | `import FILE [--dry-run] [--manifest-only] [--only KEY]... [--exclude KEY]... [--overwrite] [--manifest FILE \| --no-manifest]` | Move a `.env` file into the vault and declare its keys (below). |
-| `check [--manifest FILE]` | Verify every entry resolves to an accessible version. Reads **metadata only**; writes no `secret_get` audit rows. Fails if a required secret is missing. |
+| `check [--manifest FILE] [--access]` | Verify every entry resolves to an accessible version. Reads **metadata only**; writes no `secret_get` audit rows. Fails if a required secret is missing. `--access` also reads each value and discards it, so the status says whether this identity may read the secret and not only inspect it (a remote provider can allow metadata and deny values); on a local vault that is an audited read. |
 | `run [--manifest FILE] -- COMMAND [ARGS...]` | Resolve every entry and start `COMMAND` with the values in its environment (plus `SOURCEORRERY_PROJECT`). Missing required secrets abort before the child starts; an optional secret whose vault does not exist is skipped. The child never inherits `SOURCEORRERY_PASSPHRASE` or `SOURCEORRERY_PASSPHRASE_FILE`. `--vault` overrides the manifest's default vault. |
 
 The parent resolves values in memory without printing them, then passes
@@ -268,6 +442,51 @@ else; neither writes a manifest. Running it again updates the files
 SourceOrrery wrote and leaves alone a skill of the same name that it did
 not. Paths per agent, the Claude Code plugin and what the skills do:
 [AI coding agents](ai-agents.md).
+
+## `backup` and `restore`
+
+```
+sourceorrery backup --out FILE [--secret NAME]... [--include-deleted] [--force] [--allow-weak]
+sourceorrery restore FILE [--only NAME]... [--overwrite] [--keep-deleted] [--dry-run]
+```
+
+`backup` writes every live secret of the selected vault, every version with
+its value (disabled and expired ones included), into one file sealed under
+a passphrase of its own, asked twice and rated like a vault passphrase
+(below "good" is refused unless `--allow-weak`), or taken from
+`SOURCEORRERY_BACKUP_PASSPHRASE` for scripts (warned about when weak); it
+is never a command-line argument. The file is always created new,
+readable by the current user alone, never through a link in its place;
+`--force` removes an existing file first. When the vault's [reveal guard](#the-reveal-guard) is on, the
+vault passphrase and a code are asked for first, as for a reveal.
+`--secret` limits the backup to named secrets, `--include-deleted`
+adds the soft-deleted ones with their deleted state, and an existing file
+is replaced only with `--force`. The file is written readable by the
+current user alone, and it is as sensitive as the vault: whoever has it
+and the passphrase has the values. The command prints names and counts,
+never a value; the export is recorded as one `vault_backup` audit event
+per secret. The format is in [Backup file format](backup-format.md).
+
+`restore` reads a backup into the selected vault (`--vault`, which may be
+any vault, not only the one the backup came from): every version becomes
+a new version of the target secret, oldest first, with its metadata kept
+and two tags added, `sourceorrery.restored-from` (the original version id)
+and `sourceorrery.restored-created-on`. A secret that already exists is
+skipped unless `--overwrite` adds the versions on top; one the vault holds
+soft-deleted is always skipped. A secret the backup holds as deleted comes
+back live, or is soft-deleted again with `--keep-deleted`. `--only` limits
+the restore to named secrets and `--dry-run` prints what would happen by
+name. Each written version is one `secret_restore` audit event; restoring
+is safe to repeat. A wrong passphrase is `backup_passphrase`, an altered
+file `crypto`, a file from a newer release `backup_format`.
+
+```
+sourceorrery backup --out development-2026-10-22.sobackup --vault development
+sourceorrery restore development-2026-10-22.sobackup --vault development-copy --dry-run
+```
+
+With `-o json`, both print `{"vault", "file", ...}` with the secrets'
+names, version counts and outcomes only.
 
 ## `ui`
 

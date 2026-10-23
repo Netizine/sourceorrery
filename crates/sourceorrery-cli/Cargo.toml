@@ -23,16 +23,27 @@ path = "src/main.rs"
 doc = false
 
 [features]
-default = ["os-keyring", "ui"]
+default = ["os-keyring", "ui", "remote", "otlp"]
 # Protect vault keys with the OS credential store. Disable for headless
 # servers that only use passphrase protectors.
 os-keyring = ["sourceorrery-storage/os-keyring"]
+# Every remote provider a manifest can name (`[vaults.<name>]`).
+remote = ["sourceorrery-provider/remote"]
+# HashiCorp Vault, KV version 2.
+provider-vault = ["sourceorrery-provider/provider-vault"]
+# AWS Secrets Manager.
+provider-aws = ["sourceorrery-provider/provider-aws"]
 # The interactive vault browser, `sourceorrery ui` (Ratatui). Nothing else
 # in the CLI depends on it; disable for minimal builds.
 ui = ["dep:ratatui"]
+# `audit export --format otlp`: OTLP/HTTP log records to a collector. JSON
+# Lines needs nothing and is always built.
+otlp = ["dep:reqwest"]
 
 [dependencies]
 sourceorrery-core.workspace = true
+sourceorrery-crypto.workspace = true
+sourceorrery-provider.workspace = true
 sourceorrery-storage.workspace = true
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.6"
@@ -47,10 +58,10 @@ zeroize.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"], optional = true }
+qrcode = { version = "0.14", default-features = false }
 
 [dev-dependencies]
-# Cheap Argon2id parameters for the vaults unit tests create.
-sourceorrery-crypto.workspace = true
 tempfile.workspace = true
 # Tests tamper with a vault file the way an attacker with write access would.
 rusqlite = { version = "0.40", features = ["bundled"] }

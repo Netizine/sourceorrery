@@ -33,6 +33,7 @@ final class SecretReader
     public static function open(string $vault, ?OpenOptions $options = null): self
     {
         $options ??= new OpenOptions();
+        Native::requireAbi();
         $ffi = Native::ffi();
         [$namePtr, $nameLen] = Native::arg($vault);
         [$jsonPtr, $jsonLen] = Native::arg($options->toJson());

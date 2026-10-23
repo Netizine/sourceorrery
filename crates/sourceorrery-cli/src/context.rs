@@ -1,21 +1,37 @@
 //! Shared state for every command: where vaults live, how to unlock them,
 //! how to print.
 
+use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow};
-use sourceorrery_core::{Manifest, Result as CoreResult, SecretBytes};
+use sourceorrery_core::{
+    AuditEvent, AuditQuery, DeletedSecret, ListOptions, Manifest, Page, RemoteVault,
+    Result as CoreResult, Secret, SecretBytes, SecretClient, SecretProperties, SecretReference,
+    SetSecretOptions, UpdateSecretProperties, VaultDescriptor,
+};
+use sourceorrery_provider::Remote;
 use sourceorrery_storage::{PassphrasePrompt, SqliteVault, UnlockProvider, VaultRegistry};
 
+use zeroize::{Zeroize, ZeroizeOnDrop};
+
 use crate::cli::{Cli, OutputFormat};
-use crate::prompt;
+use crate::strength::{self, Score};
+use crate::{output, prompt};
 
 /// Environment variable that supplies a passphrase directly (CI only).
 pub const PASSPHRASE_ENV: &str = "SOURCEORRERY_PASSPHRASE";
 
-/// Variables that unlock a vault. `run` strips them from the child's environment.
-pub const UNLOCK_ENV_VARS: [&str; 2] = [PASSPHRASE_ENV, "SOURCEORRERY_PASSPHRASE_FILE"];
+/// Variables that unlock a vault or pass its guard. `run` and the rotation
+/// hooks strip them from the child's environment: a program started with
+/// its secrets is not handed the means to read every other one.
+pub const UNLOCK_ENV_VARS: [&str; 4] = [
+    PASSPHRASE_ENV,
+    "SOURCEORRERY_PASSPHRASE_FILE",
+    "SOURCEORRERY_BACKUP_PASSPHRASE",
+    "SOURCEORRERY_TOTP",
+];
 
 #[derive(Debug)]
 pub struct Ctx {
@@ -24,6 +40,9 @@ pub struct Ctx {
     pub vault_flag: Option<String>,
     pub passphrase_file: Option<PathBuf>,
     pub verbose: u8,
+    /// `--code` / `SOURCEORRERY_TOTP`: a second-factor code for a guarded
+    /// operation, consumed by the first guard check.
+    pub code: Option<Code>,
 }
 
 impl Ctx {
@@ -38,6 +57,7 @@ impl Ctx {
             vault_flag: cli.vault.clone(),
             passphrase_file: cli.passphrase_file.clone(),
             verbose: cli.verbose,
+            code: cli.code.clone(),
         })
     }
 
@@ -61,28 +81,80 @@ impl Ctx {
         if let Some(name) = &self.vault_flag {
             return Ok(Some(name.clone()));
         }
-        let cwd = std::env::current_dir().context("cannot determine current directory")?;
-        if let Some(path) = Manifest::discover(&cwd) {
-            let manifest = Manifest::load(&path)?;
-            return Ok(Some(manifest.project.vault));
-        }
-        Ok(None)
+        Ok(Self::manifest()?.map(|manifest| manifest.project.vault))
     }
 
-    /// Open and unlock a vault by name.
-    pub fn open(&self, name: &str) -> anyhow::Result<SqliteVault> {
-        let unlocker = self.unlocker();
-        Ok(self.registry.open(name, &unlocker)?)
+    /// The nearest `sourceorrery.toml` above the current directory, parsed.
+    /// `None` when there is none; one that cannot be read is an error.
+    fn manifest() -> anyhow::Result<Option<Manifest>> {
+        let cwd = std::env::current_dir().context("cannot determine current directory")?;
+        match Manifest::discover(&cwd) {
+            Some(path) => Ok(Some(Manifest::load(&path)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// The `[vaults.<name>]` table of the nearest manifest, when `name` is a
+    /// remote vault; `None` for a local vault file.
+    pub fn remote_vault(name: &str) -> anyhow::Result<Option<RemoteVault>> {
+        Ok(Self::manifest()?.and_then(|m| m.remote_vault(name).cloned()))
+    }
+
+    /// Every remote vault the nearest manifest declares, by name.
+    pub fn remote_vaults() -> anyhow::Result<BTreeMap<String, RemoteVault>> {
+        Ok(Self::manifest()?.map(|m| m.vaults).unwrap_or_default())
+    }
+
+    /// Fail when `name` is a remote vault, naming `command` as local-only.
+    pub fn refuse_remote(name: &str, command: &str) -> anyhow::Result<()> {
+        match Self::remote_vault(name)? {
+            Some(remote) => Err(anyhow!(
+                "vault '{name}' is a remote vault ({}, declared in sourceorrery.toml); \
+                 `sourceorrery {command}` works on local vaults only",
+                remote.provider().display_name()
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// Open a vault by name for the operations of the contract: the local
+    /// file unlocked, or the remote provider the manifest names.
+    pub fn open(&self, name: &str) -> anyhow::Result<Opened> {
+        if let Some(remote) = Self::remote_vault(name)? {
+            return Ok(Opened::Remote(sourceorrery_provider::open_remote(
+                name, &remote,
+            )?));
+        }
+        Ok(Opened::Local(Box::new(self.open_local_file(name)?)))
     }
 
     /// Open the vault selected by [`Ctx::vault_name`].
-    pub fn open_default(&self) -> anyhow::Result<SqliteVault> {
+    pub fn open_default(&self) -> anyhow::Result<Opened> {
         let name = self.vault_name()?;
         self.open(&name)
     }
 
+    /// Open a vault that must be a local file, for what only a file has
+    /// (protectors, the audit log, backups, migration). `command` names the
+    /// command for the refusal a remote vault gets.
+    pub fn open_local(&self, name: &str, command: &str) -> anyhow::Result<SqliteVault> {
+        Self::refuse_remote(name, command)?;
+        self.open_local_file(name)
+    }
+
+    /// [`Ctx::open_local`] for the vault selected by [`Ctx::vault_name`].
+    pub fn open_local_default(&self, command: &str) -> anyhow::Result<SqliteVault> {
+        let name = self.vault_name()?;
+        self.open_local(&name, command)
+    }
+
+    fn open_local_file(&self, name: &str) -> anyhow::Result<SqliteVault> {
+        let unlocker = self.unlocker();
+        Ok(self.registry.open(name, &unlocker)?)
+    }
+
     /// Open the selected vault to inspect its audit log: like
-    /// [`Ctx::open_default`], but a vault blocked by an unacknowledged
+    /// [`Ctx::open_local_default`], but a vault blocked by an unacknowledged
     /// audit-log truncation is unlocked too, with every secret and
     /// protector operation refused until the truncation is acknowledged.
     /// Only the `audit` command uses this.
@@ -94,8 +166,10 @@ impl Ctx {
     /// [`Ctx::inspect_default`] for a vault named explicitly. Besides
     /// `audit`, the `ui` browser opens vaults this way, so that a blocked
     /// vault can still show its audit log there; the vault itself refuses
-    /// every secret operation until the truncation is acknowledged.
+    /// every secret operation until the truncation is acknowledged. A
+    /// remote vault has no local audit log and is refused.
     pub fn inspect(&self, name: &str) -> anyhow::Result<SqliteVault> {
+        Self::refuse_remote(name, "audit` and `sourceorrery ui")?;
         let unlocker = self.unlocker();
         Ok(self.registry.open_for_inspection(name, &unlocker)?)
     }
@@ -104,18 +178,53 @@ impl Ctx {
         Unlocker {
             file: self.passphrase_file.clone(),
             interactive: std::io::stdin().is_terminal(),
+            automated: std::cell::Cell::new(false),
         }
     }
 
     /// Obtain a passphrase for creating a protector: from the environment or
     /// file when configured, otherwise prompted twice.
-    pub fn new_passphrase(&self, purpose: &str) -> anyhow::Result<SecretBytes> {
+    ///
+    /// The strength estimate (`strength`) is applied to every source. A
+    /// passphrase typed at the prompt that rates below [`Score::REQUIRED`]
+    /// is refused unless `allow_weak`; one that automation supplies through
+    /// the environment or a file is its owner's business and only gets a
+    /// warning on stderr.
+    pub fn new_passphrase(&self, purpose: &str, allow_weak: bool) -> anyhow::Result<SecretBytes> {
         if let Some(pass) = passphrase_from_env() {
+            warn_if_weak(&pass, PASSPHRASE_ENV);
             return Ok(pass);
         }
         if let Some(file) = &self.passphrase_file {
-            return read_passphrase_file(file);
+            let pass = read_passphrase_file(file)?;
+            warn_if_weak(&pass, "the passphrase file");
+            return Ok(pass);
         }
+        Self::prompt_new_passphrase(purpose, allow_weak)
+    }
+
+    /// The passphrase automation supplies (`SOURCEORRERY_PASSPHRASE`, then
+    /// `--passphrase-file`), if any; the sources an unlock tries first.
+    pub fn passphrase_from_sources(&self) -> anyhow::Result<Option<SecretBytes>> {
+        if let Some(pass) = passphrase_from_env() {
+            return Ok(Some(pass));
+        }
+        match &self.passphrase_file {
+            Some(file) => read_passphrase_file(file).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// A passphrase from a file, trailing newline removed.
+    pub fn passphrase_from_file(file: &Path) -> anyhow::Result<SecretBytes> {
+        let pass = read_passphrase_file(file)?;
+        warn_if_weak(&pass, "the passphrase file");
+        Ok(pass)
+    }
+
+    /// A new passphrase typed twice at the hidden prompt, strength-checked:
+    /// below [`Score::REQUIRED`] it is refused unless `allow_weak`.
+    pub fn prompt_new_passphrase(purpose: &str, allow_weak: bool) -> anyhow::Result<SecretBytes> {
         if !std::io::stdin().is_terminal() {
             return Err(anyhow!(
                 "cannot prompt for a passphrase: stdin is not a terminal. \
@@ -123,14 +232,54 @@ impl Ctx {
             ));
         }
         let first = prompt::read_hidden(&format!("Choose a passphrase {purpose}: "))?;
+        if first.is_empty() {
+            return Err(anyhow!("passphrase must not be empty"));
+        }
+        let estimate = strength::estimate(first.expose_utf8().unwrap_or_default());
+        if !estimate.acceptable() {
+            let reasons = if estimate.warnings.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", estimate.warnings.join(", "))
+            };
+            if !allow_weak {
+                return Err(anyhow!(
+                    "that passphrase rates {}{reasons}; a vault passphrase needs at least \
+                     \"{}\". Use a longer one, or several unrelated words (`sourceorrery \
+                     vault passphrase generate` makes one), or pass --allow-weak",
+                    estimate.score.label(),
+                    Score::REQUIRED.label()
+                ));
+            }
+            output::note(&format!(
+                "accepting a passphrase that rates {}{reasons} because --allow-weak was given",
+                estimate.score.label()
+            ));
+        }
         let second = prompt::read_hidden("Confirm passphrase: ")?;
         if first != second {
             return Err(anyhow!("passphrases do not match"));
         }
-        if first.is_empty() {
-            return Err(anyhow!("passphrase must not be empty"));
-        }
         Ok(first)
+    }
+}
+
+/// Say on stderr when a passphrase automation supplied is weak; the
+/// estimate never prints the passphrase, only what weakened it.
+pub(crate) fn warn_if_weak(pass: &SecretBytes, source: &str) {
+    let estimate = strength::estimate(pass.expose_utf8().unwrap_or_default());
+    if !estimate.acceptable() {
+        output::note(&format!(
+            "the passphrase from {source} rates {}{}; a vault passphrase should be at least \
+             \"{}\"",
+            estimate.score.label(),
+            if estimate.warnings.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", estimate.warnings.join(", "))
+            },
+            Score::REQUIRED.label()
+        ));
     }
 }
 
@@ -153,12 +302,42 @@ fn read_passphrase_file(path: &Path) -> anyhow::Result<SecretBytes> {
     Ok(SecretBytes::new(bytes))
 }
 
+/// A second-factor code from `--code` or `SOURCEORRERY_TOTP`: good for a
+/// minute and once, but a credential while it lasts, so it is wiped when
+/// dropped and never printed by `Debug`.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+pub struct Code(String);
+
+impl Code {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::str::FromStr for Code {
+    type Err = std::convert::Infallible;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Ok(Self(text.to_owned()))
+    }
+}
+
+impl std::fmt::Debug for Code {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Code([REDACTED])")
+    }
+}
+
 /// Supplies passphrases: environment variable, then file, then an
-/// interactive prompt (when stdin is a terminal).
+/// interactive prompt (when stdin is a terminal). A passphrase goes to the
+/// vault as supplied; the vault itself also tries it as a recovery code
+/// when it has the shape of one.
 #[derive(Debug)]
 pub struct Unlocker {
     file: Option<PathBuf>,
     interactive: bool,
+    /// The first attempt came from the environment or a file.
+    automated: std::cell::Cell<bool>,
 }
 
 impl UnlockProvider for Unlocker {
@@ -166,9 +345,11 @@ impl UnlockProvider for Unlocker {
         // Non-interactive sources are tried once only; a wrong value is wrong.
         if prompt.attempt == 1 {
             if let Some(pass) = passphrase_from_env() {
+                self.automated.set(true);
                 return Ok(Some(pass));
             }
             if let Some(file) = &self.file {
+                self.automated.set(true);
                 return read_passphrase_file(file)
                     .map(Some)
                     .map_err(|err| sourceorrery_core::SecretError::Io(err.to_string()));
@@ -177,8 +358,30 @@ impl UnlockProvider for Unlocker {
         if !self.interactive {
             return Ok(None);
         }
+        if prompt.attempt == 2 && self.automated.get() {
+            // Say why the prompt appears at all: the value the environment
+            // or the file supplied was rejected, and this is not it.
+            eprintln!(
+                "The passphrase from {} was not accepted; type one (or a recovery code).",
+                if passphrase_from_env().is_some() {
+                    PASSPHRASE_ENV
+                } else {
+                    "the passphrase file"
+                }
+            );
+        }
+        if prompt.attempt == 1
+            && let Some(hint) = prompt.hint
+        {
+            // The hint is text from the file, unauthenticated: sanitised
+            // like every other line shown before unlock.
+            eprintln!("Hint: {}", output::sanitize(hint));
+        }
         let text = if prompt.attempt == 1 {
-            format!("Passphrase for vault '{}': ", prompt.vault)
+            format!(
+                "Passphrase (or a recovery code) for vault '{}': ",
+                prompt.vault
+            )
         } else {
             format!(
                 "Passphrase for vault '{}' (attempt {} of {}): ",
@@ -188,5 +391,110 @@ impl UnlockProvider for Unlocker {
         prompt::read_hidden(&text)
             .map(Some)
             .map_err(|err| sourceorrery_core::SecretError::Io(err.to_string()))
+    }
+}
+
+/// A vault open for the operations of the contract: the local file, or the
+/// client of the remote provider the manifest names. Commands that need
+/// what only a file has use [`Ctx::open_local`] instead.
+#[derive(Debug)]
+pub enum Opened {
+    /// An unlocked vault file.
+    Local(Box<SqliteVault>),
+    /// A remote vault behind its provider.
+    Remote(Remote),
+}
+
+impl Opened {
+    fn client(&self) -> &dyn SecretClient {
+        match self {
+            Self::Local(vault) => vault.as_ref(),
+            Self::Remote(remote) => remote.client.as_ref(),
+        }
+    }
+
+    /// Name, backend and location.
+    pub fn descriptor(&self) -> CoreResult<VaultDescriptor> {
+        match self {
+            Self::Local(vault) => vault.descriptor(),
+            Self::Remote(remote) => Ok(remote.descriptor.clone()),
+        }
+    }
+
+    /// The vault file, when the vault is one.
+    pub fn local(&self) -> Option<&SqliteVault> {
+        match self {
+            Self::Local(vault) => Some(vault.as_ref()),
+            Self::Remote(_) => None,
+        }
+    }
+}
+
+impl SecretClient for Opened {
+    fn vault_name(&self) -> &str {
+        self.client().vault_name()
+    }
+    fn set_secret(
+        &self,
+        name: &str,
+        value: SecretBytes,
+        options: SetSecretOptions,
+    ) -> CoreResult<SecretProperties> {
+        self.client().set_secret(name, value, options)
+    }
+    fn get_secret(&self, name: &str, version: Option<&str>) -> CoreResult<Secret> {
+        self.client().get_secret(name, version)
+    }
+    fn get_secret_properties(
+        &self,
+        name: &str,
+        version: Option<&str>,
+    ) -> CoreResult<SecretProperties> {
+        self.client().get_secret_properties(name, version)
+    }
+    fn list_properties_of_secrets(&self) -> CoreResult<Vec<SecretProperties>> {
+        self.client().list_properties_of_secrets()
+    }
+    fn list_properties_of_secrets_page(
+        &self,
+        options: ListOptions,
+    ) -> CoreResult<Page<SecretProperties>> {
+        self.client().list_properties_of_secrets_page(options)
+    }
+    fn list_properties_of_secret_versions(&self, name: &str) -> CoreResult<Vec<SecretProperties>> {
+        self.client().list_properties_of_secret_versions(name)
+    }
+    fn update_secret_properties(
+        &self,
+        name: &str,
+        version: Option<&str>,
+        update: UpdateSecretProperties,
+    ) -> CoreResult<SecretProperties> {
+        self.client()
+            .update_secret_properties(name, version, update)
+    }
+    fn delete_secret(&self, name: &str) -> CoreResult<DeletedSecret> {
+        self.client().delete_secret(name)
+    }
+    fn get_deleted_secret(&self, name: &str) -> CoreResult<DeletedSecret> {
+        self.client().get_deleted_secret(name)
+    }
+    fn list_deleted_secrets(&self) -> CoreResult<Vec<DeletedSecret>> {
+        self.client().list_deleted_secrets()
+    }
+    fn list_deleted_secrets_page(&self, options: ListOptions) -> CoreResult<Page<DeletedSecret>> {
+        self.client().list_deleted_secrets_page(options)
+    }
+    fn recover_deleted_secret(&self, name: &str) -> CoreResult<SecretProperties> {
+        self.client().recover_deleted_secret(name)
+    }
+    fn purge_deleted_secret(&self, name: &str) -> CoreResult<()> {
+        self.client().purge_deleted_secret(name)
+    }
+    fn audit_events(&self, query: AuditQuery) -> CoreResult<Vec<AuditEvent>> {
+        self.client().audit_events(query)
+    }
+    fn resolve(&self, reference: &SecretReference) -> CoreResult<Secret> {
+        self.client().resolve(reference)
     }
 }

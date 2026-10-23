@@ -74,7 +74,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | Audit without values, including failed unlocks | `audit_events` table; `vault_open` denied/failure rows |
 | Metadata integrity | HMAC-SHA256 tag on every `secrets` / `secret_versions` row under an HKDF sub-key of the DEK; verified on every read, written on every insert/update; forged deletion state is neither honoured nor purged (`storage::integrity`, `storage::sqlite`) |
 | Row state bound to the audit chain | Every change records the changed row's new tag (or its removal) as a checkpoint in its own keyed audit event; a row is honoured only when its tag equals the newest checkpoint, so an authentic *older* copy of a row (re-enabled, undeleted, resurrected after purge) or a version removed out of band is refused with `crypto` (`storage::sqlite::rows`, [vault-format.md](vault-format.md#checkpoints)) |
-| Audit log integrity | Keyed hash chain over `audit_events` plus a keyed head record; a stale head (rows removed from the end, head missing or invalid) refuses the unlock or operation that finds it and is recorded as `audit_verify` / `failure`; `sourceorrery audit --verify` reports breaks, truncations and unkeyed rows (`storage::integrity`, `storage::sqlite`) |
+| Audit log integrity | Keyed hash chain over `audit_events` plus a keyed head record that names the newest keyed row and counts the keyed rows. Every unlock walks the chain from the newest acknowledgement to the end: a row that does not follow its predecessor, or whose hash does not verify (one removed, replaced or edited inside the log), refuses the unlock, is recorded as `audit_verify` / `failure` and blocks the vault like a truncation. Before every operation the head is checked: rows removed from the end, a missing or invalid head, or a keyed row removed or demoted from the middle fail it. `sourceorrery audit --verify` reports breaks, truncations and unkeyed rows (`storage::integrity`, `storage::sqlite::audit`; [security review](security-review.md), finding 1) |
 | Truncation blocks the vault until acknowledged | A recorded truncation that no later keyed `audit_verify` / `success` acknowledgement covers refuses every unlock and operation with `crypto`, naming the event; only `sourceorrery audit` and the audit view of `sourceorrery ui` unlock such a vault: both for reading the log, `audit` also for verifying the chain and for `audit --acknowledge`, which prints the truncation events, asks for confirmation and appends the acknowledgement under the vault key. Refusals and the acknowledgement are themselves on the chain; removing the acknowledgement is another truncation that un-acknowledges what it covered (`storage::sqlite::audit`, [vault-format.md](vault-format.md#audit-chain)) |
 | Every rejected operation is audited | Invalid names, rejected time windows and tags, empty updates and refused protector changes go through the same failure path as any other error: the operation body is rolled back and one `failure` row is committed (an invalid name is not recorded, since it is arbitrary input) |
 | Exclusive vault creation | The vault file is created with `O_EXCL` / `CREATE_NEW`; concurrent creators get `vault_exists` and never remove the winner's file |
@@ -91,16 +91,21 @@ treated as secrets. Users are told not to put sensitive information in them.
 | Resource ceilings before authentication | Argon2 parameters from the file are capped (1 GiB, 64 passes, 16 lanes); at most 8 passphrase protectors are tried |
 | Keyring entries deleted only when provably this vault's | Account must match the vault's own identity and no sibling vault may reference it; `--keep-os-key` opts out |
 | No secret echoes in diagnostics | Manifest parse errors report a category and position, never the offending text |
-| Terminal output sanitised | Text read from the vault file can be planted by a tamperer: protector labels and keyring accounts are not authenticated at all, and the vault name is not until unlock. Audit rows written before unlock can be forged too. So table output, status lines, notes, errors and prompts show control characters (C0 including ESC, TAB, CR and LF; DEL; C1) and bidi formatting characters as `\u{..}` escapes. Planted text cannot move the cursor to hide audit rows, write the clipboard (OSC 52) or reorder what is shown. Multi-line messages keep their own line breaks. JSON is left to serde, and revealed values stay byte-exact (`cli::output::sanitize`) |
+| Terminal output sanitised | Text read from the vault file can be planted by a tamperer: protector labels and keyring accounts are not authenticated at all, and the vault name is not until unlock. Audit rows written before unlock can be forged too. So table output, status lines, notes, errors and prompts show control characters (C0 including ESC, TAB, CR and LF; DEL; C1), bidi formatting characters and the invisible formatting characters (zero-width space, word joiner, byte-order mark, tag characters) as `\u{..}` escapes; text a provider's server supplies is bounded and cleaned the same way before it enters any error message, since the SDKs print messages as they are (`sourceorrery_core::text`). Planted text cannot move the cursor to hide audit rows, write the clipboard (OSC 52) or reorder what is shown. Multi-line messages keep their own line breaks. JSON is left to serde, and revealed values stay byte-exact (`cli::output::sanitize`) |
 | Idle lock in the browser | `ui` drops the open vault after `--lock-after` minutes without a key (default 10) and on `L`, so the vault key, zeroised as it is dropped, does not stay in memory for a long-lived session; unlocking again goes through the ordinary unlock order (`sourceorrery-cli::ui`) |
 | Value-free interactive browser | `ui` reads the vault only through `MetadataSource`, which has no operation returning a value, so no value is drawn, held in its screen buffers or copied anywhere. Its changes go through a separate `MetadataEditor` (metadata, delete, recover, new versions; no purge, protector or acknowledgement), each checked and confirmed first; a new value is read at the ordinary hidden prompt with the screen suspended and passed straight to the vault; `--read-only` refuses every change; stored text goes through the same `output::sanitize` as the rest of the CLI (`sourceorrery-cli::ui`) |
-| Child environment hygiene | `run` removes `SOURCEORRERY_PASSPHRASE` and `SOURCEORRERY_PASSPHRASE_FILE` from the child; manifests cannot deliver under `SOURCEORRERY_*` names |
+| Child environment hygiene | `run` and the rotation hooks remove `SOURCEORRERY_PASSPHRASE`, `SOURCEORRERY_PASSPHRASE_FILE`, `SOURCEORRERY_BACKUP_PASSPHRASE` and `SOURCEORRERY_TOTP` from the child; manifests cannot deliver under `SOURCEORRERY_*` names, nor under a variable that changes how programs load or run (`PATH`, `LD_*`, `DYLD_*`, `NODE_OPTIONS`, `JAVA_TOOL_OPTIONS` and the like), since a manifest is repository content |
 | Importing `.env` files without showing them | `import` reads the file into zeroised memory and stores each value straight into the vault; its table, JSON and errors carry key names and line numbers only, so a person or a coding agent can migrate a project without values reaching a terminal, a log or a model's context (`sourceorrery-cli::commands::import`, `dotenv`) |
 | Agent skills that never handle values | The skills `init --integration` installs tell an agent to learn key names from `import --dry-run`, to ask the user to type new values at the hidden prompt, and never to open `.env` files, reveal values or print the environment. They are instructions, not a boundary: see guarantee 3 ([AI coding agents](ai-agents.md)) |
 | Read-only SDKs | Every binding exposes only the read-only `so_reader_*` / `so_project_*` surface or the Rust client: open, get, properties, resolve, load a project. No write, protector or audit operation exists in any SDK ([ADR 0005](adr/0005-read-only-sdks.md)) |
 | One unlock order, no prompt in a library | The Rust client owns the unlock order (OS credential store, an explicit passphrase, `SOURCEORRERY_PASSPHRASE`, `SOURCEORRERY_PASSPHRASE_FILE`); SDKs never prompt and never migrate a vault (`crates/sourceorrery`) |
 | Values guarded in every language | A value stays in native memory until the application closes it and is zeroised then (`so_bytes_free`, `SecretBytes`); the wrapper prints as `[REDACTED]` and refuses serialisation where the language allows; bytes leave only through an explicit call (`docs/sdks`) |
 | Same behaviour in every SDK | One scenario list, judged by one harness, runs against every SDK in CI on Ubuntu, Windows and macOS (`tests/conformance/sdk`) |
+| A second check before a person sees a value | The reveal guard (`vault guard`) makes `secret get --reveal`, `backup` and every change to how the vault unlocks ask for the vault passphrase again, a TOTP code from an authenticator app, or both, even when the OS keyring unlocked the vault. The guard and the TOTP secret (sealed with the vault key, with the last accepted step so a code is never accepted twice) live in the authenticated settings record, so a file edit cannot switch the guard off. `run`, `check`, `ui` and the SDKs are untouched: the guard is for the moments a person or an agent at the CLI asks to see a value, not a boundary (`storage::sqlite::guard`, `cli::commands::guard`) |
+| A vault is not lost with its passphrase | `vault recovery codes` installs up to 7 random 125-bit codes as passphrase protectors, shown once; one unlocks the vault in place of the passphrase, and `vault passphrase set` then replaces it. A passphrase hint is stored in clear and shown at the prompt; it is refused when it would itself unlock the vault, and it is never trusted (see gap 12) |
+| Typed passphrases rated before they are accepted | A passphrase typed at the prompt must rate "good" on a rule-based estimate (common passwords, dictionary-style words, repeats, sequences, years, short lengths; no wordlist shipped) unless `--allow-weak`; `vault passphrase generate` offers one from the OS random source (`cli::strength`). The `setup` wizard applies the same rule to the passphrase and to the first secret as they are typed, draws hidden fields as dots from their length, wipes its buffers, and shows only a generated passphrase and the recovery codes, once (`cli::ui::setup`) |
+| Manifest discovery bounded | Without an explicit path, `sourceorrery.toml` is looked for in the working directory and its parents only up to the repository (`.git`), the home directory, and, on Unix, no further than directories and files owned by the home directory's owner. A manifest decides which vault a name means and where a provider credential is sent, so one planted in `/tmp` or a shared parent is never picked up (`core::manifest::Manifest::discover`) |
+| Clear text only to the local machine | A remote provider's `address` or `endpoint_url` must be `https://`, or `http://` to `localhost`, `127.0.0.0/8` or `::1`; the Vault client follows no redirect and uses no proxy for a loopback address, so a token never travels to another host (`core::remote`, `sourceorrery-provider-vault::http`) |
 | Release integrity | Locked builds, `cargo audit`, one release workflow from one commit, trusted publishing on every registry that offers it (npm, PyPI, crates.io, NuGet) with provenance on npm and PyPI, signatures on Maven Central, checksums on the release ([Supply chain](supply-chain.md)) |
 
 ## Known gaps
@@ -136,8 +141,11 @@ treated as secrets. Users are told not to put sensitive information in them.
    of a row **and** removing the audit rows that recorded the later change —
    is the same attack in a smaller form, and the file alone cannot tell the
    surviving history from the truth either. What it can do is refuse to be
-   quiet about it, and refuse to go on without its owner: the chain head no
-   longer matches, so the next unlock is refused with `crypto`, the
+   quiet about it, and refuse to go on without its owner: the chain no
+   longer verifies (rows removed from the end leave the head naming a row
+   that is gone; a row removed from the middle leaves the next one not
+   following its predecessor, which the unlock's walk finds), so the next
+   unlock is refused with `crypto`, the
    truncation is recorded in the chain for good, and from then on every
    unlock and operation is refused until the owner has reviewed the
    surviving history (`audit`, `audit --verify`, ideally against a backup)
@@ -159,15 +167,67 @@ treated as secrets. Users are told not to put sensitive information in them.
 8. **Keyring cleanup sees only this home.** `vault destroy` refuses to delete
    a credential-store entry that another vault file in the same home
    references, but a copy of the vault kept elsewhere is invisible to that
-   check; use `--keep-os-key` when a vault file has been copied.
+   check; use `--keep-os-key` when a vault file has been copied. The
+   identity the check reads (the vault id and the protector id in the file)
+   is not authenticated before unlock, so a decoy file copying a real
+   vault's identity passes it; what that costs is one credential-store
+   entry, never a value.
 9. **Copies an application makes.** An SDK zeroises the value it holds,
    but not the copies an application takes out of it: a Python `str`, a
    Java `String` or a JavaScript string cannot be wiped. Keep such copies
    short-lived.
-10. **The OS-keyring path is checked by hand.** CI tests the passphrase
-    path on every platform; the OS credential store is validated manually
-    and has not yet been validated on macOS or a Linux desktop
+10. **The OS-keyring path is checked headlessly, and by hand in a desktop
+    session.** The conformance suite uses passphrase protectors only. CI
+    runs `scripts/dev/keyring-smoke.sh` (and `.ps1` on Windows) against a
+    real store on every push: a temporary keychain on macOS, GNOME Keyring
+    under a private session bus on Linux, Credential Manager on Windows. A
+    desktop session differs (the login keychain, a keyring or KWallet
+    unlocked at login, prompts), so the same script is run by hand there;
+    the macOS and Linux desktop runs are not yet recorded
     ([roadmap](roadmap.md)).
+11. **A backup is as sensitive as the vault, and only a passphrase protects
+    it.** `sourceorrery backup` writes every value, sealed under Argon2id
+    and XChaCha20-Poly1305 ([format](backup-format.md)); no OS credential
+    store is involved, so the file can be opened wherever its passphrase
+    is. Choose it as you would a vault passphrase, keep the file where the
+    vault's threat model allows, and remember that restoring it writes
+    every version into the target, audited but not reversible except by
+    deleting the secrets again.
+12. **The reveal guard and the hint are for people, not against a
+    process.** The guard is satisfied by `SOURCEORRERY_PASSPHRASE` and
+    `SOURCEORRERY_TOTP` (or `--code`), so anything that runs as you and
+    holds both passes it as a script would; and a code read from the
+    phone is good for thirty seconds either side of its step, once. The
+    passphrase hint is a `vault_meta` row outside every tag, readable and
+    writable before unlock: a tamperer can plant one (it is sanitised
+    before it is shown, so it cannot drive the terminal), and it must
+    never be the passphrase in disguise. Recovery codes are passphrase
+    protectors: as strong as the Argon2 parameters they are wrapped under,
+    and as safe as the paper they are written on; one satisfies the guard's
+    passphrase factor, since it is a way in by design. The guard belongs to
+    the local vault file: a reveal from a remote vault is governed by the
+    provider's policy alone.
+13. **Between an unlock and the operations that follow, the head is the
+    check.** The unlock walks the whole chain; each operation after it
+    re-checks the head and its count of keyed rows, which catches rows
+    removed from the end or the middle but not a keyed row replaced by a
+    forgery of the same count while the handle is open. That needs write
+    access to the file between two operations of one process, and the
+    forgery is found at the next unlock. Walking the chain on every
+    operation would make each one cost the size of the log.
+14. **A remote vault's policy is the provider's metadata.** On HashiCorp
+    Vault the `enabled` flag, the time window, the deletion marker and the
+    rotation state live in `custom_metadata`; on AWS Secrets Manager in
+    tags. Whoever may write that metadata (`update` on
+    `<mount>/metadata/<name>`; `secretsmanager:TagResource`) administers
+    the policy, and nothing in the client can tell a planted flag from a
+    set one: the local vault's tags and checkpoints have no counterpart
+    there. Grant metadata write capability as policy administration
+    ([enterprise](enterprise.md), [security review](security-review.md),
+    finding 6).
+15. **An explicit manifest is trusted as given.** The discovery bounds
+    above apply to the manifest found upwards from the working directory;
+    `--manifest FILE` and `OpenOptions::manifest` use the file they name.
 
 ## Planned (milestone 3): the hard problem
 

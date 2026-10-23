@@ -10,6 +10,8 @@ mod dotenv;
 mod integrations;
 mod output;
 mod prompt;
+mod qr;
+mod strength;
 #[cfg(feature = "ui")]
 mod ui;
 
@@ -38,6 +40,7 @@ fn main() -> ExitCode {
     };
 
     let result = match command {
+        Command::Setup(args) => commands::setup::run(&ctx, args),
         Command::Vault(cmd) => commands::vault::run(&ctx, cmd),
         Command::Secret(cmd) => commands::secret::run(&ctx, cmd),
         Command::Audit(args) => commands::audit::run(&ctx, args),
@@ -45,6 +48,8 @@ fn main() -> ExitCode {
         Command::Import(args) => commands::import::run(&ctx, args),
         Command::Check(args) => commands::project::check(&ctx, args),
         Command::Run(args) => return commands::project::run(&ctx, args),
+        Command::Backup(args) => commands::backup::backup(&ctx, args),
+        Command::Restore(args) => commands::backup::restore(&ctx, args),
         #[cfg(feature = "ui")]
         Command::Ui(args) => ui::run(&ctx, args),
         Command::Completions(args) => commands::completions::run(args),

@@ -3,9 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use sourceorrery_core::{
-    Secret, SecretBytes, SecretClient, SecretError, SecretProperties, SecretReference,
-    VaultDescriptor,
+    Manifest, Provider, RemoteVault, Secret, SecretBytes, SecretClient, SecretError,
+    SecretProperties, SecretReference, VaultDescriptor,
 };
+use sourceorrery_provider::Remote;
 use sourceorrery_storage::{SqliteVault, VaultRegistry};
 
 use crate::error::{Context, Error, Result};
@@ -15,7 +16,9 @@ use crate::unlock::NonInteractiveUnlock;
 ///
 /// The defaults reproduce the CLI: vaults under `SOURCEORRERY_HOME` (or the
 /// platform data directory), unlocked by the OS credential store, then
-/// `SOURCEORRERY_PASSPHRASE`, then `SOURCEORRERY_PASSPHRASE_FILE`.
+/// `SOURCEORRERY_PASSPHRASE`, then `SOURCEORRERY_PASSPHRASE_FILE`; a vault
+/// that the nearest `sourceorrery.toml` declares as remote (`[vaults.<name>]`)
+/// is opened at its provider instead.
 #[derive(Clone, Debug)]
 pub struct OpenOptions {
     /// Directory holding the `vaults/` folder. `None` honours
@@ -31,6 +34,11 @@ pub struct OpenOptions {
     /// (default `true`). `SOURCEORRERY_HOME` is honoured regardless whenever
     /// `home` is unset.
     pub environment: bool,
+    /// The `sourceorrery.toml` whose `[vaults.<name>]` tables say which
+    /// vaults are remote and where. `None` uses the nearest manifest above
+    /// the current directory, as `sourceorrery run` does; a vault without a
+    /// table, or no manifest at all, is a local vault file.
+    pub manifest: Option<PathBuf>,
 }
 
 impl Default for OpenOptions {
@@ -40,6 +48,7 @@ impl Default for OpenOptions {
             passphrase: None,
             passphrase_file: None,
             environment: true,
+            manifest: None,
         }
     }
 }
@@ -78,6 +87,41 @@ impl OpenOptions {
         self
     }
 
+    /// Resolve remote vaults through this manifest instead of the nearest
+    /// `sourceorrery.toml`.
+    #[must_use]
+    pub fn manifest(mut self, path: impl Into<PathBuf>) -> Self {
+        self.manifest = Some(path.into());
+        self
+    }
+
+    /// The `[vaults.<vault>]` table for `vault`, from the manifest the
+    /// options name or the nearest one; `None` for a local vault.
+    fn remote_vault(&self, vault: &str) -> Result<Option<RemoteVault>> {
+        let path = match &self.manifest {
+            Some(path) if !path.as_os_str().is_empty() => path.clone(),
+            _ => {
+                let Some(found) = std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| Manifest::discover(&cwd))
+                else {
+                    return Ok(None);
+                };
+                found
+            }
+        };
+        let manifest = Manifest::load(&path).map_err(|err| {
+            Error::new(
+                &err,
+                &Context {
+                    vault: Some(vault),
+                    ..Context::default()
+                },
+            )
+        })?;
+        Ok(manifest.remote_vault(vault).cloned())
+    }
+
     fn registry(&self) -> sourceorrery_core::Result<VaultRegistry> {
         match &self.home {
             Some(home) if !home.as_os_str().is_empty() => Ok(VaultRegistry::with_root(home)),
@@ -86,14 +130,24 @@ impl OpenOptions {
     }
 }
 
+/// Where a reader's secrets come from.
+#[derive(Debug)]
+enum Backend {
+    /// An encrypted vault file in the home directory.
+    Local(Box<SqliteVault>),
+    /// A remote provider named by the manifest.
+    Remote(Remote),
+}
+
 /// An unlocked vault that can only be read.
 ///
 /// One reader may be shared between threads. Dropping it zeroises the vault
 /// key held in memory.
 #[derive(Debug)]
 pub struct SecretReader {
-    vault: SqliteVault,
+    backend: Backend,
     home: PathBuf,
+    provider: Option<Provider>,
 }
 
 impl SecretReader {
@@ -104,7 +158,10 @@ impl SecretReader {
 
     /// Open `vault` with explicit options.
     ///
-    /// Unlock order: OS credential store, `options.passphrase`,
+    /// A vault the manifest declares as remote ([`OpenOptions::manifest`])
+    /// is opened at its provider with the credentials the provider's own
+    /// environment supplies. Otherwise the vault file is unlocked in this
+    /// order: OS credential store, `options.passphrase`,
     /// `SOURCEORRERY_PASSPHRASE`, then `options.passphrase_file` or
     /// `SOURCEORRERY_PASSPHRASE_FILE`. Each failed attempt is audited by the
     /// vault. A vault in an older on-disk format is refused with
@@ -114,6 +171,24 @@ impl SecretReader {
             .registry()
             .map_err(|err| Error::new(&err, &Context::default()))?;
         let home = registry.root().to_path_buf();
+        if let Some(remote) = options.remote_vault(vault)? {
+            let provider = remote.provider();
+            let opened = sourceorrery_provider::open_remote(vault, &remote).map_err(|err| {
+                Error::new(
+                    &err,
+                    &Context {
+                        vault: Some(vault),
+                        provider: Some(provider),
+                        ..Context::default()
+                    },
+                )
+            })?;
+            return Ok(Self {
+                backend: Backend::Remote(opened),
+                home,
+                provider: Some(provider),
+            });
+        }
         let unlock = NonInteractiveUnlock::gather(
             options.passphrase.as_ref(),
             options.passphrase_file.as_deref(),
@@ -126,6 +201,7 @@ impl SecretReader {
                     vault: Some(vault),
                     home: Some(&home),
                     unlock: None,
+                    provider: None,
                 },
             )
         })?;
@@ -136,35 +212,53 @@ impl SecretReader {
                     vault: Some(vault),
                     home: Some(&home),
                     unlock: Some(&unlock.report),
+                    provider: None,
                 },
             )
         })?;
         Ok(Self {
-            vault: opened,
+            backend: Backend::Local(Box::new(opened)),
             home,
+            provider: None,
         })
+    }
+
+    fn client(&self) -> &dyn SecretClient {
+        match &self.backend {
+            Backend::Local(vault) => vault.as_ref(),
+            Backend::Remote(remote) => remote.client.as_ref(),
+        }
     }
 
     /// Name of the vault this reader is bound to.
     pub fn vault_name(&self) -> &str {
-        self.vault.vault_name()
+        self.client().vault_name()
     }
 
-    /// Directory the vault was found under.
+    /// Directory local vaults are looked up under.
     pub fn home(&self) -> &Path {
         &self.home
     }
 
-    /// Non-sensitive description of the vault (name, id, path, protectors).
+    /// The remote provider serving this vault; `None` for a local vault file.
+    pub fn provider(&self) -> Option<Provider> {
+        self.provider
+    }
+
+    /// Non-sensitive description of the vault (name, id, path, protectors;
+    /// for a remote vault, what its provider reports).
     pub fn descriptor(&self) -> Result<VaultDescriptor> {
-        self.vault.descriptor().map_err(|err| self.error(&err))
+        match &self.backend {
+            Backend::Local(vault) => vault.descriptor().map_err(|err| self.error(&err)),
+            Backend::Remote(remote) => Ok(remote.descriptor.clone()),
+        }
     }
 
     /// The newest accessible version of `name`: enabled and inside its
     /// `not_before` / `expires_on` window. When none is accessible the error
     /// explains why the newest version was refused.
     pub fn get(&self, name: &str) -> Result<Secret> {
-        self.vault
+        self.client()
             .get_secret(name, None)
             .map_err(|err| self.error(&err))
     }
@@ -172,7 +266,7 @@ impl SecretReader {
     /// Exactly `version` of `name`, or a policy error if that version is
     /// disabled or outside its time window.
     pub fn get_version(&self, name: &str, version: &str) -> Result<Secret> {
-        self.vault
+        self.client()
             .get_secret(name, Some(version))
             .map_err(|err| self.error(&err))
     }
@@ -180,7 +274,7 @@ impl SecretReader {
     /// Metadata of one version (`None`: the newest). Policy is not applied,
     /// so disabled and expired versions can be inspected.
     pub fn properties(&self, name: &str, version: Option<&str>) -> Result<SecretProperties> {
-        self.vault
+        self.client()
             .get_secret_properties(name, version)
             .map_err(|err| self.error(&err))
     }
@@ -194,7 +288,7 @@ impl SecretReader {
 
     /// Resolve a parsed reference.
     pub fn resolve_reference(&self, reference: &SecretReference) -> Result<Secret> {
-        self.vault
+        self.client()
             .resolve(reference)
             .map_err(|err| self.error(&err))
     }
@@ -206,6 +300,7 @@ impl SecretReader {
                 vault: Some(self.vault_name()),
                 home: Some(&self.home),
                 unlock: None,
+                provider: self.provider,
             },
         )
     }

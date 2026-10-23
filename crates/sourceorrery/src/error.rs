@@ -8,7 +8,7 @@
 use std::fmt;
 use std::path::Path;
 
-use sourceorrery_core::SecretError;
+use sourceorrery_core::{Provider, SecretError};
 use sourceorrery_storage::VAULT_FILE_EXTENSION;
 
 use crate::unlock::UnlockReport;
@@ -60,9 +60,18 @@ pub enum ErrorKind {
     Storage,
     /// `io`: a file or directory could not be read.
     Io,
-    /// `unsupported`: the operation needs something this platform lacks
-    /// (typically an OS credential store).
+    /// `unsupported`: the operation needs something this platform or build
+    /// lacks (an OS credential store, a remote provider).
     Unsupported,
+    /// `unauthenticated`: the remote provider has no credentials for this
+    /// process, or they expired.
+    Unauthenticated,
+    /// `provider_unavailable`: the remote provider could not be reached or
+    /// answered with a server error. Transient.
+    ProviderUnavailable,
+    /// `rotation`: a rotation step was asked for in a state that does not
+    /// allow it (a CLI workflow; a reader never performs one).
+    Rotation,
     /// A code added after this client was written.
     Other,
 }
@@ -89,6 +98,9 @@ impl ErrorKind {
             "storage" => Self::Storage,
             "io" => Self::Io,
             "unsupported" => Self::Unsupported,
+            "unauthenticated" => Self::Unauthenticated,
+            "provider_unavailable" => Self::ProviderUnavailable,
+            "rotation" => Self::Rotation,
             _ => Self::Other,
         }
     }
@@ -196,6 +208,8 @@ pub(crate) struct Context<'a> {
     pub home: Option<&'a Path>,
     /// Passphrase sources consulted by `open`.
     pub unlock: Option<&'a UnlockReport>,
+    /// The remote provider serving the vault, when it is remote.
+    pub provider: Option<Provider>,
 }
 
 impl Context<'_> {
@@ -227,9 +241,120 @@ fn mismatch_hint(requested: &str, found: &str, ctx: &Context<'_>) -> String {
     )
 }
 
+/// How a process gets credentials for `provider`: the provider's own
+/// mechanisms, never the manifest.
+fn credentials_hint(provider: Provider) -> &'static str {
+    match provider {
+        Provider::HashicorpVault => {
+            "Set VAULT_TOKEN for the identity this process runs as (or run `vault login`); the \
+             manifest holds the server address only, never a token"
+        }
+        Provider::AwsSecretsManager => {
+            "Give the process credentials the AWS default chain finds: AWS_ACCESS_KEY_ID and \
+             AWS_SECRET_ACCESS_KEY, AWS_PROFILE, an instance or task role, or a web identity; \
+             the manifest holds the region only"
+        }
+    }
+}
+
+/// What a denied read on `provider` needs: the permission in the provider's
+/// own policy language, granted by whoever administers it, and the command
+/// that shows which identity was refused.
+fn permission_hint(provider: Provider) -> &'static str {
+    match provider {
+        Provider::HashicorpVault => {
+            "The Vault policy of this token does not allow the operation. Grant `read` on the \
+             secret's `<mount>/data/<name>` path (and `<mount>/metadata/<name>` for its \
+             properties) with `vault policy write`, attach the policy to the role this process \
+             logs in with, and compare with `vault read sys/capabilities-self <path>`"
+        }
+        Provider::AwsSecretsManager => {
+            "The IAM policy of this identity does not allow the operation. Allow \
+             `secretsmanager:GetSecretValue` (and `secretsmanager:DescribeSecret`, \
+             `secretsmanager:ListSecretVersionIds` for its properties) on the secret's ARN for the \
+             role this process assumes; `aws sts get-caller-identity` shows which identity was \
+             refused"
+        }
+    }
+}
+
+/// Hints about a remote provider: credentials, reachability, a denied
+/// read, a build without the provider. `None` when the error is not about
+/// one.
+fn remote_hint(err: &SecretError, ctx: &Context<'_>) -> Option<String> {
+    match err {
+        SecretError::Unsupported(_) => ctx.provider.map(|provider| {
+            format!(
+                "This build of SourceOrrery does not include a {} provider. Use a build that \
+                 does, or point the manifest's vault at a local vault file",
+                provider.display_name()
+            )
+        }),
+        SecretError::Unauthenticated { provider, .. } => {
+            Some(match Provider::from_name(provider).or(ctx.provider) {
+                Some(provider) => credentials_hint(provider).to_owned(),
+                None => "Give the process credentials for the provider the way its own tools \
+                         expect them; the manifest never holds any"
+                    .to_owned(),
+            })
+        }
+        SecretError::PermissionDenied(_) => ctx.provider.map(permission_hint).map(str::to_owned),
+        SecretError::ProviderUnavailable { provider, .. } => {
+            let table = ctx
+                .vault
+                .map_or_else(|| "[vaults.<name>]".to_owned(), |v| format!("[vaults.{v}]"));
+            Some(format!(
+                "Check that {provider} is reachable from this machine and that the address in \
+                 the manifest's {table} table is right; the error is transient, so the call can \
+                 be retried"
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Hints for policy refusals: the decision and the `secret update` that
+/// changes it. `None` for every other error.
+fn policy_hint(err: &SecretError, ctx: &Context<'_>) -> Option<String> {
+    match err {
+        SecretError::Disabled { name, version } => Some(format!(
+            "Policy: this version is disabled, so it cannot be read. Enable it with \
+             `sourceorrery secret update {name} --version {version} --enable{}` or store a new \
+             version; a read without an explicit version picks the newest enabled version \
+             inside its time window",
+            ctx.vault_flag()
+        )),
+        SecretError::NotYetValid {
+            name,
+            version,
+            not_before,
+        } => Some(format!(
+            "Policy: the version's activation time {not_before} has not been reached. Wait for \
+             it, clear it with `sourceorrery secret update {name} --version {version} \
+             --clear-not-before{}`, or read another version",
+            ctx.vault_flag()
+        )),
+        SecretError::Expired {
+            name,
+            version,
+            expires_on,
+        } => Some(format!(
+            "Policy: the version expired on {expires_on}. Store a new version with \
+             `sourceorrery secret set {name}{}` or extend it with `sourceorrery secret update \
+             {name} --version {version} --expires <RFC 3339>{}`",
+            ctx.vault_flag(),
+            ctx.vault_flag()
+        )),
+        _ => None,
+    }
+}
+
 /// The actionable part of an error. Mentions commands and configuration,
 /// never values.
 fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
+    if let Some(hint) = remote_hint(err, ctx).or_else(|| policy_hint(err, ctx)) {
+        return hint;
+    }
     match err {
         SecretError::VaultNotFound { name } => format!(
             "Create it with `sourceorrery vault create {name}` (add `--protector passphrase` \
@@ -267,34 +392,6 @@ fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
         SecretError::Deleted { name } => format!(
             "The secret is soft-deleted. Recover it with `sourceorrery secret recover {name}{}` \
              or store it again after purging",
-            ctx.vault_flag()
-        ),
-        SecretError::Disabled { name, version } => format!(
-            "Policy: this version is disabled, so it cannot be read. Enable it with \
-             `sourceorrery secret update {name} --version {version} --enable{}` or store a new \
-             version; a read without an explicit version picks the newest enabled version \
-             inside its time window",
-            ctx.vault_flag()
-        ),
-        SecretError::NotYetValid {
-            name,
-            version,
-            not_before,
-        } => format!(
-            "Policy: the version's activation time {not_before} has not been reached. Wait for \
-             it, clear it with `sourceorrery secret update {name} --version {version} \
-             --clear-not-before{}`, or read another version",
-            ctx.vault_flag()
-        ),
-        SecretError::Expired {
-            name,
-            version,
-            expires_on,
-        } => format!(
-            "Policy: the version expired on {expires_on}. Store a new version with \
-             `sourceorrery secret set {name}{}` or extend it with `sourceorrery secret update \
-             {name} --version {version} --expires <RFC 3339>{}`",
-            ctx.vault_flag(),
             ctx.vault_flag()
         ),
         SecretError::VaultMismatch { requested, found } => mismatch_hint(requested, found, ctx),
@@ -357,6 +454,9 @@ mod tests {
             "storage",
             "io",
             "unsupported",
+            "unauthenticated",
+            "provider_unavailable",
+            "rotation",
         ];
         for code in codes {
             assert_ne!(ErrorKind::from_code(code), ErrorKind::Other, "{code}");
@@ -423,6 +523,101 @@ mod tests {
     }
 
     #[test]
+    fn provider_hints_name_the_credential_source_not_the_manifest() {
+        let err = Error::new(
+            &SecretError::Unauthenticated {
+                provider: "hashicorp-vault".into(),
+                reason: "no token".into(),
+            },
+            &Context::default(),
+        );
+        assert_eq!(err.code(), "unauthenticated");
+        assert_eq!(err.kind(), ErrorKind::Unauthenticated);
+        assert!(err.hint().contains("VAULT_TOKEN"), "{}", err.hint());
+        assert!(!err.is_transient());
+
+        let err = Error::new(
+            &SecretError::ProviderUnavailable {
+                provider: "aws-secrets-manager".into(),
+                reason: "connection refused".into(),
+            },
+            &Context {
+                vault: Some("prod"),
+                ..Context::default()
+            },
+        );
+        assert_eq!(err.kind(), ErrorKind::ProviderUnavailable);
+        assert!(err.is_transient());
+        assert!(err.hint().contains("[vaults.prod]"), "{}", err.hint());
+
+        let err = Error::new(
+            &SecretError::Unsupported("not built".into()),
+            &Context {
+                vault: Some("prod"),
+                provider: Some(Provider::AwsSecretsManager),
+                ..Context::default()
+            },
+        );
+        assert!(
+            err.hint().contains("AWS Secrets Manager provider"),
+            "{}",
+            err.hint()
+        );
+        let local = Error::new(
+            &SecretError::Unsupported("no store".into()),
+            &Context::default(),
+        );
+        assert!(local.hint().contains("credential store"));
+    }
+
+    #[test]
+    fn a_denied_read_names_the_permission_in_the_providers_own_terms() {
+        let denied = SecretError::PermissionDenied("forbidden".into());
+        let vault = Error::new(
+            &denied,
+            &Context {
+                provider: Some(Provider::HashicorpVault),
+                ..Context::default()
+            },
+        );
+        assert_eq!(vault.kind(), ErrorKind::PermissionDenied);
+        assert!(
+            vault.hint().contains("vault policy write"),
+            "{}",
+            vault.hint()
+        );
+        assert!(
+            vault.hint().contains("sys/capabilities-self"),
+            "{}",
+            vault.hint()
+        );
+
+        let aws = Error::new(
+            &denied,
+            &Context {
+                provider: Some(Provider::AwsSecretsManager),
+                ..Context::default()
+            },
+        );
+        assert!(
+            aws.hint().contains("secretsmanager:GetSecretValue"),
+            "{}",
+            aws.hint()
+        );
+        assert!(
+            aws.hint().contains("aws sts get-caller-identity"),
+            "{}",
+            aws.hint()
+        );
+
+        let local = Error::new(&denied, &Context::default());
+        assert_eq!(
+            local.hint(),
+            "This identity is not allowed to read the secret"
+        );
+    }
+
+    #[test]
     fn locked_hint_lists_the_sources() {
         let report = UnlockReport {
             supplied: vec![crate::PassphraseSource::Environment],
@@ -439,6 +634,7 @@ mod tests {
                 vault: Some("dev"),
                 home: Some(Path::new("/home/x/so")),
                 unlock: Some(&report),
+                provider: None,
             },
         );
         assert!(err.hint().contains("SOURCEORRERY_PASSPHRASE: tried"));

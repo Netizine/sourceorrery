@@ -25,7 +25,30 @@ pub(super) struct Meta {
     pub(super) retention_days: u32,
     /// Hex HMAC over the settings, or `None` on a legacy (schema 1) file.
     pub(super) settings_tag: Option<String>,
+    /// The second-factor record and the reveal guard as stored; part of the
+    /// settings tag when present. The live state after unlock is
+    /// `SqliteVault::guard`; this is what the file said when it was opened.
+    pub(super) guard: GuardState,
+    /// The passphrase hint as stored: in clear, outside the tag, readable
+    /// before unlock, and therefore never trusted for anything.
+    pub(super) passphrase_hint: Option<String>,
 }
+
+/// The authenticated settings that can change after creation: the
+/// second-factor enrolment and the reveal guard, each as its stored JSON
+/// string so the tag covers exactly the bytes in the file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct GuardState {
+    pub(super) second_factor: Option<String>,
+    pub(super) reveal_guard: Option<String>,
+}
+
+/// `vault_meta` key of the second-factor record.
+pub(super) const SECOND_FACTOR_KEY: &str = "second_factor";
+/// `vault_meta` key of the reveal guard.
+pub(super) const REVEAL_GUARD_KEY: &str = "reveal_guard";
+/// `vault_meta` key of the passphrase hint.
+pub(super) const PASSPHRASE_HINT_KEY: &str = "passphrase_hint";
 
 impl Meta {
     pub(super) fn retention(&self) -> SoftDeletePolicy {
@@ -42,7 +65,17 @@ impl Meta {
             created_on: nanos(self.created_on)?,
             recovery_level: &self.recovery_level_raw,
             retention_days: self.retention_days,
+            second_factor: self.guard.second_factor.as_deref(),
+            reveal_guard: self.guard.reveal_guard.as_deref(),
         })
+    }
+
+    /// This metadata with another guard state, for computing the tag a
+    /// change will carry.
+    pub(super) fn with_guard(&self, guard: &GuardState) -> Self {
+        let mut meta = self.clone();
+        meta.guard = guard.clone();
+        meta
     }
 }
 
@@ -249,7 +282,30 @@ pub(super) fn read_meta(conn: &Connection) -> Result<Meta> {
         recovery_level_raw,
         retention_days,
         settings_tag: map.get(integrity::SETTINGS_KEY).cloned(),
+        guard: GuardState {
+            second_factor: map.get(SECOND_FACTOR_KEY).cloned(),
+            reveal_guard: map.get(REVEAL_GUARD_KEY).cloned(),
+        },
+        passphrase_hint: map.get(PASSPHRASE_HINT_KEY).cloned(),
     })
+}
+
+/// Insert or replace one `vault_meta` row.
+pub(super) fn put_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )
+    .map_err(db)?;
+    Ok(())
+}
+
+/// Remove one `vault_meta` row, if present.
+pub(super) fn delete_meta(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM vault_meta WHERE key = ?1", params![key])
+        .map_err(db)?;
+    Ok(())
 }
 
 /// Write (or refresh) the authenticated settings record.

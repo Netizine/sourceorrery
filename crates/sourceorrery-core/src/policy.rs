@@ -10,7 +10,7 @@ use crate::timestamp;
 
 /// Check whether a version may be retrieved at `now`.
 ///
-/// Unlike Azure Key Vault, where `not_before` and `expires` are advisory in
+/// Unlike the managed cloud secrets services, where `not_before` and `expires` are advisory in
 /// some paths, SourceOrrery always enforces them.
 pub fn evaluate_access(props: &SecretProperties, now: OffsetDateTime) -> Result<()> {
     if !props.enabled {
@@ -79,9 +79,9 @@ pub struct SoftDeletePolicy {
 }
 
 impl SoftDeletePolicy {
-    /// Shortest retention accepted (matches Azure Key Vault).
+    /// Shortest retention accepted (the range the managed cloud secrets services use).
     pub const MIN_RETENTION_DAYS: u32 = 7;
-    /// Longest retention accepted (matches Azure Key Vault).
+    /// Longest retention accepted (the range the managed cloud secrets services use).
     pub const MAX_RETENTION_DAYS: u32 = 90;
 
     /// Build a policy, rejecting out-of-range retention.

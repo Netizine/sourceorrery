@@ -20,10 +20,16 @@ name = "sourceorrery_ffi"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
-default = ["os-keyring"]
+default = ["os-keyring", "remote"]
 # Protect vault keys with the OS credential store. Disable for headless
 # servers that only use passphrase protectors.
 os-keyring = ["sourceorrery-storage/os-keyring", "sourceorrery/os-keyring"]
+# Every remote provider a manifest can name (`[vaults.<name>]`).
+remote = ["sourceorrery/remote"]
+# HashiCorp Vault, KV version 2.
+provider-vault = ["sourceorrery/provider-vault"]
+# AWS Secrets Manager.
+provider-aws = ["sourceorrery/provider-aws"]
 
 [dependencies]
 sourceorrery.workspace = true

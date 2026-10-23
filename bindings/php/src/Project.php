@@ -45,6 +45,7 @@ final class Project
     public static function load(?string $manifest = null, ?OpenOptions $options = null): self
     {
         $options ??= new OpenOptions();
+        Native::requireAbi();
         $ffi = Native::ffi();
         [$manifestPtr, $manifestLen] = Native::arg($manifest);
         [$jsonPtr, $jsonLen] = Native::arg($options->toJson());

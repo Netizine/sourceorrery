@@ -68,7 +68,8 @@ in `bindings/go`). Never edit it by hand.
 
   ```json
   // so_reader_open / so_project_load options_json (every field optional)
-  {"home": "/path/to/home", "passphrase_file": "/run/secrets/vault", "environment": true}
+  {"home": "/path/to/home", "passphrase_file": "/run/secrets/vault", "environment": true,
+   "manifest": "/path/to/sourceorrery.toml"}
 
   // so_vault_create options_json (every field optional)
   {"recovery_level": "recoverable", "retention_days": 90,
@@ -103,15 +104,22 @@ in `bindings/go`). Never edit it by hand.
   at once (the vault serialises on an internal mutex). Closing a handle
   must not race with any other use of it. Read the error state on the
   thread that made the call.
-* **Versioning**: `SO_ABI_VERSION` / `so_abi_version()` identify the C ABI;
-  it is bumped only for incompatible changes, never for additions.
-  `so_contract_version()` returns `CONTRACT_VERSION` of the core.
+* **Versioning** ([ADR 0007](../docs/adr/0007-versioning-and-compatibility.md)):
+  `SO_ABI_VERSION` / `so_abi_version()` identify the C ABI; it is bumped
+  only for incompatible changes (a changed or removed declaration), never
+  for additions, and CI compares the header with the previous release's
+  (`scripts/ci/abi-check.py`) and runs that release's C conformance runner
+  against the current library. Every binding compares `so_abi_version()`
+  with the version it was built against before it opens anything and
+  refuses a mismatch with its base error type and the code `abi_mismatch`
+  (an SDK-level code, never produced by the core). `so_contract_version()`
+  returns `CONTRACT_VERSION` of the core.
 
 ### Read-only functions (what SDKs link)
 
 | C function | Client method | Notes |
 |------------|---------------|-------|
-| `so_reader_open(name, options_json, passphrase, out_reader)` | `SecretReader::open_with` | OS credential store, then `passphrase`, then `SOURCEORRERY_PASSPHRASE`, then the passphrase file; never a prompt |
+| `so_reader_open(name, options_json, passphrase, out_reader)` | `SecretReader::open_with` | OS credential store, then `passphrase`, then `SOURCEORRERY_PASSPHRASE`, then the passphrase file; never a prompt. A vault that `manifest` (default: the nearest `sourceorrery.toml`) declares in `[vaults.<name>]` is opened at its remote provider instead |
 | `so_reader_close(reader)` | drop | zeroises the vault key |
 | `so_reader_descriptor(reader, out_json)` | `descriptor` | name, id, path, protectors |
 | `so_reader_get(reader, name, version?, out_props, out_value)` | `get` / `get_version` | `NULL` version → newest accessible |

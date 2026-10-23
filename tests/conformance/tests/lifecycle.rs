@@ -1,285 +1,146 @@
 //! Lifecycle conformance: the semantics every `SecretClient` must honour.
 //!
-//! These scenarios are the reference for every SDK binding. If a binding
-//! cannot pass the equivalent of each test here, it does not implement
-//! SourceOrrery.
+//! The backend-independent scenarios live in `sourceorrery_conformance::
+//! lifecycle` and run here against the SQLite vault, directly and through
+//! the `Blocking<AsyncLocal<_>>` adapter pair. The tests in this file are
+//! what the local vault adds on top: version-id shape, purgeable vaults,
+//! the audit log, protectors, the registry, reopening and backups. Together
+//! they are the reference for every SDK binding: if a binding cannot pass
+//! the equivalent of each scenario, it does not implement SourceOrrery.
 
 use std::collections::BTreeMap;
 
+use sourceorrery_conformance::lifecycle::{self, seed_paged, set, walk_pages};
 use sourceorrery_conformance::{FIXTURE_PASSPHRASE, Fixture};
 use sourceorrery_core::{
-    AuditOperation, AuditOutcome, AuditQuery, RecoveryLevel, SecretBytes, SecretClient,
-    SecretReference, SetSecretOptions, UpdateSecretProperties, timestamp,
+    AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ExportOptions, ListOptions,
+    RESTORED_CREATED_ON_TAG, RESTORED_FROM_TAG, RecoveryLevel, RestoreOptions, SecretBytes,
+    SecretClient, SetSecretOptions, SkipReason, UpdateSecretProperties, VaultBackup, timestamp,
 };
 use sourceorrery_crypto::Argon2Params;
-use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, StaticPassphrase};
-use time::Duration;
+use sourceorrery_provider::{AsyncLocal, Blocking};
+use sourceorrery_storage::backup;
+use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase};
 
-fn set(vault: &impl SecretClient, name: &str, value: &str) -> sourceorrery_core::SecretProperties {
-    vault
-        .set_secret(name, SecretBytes::from(value), SetSecretOptions::default())
-        .expect("set")
+/// The lifecycle scenarios, each on a fresh vault.
+#[test]
+fn sqlite_vault_passes_the_lifecycle_scenarios() {
+    let fx = Fixture::new();
+    let mut n = 0;
+    lifecycle::lifecycle(&mut |_| {
+        n += 1;
+        Box::new(fx.create_vault(&format!("scenario-{n}")))
+    });
+}
+
+/// The same scenarios through `Blocking<AsyncLocal<SqliteVault>>`: the
+/// adapter pair of `sourceorrery-provider` is proven on the local vault
+/// before any remote provider uses it.
+#[test]
+fn the_adapter_pair_passes_the_lifecycle_scenarios() {
+    let fx = Fixture::new();
+    let mut n = 0;
+    lifecycle::lifecycle(&mut |_| {
+        n += 1;
+        let vault = fx.create_vault(&format!("adapted-{n}"));
+        Box::new(Blocking::new(AsyncLocal::new(vault)).expect("runtime"))
+    });
 }
 
 #[test]
-fn set_creates_a_new_immutable_version_each_time() {
+fn version_ids_are_32_hex_characters() {
     let fx = Fixture::new();
     let vault = fx.create_vault("dev");
-
     let v1 = set(&vault, "db-password", "one");
-    let v2 = set(&vault, "db-password", "two");
-    assert_ne!(v1.version, v2.version);
     assert_eq!(v1.version.len(), 32);
-
-    let versions = vault
-        .list_properties_of_secret_versions("db-password")
-        .unwrap();
-    assert_eq!(versions.len(), 2);
-    assert_eq!(versions[0].version, v2.version, "newest first");
-    assert_eq!(versions[1].version, v1.version);
-
-    let latest = vault.get_secret("db-password", None).unwrap();
-    assert_eq!(latest.properties.version, v2.version);
-    assert_eq!(latest.value.expose(), b"two");
-
-    let old = vault.get_secret("db-password", Some(&v1.version)).unwrap();
-    assert_eq!(old.value.expose(), b"one", "old versions are immutable");
+    assert!(v1.version.bytes().all(|b| b.is_ascii_hexdigit()));
 }
 
+/// Every page is one `secret_list` event, successes and failures alike,
+/// and a rejected request is recorded before anything is read.
 #[test]
-fn get_returns_latest_accessible_version() {
+fn every_page_is_one_audited_listing() {
     let fx = Fixture::new();
     let vault = fx.create_vault("dev");
-    let v1 = set(&vault, "api-key", "old");
-    let v2 = set(&vault, "api-key", "new");
-
-    // Disabling the newest version falls back to the previous one.
-    vault
-        .update_secret_properties(
-            "api-key",
-            None,
-            UpdateSecretProperties {
-                enabled: Some(false),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let got = vault.get_secret("api-key", None).unwrap();
-    assert_eq!(got.properties.version, v1.version);
-    assert_eq!(got.value.expose(), b"old");
-
-    // Asking for the disabled version explicitly is refused.
-    let err = vault.get_secret("api-key", Some(&v2.version)).unwrap_err();
-    assert_eq!(err.code(), "disabled");
-
-    // Metadata of the disabled version is still inspectable.
-    let props = vault
-        .get_secret_properties("api-key", Some(&v2.version))
-        .unwrap();
-    assert!(!props.enabled);
-
-    // Disabling both leaves nothing accessible; the newest failure is reported.
-    vault
-        .update_secret_properties(
-            "api-key",
-            Some(&v1.version),
-            UpdateSecretProperties {
-                enabled: Some(false),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let err = vault.get_secret("api-key", None).unwrap_err();
-    assert_eq!(err.code(), "disabled");
-}
-
-#[test]
-fn time_window_is_enforced_on_retrieval() {
-    let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    let now = timestamp::now();
-
-    vault
-        .set_secret(
-            "expired",
-            SecretBytes::from("x"),
-            SetSecretOptions {
-                expires_on: Some(now - Duration::minutes(1)),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+    seed_paged(&vault);
+    let count = |outcome: AuditOutcome| {
+        vault
+            .audit_events(AuditQuery::default())
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.operation == AuditOperation::SecretList && e.outcome == outcome)
+            .count()
+    };
+    let successes = count(AuditOutcome::Success);
+    let failures = count(AuditOutcome::Failure);
+    let (_, pages) = walk_pages(&vault, 7, false);
+    assert_eq!(count(AuditOutcome::Success), successes + pages);
     assert_eq!(
-        vault.get_secret("expired", None).unwrap_err().code(),
-        "expired"
+        vault
+            .list_properties_of_secrets_page(ListOptions::first(0))
+            .unwrap_err()
+            .code(),
+        "invalid_argument"
     );
+    assert_eq!(
+        vault
+            .list_deleted_secrets_page(ListOptions {
+                max_results: Some(5),
+                continuation: Some(ContinuationToken::new("not a secret name")),
+            })
+            .unwrap_err()
+            .code(),
+        "invalid_argument"
+    );
+    assert_eq!(count(AuditOutcome::Failure), failures + 2);
+}
 
-    vault
-        .set_secret(
-            "pending",
-            SecretBytes::from("x"),
-            SetSecretOptions {
-                not_before: Some(now + Duration::hours(1)),
-                ..Default::default()
+#[test]
+fn vault_retention_is_validated() {
+    let fx = Fixture::new();
+    let err = fx
+        .registry
+        .create(
+            "bad-retention",
+            CreateVaultOptions {
+                recovery_level: RecoveryLevel::Recoverable,
+                retention_days: 3,
             },
-        )
-        .unwrap();
-    let err = vault.get_secret("pending", None).unwrap_err();
-    assert_eq!(err.code(), "not_yet_valid");
-    assert!(err.is_transient());
-
-    // Clearing the expiry makes the secret readable again.
-    vault
-        .update_secret_properties(
-            "expired",
-            None,
-            UpdateSecretProperties {
-                expires_on: Some(None),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert!(vault.get_secret("expired", None).is_ok());
-
-    // An inverted window is rejected up front.
-    let err = vault
-        .set_secret(
-            "bad",
-            SecretBytes::from("x"),
-            SetSecretOptions {
-                not_before: Some(now + Duration::hours(2)),
-                expires_on: Some(now + Duration::hours(1)),
-                ..Default::default()
+            ProtectorSpec::Passphrase {
+                passphrase: SecretBytes::from(FIXTURE_PASSPHRASE),
+                params: Argon2Params::TESTING,
             },
         )
         .unwrap_err();
     assert_eq!(err.code(), "invalid_argument");
+    assert!(!fx.registry.exists("bad-retention"));
 }
 
 #[test]
-fn update_changes_metadata_never_the_value() {
+fn many_versions_survive_a_reopen() {
+    const VERSIONS: usize = 200;
     let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    let created = set(&vault, "token", "value");
+    let created: Vec<String> = {
+        let vault = fx.create_vault("dev");
+        (0..VERSIONS)
+            .map(|i| set(&vault, "rotated", &format!("value-{i}")).version)
+            .collect()
+    };
 
-    let updated = vault
-        .update_secret_properties(
-            "token",
-            None,
-            UpdateSecretProperties {
-                content_type: Some(Some("text/plain".into())),
-                tags: Some(BTreeMap::from([("env".to_owned(), "dev".to_owned())])),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+    let vault = fx.open_vault("dev");
     assert_eq!(
-        updated.version, created.version,
-        "same version, not a new one"
+        vault
+            .list_properties_of_secret_versions("rotated")
+            .unwrap()
+            .len(),
+        VERSIONS
     );
-    assert_eq!(updated.content_type.as_deref(), Some("text/plain"));
-    assert_eq!(updated.tags.get("env").map(String::as_str), Some("dev"));
-    assert_eq!(updated.created_on, created.created_on);
-    assert!(updated.updated_on >= created.updated_on);
-
-    let got = vault.get_secret("token", None).unwrap();
-    assert_eq!(got.value.expose(), b"value");
-    assert_eq!(got.properties, updated);
-
-    let err = vault
-        .update_secret_properties("token", None, UpdateSecretProperties::default())
-        .unwrap_err();
-    assert_eq!(err.code(), "invalid_argument");
-}
-
-#[test]
-fn list_returns_metadata_for_live_secrets_only() {
-    let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    set(&vault, "alpha", "1");
-    set(&vault, "beta", "2");
-    set(&vault, "beta", "3");
-    set(&vault, "gamma", "4");
-    vault.delete_secret("gamma").unwrap();
-
-    let listed = vault.list_properties_of_secrets().unwrap();
-    let names: Vec<&str> = listed.iter().map(|p| p.name.as_str()).collect();
-    assert_eq!(names, vec!["alpha", "beta"]);
-    let beta = listed.iter().find(|p| p.name == "beta").unwrap();
-    assert_eq!(
-        beta.version,
-        vault.get_secret("beta", None).unwrap().properties.version,
-        "list shows the newest version"
-    );
-    let json = serde_json::to_string(&listed).unwrap();
-    for value in ["\"1\"", "\"2\"", "\"3\""] {
-        assert!(!json.contains(value), "metadata must not carry values");
+    for i in [0, 1, VERSIONS / 2, VERSIONS - 2, VERSIONS - 1] {
+        let version = created[i].as_str();
+        let got = vault.get_secret("rotated", Some(version)).unwrap();
+        assert_eq!(got.properties.version, version);
+        assert_eq!(got.value.expose(), format!("value-{i}").as_bytes());
     }
-}
-
-#[test]
-fn delete_recover_and_purge() {
-    let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    set(&vault, "db", "secret");
-
-    let deleted = vault.delete_secret("db").unwrap();
-    assert_eq!(deleted.properties.name, "db");
-    assert!(deleted.scheduled_purge_on.unwrap() > deleted.deleted_on);
-    assert_eq!(deleted.recovery_id, "sourceorrery://dev/deletedsecrets/db");
-
-    assert_eq!(vault.get_secret("db", None).unwrap_err().code(), "deleted");
-    assert_eq!(vault.list_properties_of_secrets().unwrap().len(), 0);
-    assert_eq!(vault.list_deleted_secrets().unwrap().len(), 1);
-    assert_eq!(vault.get_deleted_secret("db").unwrap(), deleted);
-
-    let err = vault
-        .set_secret(
-            "db",
-            SecretBytes::from("again"),
-            SetSecretOptions::default(),
-        )
-        .unwrap_err();
-    assert_eq!(err.code(), "deleted_conflict");
-
-    assert_eq!(
-        vault.purge_deleted_secret("other").unwrap_err().code(),
-        "not_found"
-    );
-    assert_eq!(
-        vault.recover_deleted_secret("other").unwrap_err().code(),
-        "not_found"
-    );
-
-    let recovered = vault.recover_deleted_secret("db").unwrap();
-    assert_eq!(recovered.name, "db");
-    assert_eq!(
-        vault.get_secret("db", None).unwrap().value.expose(),
-        b"secret"
-    );
-    assert_eq!(
-        vault.recover_deleted_secret("db").unwrap_err().code(),
-        "not_deleted"
-    );
-    assert_eq!(
-        vault.purge_deleted_secret("db").unwrap_err().code(),
-        "not_deleted"
-    );
-
-    vault.delete_secret("db").unwrap();
-    vault.purge_deleted_secret("db").unwrap();
-    assert_eq!(
-        vault.get_secret("db", None).unwrap_err().code(),
-        "not_found"
-    );
-    assert_eq!(vault.list_deleted_secrets().unwrap().len(), 0);
-
-    // The name is free again after a purge.
-    set(&vault, "db", "fresh");
-    assert_eq!(
-        vault.get_secret("db", None).unwrap().value.expose(),
-        b"fresh"
-    );
 }
 
 #[test]
@@ -301,53 +162,6 @@ fn purgeable_vaults_delete_immediately() {
         "not_found"
     );
     assert_eq!(vault.list_deleted_secrets().unwrap().len(), 0);
-}
-
-#[test]
-fn names_and_options_are_validated() {
-    let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    for bad in [
-        "",
-        "has_underscore",
-        "has space",
-        "dots.no",
-        &"x".repeat(128),
-    ] {
-        let err = vault
-            .set_secret(bad, SecretBytes::from("v"), SetSecretOptions::default())
-            .unwrap_err();
-        assert_eq!(err.code(), "invalid_name", "{bad:?}");
-    }
-    assert_eq!(
-        vault.get_secret("missing", None).unwrap_err().code(),
-        "not_found"
-    );
-    set(&vault, "present", "v");
-    assert_eq!(
-        vault
-            .get_secret("present", Some("nope"))
-            .unwrap_err()
-            .code(),
-        "version_not_found"
-    );
-
-    let err = fx
-        .registry
-        .create(
-            "bad-retention",
-            CreateVaultOptions {
-                recovery_level: RecoveryLevel::Recoverable,
-                retention_days: 3,
-            },
-            ProtectorSpec::Passphrase {
-                passphrase: SecretBytes::from(FIXTURE_PASSPHRASE),
-                params: Argon2Params::TESTING,
-            },
-        )
-        .unwrap_err();
-    assert_eq!(err.code(), "invalid_argument");
-    assert!(!fx.registry.exists("bad-retention"));
 }
 
 #[test]
@@ -467,26 +281,6 @@ fn protectors_can_be_added_and_removed() {
         fx.registry
             .open("dev", &StaticPassphrase::new("second-passphrase"))
             .is_ok()
-    );
-}
-
-#[test]
-fn references_resolve_within_their_vault() {
-    let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    let v1 = set(&vault, "k", "one");
-    set(&vault, "k", "two");
-
-    let latest = SecretReference::parse("sourceorrery://dev/k").unwrap();
-    assert_eq!(vault.resolve(&latest).unwrap().value.expose(), b"two");
-
-    let pinned = latest.clone().with_version(v1.version.clone()).unwrap();
-    assert_eq!(vault.resolve(&pinned).unwrap().value.expose(), b"one");
-
-    let foreign = SecretReference::parse("sourceorrery://prod/k").unwrap();
-    assert_eq!(
-        vault.resolve(&foreign).unwrap_err().code(),
-        "invalid_argument"
     );
 }
 
@@ -707,54 +501,245 @@ fn every_operation_leaves_exactly_one_audit_event() {
     assert_eq!(count(&vault), n, "verification must not write events");
 }
 
+fn count_events(vault: &impl SecretClient, op: AuditOperation, outcome: AuditOutcome) -> usize {
+    vault
+        .audit_events(AuditQuery::default())
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.operation == op && e.outcome == outcome)
+        .count()
+}
+
+/// A vault worth backing up: `db-password` with three versions, the middle
+/// one disabled with a content type, tags and a window (which `get` would
+/// refuse, a backup must still carry); `api-key`; and `gone`, deleted.
+/// Returns the vault and the disabled version's properties.
+fn vault_to_back_up(fx: &Fixture) -> (SqliteVault, sourceorrery_core::SecretProperties) {
+    let source = fx.create_vault("dev");
+    set(&source, "db-password", "one");
+    let disabled = source
+        .set_secret(
+            "db-password",
+            SecretBytes::from("two"),
+            SetSecretOptions {
+                content_type: Some("text/plain".into()),
+                tags: BTreeMap::from([("env".to_owned(), "ci".to_owned())]),
+                enabled: false,
+                not_before: Some(timestamp::parse("2020-01-01T00:00:00Z").unwrap()),
+                expires_on: Some(timestamp::parse("2100-01-01T00:00:00Z").unwrap()),
+            },
+        )
+        .unwrap();
+    set(&source, "db-password", "three");
+    set(&source, "api-key", "k");
+    set(&source, "gone", "x");
+    source.delete_secret("gone").unwrap();
+    (source, disabled)
+}
+
+fn everything() -> ExportOptions {
+    ExportOptions {
+        secrets: None,
+        include_deleted: true,
+    }
+}
+
 #[test]
-fn many_versions_are_listed_and_read_correctly() {
-    // A sanity check, not a benchmark: a secret with a long history must
-    // list newest first, summarise to its newest version and return any one
-    // version by id, before and after a reopen.
-    const VERSIONS: usize = 200;
+fn export_reads_every_version_whatever_its_policy_and_is_audited_per_secret() {
     let fx = Fixture::new();
-    let created: Vec<String> = {
-        let vault = fx.create_vault("dev");
-        let created: Vec<String> = (0..VERSIONS)
-            .map(|i| set(&vault, "rotated", &format!("value-{i}")).version)
-            .collect();
+    let (source, disabled) = vault_to_back_up(&fx);
 
-        let listed = vault.list_properties_of_secret_versions("rotated").unwrap();
-        assert_eq!(listed.len(), VERSIONS);
-        let listed_ids: Vec<&str> = listed.iter().map(|p| p.version.as_str()).collect();
-        let newest_first: Vec<&str> = created.iter().rev().map(String::as_str).collect();
-        assert_eq!(listed_ids, newest_first);
-
-        let summary = vault.list_properties_of_secrets().unwrap();
-        assert_eq!(summary.len(), 1);
-        assert_eq!(summary[0].version, created[VERSIONS - 1]);
-
-        let latest = vault.get_secret("rotated", None).unwrap();
-        assert_eq!(latest.properties.version, created[VERSIONS - 1]);
-        assert_eq!(
-            latest.value.expose(),
-            format!("value-{}", VERSIONS - 1).as_bytes()
-        );
-        created
-    };
-
-    let vault = fx.open_vault("dev");
+    // Live secrets only by default; deleted ones on request.
+    let live = source.export(&ExportOptions::default()).unwrap();
+    let names: Vec<&str> = live.secrets.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["api-key", "db-password"], "name order, live only");
+    let snapshot = source.export(&everything()).unwrap();
+    assert_eq!(snapshot.secrets.len(), 3);
+    assert_eq!(snapshot.vault, "dev");
+    assert_eq!(snapshot.version_count(), 5);
+    let db = snapshot
+        .secrets
+        .iter()
+        .find(|s| s.name == "db-password")
+        .unwrap();
+    let values: Vec<&[u8]> = db.versions.iter().map(|v| v.value.expose()).collect();
     assert_eq!(
-        vault
-            .list_properties_of_secret_versions("rotated")
+        values,
+        [b"one".as_slice(), b"two", b"three"],
+        "oldest first, disabled included"
+    );
+    assert_eq!(db.versions[1].version, disabled.version);
+    assert!(!db.versions[1].enabled);
+    assert_eq!(db.versions[1].content_type.as_deref(), Some("text/plain"));
+    assert_eq!(db.versions[1].tags["env"], "ci");
+    assert_eq!(db.versions[1].not_before, disabled.not_before);
+    let gone = snapshot.secrets.iter().find(|s| s.name == "gone").unwrap();
+    assert!(gone.deleted.is_some());
+    // One `vault_backup` event per secret exported.
+    assert_eq!(
+        count_events(&source, AuditOperation::VaultBackup, AuditOutcome::Success),
+        2 + 3
+    );
+    let only = source
+        .export(&ExportOptions {
+            secrets: Some(vec!["api-key".into()]),
+            include_deleted: false,
+        })
+        .unwrap();
+    assert_eq!(only.secrets.len(), 1);
+    assert_eq!(
+        source
+            .export(&ExportOptions {
+                secrets: Some(vec!["nope".into()]),
+                include_deleted: false,
+            })
+            .unwrap_err()
+            .code(),
+        "not_found"
+    );
+}
+
+#[test]
+fn backup_round_trip_restores_every_version_with_its_metadata() {
+    let fx = Fixture::new();
+    let (source, disabled) = vault_to_back_up(&fx);
+    let snapshot = source.export(&everything()).unwrap();
+
+    let passphrase = SecretBytes::from("backup-passphrase");
+    let bytes = backup::seal(&snapshot, &passphrase, Argon2Params::TESTING).unwrap();
+    let info = backup::inspect(&bytes).unwrap();
+    assert_eq!(
+        (info.vault.as_str(), info.format),
+        ("dev", backup::BACKUP_FORMAT)
+    );
+    let from_file = backup::open(&bytes, &passphrase).unwrap();
+    let target = fx.create_vault("copy");
+    let report = target
+        .restore(&from_file, &RestoreOptions::default())
+        .unwrap();
+    assert_eq!(report.skipped, vec![]);
+    let restored: Vec<(&str, usize, bool)> = report
+        .restored
+        .iter()
+        .map(|r| (r.name.as_str(), r.versions, r.deleted))
+        .collect();
+    assert_eq!(
+        restored,
+        [
+            ("api-key", 1, false),
+            ("db-password", 3, false),
+            ("gone", 1, false)
+        ]
+    );
+
+    // Newest stays newest; the disabled version is still disabled with its
+    // metadata; every version remembers where it came from.
+    let newest = target.get_secret("db-password", None).unwrap();
+    assert_eq!(newest.value.expose(), b"three");
+    let versions = target
+        .list_properties_of_secret_versions("db-password")
+        .unwrap();
+    assert_eq!(versions.len(), 3);
+    let middle = &versions[1];
+    assert!(!middle.enabled);
+    assert_eq!(middle.content_type.as_deref(), Some("text/plain"));
+    assert_eq!(middle.tags["env"], "ci");
+    assert_eq!(middle.tags[RESTORED_FROM_TAG], disabled.version);
+    assert_eq!(
+        middle.tags[RESTORED_CREATED_ON_TAG],
+        timestamp::format(disabled.created_on)
+    );
+    assert_ne!(
+        middle.version, disabled.version,
+        "a restored version is a new version"
+    );
+    assert_eq!(
+        target
+            .get_secret("db-password", Some(&middle.version))
+            .unwrap_err()
+            .code(),
+        "disabled"
+    );
+    assert_eq!(
+        target.get_secret("gone", None).unwrap().value.expose(),
+        b"x"
+    );
+    assert_eq!(
+        count_events(
+            &target,
+            AuditOperation::SecretRestore,
+            AuditOutcome::Success
+        ),
+        5
+    );
+    assert!(target.verify_audit_chain().unwrap().is_intact());
+}
+
+#[test]
+fn restore_skips_existing_secrets_adds_on_request_and_can_keep_deleted() {
+    let fx = Fixture::new();
+    let (source, _) = vault_to_back_up(&fx);
+    let snapshot = source.export(&everything()).unwrap();
+    let target = fx.create_vault("copy");
+    target
+        .restore(&snapshot, &RestoreOptions::default())
+        .unwrap();
+
+    // Restoring again skips what exists; `overwrite` adds versions on top.
+    let again = target
+        .restore(&snapshot, &RestoreOptions::default())
+        .unwrap();
+    assert_eq!(again.restored, vec![]);
+    assert_eq!(again.skipped.len(), 3);
+    assert!(again.skipped.iter().all(|s| s.reason == SkipReason::Exists));
+    let over = target
+        .restore(
+            &snapshot,
+            &RestoreOptions {
+                only: Some(vec!["api-key".into()]),
+                overwrite: true,
+                keep_deleted: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(over.restored.len(), 1);
+    assert_eq!(
+        target
+            .list_properties_of_secret_versions("api-key")
             .unwrap()
             .len(),
-        VERSIONS
+        2
     );
-    for i in [0, 1, VERSIONS / 2, VERSIONS - 2, VERSIONS - 1] {
-        let version = created[i].as_str();
-        let got = vault.get_secret("rotated", Some(version)).unwrap();
-        assert_eq!(got.properties.version, version);
-        assert_eq!(got.value.expose(), format!("value-{i}").as_bytes());
-        let props = vault
-            .get_secret_properties("rotated", Some(version))
-            .unwrap();
-        assert_eq!(props.version, version);
-    }
+
+    // `keep_deleted` puts a deleted secret back into the deleted state, and
+    // a deleted name in the target is never written to.
+    let fresh = fx.create_vault("fresh");
+    let kept = fresh
+        .restore(
+            &snapshot,
+            &RestoreOptions {
+                only: Some(vec!["gone".into()]),
+                overwrite: false,
+                keep_deleted: true,
+            },
+        )
+        .unwrap();
+    assert!(kept.restored[0].deleted);
+    assert_eq!(
+        fresh.get_secret("gone", None).unwrap_err().code(),
+        "deleted"
+    );
+    assert_eq!(fresh.list_deleted_secrets().unwrap().len(), 1);
+    let blocked = fresh
+        .restore(
+            &snapshot,
+            &RestoreOptions {
+                only: Some(vec!["gone".into()]),
+                overwrite: true,
+                keep_deleted: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(blocked.skipped[0].reason, SkipReason::Deleted);
+    assert_eq!(blocked.restored, vec![]);
 }

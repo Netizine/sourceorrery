@@ -6,10 +6,12 @@ use std::sync::{Arc, Barrier};
 
 use sourceorrery_conformance::{FIXTURE_PASSPHRASE, Fixture};
 use sourceorrery_core::{
-    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, Manifest, SecretBytes, SecretClient,
-    SetSecretOptions, UpdateSecretProperties, timestamp,
+    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ExportOptions,
+    ListOptions, Manifest, RestoreOptions, SecretBytes, SecretClient, SetSecretOptions,
+    UpdateSecretProperties, VaultBackup, timestamp,
 };
 use sourceorrery_crypto::{Argon2Params, SymmetricKey, aead, envelope, kdf, random};
+use sourceorrery_storage::backup;
 use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase};
 use time::Duration;
 
@@ -504,8 +506,12 @@ fn fresh_vault_chain_is_intact_and_counts_unkeyed_rows() {
     assert_eq!(check.first_broken, None);
 }
 
+/// A row removed from the middle of the log leaves the head naming the
+/// newest row, so the head alone would not notice. The unlock walks the
+/// chain, finds the row after the gap no longer following its
+/// predecessor, records the break and blocks the vault like a truncation.
 #[test]
-fn deleted_middle_audit_row_breaks_the_chain() {
+fn deleted_middle_audit_row_is_detected_at_unlock() {
     let fx = Fixture::new();
     let path = fx.registry.vault_path("dev").unwrap();
     let ids = {
@@ -522,7 +528,11 @@ fn deleted_middle_audit_row_breaks_the_chain() {
         conn.execute("DELETE FROM audit_events WHERE id = ?1", [victim])
             .unwrap();
     }
-    let vault = fx.open_vault("dev");
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    let vault = fx.inspect_vault("dev");
     let check = vault.verify_audit_chain().unwrap();
     assert!(!check.is_intact());
     assert_eq!(
@@ -530,8 +540,144 @@ fn deleted_middle_audit_row_breaks_the_chain() {
         Some(ids[2]),
         "the row after the gap no longer links to its predecessor: {check:?}"
     );
-    assert_eq!(check.truncations, 0);
-    assert!(check.head_valid);
+    assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.unacknowledged, 1, "{check:?}");
+    assert!(check.head_valid, "the detection re-anchored the head");
+    assert_blocked(&vault.get_secret("k2", None).unwrap_err());
+    drop(vault);
+
+    // Acknowledged, the vault serves again. The break stays on record,
+    // and the secret whose checkpoint was removed is refused: no checkpoint
+    // means no row state can be judged, not "take the row as found".
+    fx.acknowledge_truncations("dev");
+    let vault = fx.open_vault("dev");
+    vault.get_secret("k2", None).unwrap();
+    assert_eq!(vault.get_secret("k", None).unwrap_err().code(), "crypto");
+    let check = vault.verify_audit_chain().unwrap();
+    assert_eq!(check.first_broken, Some(ids[2]), "{check:?}");
+    assert_eq!(check.unacknowledged, 0, "{check:?}");
+}
+
+/// Removing the record of a detected truncation does not lift the block:
+/// the row written after it no longer follows its predecessor, and the
+/// head's count of keyed rows is one short.
+#[test]
+fn deleting_the_truncation_record_is_detected_as_another_break() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let ids = {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", "v", SetSecretOptions::default());
+        vault.get_secret("k", None).unwrap();
+        vault.get_secret("k", None).unwrap();
+        event_ids(&vault)
+    };
+    truncate_after(&path, ids[ids.len() - 3]);
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+    let detection = {
+        let vault = fx.inspect_vault("dev");
+        events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Failure)[0].id
+    };
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "DELETE FROM audit_events WHERE id = ?1",
+            [i64::try_from(detection).unwrap()],
+        )
+        .unwrap();
+    }
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string()
+            .contains("removed or altered inside the log")
+            || err.to_string().contains("audit chain broken"),
+        "{err}"
+    );
+    let vault = fx.inspect_vault("dev");
+    let check = vault.verify_audit_chain().unwrap();
+    assert!(check.unacknowledged >= 1, "{check:?}");
+    assert_blocked(&vault.get_secret("k", None).unwrap_err());
+}
+
+/// A version's checkpoint row removed from the middle of the log, with the
+/// version itself: without the walk the previous version would come back as
+/// current without a trace. With it the unlock is refused and the break is
+/// on record. Once the owner has acknowledged it, the surviving history is
+/// what the vault goes by (known gap 6): the older version is served then,
+/// as the record shows.
+#[test]
+fn deleting_a_versions_checkpoint_row_refuses_the_unlock() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let (newest_row, newest_version) = {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", "one", SetSecretOptions::default());
+        let newest = vault
+            .set_secret("k", SecretBytes::from("two"), SetSecretOptions::default())
+            .unwrap()
+            .version;
+        let row = events_of(&vault, AuditOperation::SecretSet, AuditOutcome::Success)[0].id;
+        (row, newest)
+    };
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "DELETE FROM audit_events WHERE id = ?1",
+            [i64::try_from(newest_row).unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM secret_versions WHERE name = 'k' AND version = ?1",
+            [&newest_version],
+        )
+        .unwrap();
+    }
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    fx.acknowledge_truncations("dev");
+    let vault = fx.open_vault("dev");
+    let served = vault.get_secret("k", None).unwrap();
+    assert_ne!(served.properties.version, newest_version);
+    let check = vault.verify_audit_chain().unwrap();
+    assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.unacknowledged, 0, "{check:?}");
+}
+
+/// Rows removed while a handle is open are caught by the next operation:
+/// the head counts the keyed rows, so a keyed row missing from the middle
+/// fails the check every operation starts with.
+#[test]
+fn keyed_rows_removed_while_the_vault_is_open_are_caught_by_the_next_operation() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let vault = fx.create_vault("dev");
+    set_with(&vault, "k", "v", SetSecretOptions::default());
+    vault.get_secret("k", None).unwrap();
+    let victim = events_of(&vault, AuditOperation::SecretGet, AuditOutcome::Success)[0].id;
+    vault.list_properties_of_secrets().unwrap();
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "DELETE FROM audit_events WHERE id = ?1",
+            [i64::try_from(victim).unwrap()],
+        )
+        .unwrap();
+    }
+    let err = vault.get_secret("k", None).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string()
+            .contains("removed or altered inside the log"),
+        "{err}"
+    );
+    assert_blocked(&vault.get_secret("k", None).unwrap_err());
 }
 
 #[test]
@@ -560,9 +706,22 @@ fn edited_audit_row_breaks_the_chain() {
         )
         .unwrap();
     }
-    let vault = fx.open_vault("dev");
+    // The edited row's hash no longer verifies: the unlock finds it, records
+    // it and blocks the vault until the owner has acknowledged it.
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string().contains(&format!("event {denied_id}")),
+        "{err}"
+    );
+    let vault = fx.inspect_vault("dev");
     let check = vault.verify_audit_chain().unwrap();
     assert_eq!(check.first_broken, Some(denied_id), "{check:?}");
+    assert_eq!(check.unacknowledged, 1, "{check:?}");
+    drop(vault);
+    fx.acknowledge_truncations("dev");
+    fx.open_vault("dev");
 }
 
 /// Remove every audit row newer than `keep_up_to`, as an attacker with
@@ -1561,6 +1720,50 @@ fn secret_row_removed_out_of_band_is_rejected_not_not_found() {
 }
 
 #[test]
+fn a_tampered_row_refuses_the_page_that_holds_it_and_no_other() {
+    let fx = Fixture::new();
+    let vault = tampered(
+        &fx,
+        |v| {
+            for name in ["a", "b", "c", "d", "e"] {
+                set_with(v, name, CANARY, SetSecretOptions::default());
+            }
+        },
+        "PRAGMA foreign_keys = ON; DELETE FROM secrets WHERE name = 'd';",
+    );
+    // The chain still records `d`, so every window that includes `d` is
+    // refused, and no other window is.
+    let first = vault
+        .list_properties_of_secrets_page(ListOptions::first(2))
+        .unwrap();
+    let names: Vec<&str> = first.items.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["a", "b"]);
+    let second = vault.list_properties_of_secrets_page(ListOptions {
+        max_results: Some(2),
+        continuation: first.continuation.clone(),
+    });
+    assert_eq!(second.unwrap_err().code(), "crypto");
+    let after = vault
+        .list_properties_of_secrets_page(ListOptions {
+            max_results: Some(2),
+            continuation: Some(ContinuationToken::new("d")),
+        })
+        .unwrap();
+    let names: Vec<&str> = after.items.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["e"]);
+    assert_eq!(after.continuation, None);
+    assert_eq!(
+        vault.list_properties_of_secrets().unwrap_err().code(),
+        "crypto"
+    );
+    assert_eq!(
+        vault.list_deleted_secrets().unwrap_err().code(),
+        "crypto",
+        "a deleted listing judges the same rows"
+    );
+}
+
+#[test]
 fn forged_checkpoint_rows_do_not_count() {
     let fx = Fixture::new();
     let path = fx.registry.vault_path("dev").unwrap();
@@ -1578,7 +1781,10 @@ fn forged_checkpoint_rows_do_not_count() {
     replay(&path, "secrets", "k");
     replay(&path, "secret_versions", "k");
 
-    // An unkeyed row is forgeable by design, so it is never a checkpoint.
+    // An unkeyed row is forgeable by design, so it is never a checkpoint;
+    // one with a hash that does not verify breaks the chain, which the
+    // unlock finds and records, and once acknowledged it still counts for
+    // nothing.
     let forge = |keyed: i64| {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute(
@@ -1593,6 +1799,13 @@ fn forged_checkpoint_rows_do_not_count() {
         .unwrap();
     };
     forge(0);
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    fx.acknowledge_truncations("dev");
     let vault = fx.open_vault("dev");
     assert_eq!(vault.get_secret("k", None).unwrap_err().code(), "crypto");
     drop(vault);
@@ -1602,7 +1815,6 @@ fn forged_checkpoint_rows_do_not_count() {
     // forgery is recorded as a truncation that blocks the vault; once the
     // owner has acknowledged it the row is still not a checkpoint.
     forge(1);
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
     assert_eq!(
         fx.registry.open("dev", &unlock).unwrap_err().code(),
         "crypto"
@@ -1615,7 +1827,7 @@ fn forged_checkpoint_rows_do_not_count() {
     assert!(err.to_string().contains("does not verify"), "{err}");
     let check = vault.verify_audit_chain().unwrap();
     assert!(check.first_broken.is_some(), "{check:?}");
-    assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.truncations, 2, "one per forgery: {check:?}");
 }
 
 /// Removing the audit rows that checkpointed a change *and* replaying the
@@ -2996,5 +3208,133 @@ fn a_legacy_vault_under_another_name_is_not_migrated() {
     assert_eq!(
         vault.get_secret("beta", None).unwrap().value.expose(),
         b"beta-value"
+    );
+}
+
+#[test]
+fn backup_file_never_contains_a_value_a_name_or_the_passphrase() {
+    let fx = Fixture::new();
+    let vault = fx.create_vault("dev");
+    set_with(&vault, "api-key", CANARY, SetSecretOptions::default());
+    let snapshot = vault.export(&ExportOptions::default()).unwrap();
+    let passphrase = SecretBytes::from("CANARY-backup-passphrase-2b1d");
+    let bytes = backup::seal(&snapshot, &passphrase, Argon2Params::TESTING).unwrap();
+    for needle in [CANARY.as_bytes(), b"api-key", passphrase.expose()] {
+        assert!(
+            !contains(&bytes, needle),
+            "the backup file leaks {}",
+            String::from_utf8_lossy(needle)
+        );
+    }
+    // Neither does anything the export or the file put on the record.
+    let json = serde_json::to_string(&vault.audit_events(AuditQuery::default()).unwrap()).unwrap();
+    assert!(!json.contains(CANARY));
+    assert!(!format!("{snapshot:?}").contains(CANARY));
+    let info = backup::inspect(&bytes).unwrap();
+    assert!(!format!("{info:?}").contains("api-key"));
+}
+
+#[test]
+fn wrong_passphrase_tampering_and_newer_formats_refuse_a_backup() {
+    let fx = Fixture::new();
+    let vault = fx.create_vault("dev");
+    set_with(&vault, "api-key", CANARY, SetSecretOptions::default());
+    let snapshot = vault.export(&ExportOptions::default()).unwrap();
+    let bytes = backup::seal(
+        &snapshot,
+        &SecretBytes::from("right"),
+        Argon2Params::TESTING,
+    )
+    .unwrap();
+
+    assert_eq!(
+        backup::open(&bytes, &SecretBytes::from("wrong"))
+            .unwrap_err()
+            .code(),
+        "backup_passphrase"
+    );
+    // Any altered byte of the ciphertext is an integrity failure, and a
+    // changed header field is too, because the header is authenticated.
+    for position in [bytes.len() - 1, bytes.len() - 40] {
+        let mut flipped = bytes.clone();
+        flipped[position] ^= 0x01;
+        assert_eq!(
+            backup::open(&flipped, &SecretBytes::from("right"))
+                .unwrap_err()
+                .code(),
+            "crypto",
+            "byte {position}"
+        );
+    }
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let renamed = text.replacen("\"vault\":\"dev\"", "\"vault\":\"prd\"", 1);
+    assert_eq!(
+        backup::open(renamed.as_bytes(), &SecretBytes::from("right"))
+            .unwrap_err()
+            .code(),
+        "crypto"
+    );
+    let newer = text.replacen("\"format\":1", "\"format\":7", 1);
+    assert_eq!(
+        backup::open(newer.as_bytes(), &SecretBytes::from("right"))
+            .unwrap_err()
+            .code(),
+        "backup_format"
+    );
+    assert_eq!(
+        backup::open(b"not a backup", &SecretBytes::from("right"))
+            .unwrap_err()
+            .code(),
+        "crypto"
+    );
+    // Nothing above restored anything, and the honest file still does.
+    let target = fx.create_vault("copy");
+    let snapshot = backup::open(&bytes, &SecretBytes::from("right")).unwrap();
+    target
+        .restore(&snapshot, &RestoreOptions::default())
+        .unwrap();
+    assert_eq!(
+        target.get_secret("api-key", None).unwrap().value.expose(),
+        CANARY.as_bytes()
+    );
+}
+
+#[test]
+fn restore_is_an_audited_write_that_keeps_the_chain_intact() {
+    let fx = Fixture::new();
+    let vault = fx.create_vault("dev");
+    set_with(&vault, "api-key", CANARY, SetSecretOptions::default());
+    let snapshot = vault.export(&ExportOptions::default()).unwrap();
+    let target = fx.create_vault("copy");
+    target
+        .restore(&snapshot, &RestoreOptions::default())
+        .unwrap();
+    let restores = events_of(
+        &target,
+        AuditOperation::SecretRestore,
+        AuditOutcome::Success,
+    );
+    assert_eq!(restores.len(), 1);
+    assert_eq!(restores[0].secret_name.as_deref(), Some("api-key"));
+    assert!(restores[0].version.is_some());
+    let detail = restores[0].detail.clone().unwrap_or_default();
+    assert!(detail.starts_with("from version "), "{detail}");
+    assert!(!detail.contains(CANARY));
+    assert!(target.verify_audit_chain().unwrap().is_intact());
+    // The restored row is checkpointed like any other: removing it out of
+    // band is caught.
+    let path = fx.registry.vault_path("copy").unwrap();
+    drop(target);
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON; DELETE FROM secret_versions WHERE name = 'api-key';",
+        )
+        .unwrap();
+    }
+    let target = fx.open_vault("copy");
+    assert_eq!(
+        target.get_secret("api-key", None).unwrap_err().code(),
+        "crypto"
     );
 }

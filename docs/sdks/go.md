@@ -98,7 +98,15 @@ connect(secret.Value.Text())
 `Open(vault, nil)` behaves like the CLI: `SOURCEORRERY_HOME` locates the
 vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`, then
 `SOURCEORRERY_PASSPHRASE_FILE` unlock it. `&sourceorrery.OpenOptions{Home,
-Passphrase, PassphraseFile, IgnoreEnvironment}` overrides any of that.
+Passphrase, PassphraseFile, IgnoreEnvironment, Manifest}` overrides any of
+that. `Manifest` names the `sourceorrery.toml` whose `[vaults.<name>]`
+tables say which vaults are remote and at which provider (default: the
+nearest one above the current directory); a vault with such a table is
+opened at its provider instead of as a local file. Credentials come from
+the provider's own environment, never from the manifest: [HashiCorp
+Vault](../providers/hashicorp-vault.md) takes `VAULT_TOKEN` or the other
+sources it documents, [AWS Secrets Manager](../providers/aws-secrets-manager.md)
+the AWS default credential chain.
 
 | Call | Returns |
 |------|---------|
@@ -147,8 +155,10 @@ Sentinels: `ErrNotFound`, `ErrVersionNotFound`, `ErrDeleted`,
 `ErrInvalidName`, `ErrInvalidArgument`, `ErrPermissionDenied`,
 `ErrLocked`, `ErrVaultNotFound`, `ErrMigrationRequired`,
 `ErrVaultMismatch`, `ErrManifest`, `ErrCrypto`, `ErrStorage`,
-`ErrUnsupported`. `(*Error).Transient()` is true for `not_yet_valid`. See
-[the SDK overview](index.md#errors).
+`ErrUnsupported`, `ErrUnauthenticated` (the remote provider has no
+credentials for this process), `ErrProviderUnavailable` (it could not be
+reached). `(*Error).Transient()` is true for `not_yet_valid` and
+`provider_unavailable`. See [the SDK overview](index.md#errors).
 
 ## Load a project
 

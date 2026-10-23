@@ -332,16 +332,92 @@ pub(super) fn write_head(
     id: i64,
     hash: &[u8; MAC_LEN],
 ) -> Result<()> {
+    let keyed = keyed_count(conn)?;
     conn.execute(
         "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![
             integrity::AUDIT_HEAD_KEY,
-            integrity::head_value(key, vault_id, id, hash)
+            integrity::head_value(key, vault_id, id, hash, keyed)
         ],
     )
     .map_err(db)?;
     Ok(())
+}
+
+/// Rows flagged as written with the metadata key.
+pub(super) fn keyed_count(conn: &Connection) -> Result<u64> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE keyed = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db)?;
+    Ok(u64::try_from(count).unwrap_or_default())
+}
+
+/// Walk the chain from the newest acknowledgement (history before it was
+/// reviewed and accepted by the vault's owner) to the end, checking that
+/// every row links to the row before it and that its hash verifies. `None`
+/// when the chain holds; otherwise a short, value-free description naming
+/// the first row that does not, suitable as audit detail.
+///
+/// This is the check the head alone cannot make: the head names the newest
+/// keyed row and counts the keyed rows, which catches rows removed from the
+/// end and keyed rows removed from the middle, but not a row replaced by a
+/// forgery between two others. Run at unlock, once, over the rows that
+/// matter; every operation after that relies on the head.
+pub(super) fn chain_problem(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+) -> Result<Option<String>> {
+    // The newest authentic acknowledgement, if any: the walk starts after it.
+    let mut acks = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events
+             WHERE operation = '{}' AND outcome = '{}' AND keyed = 1
+             ORDER BY id DESC",
+            AuditOperation::AuditVerify.as_str(),
+            AuditOutcome::Success.as_str()
+        ))
+        .map_err(db)?;
+    let mut start: Option<(i64, [u8; MAC_LEN])> = None;
+    for row in acks.query_map([], chain_row).map_err(db)? {
+        let row = row.map_err(db)?;
+        if row.is_acknowledgement() && row.authentic(key, vault_id) {
+            start = Some((row.id(), integrity::hash_or_zero(row.hash.as_deref())));
+            break;
+        }
+    }
+    let (after, mut prev) = start.unwrap_or((0, integrity::ZERO_HASH));
+    let zero = integrity::zero_key();
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events WHERE id > ?1 ORDER BY id"
+        ))
+        .map_err(db)?;
+    for row in stmt.query_map(params![after], chain_row).map_err(db)? {
+        let row = row.map_err(db)?;
+        let row_key = if row.keyed { key } else { &zero };
+        let fields = row.fields(vault_id);
+        let linked = row.prev_hash.as_deref() == Some(prev.as_slice());
+        let authentic = integrity::verify_audit_hash(row_key, &prev, &fields, row.hash.as_deref());
+        if !(linked && authentic) {
+            return Ok(Some(format!(
+                "audit chain broken at event {}: {}",
+                row.id(),
+                if linked {
+                    "its hash does not verify"
+                } else {
+                    "it does not follow the row before it (a row was removed or replaced)"
+                }
+            )));
+        }
+        prev = integrity::hash_or_zero(row.hash.as_deref());
+    }
+    Ok(None)
 }
 
 pub(super) fn read_head(conn: &Connection) -> Result<Option<String>> {
@@ -470,14 +546,27 @@ pub(super) fn head_problem(
         (None, Some(_)) => Some("audit chain head missing".to_owned()),
         (Some(_), None) => Some("audit chain head stale: no keyed rows remain".to_owned()),
         (Some(head), Some((id, hash))) => {
-            if integrity::head_matches(key, vault_id, &head, id, &hash) {
+            let keyed = keyed_count(conn)?;
+            if integrity::head_matches(key, vault_id, &head, id, &hash, keyed) {
                 None
             } else {
-                Some(match integrity::head_id(&head) {
-                    Some(head_id) if head_id > id => {
-                        format!("rows removed after event {id} (head was event {head_id})")
+                Some(match integrity::parse_head(&head) {
+                    Some(record) if record.id > id => {
+                        format!(
+                            "rows removed after event {id} (head was event {})",
+                            record.id
+                        )
                     }
-                    Some(head_id) => format!("audit chain head stale (head was event {head_id})"),
+                    Some(record) if record.id == id && record.keyed.is_some_and(|n| n != keyed) => {
+                        format!(
+                            "keyed audit rows removed or altered inside the log (the head records \
+                             {}, {keyed} remain)",
+                            record.keyed.unwrap_or_default()
+                        )
+                    }
+                    Some(record) => {
+                        format!("audit chain head stale (head was event {})", record.id)
+                    }
                     None => "audit chain head invalid".to_owned(),
                 })
             }
@@ -580,6 +669,35 @@ fn decode_checkpoint(blob: Option<&[u8]>, name: &str, id: i64) -> Result<Option<
     .transpose()
 }
 
+impl SecretCheckpoints {
+    /// True when the newest state checkpoint says the `secrets` row exists.
+    pub(super) fn is_present(&self) -> bool {
+        matches!(self.state, Some(Checkpoint::Present(_)))
+    }
+
+    /// Apply one authenticated checkpoint row, in chain order.
+    fn fold(&mut self, row: &ChainRow, name: &str) -> Result<()> {
+        let id = row.row.0;
+        if let Some(state) = decode_checkpoint(row.state_tag.as_deref(), name, id)? {
+            if state == Checkpoint::Absent {
+                // The secret was removed: whatever versions it had are gone
+                // with it, and a later secret of the same name starts afresh.
+                self.versions.clear();
+            }
+            self.state = Some(state);
+        }
+        if let Some(version) = decode_checkpoint(row.version_tag.as_deref(), name, id)? {
+            let Some(version_id) = row.row.5.clone() else {
+                return Err(SecretError::Crypto(format!(
+                    "audit checkpoint for {name} names no version (event {id})"
+                )));
+            };
+            self.versions.insert(version_id, version);
+        }
+        Ok(())
+    }
+}
+
 /// The chain's current state for `name`. See [`SecretCheckpoints`].
 pub(super) fn secret_checkpoints(
     conn: &Connection,
@@ -589,39 +707,28 @@ pub(super) fn secret_checkpoints(
 ) -> Result<SecretCheckpoints> {
     let mut out = SecretCheckpoints::default();
     for row in read_checkpoints(conn, key, vault_id, name)? {
-        let id = row.row.0;
-        if let Some(state) = decode_checkpoint(row.state_tag.as_deref(), name, id)? {
-            if state == Checkpoint::Absent {
-                // The secret was removed: whatever versions it had are gone
-                // with it, and a later secret of the same name starts afresh.
-                out.versions.clear();
-            }
-            out.state = Some(state);
-        }
-        if let Some(version) = decode_checkpoint(row.version_tag.as_deref(), name, id)? {
-            let Some(version_id) = row.row.5.clone() else {
-                return Err(SecretError::Crypto(format!(
-                    "audit checkpoint for {name} names no version (event {id})"
-                )));
-            };
-            out.versions.insert(version_id, version);
-        }
+        out.fold(&row, name)?;
     }
     Ok(out)
 }
 
-/// Names whose newest keyed state checkpoint says the secret exists, so a
-/// `secrets` row removed out of band is still looked for. Checkpoint rows
-/// are authenticated as in [`secret_checkpoints`].
-pub(super) fn checkpointed_names(
+/// The chain's current state for every secret it records, from one scan of
+/// the checkpoint rows: each row is authenticated once and folded into its
+/// name's [`SecretCheckpoints`] under the rules of [`secret_checkpoints`].
+/// Listings use this so that their cost does not grow with one chain scan
+/// per secret; a name whose newest state checkpoint says the row exists is
+/// in the map even when the `secrets` table no longer has the row, so a
+/// row removed out of band is still looked for and refused.
+pub(super) fn vault_checkpoints(
     conn: &Connection,
     key: &SymmetricKey,
     vault_id: &str,
-) -> Result<Vec<String>> {
+) -> Result<BTreeMap<String, SecretCheckpoints>> {
     let mut stmt = conn
         .prepare(&format!(
             "SELECT {CHAIN_COLUMNS} FROM audit_events
-             WHERE secret_name IS NOT NULL AND keyed = 1 AND state_tag IS NOT NULL
+             WHERE secret_name IS NOT NULL AND keyed = 1
+               AND (state_tag IS NOT NULL OR version_tag IS NOT NULL)
              ORDER BY id"
         ))
         .map_err(db)?;
@@ -630,7 +737,7 @@ pub(super) fn checkpointed_names(
         .map_err(db)?
         .collect::<rusqlite::Result<_>>()
         .map_err(db)?;
-    let mut newest: BTreeMap<String, bool> = BTreeMap::new();
+    let mut out: BTreeMap<String, SecretCheckpoints> = BTreeMap::new();
     for row in rows {
         let name = row.row.4.clone().unwrap_or_default();
         if !row.authentic(key, vault_id) {
@@ -639,13 +746,9 @@ pub(super) fn checkpointed_names(
                 row.row.0
             )));
         }
-        let present = !row.state_tag.as_deref().is_some_and(<[u8]>::is_empty);
-        newest.insert(name, present);
+        out.entry(name.clone()).or_default().fold(&row, &name)?;
     }
-    Ok(newest
-        .into_iter()
-        .filter_map(|(name, present)| present.then_some(name))
-        .collect())
+    Ok(out)
 }
 
 impl SqliteVault {

@@ -6,8 +6,8 @@ description: Install SourceOrrery 0.1.4 from the package registries, the GitHub 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 import Aside from '../../components/Aside.astro';
 
-SourceOrrery 0.1.4 is an encrypted local vault with an Azure Key
-Vault–style lifecycle, a CLI with an interactive vault manager, and
+SourceOrrery 0.1.4 is an encrypted local vault with a
+cloud-secrets-manager-style lifecycle, a CLI with an interactive vault manager, and
 read-only [SDKs](/sdks/) for Python, JavaScript/TypeScript, Rust, Java,
 .NET, Go, C, C++ and PHP. It works on Windows, macOS and Linux.
 
@@ -67,14 +67,59 @@ Go, C, C++ and PHP load the C ABI library from the release (below); each
 to check that what you installed is what was released, is in
 [Supply chain](/security/supply-chain/).
 
+### With a package manager
+
+Each package manager downloads the CLI archive from the GitHub release
+and checks its SHA-256 against the one recorded at release time, so what
+it installs is the released file.
+
+<Tabs syncKey="os">
+<TabItem label="Windows">
+
+```powershell
+winget install Netizine.SourceOrrery
+```
+
+or, with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery
+scoop install sourceorrery
+```
+
+WinGet lists a new version once the community repository has merged its
+submission, usually a few days after a release; the Scoop bucket has it at
+once. The binaries are not code-signed yet, so SmartScreen may ask the
+first time `sourceorrery` runs (*More info → Run anyway*); the hash check
+above, the release's `SHA256SUMS` and `gh attestation verify` are how to
+check a download in the meantime.
+
+</TabItem>
+<TabItem label="macOS">
+
+```bash
+brew install Netizine/sourceorrery/sourceorrery
+```
+
+</TabItem>
+<TabItem label="Linux">
+
+With [Homebrew on Linux](https://docs.brew.sh/Homebrew-on-Linux):
+
+```bash
+brew install Netizine/sourceorrery/sourceorrery
+```
+
+</TabItem>
+</Tabs>
+
 ### From the GitHub release
 
 The [v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4)
 ships the CLI for Windows, macOS and Linux on x64 and arm64, the C ABI
 library with its headers, and every SDK package (wheels, the npm tarballs,
 the jar, the NuGet package), with a `SHA256SUMS` file to check each
-download against. Homebrew, WinGet and Scoop packages are on the
-[roadmap](/roadmap/).
+download against.
 
 <Tabs syncKey="os">
 <TabItem label="Windows">
@@ -205,6 +250,23 @@ This minimal build also omits the interactive `ui` command; add
 `--features ui` if you need it without OS-keyring support.
 </Aside>
 
+## Set up a project
+
+With the CLI installed, run the guided first run from your application's
+directory:
+
+```bash
+sourceorrery setup
+```
+
+Six screens take you from a vault with a strong passphrase to a running
+program: the vault, a first database password (typed against a strength
+meter or generated, never shown), recovery codes and a hint, an
+authenticator app as a second factor, the reveal guard, and the manifest.
+[First run](/guides/first-run/) walks through each screen and gives the
+same steps as commands, which the wizard prints where there is no
+terminal. The sections below are the manual path.
+
 ## First vault to first run
 
 Run these steps from the directory containing your application. Use a
@@ -247,7 +309,7 @@ development credential for the walkthrough.
    sourceorrery secret set tls-key --from-file ./server.key --vault development
    ```
 
-   Names follow Azure Key Vault rules: letters, digits and hyphens, at most
+   Names are letters, digits and hyphens, at most
    127 characters.
 
 3. **Inspect without revealing.**

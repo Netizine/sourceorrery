@@ -89,6 +89,7 @@ int main(int argc, char **argv) {
     char options[4096] = "{";
     if (home != NULL) { strcat(options, "\"home\":"); json_string(options, sizeof options, home); strcat(options, ","); }
     if (passphrase_file != NULL) { strcat(options, "\"passphrase_file\":"); json_string(options, sizeof options, passphrase_file); strcat(options, ","); }
+    if (manifest != NULL) { strcat(options, "\"manifest\":"); json_string(options, sizeof options, manifest); strcat(options, ","); }
     strcat(options, environment != NULL && strcmp(environment, "false") == 0 ? "\"environment\":false}" : "\"environment\":true}");
 
     so_bytes props = {NULL, 0}, value = {NULL, 0};

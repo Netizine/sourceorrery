@@ -1,9 +1,13 @@
 //! Shared fixtures for the SourceOrrery conformance suite.
 //!
 //! Every SDK binding is expected to run the same scenarios against the same
-//! semantics; the fixtures here define those scenarios once.
+//! semantics; the fixtures here define those scenarios once. The
+//! [`lifecycle`] module holds the scenarios every backend must pass, over
+//! `&dyn SecretClient`, and [`lifecycle::lifecycle`] runs them.
 
 #![forbid(unsafe_code)]
+
+pub mod lifecycle;
 
 use sourceorrery_core::SecretBytes;
 use sourceorrery_crypto::Argon2Params;

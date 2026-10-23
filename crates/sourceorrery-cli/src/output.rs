@@ -51,15 +51,15 @@ fn escape_unsafe(text: &str, keep_line_feeds: bool) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// Characters a terminal acts on instead of showing: the `Cc` category
-/// (U+0000–U+001F, U+007F–U+009F) and Unicode's `Bidi_Control` set (the
-/// embeddings, overrides and isolates, plus the ALM, LRM and RLM marks).
+/// Characters a terminal acts on instead of showing, or shows as nothing:
+/// the `Cc` category (U+0000–U+001F, U+007F–U+009F), Unicode's
+/// `Bidi_Control` set (the embeddings, overrides and isolates, plus the
+/// ALM, LRM and RLM marks), and the invisible formatting characters that
+/// let planted text hide inside a name (zero-width characters, joiners,
+/// the byte-order mark, the tag characters): the set
+/// [`sourceorrery_core::text`] replaces in foreign text.
 fn is_unsafe(c: char) -> bool {
-    c.is_control()
-        || matches!(
-            c,
-            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
-        )
+    c.is_control() || sourceorrery_core::text::is_invisible_format(c)
 }
 
 /// [`sanitize`] for an owned string, reusing it when nothing changes.
@@ -339,6 +339,16 @@ mod tests {
         {
             assert!(matches!(sanitize(text), Cow::Borrowed(t) if t == text));
         }
+    }
+
+    #[test]
+    fn invisible_formatting_characters_are_shown_escaped() {
+        // Zero-width space, word joiner, byte-order mark, a tag character:
+        // planted text that would read as another name.
+        assert_eq!(sanitize("de\u{200b}v"), "de\\u{200b}v");
+        assert_eq!(sanitize("a\u{2060}b\u{feff}c"), "a\\u{2060}b\\u{feff}c");
+        assert_eq!(sanitize("x\u{e0069}y"), "x\\u{e0069}y");
+        assert_eq!(sanitize("soft\u{ad}hyphen"), "soft\\u{ad}hyphen");
     }
 
     #[test]

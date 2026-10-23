@@ -24,6 +24,7 @@ class Reader:
         passphrase: bytes | None = None,
         passphrase_file: str | None = None,
         environment: bool = True,
+        manifest: str | None = None,
     ) -> None: ...
     @property
     def vault_name(self) -> str: ...

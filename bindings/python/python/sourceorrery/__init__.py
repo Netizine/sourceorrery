@@ -31,6 +31,7 @@ from .errors import (
     MigrationRequiredError,
     PermissionDeniedError,
     PolicyError,
+    ProviderUnavailableError,
     SecretDeletedError,
     SecretDisabledError,
     SecretExpiredError,
@@ -38,6 +39,7 @@ from .errors import (
     SecretNotYetValidError,
     SourceOrreryError,
     StorageError,
+    UnauthenticatedError,
     UnsupportedError,
     VaultLockedError,
     VaultMismatchError,
@@ -73,6 +75,8 @@ __all__ = [
     "ManifestError",
     "PermissionDeniedError",
     "StorageError",
+    "UnauthenticatedError",
+    "ProviderUnavailableError",
 ]
 
 __version__ = "0.1.4"
@@ -159,6 +163,14 @@ class SecretReader:
     ``SOURCEORRERY_PASSPHRASE`` and ``passphrase_file`` /
     ``SOURCEORRERY_PASSPHRASE_FILE``. Pass ``environment=False`` to ignore
     the two passphrase variables. There is never an interactive prompt.
+
+    ``manifest`` is the ``sourceorrery.toml`` whose ``[vaults.<name>]``
+    tables say which vaults are remote and where (default: the nearest one
+    above the current directory, as ``sourceorrery run`` finds it). A vault
+    the manifest declares there is opened at its provider, with the
+    credentials the provider's own tools expect from the environment; the
+    manifest never holds any. A vault without a table, or no manifest at
+    all, is a local vault file.
     """
 
     def __init__(
@@ -169,6 +181,7 @@ class SecretReader:
         passphrase: str | bytes | None = None,
         passphrase_file: PathLike | None = None,
         environment: bool = True,
+        manifest: PathLike | None = None,
     ) -> None:
         self._native = _native.Reader(
             vault,
@@ -176,6 +189,7 @@ class SecretReader:
             passphrase=_passphrase_bytes(passphrase),
             passphrase_file=None if passphrase_file is None else os.fspath(passphrase_file),
             environment=environment,
+            manifest=None if manifest is None else os.fspath(manifest),
         )
         self._vault = vault
 

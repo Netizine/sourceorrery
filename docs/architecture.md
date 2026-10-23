@@ -22,8 +22,9 @@ source code.
   identity, policy and secret lifecycle management.
 * **Cross-platform CLI.** A polished terminal interface on macOS, Windows and
   Linux.
-* **Azure Key Vault–inspired API.** Familiar `SecretClient`, `set_secret`,
-  `get_secret`, versioning and lifecycle operations, independent of Azure.
+* **Cloud-secrets-manager-style API.** Familiar `SecretClient`, `set_secret`,
+  `get_secret`, versioning and lifecycle operations, independent of any one
+  vendor.
 * **Multi-language SDKs.** Read-only clients for Python,
   JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP over one Rust
   implementation (shipped); a standard local protocol with the broker
@@ -58,8 +59,14 @@ sourceorrery/
 │   ├── sourceorrery-cli        the `sourceorrery` binary
 │   ├── sourceorrery            the read-only client: CLI unlock order,
 │   │                           manifest loading, error hints (the Rust SDK)
-│   └── sourceorrery-ffi        stable C ABI (cbindgen header): read-only
-│                               so_reader_* for SDKs, so_vault_* for tooling
+│   ├── sourceorrery-ffi        stable C ABI (cbindgen header): read-only
+│   │                           so_reader_* for SDKs, so_vault_* for tooling
+│   ├── sourceorrery-provider   Blocking / AsyncLocal adapters between the
+│   │                           sync and async shapes of the contract;
+│   │                           open_remote picks a provider for a manifest's
+│   │                           [vaults.<name>] table
+│   ├── sourceorrery-provider-vault  HashiCorp Vault KV v2 behind the contract
+│   └── sourceorrery-provider-aws    AWS Secrets Manager behind the contract
 ├── bindings/                   the other nine SDKs (see §7)
 ├── tests/conformance           lifecycle + security suite for every backend/SDK
 ├── scripts/ci, scripts/release fixture vault for SDK tests; version stamping
@@ -81,6 +88,10 @@ cli ──► storage ──► crypto
 
 sourceorrery (client) ──► storage, core
 sourceorrery-ffi ──────► sourceorrery (client), storage, core
+sourceorrery-provider ─► core, tokio; provider-vault, provider-aws (features)
+sourceorrery-provider-vault ─► core, reqwest (rustls)
+sourceorrery-provider-aws ───► core, aws-sdk-secretsmanager, aws-config
+tests/conformance ─────► storage, core; provider in its tests
 bindings/python, bindings/node ──► sourceorrery (client)      native extensions
 bindings/{java,dotnet,go,cpp,php} ──► sourceorrery-ffi (C ABI) foreign-function calls
 ```
@@ -98,7 +109,7 @@ bindings/{java,dotnet,go,cpp,php} ──► sourceorrery-ffi (C ABI) foreign-fun
 | `SecretError` | Typed errors with stable, append-only string codes for SDKs. |
 | `Principal` | Who is asking (`user`, `workload`, `agent`, `system`). Today it labels the OS user; it is not verified identity. |
 | `AuditEvent` | Metadata-only record: actor, operation, secret, version, outcome, detail (error code). |
-| `Manifest` | `sourceorrery.toml`: project name, default vault, required secrets. Rejects unknown fields, so it cannot hold a value. |
+| `Manifest` | `sourceorrery.toml`: project name, default vault, required secrets, and the remote vaults (`[vaults.<name>]`: a `RemoteVault`, the provider and its addressing keys only). Rejects unknown fields, so it cannot hold a value or a credential. |
 
 ### The `SecretClient` contract
 
@@ -109,17 +120,30 @@ pub trait SecretClient {
     fn get_secret(&self, name: &str, version: Option<&str>) -> Result<Secret>;
     fn get_secret_properties(&self, name: &str, version: Option<&str>) -> Result<SecretProperties>;
     fn list_properties_of_secrets(&self) -> Result<Vec<SecretProperties>>;
+    fn list_properties_of_secrets_page(&self, options: ListOptions) -> Result<Page<SecretProperties>>; // provided
     fn list_properties_of_secret_versions(&self, name: &str) -> Result<Vec<SecretProperties>>;
     fn update_secret_properties(&self, name: &str, version: Option<&str>, update: UpdateSecretProperties) -> Result<SecretProperties>;
     fn delete_secret(&self, name: &str) -> Result<DeletedSecret>;
     fn get_deleted_secret(&self, name: &str) -> Result<DeletedSecret>;
     fn list_deleted_secrets(&self) -> Result<Vec<DeletedSecret>>;
+    fn list_deleted_secrets_page(&self, options: ListOptions) -> Result<Page<DeletedSecret>>; // provided
     fn recover_deleted_secret(&self, name: &str) -> Result<SecretProperties>;
     fn purge_deleted_secret(&self, name: &str) -> Result<()>;
     fn audit_events(&self, query: AuditQuery) -> Result<Vec<AuditEvent>>;
     fn resolve(&self, reference: &SecretReference) -> Result<Secret>; // provided
 }
 ```
+
+The contract has a second shape, `AsyncSecretClient`: the same methods as
+`async fn`, the same semantics, for backends that wait on the network (the
+remote providers of milestone 4, [ADR 0008](adr/0008-remote-providers.md)).
+It is object safe (`Box<dyn AsyncSecretClient>`, through `async-trait`) so a
+provider can be chosen at run time. `sourceorrery-provider` turns either
+shape into the other: `Blocking<A>` drives an async client on a Tokio
+runtime it owns or borrows, so the CLI, the C ABI and every SDK run
+unchanged against a remote provider; `AsyncLocal<C>` runs a synchronous
+client on Tokio's blocking pool, so async applications reach the local
+vault. Both pass every operation and every error through untouched.
 
 Semantics every implementation must honour:
 
@@ -129,18 +153,45 @@ Semantics every implementation must honour:
 | `get_secret(name, None)` | Returns the **newest accessible** version: enabled and inside its time window. If none is accessible, the error explains why the newest was rejected. |
 | `get_secret(name, Some(v))` | Exactly that version, or a policy error (`disabled`, `not_yet_valid`, `expired`). |
 | `get_secret_properties` | Metadata only, policy not applied — disabled/expired versions can be inspected. |
-| `list_*` | Metadata only. |
+| `list_*` | Metadata only, in name order. |
+| `list_*_page` | A window of the same order: up to `max_results` items whose names sort after the continuation token, and a token of their own, the name of the last item, while names remain after it (`None` on the last page). A token is a name, so a secret created or removed between pages shows up or not by where it sorts, and nothing is returned twice. The names after a token may all belong to the other listing (deleted versus live), so the final page can hold fewer items than `max_results`, even none: page until the token is `None`. `max_results: Some(0)` or a token that is not a secret name is `invalid_argument`. The defaults cut the page out of the full listing; the SQLite backend reads only the window. |
 | `update_secret_properties` | Metadata only, never the value, never a new version. |
 | `delete_secret` | Soft-deletes **all versions** in a recoverable vault; immediate in a purgeable vault. |
 | `recover_deleted_secret` | Restores all versions. |
 | `purge_deleted_secret` | Permanent. Only valid on a deleted secret. |
 | `audit_events` | Every operation above is recorded, successes and failures, never with a value; metadata reads appear as `secret_inspect`. Reading the log and verifying the chain are not recorded; acknowledging a detected truncation of it is (`audit_verify` / `success`). |
 
-A deliberate difference from Azure Key Vault: `not_before` and `expires_on`
+The lifecycle conformance suite checks these as functions over
+`&dyn SecretClient` (`sourceorrery_conformance::lifecycle`), run against the
+SQLite vault directly and through the adapter pair, and by each remote
+provider's CI job through its `Blocking` adapter. A remote backend may
+differ only where its service cannot express the contract, and documents
+each difference; `audit_events` returning `unsupported` (the service keeps
+its own log) is the one common to all.
+
+A deliberate difference from the managed cloud secrets services: `not_before` and `expires_on`
 are **enforced** on retrieval, not advisory.
 
-Rotation is intentionally not an operation yet. A new value is not a rotated
-credential; real rotation needs the external issuer (milestone 4).
+Rotation is not an operation of the contract but a workflow over it
+(`core::rotation`, [rotation.md](rotation.md)): a new value is written as a
+disabled candidate, validated, enabled while the version it replaces is
+disabled, and the previous credential retired at the issuer after a grace
+period. Every step is an ordinary `set` or `update`, recorded in the
+versions' tags; the issuer's side is a command the CLI runs, because a new
+value is not a rotated credential until the issuer knows about it. It needs
+per-version properties (`SecretClient::capabilities`), which the local vault
+and HashiCorp Vault have and AWS Secrets Manager has not.
+
+A second, smaller contract, `VaultBackup`, covers backups: `export` takes
+a `Snapshot` of the secrets with every version's value (disabled and
+expired ones included, which is why it is a separate, privileged read,
+recorded as `vault_backup` per secret), and `restore` writes a snapshot's
+versions through the ordinary checkpointed write path as new versions
+(`secret_restore` per version), skipping names the target already has
+unless asked to add to them. The snapshot holds values as `SecretBytes`
+and has no `Serialize`; sealing it into a file is the storage crate's
+([backup format](backup-format.md)). Only the CLI uses it: SDKs stay
+read-only (ADR 0005).
 
 ## 4. Cryptography (`sourceorrery-crypto`)
 
@@ -195,7 +246,7 @@ Docker or CI. Removing the last protector is refused.
 | Backend | Status |
 |---------|--------|
 | Encrypted SQLite vault, key in OS store or passphrase | Shipped (milestone 1) |
-| Remote provider (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault, SourceOrrery server) implementing the same contract | Planned (milestone 4) |
+| Remote providers (HashiCorp Vault, AWS Secrets Manager) implementing the same contract ([providers](providers/index.md); identity, policy and revocation: [enterprise](enterprise.md)) | Shipped (0.3.0) |
 
 Headless Linux servers often have no Secret Service daemon. The fallback is a
 passphrase protector with an independently provisioned secret — never silent
@@ -328,8 +379,8 @@ until a keyring-capable CI matrix exists.
 ## 10. Three decisions made before the first line
 
 1. The Rust core owns all secret-management semantics.
-2. The contract is compatible with Azure Key Vault's conceptual model but
-   independent of Azure.
+2. The contract follows the conceptual model of the managed cloud secrets
+   services but is independent of any vendor.
 3. The threat model is explicit: eliminating `.env` files is valuable;
    protecting secrets from arbitrary code executed by an AI agent requires a
    separate authentication and isolation strategy.

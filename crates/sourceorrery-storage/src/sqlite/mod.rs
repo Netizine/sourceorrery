@@ -22,24 +22,30 @@
 //! state of the rows they touched as checkpoints in that row.
 
 mod audit;
+mod backup;
+mod guard;
 mod migrate;
+
+pub use self::guard::{MAX_HINT_LEN, RevealGuard, SecondFactorInfo};
+pub use self::protectors::RECOVERY_LABEL_PREFIX;
 mod protectors;
 mod rows;
 mod schema;
 #[cfg(test)]
 mod tests;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 use serde::Serialize;
 use sourceorrery_core::audit::{AuditEvent, AuditOperation, AuditOutcome, AuditQuery};
 use sourceorrery_core::policy::SoftDeletePolicy;
 use sourceorrery_core::{
-    DeletedSecret, Principal, RecoveryLevel, Result, Secret, SecretBytes, SecretClient,
-    SecretError, SecretProperties, SetSecretOptions, UpdateSecretProperties, VaultDescriptor,
-    timestamp, validate_vault_name,
+    ContinuationToken, DeletedSecret, ListOptions, Page, Principal, RecoveryLevel, Result, Secret,
+    SecretBytes, SecretClient, SecretError, SecretProperties, SetSecretOptions,
+    UpdateSecretProperties, VaultDescriptor, timestamp, validate_vault_name,
 };
 use sourceorrery_crypto::{SymmetricKey, aead, random};
 
@@ -51,19 +57,33 @@ use crate::unlock::UnlockProvider;
 use crate::{BACKEND_NAME, SCHEMA_VERSION};
 
 use self::audit::{
-    AuditRow, AuditWriter, Checkpoints, event_from_row, head_problem, quarantined_message,
-    truncated_message, unacknowledged_truncations,
+    AuditRow, AuditWriter, Checkpoints, SecretCheckpoints, chain_problem, event_from_row,
+    head_problem, quarantined_message, truncated_message, unacknowledged_truncations,
+    vault_checkpoints,
 };
 use self::migrate::migrate;
 use self::protectors::{
     Unlocked, add_protector, any_keyring_protector_wrapped_newer, read_protectors,
     rewrap_protector, try_passphrases, try_unwrap,
 };
-use self::rows::{NewVersion, SecretRow, load_ciphertext, select_version};
-use self::schema::{
-    Meta, SCHEMA, crypto, db, nanos, open_connection, opt_nanos, read_meta, recovery_id, value_aad,
-    write_settings_tag,
+use self::rows::{
+    NewVersion, RawVersion, SecretRow, StoredSecretRow, load_ciphertext, query_raw_versions_in,
+    query_secret_names, query_secret_rows, select_version,
 };
+use self::schema::{
+    GuardState, Meta, SCHEMA, begin_write, crypto, db, nanos, open_connection, opt_nanos,
+    read_meta, recovery_id, value_aad, write_settings_tag,
+};
+
+/// The passphrase hint a vault file stores, read without unlocking it:
+/// in clear and unauthenticated, so it is whatever the file says.
+pub(crate) fn read_passphrase_hint(path: &Path) -> Result<Option<String>> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let conn = open_connection(path)?;
+    Ok(read_meta(&conn)?.passphrase_hint)
+}
 
 /// Maximum passphrase attempts per `open`.
 pub const MAX_UNLOCK_ATTEMPTS: u32 = 3;
@@ -163,6 +183,9 @@ pub struct SqliteVault {
     /// HKDF sub-key of `dek` that authenticates metadata and the audit chain.
     metadata_key: SymmetricKey,
     meta: Meta,
+    /// The second-factor enrolment and the reveal guard as they are now
+    /// (`meta.guard` is what the file said at open).
+    guard: Mutex<GuardState>,
     path: PathBuf,
     actor: Principal,
 }
@@ -205,9 +228,13 @@ impl SqliteVault {
         protector: ProtectorSpec,
     ) -> Result<Self> {
         // The reserved file is empty, which SQLite treats as a new database.
-        let conn = open_connection(path)?;
+        let mut conn = open_connection(path)?;
         restrict_permissions(path, 0o600)?;
         conn.execute_batch(SCHEMA).map_err(db)?;
+        // Everything that makes the file a vault lands in one transaction:
+        // a crash leaves an empty database, never a vault without its
+        // protector, its settings tag or its first audit row.
+        let tx = begin_write(&mut conn)?;
 
         let now = timestamp::now();
         let recovery_level_raw = serde_json::to_string(&options.recovery_level)
@@ -221,6 +248,8 @@ impl SqliteVault {
             recovery_level_raw: recovery_level_raw.clone(),
             retention_days: options.retention_days,
             settings_tag: None,
+            guard: GuardState::default(),
+            passphrase_hint: None,
         };
         let rows: [(&str, String); 6] = [
             ("schema_version", SCHEMA_VERSION.to_string()),
@@ -231,7 +260,7 @@ impl SqliteVault {
             ("retention_days", meta.retention_days.to_string()),
         ];
         for (key, value) in rows {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)",
                 params![key, value],
             )
@@ -241,8 +270,8 @@ impl SqliteVault {
         let dek = SymmetricKey::generate().map_err(crypto)?;
         let metadata_key = integrity::derive_metadata_key(&dek);
         let actor = Principal::local_user();
-        add_protector(&conn, &meta, &dek, protector, None)?;
-        write_settings_tag(&conn, &metadata_key, &meta)?;
+        add_protector(&tx, &meta, &dek, protector, None)?;
+        write_settings_tag(&tx, &metadata_key, &meta)?;
         AuditWriter {
             meta: &meta,
             key: Some(&metadata_key),
@@ -250,18 +279,20 @@ impl SqliteVault {
             allow_empty_chain: true,
         }
         .record(
-            &conn,
+            &tx,
             AuditOperation::VaultCreate,
             None,
             None,
             AuditOutcome::Success,
             Some(BACKEND_NAME),
         )?;
+        tx.commit().map_err(db)?;
 
         Ok(Self {
             conn: Mutex::new(conn),
             dek,
             metadata_key,
+            guard: Mutex::new(meta.guard.clone()),
             meta,
             path: path.to_path_buf(),
             actor,
@@ -519,6 +550,7 @@ impl SqliteVault {
             conn: Mutex::new(conn),
             dek,
             metadata_key,
+            guard: Mutex::new(meta.guard.clone()),
             meta,
             path: path.to_path_buf(),
             actor,
@@ -544,19 +576,41 @@ impl SqliteVault {
         actor: &Principal,
         allow_quarantined: bool,
     ) -> Result<bool> {
-        let Some(problem) = head_problem(conn, key, &meta.id, false)? else {
-            return Ok(false);
-        };
-        if allow_quarantined {
-            return Ok(true);
-        }
-        AuditWriter {
+        let writer = AuditWriter {
             meta,
             key: Some(key),
             actor,
             allow_empty_chain: false,
+        };
+        let problem = if let Some(problem) = head_problem(conn, key, &meta.id, false)? {
+            problem
+        } else {
+            // The head holds, so a keyed write would record nothing; the
+            // walk is what finds a row removed or replaced inside the log,
+            // and its finding goes on the chain here.
+            let Some(problem) = chain_problem(conn, key, &meta.id)? else {
+                return Ok(false);
+            };
+            if !unacknowledged_truncations(conn, key, &meta.id)?.is_empty() {
+                // Already on record and blocking the vault: the quarantine
+                // check below refuses, without recording the same break
+                // again at every unlock.
+                return Ok(false);
+            }
+            writer.record(
+                conn,
+                AuditOperation::AuditVerify,
+                None,
+                None,
+                AuditOutcome::Failure,
+                Some(&problem),
+            )?;
+            problem
+        };
+        if allow_quarantined {
+            return Ok(true);
         }
-        .record(
+        writer.record(
             conn,
             AuditOperation::VaultOpen,
             None,
@@ -673,6 +727,128 @@ impl SqliteVault {
             .lock()
             .map_err(|_| SecretError::Storage("vault connection poisoned".to_owned()))
     }
+
+    /// The next window of candidate names after `after`, at most `limit` of
+    /// them, with their `secrets` and `secret_versions` rows: three
+    /// statements whatever the window holds. `checkpoints` is the chain's
+    /// state for every secret, read once per page by [`Self::page_of`].
+    ///
+    /// The candidate names are the union of the table's names and the names
+    /// whose newest state checkpoint says the row exists, so a row removed
+    /// out of band is still visited and refused. Which version of a secret
+    /// is newest is judged against all of its versions, as `load_versions`
+    /// does; only the set of *names* is cut into windows.
+    fn listing_window(
+        conn: &Connection,
+        checkpoints: &BTreeMap<String, SecretCheckpoints>,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<ListingWindow> {
+        let mut names: BTreeSet<String> = query_secret_names(conn, after)?.into_iter().collect();
+        names.extend(
+            checkpoints
+                .iter()
+                .filter(|(name, state)| {
+                    state.is_present() && after.is_none_or(|after| name.as_str() > after)
+                })
+                .map(|(name, _)| name.clone()),
+        );
+        let mut names = names.into_iter();
+        let window: Vec<String> = names.by_ref().take(limit).collect();
+        let more = names.next().is_some();
+        let Some(through) = window.last() else {
+            return Ok(ListingWindow::default());
+        };
+        Ok(ListingWindow {
+            rows: query_secret_rows(conn, after, Some(through))?,
+            versions: query_raw_versions_in(conn, after, Some(through))?,
+            names: window,
+            more,
+        })
+    }
+
+    /// One page of a listing: candidate names are visited in order, each
+    /// verified (its `secrets` row against the chain, then, for the rows
+    /// `wanted` selects, every version), until `max_results` items have been
+    /// built or no name is left; `build` turns a verified row and its newest
+    /// version into an item. Names the other listing owns (deleted for a
+    /// live listing and the reverse) are skipped, so a page holds
+    /// `max_results` items unless it is the last, and its token is the name
+    /// of its last item. The token is present while candidate *names*
+    /// remain: deciding whether any of them is an item would mean verifying
+    /// rows beyond the page, so the page after the last item can be empty.
+    fn page_of<T>(
+        &self,
+        tx: &Transaction<'_>,
+        options: &ListOptions,
+        wanted: impl Fn(&SecretRow) -> bool,
+        build: impl Fn(&str, &SecretRow, SecretProperties) -> Result<T>,
+    ) -> Result<Page<T>> {
+        options.validate()?;
+        let checkpoints = vault_checkpoints(tx, &self.metadata_key, &self.meta.id)?;
+        let no_versions = BTreeMap::new();
+        let limit = options.limit();
+        let mut after = options.after().map(str::to_owned);
+        let mut items = Vec::new();
+        loop {
+            let mut window =
+                Self::listing_window(tx, &checkpoints, after.as_deref(), limit - items.len())?;
+            let mut names = window.names.iter();
+            for name in names.by_ref() {
+                // Every row is verified against its checkpoint: a tampered
+                // or resurrected `deleted_on` must not resurface a secret in
+                // listings, and a row the chain records but the table lacks
+                // is an error rather than a quiet omission.
+                let state = checkpoints.get(name);
+                let row = self.verify_secret_row(
+                    name,
+                    window.rows.remove(name),
+                    state.and_then(|c| c.state),
+                )?;
+                let Some(row) = row else { continue };
+                if !wanted(&row) {
+                    continue;
+                }
+                let raw = window.versions.remove(name).unwrap_or_default();
+                let versions = state.map_or(&no_versions, |c| &c.versions);
+                let newest = self
+                    .verify_versions(name, raw, versions)?
+                    .into_iter()
+                    .next()
+                    .map(|v| v.props)
+                    .ok_or_else(|| {
+                        SecretError::Storage(format!("secret '{name}' has no versions"))
+                    })?;
+                items.push(build(name, &row, newest)?);
+                if items.len() == limit {
+                    let more = names.next().is_some() || window.more;
+                    return Ok(Page {
+                        items,
+                        continuation: more.then(|| ContinuationToken::new(name)),
+                    });
+                }
+            }
+            if !window.more {
+                return Ok(Page {
+                    items,
+                    continuation: None,
+                });
+            }
+            after = window.names.pop();
+        }
+    }
+}
+
+/// The rows one window of a listing is judged from; see
+/// [`SqliteVault::listing_window`].
+#[derive(Default)]
+struct ListingWindow {
+    /// The window's candidate names, in order.
+    names: Vec<String>,
+    /// True when names remain after the last one.
+    more: bool,
+    rows: BTreeMap<String, StoredSecretRow>,
+    versions: BTreeMap<String, Vec<RawVersion>>,
 }
 
 impl SecretClient for SqliteVault {
@@ -838,31 +1014,31 @@ impl SecretClient for SqliteVault {
     }
 
     fn list_properties_of_secrets(&self) -> Result<Vec<SecretProperties>> {
+        self.list_properties_of_secrets_page(ListOptions::default())
+            .map(|page| page.items)
+    }
+
+    fn list_properties_of_secrets_page(
+        &self,
+        options: ListOptions,
+    ) -> Result<Page<SecretProperties>> {
         let op = AuditOperation::SecretList;
         let mut conn = self.lock()?;
         let tx = self.begin(&mut conn, op)?;
-        let names = match self.candidate_names(&tx) {
-            Ok(names) => names,
-            Err(err) => return self.fail(tx, op, None, None, err),
-        };
-        let mut out = Vec::with_capacity(names.len());
-        for name in &names {
-            // Every row is verified against its checkpoint: a tampered or
-            // resurrected `deleted_on` must not resurface a secret in
-            // listings, and a row the chain records but the table lacks is
-            // an error rather than a quiet omission.
-            match self.load_secret_row(&tx, name) {
-                Ok(Some(row)) if row.deleted_on.is_none() => match self.newest_props(&tx, name) {
-                    Ok(props) => out.push(props),
-                    Err(err) => return self.fail(tx, op, Some(name), None, err),
-                },
-                Ok(_) => {}
-                Err(err) => return self.fail(tx, op, Some(name), None, err),
+        let result = self.page_of(
+            &tx,
+            &options,
+            |row| row.deleted_on.is_none(),
+            |_, _, props| Ok(props),
+        );
+        match result {
+            Ok(page) => {
+                self.audit(&tx, op, None, None, AuditOutcome::Success, None)?;
+                tx.commit().map_err(db)?;
+                Ok(page)
             }
+            Err(err) => self.fail(tx, op, None, None, err),
         }
-        self.audit(&tx, op, None, None, AuditOutcome::Success, None)?;
-        tx.commit().map_err(db)?;
-        Ok(out)
     }
 
     fn list_properties_of_secret_versions(&self, name: &str) -> Result<Vec<SecretProperties>> {
@@ -1046,27 +1222,21 @@ impl SecretClient for SqliteVault {
     }
 
     fn list_deleted_secrets(&self) -> Result<Vec<DeletedSecret>> {
+        self.list_deleted_secrets_page(ListOptions::default())
+            .map(|page| page.items)
+    }
+
+    fn list_deleted_secrets_page(&self, options: ListOptions) -> Result<Page<DeletedSecret>> {
         let op = AuditOperation::SecretList;
         let mut conn = self.lock()?;
         let tx = self.begin(&mut conn, op)?;
-        let names = match self.candidate_names(&tx) {
-            Ok(names) => names,
-            Err(err) => return self.fail(tx, op, None, None, err),
-        };
-        let mut out = Vec::new();
-        for name in &names {
-            match self.load_secret_row(&tx, name) {
-                Ok(Some(row)) if row.deleted_on.is_some() => {
-                    match self.deleted_from_row(&tx, name, &row) {
-                        Ok(deleted) => out.push(deleted),
-                        Err(err) => return self.fail(tx, op, Some(name), None, err),
-                    }
-                }
-                Ok(_) => {}
-                Err(err) => return self.fail(tx, op, Some(name), None, err),
-            }
-        }
-        self.finish_read(tx, op, None, "deleted", Ok(out))
+        let result = self.page_of(
+            &tx,
+            &options,
+            |row| row.deleted_on.is_some(),
+            |name, row, props| self.deleted_from_parts(name, row, props),
+        );
+        self.finish_read(tx, op, None, "deleted", result)
     }
 
     fn recover_deleted_secret(&self, name: &str) -> Result<SecretProperties> {
@@ -1128,6 +1298,10 @@ impl SecretClient for SqliteVault {
         Ok(())
     }
 
+    /// Events newest first. A row whose operation or outcome no longer
+    /// parses (a tamperer's edit, which the chain walk at unlock also
+    /// records) is left out rather than failing the whole listing, so the
+    /// surviving history can still be reviewed before an acknowledgement.
     fn audit_events(&self, query: AuditQuery) -> Result<Vec<AuditEvent>> {
         let conn = self.lock()?;
         let since = opt_nanos(query.since)?;
@@ -1159,6 +1333,9 @@ impl SecretClient for SqliteVault {
             .map_err(db)?
             .collect::<rusqlite::Result<_>>()
             .map_err(db)?;
-        raw.into_iter().map(event_from_row).collect()
+        Ok(raw
+            .into_iter()
+            .filter_map(|row| event_from_row(row).ok())
+            .collect())
     }
 }

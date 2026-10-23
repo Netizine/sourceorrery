@@ -1,0 +1,36 @@
+[package]
+name = "sourceorrery-provider"
+description = "Adapters between SourceOrrery's synchronous and asynchronous secret clients; the base of the remote providers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+categories = ["asynchronous", "authentication"]
+keywords = ["secrets", "vault", "async", "tokio", "provider"]
+
+[features]
+default = []
+# Every remote provider.
+remote = ["provider-vault", "provider-aws"]
+# HashiCorp Vault, KV version 2.
+provider-vault = ["dep:sourceorrery-provider-vault"]
+# AWS Secrets Manager.
+provider-aws = ["dep:sourceorrery-provider-aws"]
+
+[dependencies]
+sourceorrery-core.workspace = true
+sourceorrery-provider-vault = { workspace = true, optional = true }
+sourceorrery-provider-aws = { workspace = true, optional = true }
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+time.workspace = true
+
+[lints]
+workspace = true

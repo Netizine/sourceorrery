@@ -93,9 +93,20 @@ export default defineConfig({
 				{
 					label: 'Guides',
 					items: [
+						{ label: 'First run: the set-up wizard', slug: 'guides/first-run' },
 						{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' },
 						{ label: 'AI coding agents', slug: 'guides/ai-agents' },
 						{ label: 'Building from source', slug: 'guides/building-from-source' },
+						{ label: 'Rotating a secret', slug: 'guides/rotation' },
+						{ label: 'Enterprise: identity, policy, revocation', slug: 'guides/enterprise' },
+					],
+				},
+				{
+					label: 'Remote providers',
+					items: [
+						{ label: 'Overview', slug: 'providers' },
+						{ label: 'HashiCorp Vault', slug: 'providers/hashicorp-vault' },
+						{ label: 'AWS Secrets Manager', slug: 'providers/aws-secrets-manager' },
 					],
 				},
 				{
@@ -127,6 +138,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Threat model', slug: 'security/threat-model' },
 						{ label: 'Supply chain', slug: 'security/supply-chain' },
+						{ label: 'Security review', slug: 'security/review' },
 					],
 				},
 				{ label: 'Architecture', slug: 'architecture' },

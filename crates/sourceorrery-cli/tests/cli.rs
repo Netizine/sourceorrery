@@ -264,6 +264,20 @@ fn manifest_driven_check_and_run() {
     let out = env.run(&["check"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(stdout(&out).contains("ok"));
+    // --access reads the value too (and discards it), which the audit log
+    // records as a secret_get; plain check leaves no such row.
+    let gets = |label: &str| {
+        let out = env.run(&["audit", "--vault", "development", "-o", "json"]);
+        assert!(out.status.success(), "{label}: {}", stderr(&out));
+        stdout(&out).matches("\"secret_get\"").count()
+    };
+    let before = gets("before");
+    let out = env.run(&["check", "--access"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(text.contains("readable by this identity"), "{text}");
+    assert!(!text.contains(CANARY));
+    assert_eq!(gets("after"), before + 1);
 
     let echo: &[&str] = if cfg!(windows) {
         &["run", "--", "cmd", "/C", "echo %DATABASE_PASSWORD%"]
@@ -603,14 +617,17 @@ fn run_does_not_pass_the_unlock_passphrase_to_the_child() {
     let init = env.run(&["init", "--project-name", "demo"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    // The child reports whether the unlock variable reached it.
+    // The child reports whether any unlock or guard variable reached it.
     let probe: &[&str] = if cfg!(windows) {
         &[
             "run",
             "--",
             "cmd",
             "/C",
-            "if defined SOURCEORRERY_PASSPHRASE (echo LEAK) else (echo CLEAN)",
+            "if defined SOURCEORRERY_PASSPHRASE (echo LEAK) else if defined \
+             SOURCEORRERY_PASSPHRASE_FILE (echo LEAK) else if defined SOURCEORRERY_TOTP \
+             (echo LEAK) else if defined SOURCEORRERY_BACKUP_PASSPHRASE (echo LEAK) else \
+             (echo CLEAN)",
         ]
     } else {
         &[
@@ -618,12 +635,144 @@ fn run_does_not_pass_the_unlock_passphrase_to_the_child() {
             "--",
             "sh",
             "-c",
-            "if [ -n \"$SOURCEORRERY_PASSPHRASE\" ]; then echo LEAK; else echo CLEAN; fi",
+            "if [ -n \"$SOURCEORRERY_PASSPHRASE$SOURCEORRERY_PASSPHRASE_FILE$SOURCEORRERY_TOTP\
+             $SOURCEORRERY_BACKUP_PASSPHRASE\" ]; then echo LEAK; else echo CLEAN; fi",
         ]
     };
-    let out = env.run(probe);
+    let out = env
+        .cmd(probe)
+        .env("SOURCEORRERY_TOTP", "123456")
+        .env("SOURCEORRERY_BACKUP_PASSPHRASE", "backup-pass")
+        .output()
+        .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out).trim(), "CLEAN");
+}
+
+/// A passphrase of exactly twenty-five letters and some spaces has the
+/// shape of a recovery code; it must still unlock as typed, and a real
+/// code must still unlock however it is written.
+#[test]
+fn a_passphrase_shaped_like_a_recovery_code_unlocks_as_typed() {
+    const PHRASE: &str = "correct horse battery staple";
+    let env = Env::new();
+    let create = env
+        .cmd(&["vault", "create", "dev", "--protector", "passphrase"])
+        .env("SOURCEORRERY_PASSPHRASE", PHRASE)
+        .output()
+        .unwrap();
+    assert!(create.status.success(), "{}", stderr(&create));
+    let list = env
+        .cmd(&["secret", "list", "--vault", "dev"])
+        .env("SOURCEORRERY_PASSPHRASE", PHRASE)
+        .output()
+        .unwrap();
+    assert!(list.status.success(), "{}", stderr(&list));
+    let wrong = env
+        .cmd(&["secret", "list", "--vault", "dev"])
+        .env("SOURCEORRERY_PASSPHRASE", "CORRECTHORSEBATTERYSTAPLE")
+        .output()
+        .unwrap();
+    assert!(
+        !wrong.status.success(),
+        "the folded form is not the passphrase"
+    );
+}
+
+/// Tags under SourceOrrery's own prefix record rotation and restore state;
+/// a hand-set one would be taken for theirs.
+#[test]
+fn reserved_tag_keys_are_refused() {
+    let env = Env::new();
+    env.create_vault("dev");
+    let out = env.run_with_stdin(
+        &[
+            "secret",
+            "set",
+            "api-key",
+            "--vault",
+            "dev",
+            "--tag",
+            "sourceorrery.rotation.state=validated",
+        ],
+        "v",
+    );
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("SourceOrrery's own"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        env.ok(&["secret", "list", "--vault", "dev"])
+            .trim()
+            .is_empty()
+            || !env
+                .ok(&["secret", "list", "--vault", "dev"])
+                .contains("api-key")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_backup_never_inherits_another_files_mode_or_follows_a_link() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "api-key", CANARY);
+    let out = env.project.path().join("dev.sobackup");
+    std::fs::write(&out, b"old").unwrap();
+    std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let backup = |args: &[&str]| {
+        env.cmd(args)
+            .env(
+                "SOURCEORRERY_BACKUP_PASSPHRASE",
+                "orbit-lantern-copper-nine-42",
+            )
+            .output()
+            .unwrap()
+    };
+    let refused = backup(&["backup", "--vault", "dev", "--out", out.to_str().unwrap()]);
+    assert!(!refused.status.success());
+    assert_eq!(
+        std::fs::read(&out).unwrap(),
+        b"old",
+        "nothing is replaced without --force"
+    );
+    let replaced = backup(&[
+        "backup",
+        "--vault",
+        "dev",
+        "--out",
+        out.to_str().unwrap(),
+        "--force",
+    ]);
+    assert!(replaced.status.success(), "{}", stderr(&replaced));
+    let mode = std::fs::metadata(&out).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "the export is the user's alone");
+    assert!(
+        !std::fs::read(&out)
+            .unwrap()
+            .windows(CANARY.len())
+            .any(|w| w == CANARY.as_bytes())
+    );
+
+    // A link in the output's place is removed, never written through.
+    let target = env.project.path().join("elsewhere");
+    std::fs::write(&target, b"untouched").unwrap();
+    let link = env.project.path().join("link.sobackup");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let through = backup(&[
+        "backup",
+        "--vault",
+        "dev",
+        "--out",
+        link.to_str().unwrap(),
+        "--force",
+    ]);
+    assert!(through.status.success(), "{}", stderr(&through));
+    assert_eq!(std::fs::read(&target).unwrap(), b"untouched");
+    assert!(std::fs::symlink_metadata(&link).unwrap().is_file());
 }
 
 #[test]
@@ -714,4 +863,1185 @@ fn run_passes_the_child_exit_status_through_whole() {
         let out = env.run(&["run", "--", "sh", "-c", "kill -9 $$"]);
         assert_eq!(out.status.code(), Some(137), "{}", stderr(&out));
     }
+}
+
+#[test]
+fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.set("development", "database-password", CANARY);
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
+         [secrets.database-password]\n\n\
+         [secrets.api-key]\nvault = \"prod\"\n\n\
+         [vaults.prod]\nprovider = \"hashicorp-vault\"\n\
+         address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n",
+    )
+    .unwrap();
+
+    // The listing shows both kinds.
+    let out = env.ok(&["vault", "list"]);
+    assert!(
+        out.contains("development") && out.contains("local"),
+        "{out}"
+    );
+    assert!(
+        out.contains("prod") && out.contains("hashicorp-vault") && out.contains("127.0.0.1:1"),
+        "{out}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&env.ok(&["vault", "list", "-o", "json"])).unwrap();
+    let rows = json.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["name"], "development");
+    assert_eq!(rows[0]["kind"], "local");
+    assert_eq!(rows[1]["name"], "prod");
+    assert_eq!(rows[1]["kind"], "remote");
+    assert_eq!(rows[1]["provider"], "hashicorp-vault");
+
+    // Contract commands reach the HashiCorp Vault provider. With a token in
+    // the environment the provider connects, and nothing listens on port 1,
+    // so the outcome is `provider_unavailable`; without one it is
+    // `unauthenticated` before any connection (unless the developer running
+    // the tests has a ~/.vault-token).
+    let remote = |args: &[&str]| {
+        let mut cmd = env.cmd(args);
+        cmd.env("VAULT_TOKEN", "cli-test-token");
+        cmd.output().unwrap()
+    };
+    let out = remote(&["secret", "get", "api-key", "--vault", "prod", "-o", "json"]);
+    assert!(!out.status.success());
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert_eq!(err["error"]["code"], "provider_unavailable", "{err}");
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("hashicorp-vault is unavailable"),
+        "{err}"
+    );
+    let out = env.run(&["secret", "get", "api-key", "--vault", "prod", "-o", "json"]);
+    assert!(!out.status.success());
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert!(
+        err["error"]["code"] == "unauthenticated" || err["error"]["code"] == "provider_unavailable",
+        "{err}"
+    );
+    let out = remote(&["check"]);
+    assert!(!out.status.success());
+    assert!(
+        stdout(&out).contains("provider_unavailable"),
+        "{}",
+        stdout(&out)
+    );
+    // The local vault is still read as before.
+    assert!(stdout(&out).contains("ok"), "{}", stdout(&out));
+
+    // Local-only commands refuse the remote vault by name, before any
+    // network or unlock attempt.
+    for args in [
+        vec!["vault", "protector", "list", "--vault", "prod"],
+        vec!["vault", "destroy", "prod", "--yes"],
+        vec!["vault", "migrate", "prod"],
+        vec!["audit", "--verify", "--vault", "prod"],
+        vec!["audit", "--acknowledge", "--yes", "--vault", "prod"],
+        vec!["backup", "--vault", "prod", "--out", "x.sobackup"],
+    ] {
+        let out = env.run(&args);
+        assert!(!out.status.success(), "{args:?}");
+        let text = stderr(&out);
+        assert!(
+            text.contains("remote vault") && text.contains("local vaults only"),
+            "{args:?}: {text}"
+        );
+    }
+    assert!(!env.project.path().join("x.sobackup").exists());
+    // Listing the audit log of a remote vault points at the provider's own
+    // trail instead, without touching the network.
+    let out = env.run(&["audit", "--vault", "prod"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stderr(&out).contains("audit devices"), "{}", stderr(&out));
+
+    // A credential in the manifest is a parse error that never echoes it.
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
+         [vaults.prod]\nprovider = \"hashicorp-vault\"\n\
+         address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n\
+         token = \"hvs.SMUGGLED-TOKEN-CANARY\"\n",
+    )
+    .unwrap();
+    let out = env.run(&["vault", "list"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("token"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("SMUGGLED"), "{}", stderr(&out));
+}
+
+/// Hook scripts for `secret rotate`: the issuer mints `next-<current>`, the
+/// validator compares the candidate with `EXPECTED` (or fails on
+/// `FAIL_VALIDATE`), and the retire hook records which version it was told
+/// to revoke. Written per platform; the manifest names them as argv.
+fn write_rotation_hooks(project: &Path) -> String {
+    let dir = project.join("hooks");
+    std::fs::create_dir_all(&dir).unwrap();
+    if cfg!(windows) {
+        std::fs::write(
+            dir.join("issue.cmd"),
+            "@echo off\r\necho next-%DATABASE_PASSWORD%\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("validate.cmd"),
+            "@echo off\r\nif defined FAIL_VALIDATE exit /b 3\r\n\
+             if not \"%DATABASE_PASSWORD%\"==\"%EXPECTED%\" exit /b 4\r\nexit /b 0\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("retire.cmd"),
+            "@echo off\r\nif not defined SOURCEORRERY_RETIRED_VERSION exit /b 5\r\n\
+             echo %SOURCEORRERY_RETIRED_VERSION%> retired.txt\r\n",
+        )
+        .unwrap();
+        "[rotation.database-password]\n\
+         issue = ['cmd', '/C', 'hooks\\issue.cmd']\n\
+         validate = ['cmd', '/C', 'hooks\\validate.cmd']\n\
+         retire = ['cmd', '/C', 'hooks\\retire.cmd']\n\
+         retire_after = \"7d\"\n"
+            .to_owned()
+    } else {
+        std::fs::write(
+            dir.join("issue.sh"),
+            "printf 'next-%s\\n' \"$DATABASE_PASSWORD\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("validate.sh"),
+            "[ -n \"$FAIL_VALIDATE\" ] && exit 3\n\
+             [ \"$DATABASE_PASSWORD\" = \"$EXPECTED\" ] || exit 4\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("retire.sh"),
+            "[ -n \"$SOURCEORRERY_RETIRED_VERSION\" ] || exit 5\n\
+             printf '%s' \"$SOURCEORRERY_RETIRED_VERSION\" > retired.txt\n",
+        )
+        .unwrap();
+        "[rotation.database-password]\n\
+         issue = ['sh', 'hooks/issue.sh']\n\
+         validate = ['sh', 'hooks/validate.sh']\n\
+         retire = ['sh', 'hooks/retire.sh']\n\
+         retire_after = \"7d\"\n"
+            .to_owned()
+    }
+}
+
+/// A project whose manifest declares the rotation hooks for
+/// `database-password`, holding `first-value`.
+fn rotation_project() -> Env {
+    let env = Env::new();
+    env.create_vault("development");
+    env.ok(&["init", "--project-name", "demo"]);
+    let manifest_path = env.project.path().join("sourceorrery.toml");
+    let mut manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    manifest.push('\n');
+    manifest.push_str(&write_rotation_hooks(env.project.path()));
+    std::fs::write(&manifest_path, manifest).unwrap();
+    env.set("development", "database-password", "first-value");
+    env
+}
+
+/// The versions of `database-password` as JSON, asserting how many.
+fn rotation_versions(env: &Env, expect: usize) -> Vec<serde_json::Value> {
+    let text = env.ok(&[
+        "secret",
+        "versions",
+        "database-password",
+        "--vault",
+        "development",
+        "-o",
+        "json",
+    ]);
+    let list: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    assert_eq!(list.len(), expect, "{text}");
+    list
+}
+
+fn rotation_tag(v: &serde_json::Value, key: &str) -> String {
+    v["tags"][key].as_str().unwrap_or("").to_owned()
+}
+
+#[test]
+fn rotation_runs_the_hooks_and_never_prints_a_value() {
+    let env = rotation_project();
+
+    // Issue → validate → activate, with a grace period before retirement.
+    let out = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("EXPECTED", "next-first-value")
+        .output()
+        .unwrap();
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("Activated version"), "{text}");
+    assert!(text.contains("retired after"), "{text}");
+    assert!(!text.contains("first-value"), "a value leaked: {text}");
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "database-password",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "next-first-value");
+    let list = rotation_versions(&env, 2);
+    let (new, old) = (&list[0], &list[1]);
+    assert_eq!(new["enabled"], true);
+    assert_eq!(rotation_tag(new, "sourceorrery.rotation.state"), "active");
+    assert_eq!(
+        rotation_tag(new, "sourceorrery.rotation.previous"),
+        old["version"].as_str().unwrap()
+    );
+    assert_ne!(rotation_tag(new, "sourceorrery.rotation.retire-on"), "");
+    assert_eq!(old["enabled"], false);
+    assert_eq!(
+        rotation_tag(old, "sourceorrery.rotation.state"),
+        "superseded"
+    );
+    let old_version = old["version"].as_str().unwrap().to_owned();
+
+    // Retirement waits for the grace period unless forced; the hook learns
+    // which version it is revoking.
+    let out = env.run(&[
+        "secret",
+        "rotate",
+        "database-password",
+        "--step",
+        "retire",
+        "-o",
+        "json",
+    ]);
+    assert!(!out.status.success());
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(
+        text.contains("\"rotation\"") && text.contains("grace"),
+        "{text}"
+    );
+    assert!(!env.project.path().join("retired.txt").exists());
+    let out = env.run(&[
+        "secret",
+        "rotate",
+        "database-password",
+        "--step",
+        "retire",
+        "--now",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let retired = std::fs::read_to_string(env.project.path().join("retired.txt")).unwrap();
+    assert_eq!(retired.trim(), old_version);
+    let list = rotation_versions(&env, 2);
+    assert_eq!(
+        rotation_tag(&list[0], "sourceorrery.rotation.state"),
+        "complete"
+    );
+    assert_eq!(
+        rotation_tag(&list[1], "sourceorrery.rotation.state"),
+        "retired"
+    );
+}
+
+#[test]
+fn a_failing_validator_leaves_the_current_version_in_place() {
+    let env = rotation_project();
+    // A failing validator leaves the candidate disabled and the current
+    // version current; nothing printed names either value.
+    let out = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("FAIL_VALIDATE", "1")
+        .output()
+        .unwrap();
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!out.status.success(), "{text}");
+    assert!(
+        text.contains("validate command exited with status 3"),
+        "{text}"
+    );
+    assert!(text.contains("stays current"), "{text}");
+    assert!(!text.contains("first-value"), "a value leaked: {text}");
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "database-password",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "first-value");
+    let list = rotation_versions(&env, 2);
+    assert_eq!(list[0]["enabled"], false);
+    assert_eq!(
+        rotation_tag(&list[0], "sourceorrery.rotation.state"),
+        "failed"
+    );
+
+    // Status, as JSON.
+    let text = env.ok(&[
+        "secret",
+        "rotate",
+        "database-password",
+        "--step",
+        "status",
+        "-o",
+        "json",
+    ]);
+    let status: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(status["current"].is_null(), "nothing was activated: {text}");
+    assert!(
+        status["candidate"].is_null(),
+        "a failed candidate is not waiting"
+    );
+    assert_eq!(status["grace"], "7d");
+    assert_eq!(status["versions"][0]["state"], "failed");
+    assert!(!text.contains("first-value"));
+}
+
+#[test]
+fn rotation_without_hooks_reads_stdin_and_activates_on_demand() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.ok(&["init", "--project-name", "demo"]);
+
+    // Without hooks the value comes from stdin, and without a grace period
+    // the previous version is retired in the same run.
+    env.set("development", "api-key", "k1");
+    let out = env.run_with_stdin(&["secret", "rotate", "api-key", "-o", "json"], "k2\n");
+    assert!(out.status.success(), "{}", stderr(&out));
+    let report: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(report["activated"], true);
+    assert_eq!(report["retired"], true);
+    assert!(report["retire_on"].is_null());
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "k2");
+
+    // --no-activate leaves a validated candidate that --step activate enables.
+    let out = env.run_with_stdin(&["secret", "rotate", "api-key", "--no-activate"], "k3\n");
+    assert!(out.status.success(), "{}", stderr(&out));
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "k2", "a validated candidate is not served");
+    let out = env.run_with_stdin(&["secret", "rotate", "api-key"], "k4\n");
+    assert!(
+        !out.status.success(),
+        "a waiting candidate blocks a new rotation"
+    );
+    assert!(
+        stderr(&out).contains("waiting for activation"),
+        "{}",
+        stderr(&out)
+    );
+    env.ok(&["secret", "rotate", "api-key", "--step", "activate"]);
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "k3");
+}
+
+/// What a fake collector saw per request: the path, the `X-Token` header
+/// and the body.
+type CollectedRequests = Vec<(String, Option<String>, serde_json::Value)>;
+
+/// Accept OTLP/HTTP posts on a local port, answering `status`, and record
+/// each request's path, one header and the body it carried.
+fn otlp_collector(
+    status: u16,
+    requests: usize,
+) -> (String, std::thread::JoinHandle<CollectedRequests>) {
+    use std::io::{BufRead, BufReader, Read};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/logs", listener.local_addr().unwrap());
+    let handle = std::thread::spawn(move || {
+        let mut seen = Vec::new();
+        for _ in 0..requests {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            let path = request_line.split_whitespace().nth(1).unwrap().to_owned();
+            let mut length = 0;
+            let mut token = None;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let line = line.trim_end();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':') {
+                    match name.to_ascii_lowercase().as_str() {
+                        "content-length" => length = value.trim().parse().unwrap(),
+                        "x-token" => token = Some(value.trim().to_owned()),
+                        _ => {}
+                    }
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let records: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let reply = format!(
+                "HTTP/1.1 {status} {}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}",
+                if status == 200 { "OK" } else { "Error" }
+            );
+            reader.get_mut().write_all(reply.as_bytes()).unwrap();
+            seen.push((path, token, records));
+        }
+        seen
+    });
+    (endpoint, handle)
+}
+
+#[test]
+fn audit_export_writes_json_lines_with_a_verification_trailer() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "k", CANARY);
+    env.ok(&["secret", "get", "k", "--vault", "dev", "--reveal"]);
+
+    let text = env.ok(&["audit", "export", "--vault", "dev"]);
+    assert!(!text.contains(CANARY), "a value leaked: {text}");
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let (trailer, events) = lines.split_last().unwrap();
+    assert!(events.len() >= 4, "{text}");
+    let ids: Vec<u64> = events.iter().map(|e| e["id"].as_u64().unwrap()).collect();
+    assert!(ids.windows(2).all(|w| w[0] < w[1]), "oldest first: {ids:?}");
+    assert!(events.iter().all(|e| e["vault"] == "dev"));
+    assert!(
+        events
+            .iter()
+            .any(|e| e["operation"] == "secret_get" && e["outcome"] == "success")
+    );
+    assert_eq!(trailer["vault"], "dev");
+    assert_eq!(trailer["events"], events.len());
+    assert_eq!(trailer["last_id"], *ids.last().unwrap());
+    assert_eq!(trailer["intact"], true);
+    assert_eq!(trailer["verification"]["truncations"], 0);
+
+    // --since cuts the backlog; the trailer still comes.
+    let text = env.ok(&[
+        "audit",
+        "export",
+        "--vault",
+        "dev",
+        "--since",
+        "2099-01-01T00:00:00Z",
+    ]);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1, "{text}");
+    let trailer: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(trailer["events"], 0);
+    assert!(trailer["last_id"].is_null());
+
+    // A truncated log exports with a trailer that says so.
+    truncate_audit_log(env.home.path(), "dev", 1);
+    let out = env.run(&["secret", "get", "k", "--vault", "dev"]);
+    assert!(
+        !out.status.success(),
+        "the truncation is detected and blocks"
+    );
+    let text = env.ok(&["audit", "export", "--vault", "dev"]);
+    let trailer: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    assert_eq!(trailer["intact"], false);
+    assert_eq!(trailer["verification"]["truncations"], 1);
+    assert_eq!(trailer["verification"]["unacknowledged"], 1);
+}
+
+#[test]
+fn audit_export_follow_streams_new_events() {
+    use std::io::{BufRead, BufReader};
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "k", "v1");
+
+    let mut child = env
+        .cmd(&[
+            "audit",
+            "export",
+            "--vault",
+            "dev",
+            "--follow",
+            "--interval",
+            "1",
+        ])
+        .spawn()
+        .unwrap();
+    drop(child.stdin.take());
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let wait = std::time::Duration::from_secs(30);
+    // The backlog ends with the trailer.
+    loop {
+        let line = rx.recv_timeout(wait).expect("the backlog and its trailer");
+        if line.contains("\"verification\"") {
+            break;
+        }
+    }
+    // A new event appears without restarting the export.
+    env.set("dev", "k", "v2");
+    let line = loop {
+        let line = rx.recv_timeout(wait).expect("the new event");
+        if line.contains("\"secret_set\"") {
+            break line;
+        }
+    };
+    let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(event["secret_name"], "k");
+    assert!(!line.contains("v2"));
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[test]
+fn audit_export_posts_otlp_log_records() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "k", CANARY);
+
+    // Every event plus the verification record, in batches of two, with the
+    // header the collector asked for. The vault has create, open, set and
+    // the export's own open: four events, so two batches of two carry the
+    // events and a third the verification.
+    let (endpoint, collector) = otlp_collector(200, 3);
+    let out = env
+        .cmd(&[
+            "audit",
+            "export",
+            "--vault",
+            "dev",
+            "--format",
+            "otlp",
+            "--endpoint",
+            &endpoint,
+            "--header",
+            "X-Token=secret-token",
+            "--batch",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let requests = collector.join().unwrap();
+    assert_eq!(requests.len(), 3);
+    let mut records = Vec::new();
+    for (path, token, body) in &requests {
+        assert_eq!(path, "/v1/logs");
+        assert_eq!(token.as_deref(), Some("secret-token"));
+        let resource = &body["resourceLogs"][0];
+        assert!(
+            resource["resource"]["attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a["key"] == "service.name" && a["value"]["stringValue"] == "sourceorrery")
+        );
+        records.extend(
+            resource["scopeLogs"][0]["logRecords"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .cloned(),
+        );
+    }
+    assert_eq!(records.len(), 5, "{records:?}");
+    assert!(!serde_json::to_string(&records).unwrap().contains(CANARY));
+    let last = records.last().unwrap();
+    assert_eq!(
+        last["body"]["stringValue"],
+        "audit chain verification: intact"
+    );
+    assert_eq!(last["severityText"], "INFO");
+    let set = records
+        .iter()
+        .find(|r| {
+            r["body"]["stringValue"]
+                .as_str()
+                .unwrap()
+                .starts_with("secret_set success")
+        })
+        .expect("the set event");
+    assert!(set["timeUnixNano"].as_str().unwrap().len() > 10);
+    assert!(
+        set["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["key"] == "sourceorrery.secret" && a["value"]["stringValue"] == "k")
+    );
+
+    // A collector that refuses fails the export, with the status in the error.
+    let (endpoint, collector) = otlp_collector(503, 1);
+    let out = env.run(&[
+        "audit",
+        "export",
+        "--vault",
+        "dev",
+        "--format",
+        "otlp",
+        "--endpoint",
+        &endpoint,
+    ]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("503"), "{}", stderr(&out));
+    collector.join().unwrap();
+
+    // No endpoint anywhere is an error.
+    let out = env
+        .cmd(&["audit", "export", "--vault", "dev", "--format", "otlp"])
+        .env_remove("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .env_remove("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("--endpoint"), "{}", stderr(&out));
+}
+
+#[test]
+fn audit_on_a_remote_vault_points_at_the_providers_trail() {
+    let env = Env::new();
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"x\"\nvault = \"dev\"\n\n[vaults.remote]\n\
+         provider = \"aws-secrets-manager\"\nregion = \"eu-west-1\"\nprefix = \"myapp/\"\n",
+    )
+    .unwrap();
+    let text = env.ok(&["audit", "--vault", "remote", "-o", "json"]);
+    let pointer: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(pointer["provider"], "aws-secrets-manager");
+    assert_eq!(pointer["audit_trail"], "AWS CloudTrail");
+    assert!(pointer["query"].as_str().unwrap().contains("myapp/"));
+    assert!(pointer["docs"].as_str().unwrap().ends_with("#audit-trail"));
+    let out = env.run(&["audit", "--vault", "remote"]);
+    assert!(out.status.success());
+    assert!(stderr(&out).contains("CloudTrail"), "{}", stderr(&out));
+
+    // An export has nothing of ours to export there.
+    let out = env.run(&["audit", "export", "--vault", "remote"]);
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(
+        err.contains("unsupported") && err.contains("CloudTrail"),
+        "{err}"
+    );
+}
+
+#[test]
+fn passphrase_generate_and_check_estimate_strength_without_storing_anything() {
+    let env = Env::new();
+    let text = env.ok(&["vault", "passphrase", "generate"]);
+    let generated = text.trim();
+    assert_eq!(generated.chars().count(), 20, "{text}");
+    assert!(generated.bytes().all(|b| b.is_ascii_graphic()));
+    let again = env.ok(&["vault", "passphrase", "generate", "--length", "32"]);
+    assert_eq!(again.trim().chars().count(), 32);
+    assert_ne!(generated, again.trim());
+    let json = env.ok(&["vault", "passphrase", "generate", "-o", "json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["length"], 20);
+    assert_eq!(parsed["bits"], 125);
+    assert_eq!(parsed["passphrase"].as_str().unwrap().len(), 20);
+    let out = env.run(&["vault", "passphrase", "generate", "--length", "8"]);
+    assert!(!out.status.success());
+
+    // The generated passphrase rates strong; a common one does not, and the
+    // estimate never repeats what it was given.
+    let out = env.run_with_stdin(&["vault", "passphrase", "check", "-o", "json"], generated);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let estimate: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    // Random characters can land in runs the estimate costs as words, so a
+    // generated passphrase is asserted acceptable, not a fixed score.
+    assert_eq!(estimate["acceptable"], true, "{estimate}");
+    assert!(estimate["bits"].as_u64().unwrap() >= 44, "{estimate}");
+    let out = env.run_with_stdin(
+        &["vault", "passphrase", "check", "-o", "json"],
+        "Password1!\n",
+    );
+    let estimate: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(estimate["label"], "guessable", "{estimate}");
+    assert_eq!(estimate["acceptable"], false);
+    assert!(!stdout(&out).contains("Password1"));
+    let out = env.run_with_stdin(&["vault", "passphrase", "check"], "Harbour2024!\n");
+    let shown = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(shown.contains("a year"), "{shown}");
+    assert!(!shown.contains("Harbour"), "{shown}");
+}
+
+#[test]
+fn a_weak_passphrase_from_the_environment_is_warned_about_not_refused() {
+    let env = Env::new();
+    let out = env
+        .cmd(&["vault", "create", "weakly", "--protector", "passphrase"])
+        .env("SOURCEORRERY_PASSPHRASE", "dev-only")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("rates fair") || err.contains("rates weak"),
+        "{err}"
+    );
+    assert!(err.contains("SOURCEORRERY_PASSPHRASE"), "{err}");
+    assert!(
+        !err.contains("dev-only"),
+        "the passphrase itself is never printed: {err}"
+    );
+    // A strong one passes silently.
+    let out = env
+        .cmd(&["vault", "create", "strongly", "--protector", "passphrase"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("rates"), "{}", stderr(&out));
+}
+
+// ---------------------------------------------------------------------------
+// Part 3: the reveal guard, second factor, recovery codes and the hint
+// ---------------------------------------------------------------------------
+
+/// The current TOTP step, after waiting (at most a few seconds) for one with
+/// enough of it left that the codes a test computes for the steps before,
+/// at and after it stay inside the verifier's window while the test runs.
+fn fresh_totp_step() -> u64 {
+    use sourceorrery_crypto::totp::{PERIOD_SECS, counter_at, seconds_left};
+    loop {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        if seconds_left(now) >= 20 {
+            return counter_at(now);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(
+            seconds_left(now).min(PERIOD_SECS),
+        ));
+    }
+}
+
+fn totp_code(key: &str, step: u64) -> String {
+    sourceorrery_crypto::TotpSecret::from_base32(key)
+        .unwrap()
+        .code(step)
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one enrolment, one TOTP window, every door tried
+fn second_factor_and_guard_protect_reveal_and_export() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "api-key", CANARY);
+    let backup = env.project.path().join("dev.sobackup");
+    let backup = backup.to_str().unwrap();
+
+    // Enrol without verifying: the key is shown once, as JSON here.
+    let enrolled: serde_json::Value = serde_json::from_str(&env.ok(&[
+        "vault",
+        "2fa",
+        "enable",
+        "--vault",
+        "dev",
+        "--no-verify",
+        "-o",
+        "json",
+    ]))
+    .unwrap();
+    let key = enrolled["key"].as_str().unwrap().to_owned();
+    assert_eq!(key.len(), 32);
+    assert!(
+        enrolled["uri"]
+            .as_str()
+            .unwrap()
+            .starts_with("otpauth://totp/SourceOrrery:dev?secret=")
+    );
+    assert_eq!(enrolled["verified"], false);
+    let status = env.ok(&["vault", "2fa", "status", "--vault", "dev", "-o", "json"]);
+    let status: serde_json::Value = serde_json::from_str(&status).unwrap();
+    assert_eq!(status["enrolled"], true);
+    assert_eq!(status["verified"], false);
+
+    // Until it is verified the guard cannot ask for it.
+    let early = env.run(&[
+        "vault",
+        "guard",
+        "--reveal",
+        "second-factor",
+        "--vault",
+        "dev",
+    ]);
+    assert!(!early.status.success());
+    assert!(stderr(&early).contains("verif"), "{}", stderr(&early));
+
+    // Verify with the code of the previous step; the window allows it.
+    let step = fresh_totp_step();
+    let verified = env.ok(&[
+        "vault",
+        "2fa",
+        "verify",
+        "--vault",
+        "dev",
+        "--code",
+        &totp_code(&key, step - 1),
+        "-o",
+        "json",
+    ]);
+    let verified: serde_json::Value = serde_json::from_str(&verified).unwrap();
+    assert_eq!(verified["accepted"], true);
+
+    // A code is only ever accepted once.
+    let replay = env.run(&[
+        "vault",
+        "2fa",
+        "verify",
+        "--vault",
+        "dev",
+        "--code",
+        &totp_code(&key, step - 1),
+    ]);
+    assert!(!replay.status.success());
+    assert!(
+        stderr(&replay).contains("already used"),
+        "{}",
+        stderr(&replay)
+    );
+
+    // Turn the guard on (changing it passes the current guard: none).
+    let set = env.ok(&[
+        "vault",
+        "guard",
+        "--reveal",
+        "passphrase,second-factor",
+        "--vault",
+        "dev",
+        "-o",
+        "json",
+    ]);
+    let set: serde_json::Value = serde_json::from_str(&set).unwrap();
+    assert_eq!(set["reveal"]["passphrase"], true);
+    assert_eq!(set["reveal"]["second_factor"], true);
+
+    // Reading metadata needs nothing new.
+    assert!(
+        env.ok(&["secret", "list", "--vault", "dev"])
+            .contains("api-key")
+    );
+
+    // Revealing without a code is refused and nothing is printed.
+    let refused = env.run(&["secret", "get", "api-key", "--vault", "dev", "--reveal"]);
+    assert!(!refused.status.success());
+    assert!(!stdout(&refused).contains(CANARY));
+    assert!(stderr(&refused).contains("--code"), "{}", stderr(&refused));
+    assert!(
+        stderr(&refused).contains("permission denied"),
+        "{}",
+        stderr(&refused)
+    );
+
+    // A code from well outside the window is refused too.
+    let wrong = env.run(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "dev",
+        "--reveal",
+        "--code",
+        &totp_code(&key, step + 7),
+    ]);
+    assert!(!wrong.status.success());
+    assert!(!stdout(&wrong).contains(CANARY));
+
+    // With the current step's code the value is shown, once.
+    let shown = env.ok(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "dev",
+        "--reveal",
+        "--code",
+        &totp_code(&key, step),
+    ]);
+    assert!(shown.contains(CANARY));
+    let again = env.run(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "dev",
+        "--reveal",
+        "--code",
+        &totp_code(&key, step),
+    ]);
+    assert!(!again.status.success(), "a code was accepted twice");
+    assert!(!stdout(&again).contains(CANARY));
+
+    // The export asks for the same things.
+    let export = env.run(&["backup", "--vault", "dev", "--out", backup]);
+    assert!(!export.status.success());
+    assert!(
+        stderr(&export).contains("export the vault"),
+        "{}",
+        stderr(&export)
+    );
+    assert!(!Path::new(backup).exists());
+
+    // Without the passphrase the guard refuses as well, whatever the code.
+    let no_pass = env
+        .cmd(&[
+            "secret", "get", "api-key", "--vault", "dev", "--reveal", "--code", "000000",
+        ])
+        .env_remove("SOURCEORRERY_PASSPHRASE")
+        .output()
+        .unwrap();
+    assert!(!no_pass.status.success());
+    assert!(!stdout(&no_pass).contains(CANARY));
+
+    // `vault info` describes the guard without any secret.
+    let info = env.ok(&["vault", "info", "--vault", "dev", "-o", "json"]);
+    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
+    assert_eq!(info["guard"]["second_factor"], true);
+    assert_eq!(info["second_factor"]["verified"], true);
+    assert!(!info.to_string().contains(&key));
+
+    // Disabling the second factor needs one more code (the next step's);
+    // the guard then asks for the passphrase alone.
+    let disabled = env.ok(&[
+        "vault",
+        "2fa",
+        "disable",
+        "--vault",
+        "dev",
+        "--code",
+        &totp_code(&key, step + 1),
+        "-o",
+        "json",
+    ]);
+    let disabled: serde_json::Value = serde_json::from_str(&disabled).unwrap();
+    assert_eq!(disabled["second_factor"], false);
+    assert_eq!(disabled["guard"]["passphrase"], true);
+    assert_eq!(disabled["guard"]["second_factor"], false);
+    let shown = env.ok(&["secret", "get", "api-key", "--vault", "dev", "--reveal"]);
+    assert!(shown.contains(CANARY));
+
+    // Every guard decision is in the audit trail; no code or key is.
+    let audit = env.ok(&["audit", "--vault", "dev", "-o", "json"]);
+    assert!(audit.contains("\"guard\""));
+    assert!(!audit.contains(&key));
+    assert!(!audit.contains(CANARY));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one set of codes, every way of typing one
+fn recovery_codes_unlock_and_the_hint_is_shown_before_unlock() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "api-key", CANARY);
+
+    let issued = env.ok(&[
+        "vault", "recovery", "codes", "--vault", "dev", "--count", "2", "-o", "json",
+    ]);
+    let issued: serde_json::Value = serde_json::from_str(&issued).unwrap();
+    let codes: Vec<String> = issued["codes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(codes.len(), 2);
+    assert_eq!(issued["replaced"], 0);
+    assert_eq!(
+        issued["labels"],
+        serde_json::json!(["recovery-1", "recovery-2"])
+    );
+    for code in &codes {
+        assert_eq!(code.len(), 29, "{code}");
+        assert_eq!(code.matches('-').count(), 4, "{code}");
+    }
+    let info = env.ok(&["vault", "info", "--vault", "dev", "-o", "json"]);
+    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
+    assert_eq!(
+        info["recovery_codes"],
+        serde_json::json!(["recovery-1", "recovery-2"])
+    );
+    assert!(!info.to_string().contains(&codes[0]));
+
+    // A code unlocks the vault in place of the passphrase, however it is
+    // written: lower case, with or without hyphens, from the environment or
+    // a file.
+    let unlock_with = |pass: &str| -> Output {
+        env.cmd(&["secret", "list", "--vault", "dev"])
+            .env("SOURCEORRERY_PASSPHRASE", pass)
+            .output()
+            .unwrap()
+    };
+    let out = unlock_with(&codes[0].to_lowercase());
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("api-key"));
+    let out = unlock_with(&codes[0].replace('-', ""));
+    assert!(out.status.success(), "{}", stderr(&out));
+    let mut wrong = codes[0].clone();
+    wrong.replace_range(0..1, if codes[0].starts_with('A') { "B" } else { "A" });
+    let out = unlock_with(&wrong);
+    assert!(!out.status.success());
+    assert!(!stdout(&out).contains("api-key"));
+
+    let file = env.project.path().join("recovery.txt");
+    std::fs::write(&file, format!("{}\n", codes[1].to_lowercase())).unwrap();
+    let out = env
+        .cmd(&[
+            "secret",
+            "list",
+            "--vault",
+            "dev",
+            "--passphrase-file",
+            file.to_str().unwrap(),
+        ])
+        .env_remove("SOURCEORRERY_PASSPHRASE")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    // The hint lives in clear in the file; it cannot be the passphrase.
+    let bad = env.run(&["vault", "passphrase", "hint", PASSPHRASE, "--vault", "dev"]);
+    assert!(!bad.status.success());
+    env.ok(&[
+        "vault",
+        "passphrase",
+        "hint",
+        "the usual one, with the year",
+        "--vault",
+        "dev",
+    ]);
+    let hint = env.ok(&[
+        "vault",
+        "passphrase",
+        "hint",
+        "--vault",
+        "dev",
+        "-o",
+        "json",
+    ]);
+    let hint: serde_json::Value = serde_json::from_str(&hint).unwrap();
+    assert_eq!(hint["hint"], "the usual one, with the year");
+    let info = env.ok(&["vault", "info", "--vault", "dev", "-o", "json"]);
+    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
+    assert_eq!(info["passphrase_hint"], "the usual one, with the year");
+    env.ok(&["vault", "passphrase", "hint", "--clear", "--vault", "dev"]);
+    let hint = env.ok(&[
+        "vault",
+        "passphrase",
+        "hint",
+        "--vault",
+        "dev",
+        "-o",
+        "json",
+    ]);
+    let hint: serde_json::Value = serde_json::from_str(&hint).unwrap();
+    assert!(hint["hint"].is_null());
+
+    // Changing the passphrase keeps the recovery codes; a weak replacement
+    // from a file is warned about, not refused.
+    let new_file = env.project.path().join("new.txt");
+    std::fs::write(&new_file, "Orbit-Lantern-Copper-Nine-42\n").unwrap();
+    let changed = env.ok(&[
+        "vault",
+        "passphrase",
+        "set",
+        "--new-from-file",
+        new_file.to_str().unwrap(),
+        "--vault",
+        "dev",
+        "-o",
+        "json",
+    ]);
+    let changed: serde_json::Value = serde_json::from_str(&changed).unwrap();
+    assert_eq!(changed["kind"], "passphrase");
+    let old = unlock_with(PASSPHRASE);
+    assert!(!old.status.success(), "the old passphrase still unlocks");
+    let new = unlock_with("Orbit-Lantern-Copper-Nine-42");
+    assert!(new.status.success(), "{}", stderr(&new));
+    let code = unlock_with(&codes[1]);
+    assert!(code.status.success(), "{}", stderr(&code));
+
+    // New codes replace the old ones.
+    let reissued = env
+        .cmd(&["vault", "recovery", "codes", "--vault", "dev", "-o", "json"])
+        .env("SOURCEORRERY_PASSPHRASE", "Orbit-Lantern-Copper-Nine-42")
+        .output()
+        .unwrap();
+    assert!(reissued.status.success(), "{}", stderr(&reissued));
+    let reissued: serde_json::Value = serde_json::from_str(&stdout(&reissued)).unwrap();
+    assert_eq!(reissued["replaced"], 2);
+    assert_eq!(reissued["codes"].as_array().unwrap().len(), 5);
+    let stale = unlock_with(&codes[1]);
+    assert!(
+        !stale.status.success(),
+        "a replaced recovery code still unlocks"
+    );
+    let fresh = reissued["codes"][4].as_str().unwrap();
+    let fresh = unlock_with(fresh);
+    assert!(fresh.status.success(), "{}", stderr(&fresh));
+}
+
+#[test]
+fn setup_without_a_terminal_prints_the_steps_and_creates_nothing() {
+    let env = Env::new();
+    let out = env.run(&["setup"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    let guide = stderr(&out);
+    assert!(guide.contains("need an interactive terminal"), "{guide}");
+    assert!(guide.contains("sourceorrery vault create development --protector passphrase"));
+    assert!(guide.contains("sourceorrery vault 2fa enable --vault development"));
+    assert!(guide.contains("sourceorrery run -- <your command>"));
+    assert_eq!(env.ok(&["vault", "list", "-o", "json"]).trim(), "[]");
+    assert!(!env.project.path().join("sourceorrery.toml").exists());
+
+    let json = env.ok(&[
+        "setup", "--guide", "--vault", "staging", "--secret", "api-key", "-o", "json",
+    ]);
+    let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(json["vault"], "staging");
+    let steps = json["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 6);
+    assert_eq!(
+        steps[1]["commands"][0],
+        "sourceorrery secret set api-key --vault staging"
+    );
 }

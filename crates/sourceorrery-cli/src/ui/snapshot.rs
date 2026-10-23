@@ -27,6 +27,8 @@ use time::{Duration, OffsetDateTime};
 
 use super::app::{Action, App, Message, Tab, VaultEntry};
 use super::session::Session;
+use super::setup::fake::{self as setup_fake, Fake};
+use super::setup::wizard::{Action as SetupAction, Control, Wizard};
 use super::theme::Theme;
 use super::view;
 use crate::cli::UiTheme;
@@ -466,6 +468,96 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     out
 }
 
+fn draw_setup(wizard: &Wizard<Fake>, theme: &Theme, height: u16) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, height)).unwrap();
+    terminal
+        .draw(|frame| super::setup::view::draw(frame, wizard, theme))
+        .unwrap();
+    terminal.backend().buffer().clone()
+}
+
+/// Every screen of the set-up wizard, driven against the fake backend.
+fn setup_screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
+    fn focus(wizard: &mut Wizard<Fake>, control: Control) {
+        for _ in 0..wizard.controls().len() {
+            if wizard.focused() == control {
+                return;
+            }
+            wizard.update(SetupAction::Next);
+        }
+    }
+    fn press(wizard: &mut Wizard<Fake>, control: Control) {
+        focus(wizard, control);
+        wizard.update(SetupAction::Enter);
+    }
+    fn type_text(wizard: &mut Wizard<Fake>, text: &str) {
+        for c in text.chars() {
+            wizard.update(SetupAction::Input(c));
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut wizard = Wizard::new(Fake::with_keyring(), "development", "database-password");
+    out.push(("setup-welcome", draw_setup(&wizard, theme, 26)));
+    wizard.update(SetupAction::Enter);
+    focus(&mut wizard, Control::Passphrase);
+    type_text(&mut wizard, "Summer2024!");
+    out.push(("setup-vault-weak", draw_setup(&wizard, theme, 24)));
+    for _ in 0..11 {
+        wizard.update(SetupAction::Erase);
+    }
+    type_text(&mut wizard, "orbit lantern copper nine 42");
+    focus(&mut wizard, Control::PassphraseConfirm);
+    type_text(&mut wizard, "orbit lantern copper nine 42");
+    out.push(("setup-vault", draw_setup(&wizard, theme, 24)));
+    press(&mut wizard, Control::GeneratePassphrase);
+    out.push(("setup-vault-generated", draw_setup(&wizard, theme, 24)));
+    press(&mut wizard, Control::CreateVault);
+    out.push(("setup-vault-gate", draw_setup(&wizard, theme, 24)));
+    press(&mut wizard, Control::PassphraseWritten);
+    press(&mut wizard, Control::CreateVault);
+    focus(&mut wizard, Control::SecretValue);
+    type_text(&mut wizard, "Tq8#mv2!Lp9&zR4wXe7");
+    out.push(("setup-secret", draw_setup(&wizard, theme, 24)));
+    press(&mut wizard, Control::GenerateSecret);
+    out.push(("setup-secret-generated", draw_setup(&wizard, theme, 24)));
+    press(&mut wizard, Control::StoreSecret);
+    out.push(("setup-recovery", draw_setup(&wizard, theme, 24)));
+    press(&mut wizard, Control::ShowCodes);
+    focus(&mut wizard, Control::Hint);
+    type_text(&mut wizard, "the usual phrase, with the year");
+    out.push(("setup-recovery-codes", draw_setup(&wizard, theme, 28)));
+    press(&mut wizard, Control::CodesWritten);
+    press(&mut wizard, Control::FinishRecovery);
+    out.push(("setup-second-factor", draw_setup(&wizard, theme, 20)));
+    press(&mut wizard, Control::Enrol);
+    focus(&mut wizard, Control::Code);
+    type_text(&mut wizard, "492");
+    out.push(("setup-second-factor-qr", draw_setup(&wizard, theme, 44)));
+    type_text(&mut wizard, "039");
+    press(&mut wizard, Control::Verify);
+    out.push(("setup-guard", draw_setup(&wizard, theme, 24)));
+    press(&mut wizard, Control::SetGuard);
+    out.push(("setup-project", draw_setup(&wizard, theme, 22)));
+    press(&mut wizard, Control::Finish);
+    out.push(("setup-done", draw_setup(&wizard, theme, 34)));
+
+    let mut existing = Fake::default();
+    existing.existing.push("development".to_owned());
+    existing.refuse_open = Some(format!(
+        "vault 'development' is locked: incorrect passphrase or no passphrase supplied (locked); \
+         key {}",
+        &setup_fake::KEY[..4]
+    ));
+    let mut wizard = Wizard::new(existing, "development", "database-password");
+    wizard.update(SetupAction::Enter);
+    press(&mut wizard, Control::CreateVault);
+    wizard.take_request();
+    wizard.open_existing("development");
+    out.push(("setup-vault-existing-error", draw_setup(&wizard, theme, 20)));
+    out
+}
+
 #[test]
 #[ignore = "writes design snapshots; run with --ignored"]
 fn write_design_snapshots() {
@@ -476,7 +568,7 @@ fn write_design_snapshots() {
     std::fs::create_dir_all(&out).unwrap();
     let mut index = String::new();
     for (look, theme, palette) in looks() {
-        for (state, buffer) in screens(&theme) {
+        for (state, buffer) in screens(&theme).into_iter().chain(setup_screens(&theme)) {
             let name = format!("{look}-{state}");
             let html = to_html(&buffer, palette);
             std::fs::write(

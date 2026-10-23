@@ -1,7 +1,7 @@
 # sourceorrery-core
 
 The contracts and semantics of [SourceOrrery](https://sourceorrery.ai), the
-encrypted local secrets vault with an Azure Key Vault–style lifecycle.
+encrypted local secrets vault with a cloud-secrets-manager-style lifecycle.
 Secrets belong to the runtime, not the repository.
 
 **You probably want another crate.** To read secrets from an application,

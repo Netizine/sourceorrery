@@ -44,15 +44,19 @@ const _: () = assert_send_sync::<so_project>();
 /// {
 ///   "home": "/path/to/sourceorrery-home",
 ///   "passphrase_file": "/run/secrets/vault-passphrase",
-///   "environment": true
+///   "environment": true,
+///   "manifest": "/path/to/sourceorrery.toml"
 /// }
 /// ```
 ///
 /// `home` replaces `SOURCEORRERY_HOME`; `passphrase_file` replaces
 /// `SOURCEORRERY_PASSPHRASE_FILE`; `environment` (default `true`) says
 /// whether `SOURCEORRERY_PASSPHRASE` and `SOURCEORRERY_PASSPHRASE_FILE` are
-/// consulted at all. The passphrase itself never travels in JSON: it is the
-/// separate raw-bytes argument.
+/// consulted at all; `manifest` is the `sourceorrery.toml` whose
+/// `[vaults.<name>]` tables say which vaults are remote and where (default:
+/// the nearest manifest above the current directory; `so_project_load`
+/// always uses the manifest it loads). The passphrase itself never travels
+/// in JSON: it is the separate raw-bytes argument.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReaderOptions {
@@ -65,6 +69,9 @@ pub struct ReaderOptions {
     /// Consult the `SOURCEORRERY_PASSPHRASE*` variables.
     #[serde(default)]
     pub environment: Option<bool>,
+    /// The manifest that declares remote vaults.
+    #[serde(default)]
+    pub manifest: Option<String>,
 }
 
 impl ReaderOptions {
@@ -77,6 +84,7 @@ impl ReaderOptions {
                 .filter(|f| !f.is_empty())
                 .map(PathBuf::from),
             environment: self.environment.unwrap_or(true),
+            manifest: self.manifest.filter(|m| !m.is_empty()).map(PathBuf::from),
         }
     }
 }
@@ -155,11 +163,13 @@ fn publish_secret(
 /// Open a vault for reading, the way the CLI does.
 ///
 /// `name` is the vault name. `options_json` (nullable) is a
-/// [`ReaderOptions`] document. Unlock order: the OS credential store, then
-/// `passphrase` if non-null, then `SOURCEORRERY_PASSPHRASE`, then the
-/// passphrase file from the options or `SOURCEORRERY_PASSPHRASE_FILE`.
-/// There is no prompt. A vault in an older on-disk format is refused with
-/// `migration_required`.
+/// [`ReaderOptions`] document. A vault the manifest declares as remote
+/// (`[vaults.<name>]`) is opened at its provider with the credentials the
+/// provider's own environment supplies. Otherwise the vault file is
+/// unlocked in this order: the OS credential store, then `passphrase` if
+/// non-null, then `SOURCEORRERY_PASSPHRASE`, then the passphrase file from
+/// the options or `SOURCEORRERY_PASSPHRASE_FILE`. There is no prompt. A
+/// vault in an older on-disk format is refused with `migration_required`.
 ///
 /// On success `*out_handle` holds the handle; on failure it is `NULL` and
 /// `so_last_error_hint()` says what to do.

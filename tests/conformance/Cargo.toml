@@ -11,12 +11,13 @@ publish = false
 sourceorrery-core.workspace = true
 sourceorrery-crypto.workspace = true
 sourceorrery-storage = { path = "../../crates/sourceorrery-storage", default-features = false }
+serde_json.workspace = true
 tempfile.workspace = true
 time.workspace = true
 
 [dev-dependencies]
+sourceorrery-provider.workspace = true
 rusqlite = { version = "0.40", features = ["bundled"] }
-serde_json.workspace = true
 hex.workspace = true
 
 [lints]

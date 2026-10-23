@@ -140,6 +140,27 @@ cargo test --workspace --locked
 The tests use passphrase vaults in temporary directories; they never touch
 your credential store or your own vaults.
 
+### The OS-keyring path
+
+`scripts/dev/keyring-smoke.sh` (macOS, Linux) and
+`scripts/dev/keyring-smoke.ps1` (Windows) exercise the OS-keyring
+protector against this machine's credential store, in an isolated home:
+create, read, add and remove protectors, destroy with and without
+`--keep-os-key`, with the store inspected after each step. They print PASS
+or FAIL per check and never a value; exit 2 means the store is not
+available in this session (no desktop, no session bus). CI runs them
+headlessly on all three platforms (the `keyring` job); run one by hand in a
+desktop session to validate the store you use day to day:
+
+```bash
+cargo build -p sourceorrery-cli
+bash scripts/dev/keyring-smoke.sh            # macOS Keychain, GNOME Keyring, KWallet, KeePassXC
+pwsh scripts/dev/keyring-smoke.ps1           # Windows Credential Manager
+```
+
+On Linux the store checks need `secret-tool` (`libsecret-tools`); without
+it the functional checks still run.
+
 ### The SDK test vault
 
 Every SDK's tests, its example and the conformance harness read a vault

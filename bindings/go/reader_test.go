@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -320,6 +321,83 @@ func TestProjectLoadMirrorsRun(t *testing.T) {
 	expectErr(t, err, ErrLocked, "locked", "")
 }
 
+// A manifest whose [vaults.<name>] table makes `remote` a remote vault; the
+// fixture vault stays a local file.
+func manifestWithRemote(t *testing.T, fx fixture, remote string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "sourceorrery.toml")
+	content := fmt.Sprintf("[project]\nname = \"demo\"\nvault = %q\n\n"+
+		"[vaults.%s]\nprovider = \"hashicorp-vault\"\n"+
+		"address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n", fx.vault, remote)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	return path
+}
+
+func TestAVaultTheManifestDeclaresRemoteIsOpenedAtItsProvider(t *testing.T) {
+	fx := loadFixture(t)
+	opts := &OpenOptions{Manifest: manifestWithRemote(t, fx, "remote-x")}
+	// With a credential the provider connects to the manifest's address, where
+	// nothing listens: the failure is transient and names the vault's table.
+	t.Setenv("VAULT_TOKEN", "test-token")
+	_, err := Open("remote-x", opts)
+	e := expectErr(t, err, ErrProviderUnavailable, "provider_unavailable", "[vaults.remote-x]")
+	if !strings.Contains(e.Message, "hashicorp-vault is unavailable") || !e.Transient() {
+		t.Fatalf("unexpected remote error: %v", err)
+	}
+	// Without VAULT_TOKEN the process is unauthenticated before any request
+	// is made, unless the developer has another Vault credential (such as
+	// ~/.vault-token), in which case the address is still unreachable.
+	os.Unsetenv("VAULT_TOKEN")
+	_, err = Open("remote-x", opts)
+	e, ok := AsError(err)
+	if !ok {
+		t.Fatalf("expected *Error without VAULT_TOKEN, got %T: %v", err, err)
+	}
+	switch e.Code {
+	case "unauthenticated":
+		if !errors.Is(err, ErrUnauthenticated) || e.Transient() || !strings.Contains(e.Message, "not authenticated to hashicorp-vault") || !strings.Contains(e.Hint, "VAULT_TOKEN") {
+			t.Fatalf("unexpected unauthenticated error: %v", err)
+		}
+	case "provider_unavailable":
+		if !errors.Is(err, ErrProviderUnavailable) || !e.Transient() {
+			t.Fatalf("unexpected unavailable error: %v", err)
+		}
+	default:
+		t.Fatalf("unexpected remote error without VAULT_TOKEN: %v", err)
+	}
+	// A vault without a table is still the local file.
+	reader, err := Open(fx.vault, opts)
+	if err != nil {
+		t.Fatalf("open local vault with manifest: %v", err)
+	}
+	defer reader.Close()
+	if get(t, reader, "database-password").Value.Text() != latestValue {
+		t.Fatalf("local vault value")
+	}
+}
+
+func TestRemoteProviderCodesMapToSentinels(t *testing.T) {
+	cases := []struct {
+		code      string
+		sentinel  error
+		transient bool
+	}{
+		{"unauthenticated", ErrUnauthenticated, false},
+		{"provider_unavailable", ErrProviderUnavailable, true},
+	}
+	for _, tc := range cases {
+		err := &Error{Code: tc.code, Message: "m", Hint: "h"}
+		if !errors.Is(err, tc.sentinel) || errors.Is(err, ErrUnsupported) || errors.Is(err, ErrPolicy) {
+			t.Fatalf("%s: sentinel mismatch", tc.code)
+		}
+		if err.Transient() != tc.transient || err.Policy() {
+			t.Fatalf("%s: transient=%v policy=%v", tc.code, err.Transient(), err.Policy())
+		}
+	}
+}
+
 func TestUnknownCodesKeepTheirCode(t *testing.T) {
 	err := &Error{Code: "brand_new_code", Message: "m", Hint: "h"}
 	if err.Error() != "m. h" || errors.Is(err, ErrNotFound) {
@@ -327,5 +405,29 @@ func TestUnknownCodesKeepTheirCode(t *testing.T) {
 	}
 	if !errors.Is(&Error{Code: "io"}, ErrStorage) {
 		t.Fatalf("io matches ErrStorage")
+	}
+}
+
+// An SDK built against one C ABI version refuses a library built for another
+// with a typed error (ADR 0007); the installed library matches.
+func TestAbiMismatchIsATypedError(t *testing.T) {
+	if err := abiError(AbiVersion()); err != nil {
+		t.Fatalf("matching ABI version reported %v", err)
+	}
+	if err := requireAbi(); err != nil {
+		t.Fatalf("the installed library was refused: %v", err)
+	}
+	err := abiError(AbiVersion() + 1)
+	var typed *Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected *Error, got %T", err)
+	}
+	if typed.Code != "abi_mismatch" {
+		t.Fatalf("code %q", typed.Code)
+	}
+	for _, want := range []string{fmt.Sprint(AbiVersion() + 1), fmt.Sprint(AbiVersion()), "sourceorrery-ffi"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("message %q lacks %q", err.Error(), want)
+		}
 	}
 }

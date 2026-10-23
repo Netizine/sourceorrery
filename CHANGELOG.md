@@ -4,6 +4,291 @@ All notable changes to SourceOrrery are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+The engineering pass of the milestone 4 security review
+(`docs/security-review.md`) found and fixed:
+
+* The audit chain's interior linkage was checked only by `audit --verify`:
+  a row deleted from the middle of the log (the record of a detected
+  truncation, a version's checkpoint) passed the unlock. Every unlock now
+  walks the chain from the newest acknowledgement and quarantines on a
+  break; the head record counts the keyed rows under its MAC, so every
+  operation notices a keyed row removed between two operations. The file
+  format is unchanged; an older head is accepted until the next write.
+* Manifest discovery walked to the filesystem root, so a `sourceorrery.toml`
+  planted in a world-writable or shared parent could point a process's
+  Vault token at another host. Discovery stops at the repository, the home
+  directory and, on Unix, directories owned by someone else. `http://` is
+  accepted for the local machine only; the Vault client follows no
+  redirect and uses no proxy for a loopback address.
+* A passphrase with the shape of a recovery code (twenty-five letters and
+  spaces) was folded before use by the CLI and no longer unlocked. The
+  vault now tries a passphrase as typed first and as a code second, for
+  every caller.
+* The second factor's replay step and the reveal guard were written from a
+  per-handle snapshot, so two processes could accept one code or overwrite
+  each other's guard. Guard writes re-read and verify the stored state in
+  their transaction.
+* Manifest validation errors echoed the offending value; provider error
+  text reached SDK messages unbounded and unescaped; a backup written over
+  an existing file kept its mode and followed a link; `SOURCEORRERY_TOTP`
+  and `SOURCEORRERY_BACKUP_PASSPHRASE` reached `run` children; invisible
+  formatting characters passed the terminal sanitiser; loader variables
+  (`LD_PRELOAD`, `NODE_OPTIONS`, ...) were valid manifest destinations;
+  secret names could start with a hyphen; the backup passphrase was not
+  strength-rated; several buffers holding the enrolment key, a hook's
+  output, a typed passphrase's intermediates or a Vault credential were
+  not zeroising. All fixed.
+
+### Changed
+
+* Secret names may no longer start or end with a hyphen (an imported
+  `_PRIVATE` key is skipped rather than stored as `-private`).
+* A manifest `env` naming `PATH`, an `LD_*` or `DYLD_*` variable,
+  `NODE_OPTIONS`, `JAVA_TOOL_OPTIONS` or another loader or runtime option
+  is a manifest error.
+* `--tag` keys under `sourceorrery.` are refused.
+* A remote provider's `address` or `endpoint_url` must be `https://`, or
+  `http://` to localhost.
+
+### Added
+
+* A vault passphrase typed at the prompt must rate at least "good" on a
+  strength estimate (a score 0 to 4 from the character runs, with common
+  passwords, dictionary-style words, repeated characters, keyboard and
+  alphabet sequences, years and short lengths counted against it; an
+  estimate from rules, no wordlist shipped) unless `--allow-weak`; a
+  passphrase supplied through `SOURCEORRERY_PASSPHRASE` or
+  `--passphrase-file` is accepted with a warning when it rates lower.
+  `vault passphrase generate` prints a random passphrase once (20
+  characters, about 125 bits, by default) and `vault passphrase check`
+  prints the estimate for one. The crypto crate gains `totp` (RFC 6238 over
+  HMAC-SHA1 with the RFC's test vectors, replay refusal and a one-step
+  window), recovery codes (125 bits over an alphabet without look-alikes)
+  and passphrase generation, for the second factor and the recovery that
+  follow.
+* The vault stores a **reveal guard** (what an interactive reveal or export
+  must present again: the passphrase, a second-factor code, both or
+  neither), a **second factor** (a TOTP secret sealed with the vault key,
+  with the last accepted step so a code is never accepted twice; an
+  enrolment counts only once one code has been accepted) and a
+  **passphrase hint** (in clear, shown at the prompt, never trusted, and
+  refused when it would itself unlock the vault). The guard and the
+  enrolment are part of the authenticated settings record, appended only
+  when present, so every existing vault's tag still verifies and a file
+  edit cannot switch the guard off. `SqliteVault::verify_passphrase`
+  checks a passphrase (or a recovery code) in place; every check, change
+  and refusal is audited under the new operation `guard`
+  (`docs/vault-format.md`).
+* The commands for all of it. `vault 2fa enable` enrols an authenticator
+  app (a QR code drawn on stderr, the `otpauth://` URI only with
+  `--show-uri`, the base32 key once with `-o json`) and keeps the
+  enrolment only once a code from the app has matched (`--no-verify` and
+  `vault 2fa verify` for later); `vault 2fa disable` and `status`.
+  `vault guard --reveal passphrase,second-factor|none` sets what
+  `secret get --reveal`, `backup`, `vault protector add|remove`, `vault
+  recovery codes`, `vault 2fa enable` and `vault guard` itself must
+  present again: the passphrase from where an unlock takes it, the code
+  from the new global `--code` / `SOURCEORRERY_TOTP` or a prompt on the
+  terminal (never a pipe); a refusal is `permission_denied` and prints
+  nothing of the value. `run`, `check`, `ui` and the SDKs are untouched.
+  `vault recovery codes [--count N]` prints up to 7 recovery codes once
+  and installs them as passphrase protectors `recovery-1..N`, replacing
+  earlier ones; a code unlocks the vault wherever a passphrase is
+  accepted (prompt, `SOURCEORRERY_PASSPHRASE`, a file), with case,
+  hyphens and look-alike letters ignored. `vault passphrase set` replaces
+  the passphrase after checking the current one (and a code when the
+  guard asks); `vault passphrase hint [TEXT|--clear]` manages the hint
+  the prompt shows. `vault info` reports the guard, the enrolment, the
+  recovery codes' labels and the hint (`docs/cli.md`, "The reveal
+  guard"; `docs/threat-model.md`).
+* `sourceorrery setup`: the guided first run, six screens on the terminal
+  from the first vault to the first `run` (Cargo feature `ui`): the vault,
+  with a passphrase typed against a live strength meter or generated and
+  shown once, and the OS credential store as a second key where it
+  exists; the first secret, a database password typed against the same
+  meter or generated and stored unseen; recovery codes shown once behind
+  a "written down" tick box, and the hint; the second factor, as a QR code
+  to scan and one code to prove it; the reveal guard; and the manifest,
+  written and checked, with the `run` line. Hidden fields are drawn as
+  dots from their length and wiped afterwards; nothing typed as a secret
+  is kept by the screens. Without a terminal, or with `--guide`, the same
+  six steps are printed as commands (`-o json` too). `docs/getting-started.md`
+  is the walkthrough; the README's quick start begins with it. The
+  `otpauth://` URI `vault 2fa enable` shows leaves out the format's
+  default algorithm, digits and period, so the QR code is a version
+  smaller.
+* `sourceorrery audit export` writes a local vault's audit log, oldest
+  first, for a collector: as JSON Lines on stdout (one object per event
+  plus `vault`, then a trailer with the count, the last id and the chain
+  verification, so a collector can tell a complete export from a truncated
+  log), or as OTLP/HTTP log records posted to `--endpoint` (or the
+  `OTEL_EXPORTER_OTLP_*` variables) with the verification as the last
+  record (Cargo feature `otlp`, on by default). `--since` starts from a
+  time; `--follow` keeps exporting new events as they are recorded.
+  `audit --vault <remote>` prints where the provider keeps its trail and
+  the query that shows SourceOrrery's operations there instead of an error
+  (`-o json`: `provider`, `audit_trail`, `query`, `docs`); `audit export`
+  on a remote vault is `unsupported` with the same pointer. The provider
+  pages gain an "Audit trail" section each, and `docs/enterprise.md`
+  "Collecting the audit trail".
+* `sourceorrery secret rotate NAME` rotates a credential as a recorded
+  workflow over any vault: the new value is written as a disabled candidate
+  (from the manifest's `[rotation.NAME]` `issue` command, whose standard
+  output is the value and which receives the current value in the secret's
+  environment variable, or from stdin), validated by the `validate` command,
+  activated (enabled, then the previous version disabled, so one version is
+  always accessible) and the previous credential retired at the issuer by
+  the `retire` command once `retire_after` has passed, in a later
+  `--step retire` run. Hooks run the way `run` runs a program (an argv, no
+  shell; the value only in the child's environment). State lives in the
+  versions' `sourceorrery.rotation.*` tags, so a rotation survives a crash
+  and shows in `secret versions` and `--step status`; every step is an
+  ordinary `secret_set` or `secret_update` audit event. Refusals carry the
+  new code `rotation`. The core's `rotation` module is the state machine;
+  `SecretClient::capabilities` (new, default: everything) lets a backend
+  whose properties are per secret, AWS Secrets Manager, refuse rotation
+  with `unsupported` before anything is written. Two lifecycle conformance
+  scenarios cover activation and a failed validation (`docs/rotation.md`).
+* `sourceorrery check --access` reads each value and discards it, so the
+  status says whether this identity may read the secret and not only
+  inspect it: a remote provider's policy can allow metadata and deny
+  values, and the plain `check` stays metadata-only. A denied read on a
+  remote vault now carries a hint in the provider's own terms (the Vault
+  paths to grant and `vault read sys/capabilities-self`; the
+  `secretsmanager:*` actions and `aws sts get-caller-identity`).
+  `docs/enterprise.md` describes who decides what per provider, the
+  workload identity set-up for GitHub Actions, Kubernetes and VMs, and
+  what a revocation reaches; `scripts/ci/vault-federation.sh` and
+  `scripts/ci/aws-federation.sh` prove the federated logins, a
+  metadata-only policy and a revoked token in the provider CI jobs.
+* AWS Secrets Manager is the second remote provider: `provider =
+  "aws-secrets-manager"` with `region`, an optional `prefix` and an optional
+  `endpoint_url` serves the secrets under that prefix behind the same
+  contract (`docs/providers/aws-secrets-manager.md`). Credentials come from
+  the AWS SDK's default chain, never the manifest. Secrets Manager keeps
+  properties per secret, not per version, so `enabled`, `content_type` and
+  the time window apply to every version and `update_secret_properties`
+  accepts only the newest version; the lifecycle conformance suite gains
+  capability flags (`lifecycle_with`) so such a documented difference skips
+  exactly the scenario that needs it. The crate `sourceorrery-provider-aws`
+  (the official SDK, trimmed to its Tokio and rustls stack) is on by
+  default everywhere (feature `provider-aws`, part of `remote`). The
+  `provider-aws` CI job runs the suite against the moto emulator and the
+  SDK harness's remote scenarios through the CLI, the Rust and the C
+  runners.
+* HashiCorp Vault is the first remote provider: `provider =
+  "hashicorp-vault"` in a `[vaults.<name>]` table serves a KV version 2
+  mount behind the same contract as a local vault (versions, per-version
+  properties in `custom_metadata`, soft delete as `delete`/`undelete`, purge
+  as metadata deletion; `docs/providers/hashicorp-vault.md`). Credentials
+  come from `VAULT_TOKEN`, `~/.vault-token`, an AppRole, a JWT or the
+  Kubernetes service account token, never the manifest. The crate
+  `sourceorrery-provider-vault` is a small `reqwest`/`rustls` client that
+  never logs a body; it is on by default in the CLI, the `sourceorrery`
+  crate, the C ABI library and the Python and Node extensions (feature
+  `provider-vault`, part of `remote`; `--no-default-features` builds stay
+  local-only). The `provider-vault` CI job runs the lifecycle conformance
+  suite against a Vault container and reads a Vault-backed vault through
+  the SDK harness's new `--remote` scenarios.
+* Remote vaults in the manifest: a `[vaults.<name>]` table in
+  `sourceorrery.toml` names a provider (`hashicorp-vault`,
+  `aws-secrets-manager`) and its addressing keys, and
+  nothing else: there is no credential key, and an unknown key is a parse
+  error. `SecretReader::open` resolves a vault name through the nearest
+  manifest or the one `OpenOptions::manifest` names, `so_reader_open`
+  through the `manifest` key of `options_json`, and every SDK through a
+  `manifest` option; `Project::load` always uses the manifest it loads.
+  `vault list` shows remote vaults with their provider and location, and
+  the commands about the vault file (`vault create`, `vault protector`,
+  `vault destroy`, `vault migrate`, `audit`, `backup`, `restore`, `ui`)
+  refuse a remote vault by name. The error codes `unauthenticated` and
+  `provider_unavailable` (transient) are new; a provider the build leaves
+  out is `unsupported`, naming it (`docs/providers/index.md`).
+* `AsyncSecretClient`, the asynchronous shape of the contract, in
+  `sourceorrery-core` (ADR 0008): the same methods and semantics as
+  `SecretClient`, object safe, for the remote providers of milestone 4.
+  The new `sourceorrery-provider` crate holds the adapters between the two
+  shapes, `Blocking<A>` (an async client as a `SecretClient`, on a Tokio
+  runtime it owns or borrows) and `AsyncLocal<C>` (a synchronous client as
+  an `AsyncSecretClient`, on Tokio's blocking pool), which pass every
+  operation and every error code through unchanged. The lifecycle
+  conformance scenarios are now functions over `&dyn SecretClient`
+  (`sourceorrery_conformance::lifecycle`), run against the SQLite vault
+  directly and through the adapter pair.
+* `scripts/dev/keyring-smoke.sh` and `.ps1` exercise the OS-keyring
+  protector against a real credential store (create, read, protector add
+  and remove, destroy with and without `--keep-os-key`, the store inspected
+  after each step) in an isolated home, and the `keyring` CI job runs them
+  headlessly against a temporary macOS keychain, GNOME Keyring on a private
+  session bus and Windows Credential Manager.
+* `sourceorrery backup --out FILE` writes every live secret of a vault,
+  every version with its value, into one file sealed under a passphrase of
+  its own (Argon2id, XChaCha20-Poly1305; `SOURCEORRERY_BACKUP_PASSPHRASE`
+  for scripts), optionally only named secrets or including deleted ones;
+  `sourceorrery restore FILE` writes it into a vault as new versions with
+  their metadata kept and the original version recorded in tags, skipping
+  secrets that exist unless `--overwrite`, with `--only`, `--keep-deleted`
+  and `--dry-run`. The core contract gains `VaultBackup` and the audit
+  operations `vault_backup` and `secret_restore`; the error codes
+  `backup_passphrase` and `backup_format` are new. The format is in
+  `docs/backup-format.md`.
+* Every release carries a CycloneDX 1.5 software bill of materials per
+  shipped binary and target: the CLI, the C ABI library, the Python
+  extension and the Node addon, listing every Rust crate compiled in. The
+  CLI and the C ABI library are built with `cargo auditable`, so
+  `cargo audit bin` can check a shipped binary against the advisory
+  database.
+* Every file on a GitHub Release, `SHA256SUMS` included, carries a build
+  provenance attestation signed in the release workflow run, so
+  `gh attestation verify <file> --repo Netizine/sourceorrery` proves which
+  commit and workflow built a download.
+* ADR 0007 fixes what a version number promises for every surface (CLI,
+  Rust API, C ABI, contract, SDKs, vault file, error codes) and how it is
+  checked: `scripts/ci/abi-check.py` fails CI when a declaration of the
+  previous release's C header changed or disappeared without a
+  `SO_ABI_VERSION` bump, the `abi-compat` job runs the previous release's C
+  conformance runner against the current library, and the release workflow
+  runs `cargo semver-checks` on `sourceorrery` and `sourceorrery-core` for
+  the version typed. The Go, Java, .NET, PHP and C++ SDKs compare
+  `so_abi_version()` with the version they were built against before
+  opening anything and refuse a mismatch with the code `abi_mismatch`.
+* Paged listings: `SecretClient::list_properties_of_secrets_page` and
+  `list_deleted_secrets_page` take `ListOptions` (`max_results`, a
+  `ContinuationToken`) and return a `Page` whose token is the last name
+  returned, so a listing can be read in name windows without duplicates or
+  skips while the vault changes. `secret list` gains `--limit N` and
+  `--after NAME`; with either, `-o json` prints `{"items", "continuation"}`.
+* The CLI installs from a Homebrew tap (`brew install
+  Netizine/sourceorrery/sourceorrery`, macOS and Linux), a Scoop bucket
+  (`Netizine/scoop-sourceorrery`) and WinGet (`Netizine.SourceOrrery`).
+  The release workflow renders the formula and the manifests from the
+  release's `SHA256SUMS` (`scripts/release/package-managers.py`), commits
+  them to the tap and the bucket and opens the WinGet pull request; the
+  *Release packages* workflow can do the same for an existing release.
+
+### Changed
+
+* `vault list -o json` prints one object per vault (`name`, `kind`, and
+  `path` for a local vault or `provider` and `location` for a remote one)
+  instead of an array of names, so that remote vaults can be listed.
+* Listing a vault no longer costs one audit-chain scan and two queries per
+  secret: the SQLite backend reads the checkpoints of every secret in one
+  statement and the names, `secrets` rows and version rows of the listing
+  window in three more, verifying each row exactly as before (a row the
+  chain records but the table lacks, or whose tag is not the newest
+  checkpoint, still refuses the listing).
+* Every third-party GitHub Action in the workflows is pinned to the commit
+  of its release, with the version as a comment, and Dependabot updates
+  the pins and the Rust, npm, Python, NuGet and Maven dependencies weekly
+  in one grouped pull request per ecosystem. A `workflows` CI job runs
+  zizmor over `.github/`, so an unpinned action or a shell step that
+  expands an input fails the gate. The release workflow is read-only
+  except for the two jobs that create the tag and the GitHub Release.
+
 ## [0.1.4] - 2026-10-22
 
 ### Added
@@ -77,17 +362,17 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [0.1.3] - 2026-10-21
 
-The first release: an encrypted local secrets vault with an Azure Key
-Vault–style lifecycle, a CLI and an interactive vault manager, read-only
+The first release: an encrypted local secrets vault with a
+cloud-secrets-manager-style lifecycle, a CLI and an interactive vault manager, read-only
 SDKs for ten languages over one Rust core, and a release pipeline to every
 package registry.
 
 ### Added — core and encrypted vault
 
-* `sourceorrery-core`: the `SecretClient` contract modelled on Azure Key
-  Vault (set → a new immutable version, get the newest accessible version,
-  metadata-only listing, property updates, soft delete, recover, purge,
-  audit), stable append-only error codes, Azure Key Vault naming rules,
+* `sourceorrery-core`: the `SecretClient` contract modelled on the managed
+  cloud secrets services (set → a new immutable version, get the newest
+  accessible version, metadata-only listing, property updates, soft delete,
+  recover, purge, audit), stable append-only error codes, portable naming rules,
   enforced `not_before` / `expires_on`, `SecretBytes` (zeroising, redacted,
   never serialisable), `sourceorrery://` references and the
   `sourceorrery.toml` manifest, which cannot hold a value and whose errors

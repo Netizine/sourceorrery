@@ -64,13 +64,25 @@ prompt. On servers, in containers and in CI, give the vault a passphrase
 protector and pass the passphrase as a file
 ([Headless](https://sourceorrery.ai/guides/headless/)).
 
+## Remote vaults
+
+A vault that `sourceorrery.toml` declares in a `[vaults.<name>]` table is
+opened at its remote provider by the same `SecretReader.Open` call;
+`new OpenOptions { Manifest = path }` names the manifest to resolve through
+(default: the nearest `sourceorrery.toml` above the current directory).
+Credentials come from the provider's own environment, never from the
+manifest: HashiCorp Vault is the first provider, and its credential comes
+from `VAULT_TOKEN` or the other sources
+[the provider documents](../../docs/providers/hashicorp-vault.md).
+
 ## Errors and values
 
 Every failure is a `SourceOrreryException` or a subclass
 (`SecretNotFoundException`, `VaultLockedException`,
-`SecretExpiredException`, …) with a stable `Code` and a `Hint` that says
-what to do, such as the `sourceorrery secret set` command that would store
-a missing secret. A value is a `SecretValue`: it prints as `[REDACTED]`,
+`SecretExpiredException`, `UnauthenticatedException`,
+`ProviderUnavailableException`, …) with a stable `Code` and a `Hint` that
+says what to do, such as the `sourceorrery secret set` command that would
+store a missing secret. A value is a `SecretValue`: it prints as `[REDACTED]`,
 lends its bytes as a span through `Use` or copies them out through
 `Expose` and `ExposeText`, and is zeroised when disposed.
 

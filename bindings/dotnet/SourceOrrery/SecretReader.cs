@@ -28,6 +28,7 @@ public sealed unsafe class SecretReader : IDisposable
     /// <summary>Open <paramref name="vault"/>; see the class remarks for the unlock order.</summary>
     public static SecretReader Open(string vault, OpenOptions? options = null)
     {
+        Interop.RequireAbi();
         ArgumentNullException.ThrowIfNull(vault);
         options ??= new OpenOptions();
         var name = NativeLibraryLoader.Utf8(vault)!;
@@ -151,6 +152,39 @@ public sealed unsafe class SecretReader : IDisposable
 
 internal static unsafe class Interop
 {
+    /// <summary>
+    /// C ABI version the <c>NativeMethods</c> declarations follow: <c>SO_ABI_VERSION</c>
+    /// in the <c>sourceorrery.h</c> this package was written against.
+    /// </summary>
+    internal const uint AbiVersion = 1;
+
+    /// <summary>Refuse a library built for another C ABI version before anything is opened (ADR 0007).</summary>
+    internal static void RequireAbi()
+    {
+        var mismatch = AbiMismatch(NativeMethods.so_abi_version());
+        if (mismatch is not null)
+        {
+            throw mismatch;
+        }
+    }
+
+    /// <summary>
+    /// The exception for a library whose C ABI version is <paramref name="found"/>, or <c>null</c>
+    /// when it matches <see cref="AbiVersion"/>. Its code, <c>abi_mismatch</c>, is produced by the
+    /// SDK itself, never by the core.
+    /// </summary>
+    internal static SourceOrreryException? AbiMismatch(uint found)
+    {
+        if (found == AbiVersion)
+        {
+            return null;
+        }
+        return new SourceOrreryException(
+            $"the SourceOrrery native library implements C ABI version {found}; this SDK was built for version {AbiVersion}",
+            "abi_mismatch",
+            "install the sourceorrery-ffi library of the release this SDK version belongs to");
+    }
+
     /// <summary>Throw the typed exception for the last error when <paramref name="status"/> is not OK.</summary>
     public static void Check(int status)
     {

@@ -56,12 +56,24 @@ aarch64) and extracts it on first use; set `SOURCEORRERY_NATIVE_DIR` to use
 a library from elsewhere. Every file on Maven Central is signed with the
 release key ([Supply chain](https://sourceorrery.ai/security/supply-chain/)).
 
+## Remote vaults
+
+A vault that `sourceorrery.toml` declares in a `[vaults.<name>]` table is
+opened at its remote provider by the same `SecretReader.open` call;
+`OpenOptions.defaults().withManifest(path)` names the manifest to resolve
+through (default: the nearest `sourceorrery.toml` above the current
+directory). Credentials come from the provider's own environment, never
+from the manifest: HashiCorp Vault is the first provider, and its credential
+comes from `VAULT_TOKEN` or the other sources
+[the provider documents](../../docs/providers/hashicorp-vault.md).
+
 ## Errors and values
 
 Every failure is a `SourceOrreryException` (unchecked) or a subclass
 (`SecretNotFoundException`, `VaultLockedException`,
-`SecretExpiredException`, …) with a stable `code()` and a `hint()` that
-says what to do. A value is a `SecretValue`: `toString()` is
+`SecretExpiredException`, `UnauthenticatedException`,
+`ProviderUnavailableException`, …) with a stable `code()` and a `hint()`
+that says what to do. A value is a `SecretValue`: `toString()` is
 `[REDACTED]`, the bytes come out only through `expose()`, `exposeText()`
 or `use(...)`, and closing it zeroises them.
 

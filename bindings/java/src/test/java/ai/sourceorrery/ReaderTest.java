@@ -6,9 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +22,9 @@ import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import ai.sourceorrery.internal.Native;
 
 /** The Java SDK against the vault created by scripts/ci/fixture-vault.sh. */
 class ReaderTest {
@@ -224,11 +230,86 @@ class ReaderTest {
         assertThrows(VaultLockedException.class, () -> Project.load(Optional.of(manifest), wrong));
     }
 
+    /**
+     * A vault the manifest declares in {@code [vaults.<name>]} goes to its provider, whose credential
+     * comes from the environment, never the manifest.
+     */
+    @Test
+    void manifestDeclaresRemoteVaults(@TempDir Path dir) throws Exception {
+        Path remoteManifest = dir.resolve("sourceorrery.toml");
+        Files.writeString(remoteManifest, String.join("\n",
+                "[project]",
+                "name = \"demo\"",
+                "vault = \"" + vault + "\"",
+                "",
+                "[vaults.remote-x]",
+                "provider = \"hashicorp-vault\"",
+                "address = \"http://127.0.0.1:1\"",
+                "mount = \"secret\"",
+                ""));
+        OpenOptions options = OpenOptions.defaults().withManifest(remoteManifest);
+        assertEquals(Optional.of(remoteManifest.toString()), options.manifest());
+        assertTrue(options.toJson().contains("\"manifest\":"));
+
+        // Nothing listens on port 1. Without a Vault credential (VAULT_TOKEN, ~/.vault-token, AppRole,
+        // ...) the provider refuses before any request; with one it fails to connect. Java cannot set
+        // environment variables in-process, so whichever the environment produces is accepted, as long
+        // as the code matches the class and the message names the provider.
+        SourceOrreryException err = assertThrows(SourceOrreryException.class, () -> SecretReader.open("remote-x", options));
+        assertTrue(err.detail().contains("hashicorp-vault"), err.detail());
+        switch (err) {
+            case UnauthenticatedException unauthenticated -> {
+                assertEquals("unauthenticated", unauthenticated.code());
+                assertFalse(unauthenticated.isTransient());
+                assertTrue(unauthenticated.detail().contains("not authenticated to hashicorp-vault"), unauthenticated.detail());
+                assertTrue(unauthenticated.hint().contains("VAULT_TOKEN"), unauthenticated.hint());
+            }
+            case ProviderUnavailableException unavailable -> {
+                assertEquals("provider_unavailable", unavailable.code());
+                assertTrue(unavailable.isTransient());
+                assertTrue(unavailable.detail().contains("hashicorp-vault is unavailable"), unavailable.detail());
+                assertTrue(unavailable.hint().contains("[vaults.remote-x]"), unavailable.hint());
+            }
+            default -> fail("expected UnauthenticatedException or ProviderUnavailableException, got "
+                    + err.getClass().getName() + " (" + err.code() + "): " + err.getMessage());
+        }
+
+        // A vault without a table is still the local file.
+        try (SecretReader reader = SecretReader.open(vault, options); Secret secret = reader.get("database-password")) {
+            assertEquals(vault, reader.vaultName());
+            assertEquals(LATEST, secret.value().exposeText());
+        }
+    }
+
+    @Test
+    void remoteCodesMapToTheirExceptions() {
+        SourceOrreryException unauthenticated = SourceOrreryException.forCode("unauthenticated", "m", "h");
+        assertInstanceOf(UnauthenticatedException.class, unauthenticated);
+        assertEquals("unauthenticated", unauthenticated.code());
+        assertFalse(unauthenticated.isTransient());
+        SourceOrreryException unavailable = SourceOrreryException.forCode("provider_unavailable", "m", "h");
+        assertInstanceOf(ProviderUnavailableException.class, unavailable);
+        assertEquals("provider_unavailable", unavailable.code());
+        assertTrue(unavailable.isTransient());
+    }
+
     @Test
     void unknownCodesKeepTheirCode() {
         SourceOrreryException err = SourceOrreryException.forCode("brand_new_code", "m", "h");
         assertEquals(SourceOrreryException.class, err.getClass());
         assertEquals("brand_new_code", err.code());
         assertEquals("m. h", err.getMessage());
+    }
+
+    /** An SDK refuses a library built for another C ABI version with a typed exception (ADR 0007). */
+    @Test
+    void abiMismatchIsATypedException() {
+        assertEquals(Native.ABI_VERSION, Native.abiVersion(), "the installed library matches");
+        assertTrue(Native.abiMismatch(Native.ABI_VERSION) == null);
+        SourceOrreryException err = Native.abiMismatch(Native.ABI_VERSION + 1);
+        assertEquals("abi_mismatch", err.code());
+        assertTrue(err.getMessage().contains(String.valueOf(Native.ABI_VERSION + 1)));
+        assertTrue(err.getMessage().contains(String.valueOf(Native.ABI_VERSION)));
+        assertTrue(err.hint().contains("sourceorrery-ffi"));
     }
 }

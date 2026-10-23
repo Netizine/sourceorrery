@@ -45,6 +45,7 @@ import "C"
 
 import (
 	"encoding/json"
+	"fmt"
 	"runtime"
 	"time"
 	"unsafe"
@@ -62,12 +63,19 @@ type OpenOptions struct {
 	PassphraseFile string
 	// IgnoreEnvironment skips SOURCEORRERY_PASSPHRASE and SOURCEORRERY_PASSPHRASE_FILE.
 	IgnoreEnvironment bool
+	// Manifest is the sourceorrery.toml whose [vaults.<name>] tables say
+	// which vaults are remote and where; empty uses the nearest one above
+	// the current directory. A vault with a table is opened at its provider
+	// instead of as a local file. Credentials come from the provider's own
+	// environment, never from the manifest.
+	Manifest string
 }
 
 type readerOptionsJSON struct {
 	Home           string `json:"home,omitempty"`
 	PassphraseFile string `json:"passphrase_file,omitempty"`
 	Environment    bool   `json:"environment"`
+	Manifest       string `json:"manifest,omitempty"`
 }
 
 func (o *OpenOptions) json() []byte {
@@ -79,6 +87,7 @@ func (o *OpenOptions) json() []byte {
 		Home:           opts.Home,
 		PassphraseFile: opts.PassphraseFile,
 		Environment:    !opts.IgnoreEnvironment,
+		Manifest:       opts.Manifest,
 	})
 	return text
 }
@@ -156,6 +165,9 @@ func (h *readerHandle) close() {
 // SOURCEORRERY_PASSPHRASE, then opts.PassphraseFile or
 // SOURCEORRERY_PASSPHRASE_FILE. It never prompts.
 func Open(vault string, opts *OpenOptions) (*Reader, error) {
+	if err := requireAbi(); err != nil {
+		return nil, err
+	}
 	optionsJSON := opts.json()
 	passphrase := opts.passphrase()
 	var handle *C.so_reader
@@ -351,6 +363,29 @@ func ContractVersion() string { return C.GoString(C.so_contract_version()) }
 
 // AbiVersion is the version of the C ABI the loaded library was built with.
 func AbiVersion() uint32 { return uint32(C.so_abi_version()) }
+
+// abiVersionBuilt is the C ABI version this package's cgo declarations
+// follow: SO_ABI_VERSION in the sourceorrery.h it is compiled against.
+const abiVersionBuilt = uint32(C.SO_ABI_VERSION)
+
+// requireAbi refuses a library built for another C ABI version before any
+// handle is opened (ADR 0007).
+func requireAbi() error { return abiError(AbiVersion()) }
+
+// abiError is the error for a library whose C ABI version is found, or nil
+// when it matches the version this package was built against. The code
+// "abi_mismatch" is produced by the SDK itself, never by the core.
+func abiError(found uint32) error {
+	if found == abiVersionBuilt {
+		return nil
+	}
+	return &Error{
+		Code: "abi_mismatch",
+		Message: fmt.Sprintf("the SourceOrrery native library implements C ABI version %d; this SDK was built for version %d",
+			found, abiVersionBuilt),
+		Hint: "install the sourceorrery-ffi library of the release this SDK version belongs to",
+	}
+}
 
 func bytesPtr(b []byte) *C.uint8_t {
 	if len(b) == 0 {

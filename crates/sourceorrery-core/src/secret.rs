@@ -12,7 +12,7 @@ use crate::REFERENCE_SCHEME;
 use crate::error::{Result, SecretError};
 use crate::vault::validate_vault_name;
 
-/// Maximum length of a secret name (Azure Key Vault compatible).
+/// Maximum length of a secret name (portable to the managed cloud secrets services).
 pub const MAX_SECRET_NAME_LEN: usize = 127;
 
 /// Maximum length of a version identifier.
@@ -463,7 +463,7 @@ impl<'de> Deserialize<'de> for SecretReference {
 
 /// Validate a secret name.
 ///
-/// Rules match Azure Key Vault so names port without change: 1–127 ASCII
+/// Rules are the common denominator of the managed cloud secrets services, so names port without change: 1–127 ASCII
 /// letters, digits or hyphens.
 pub fn validate_secret_name(name: &str) -> Result<()> {
     let invalid = |reason: &str| SecretError::InvalidName {
@@ -485,6 +485,11 @@ pub fn validate_secret_name(name: &str) -> Result<()> {
         return Err(invalid(
             "may contain only ASCII letters, digits and hyphens",
         ));
+    }
+    if name.starts_with('-') || name.ends_with('-') {
+        // A leading hyphen reads as an option on a command line, and a
+        // name that is only hyphens says nothing; neither is portable.
+        return Err(invalid("must not start or end with a hyphen"));
     }
     Ok(())
 }

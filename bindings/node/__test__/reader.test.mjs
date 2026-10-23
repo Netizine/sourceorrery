@@ -1,7 +1,10 @@
 // The Node SDK against the vault created by scripts/ci/fixture-vault.sh.
 // Run after `npm run build`:  eval "$(bash scripts/ci/fixture-vault.sh)" && npm test
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import util from 'node:util';
 
@@ -27,6 +30,8 @@ const {
   InvalidArgumentError,
   InvalidNameError,
   ManifestError,
+  UnauthenticatedError,
+  ProviderUnavailableError,
 } = sdk;
 
 const env = process.env;
@@ -211,4 +216,83 @@ test('unknown codes keep their code', () => {
   assert.equal(err.constructor, SourceOrreryError);
   assert.equal(err.code, 'brand_new_code');
   assert.equal(err.message, 'm. h');
+});
+
+test('provider codes map to typed errors', () => {
+  const unauthenticated = errorFor('unauthenticated', 'm', 'h');
+  assert.equal(unauthenticated.constructor, UnauthenticatedError);
+  assert.equal(unauthenticated.code, 'unauthenticated');
+  assert.equal(unauthenticated.name, 'UnauthenticatedError');
+  assert.equal(unauthenticated.transient, false);
+  const unavailable = errorFor('provider_unavailable', 'm', 'h');
+  assert.equal(unavailable.constructor, ProviderUnavailableError);
+  assert.equal(unavailable.code, 'provider_unavailable');
+  assert.equal(unavailable.transient, true);
+});
+
+test('a remote vault in the manifest is opened at its provider', { skip }, () => {
+  const manifest = join(mkdtempSync(join(tmpdir(), 'sourceorrery-sdk-')), 'sourceorrery.toml');
+  writeFileSync(
+    manifest,
+    [
+      '[project]',
+      'name = "demo"',
+      `vault = "${fixture.vault}"`,
+      '',
+      '[vaults.remote-x]',
+      'provider = "hashicorp-vault"',
+      'address = "http://127.0.0.1:1"', // nothing listens here
+      'mount = "secret"',
+      '',
+    ].join('\n'),
+  );
+  const options = { home: fixture.home, passphrase: fixture.passphrase, environment: false, manifest };
+
+  const hadToken = Object.prototype.hasOwnProperty.call(process.env, 'VAULT_TOKEN');
+  const savedToken = process.env.VAULT_TOKEN;
+  try {
+    // With a credential, the remote vault is opened at its provider, which is not there.
+    process.env.VAULT_TOKEN = 'dummy-token-for-tests';
+    assert.throws(
+      () => new SecretReader('remote-x', options),
+      (err) =>
+        err instanceof ProviderUnavailableError &&
+        err.code === 'provider_unavailable' &&
+        err.transient === true &&
+        err.detail.includes('hashicorp-vault is unavailable') &&
+        err.hint.includes('[vaults.remote-x]'),
+    );
+
+    // Without one, the provider refuses before any request, unless the developer
+    // running the tests has a ~/.vault-token or another Vault credential around.
+    delete process.env.VAULT_TOKEN;
+    assert.throws(
+      () => new SecretReader('remote-x', options),
+      (err) => {
+        if (err instanceof UnauthenticatedError) {
+          return (
+            err.code === 'unauthenticated' &&
+            err.transient === false &&
+            err.detail.includes('not authenticated to hashicorp-vault') &&
+            err.hint.includes('VAULT_TOKEN')
+          );
+        }
+        return err instanceof ProviderUnavailableError && err.code === 'provider_unavailable';
+      },
+    );
+  } finally {
+    if (hadToken) {
+      process.env.VAULT_TOKEN = savedToken;
+    } else {
+      delete process.env.VAULT_TOKEN;
+    }
+  }
+
+  // A vault without a `[vaults.<name>]` table is still the local file.
+  const reader = SecretReader.open(fixture.vault, options);
+  try {
+    assert.equal(reader.get('database-password').value.exposeText(), fixture.latest);
+  } finally {
+    reader.close();
+  }
 });

@@ -5,10 +5,14 @@
 //!
 //! This crate owns *semantics*. It contains no cryptography and no storage;
 //! it defines what a secret, a version, a policy decision and an audit event
-//! *are*, and the [`SecretClient`] contract every backend must honour.
+//! *are*, and the [`SecretClient`] contract every backend must honour (in
+//! its async shape, [`AsyncSecretClient`], for backends that wait on the
+//! network).
 //!
-//! The model is deliberately close to Azure Key Vault's `SecretClient` so the
-//! mental model is familiar, while remaining independent of Azure itself.
+//! The model follows the `SecretClient` shape of the managed cloud secrets
+//! services (immutable versions, enable and disable, time windows, soft
+//! delete and recovery), so the mental model is familiar, while depending
+//! on none of them.
 //!
 //! ## Guarantees that belong to this crate
 //!
@@ -23,25 +27,39 @@
 #![forbid(unsafe_code)]
 
 pub mod audit;
+pub mod backup;
 pub mod error;
 pub mod identity;
+pub mod listing;
 pub mod manifest;
 pub mod policy;
+pub mod remote;
+pub mod rotation;
 pub mod secret;
+pub mod text;
 pub mod timestamp;
 pub mod traits;
 pub mod vault;
 
 pub use audit::{AuditEvent, AuditOperation, AuditOutcome, AuditQuery};
+pub use backup::{
+    ExportOptions, RESTORED_CREATED_ON_TAG, RESTORED_FROM_TAG, RestoreOptions, RestoreReport,
+    RestoredSecret, SecretSnapshot, SkipReason, SkippedSecret, Snapshot, VaultBackup,
+    VersionSnapshot,
+};
 pub use error::{Result, SecretError};
 pub use identity::{Principal, PrincipalKind};
-pub use manifest::{MANIFEST_FILE_NAME, Manifest, ProjectSection, SecretRequirement};
+pub use listing::{ContinuationToken, ListOptions, Page};
+pub use manifest::{
+    MANIFEST_FILE_NAME, Manifest, ProjectSection, RotationSection, SecretRequirement,
+};
 pub use policy::{AccessPolicy, AllowAll, Decision, SoftDeletePolicy};
+pub use remote::{Provider, RemoteVault, VaultConfig};
 pub use secret::{
     DeletedSecret, RecoveryLevel, Secret, SecretBytes, SecretProperties, SecretReference,
     SetSecretOptions, UpdateSecretProperties, validate_secret_name, validate_version_id,
 };
-pub use traits::SecretClient;
+pub use traits::{AsyncSecretClient, Capability, SecretClient};
 pub use vault::{VaultDescriptor, validate_vault_name};
 
 /// Version of the public contract implemented by this crate.

@@ -7,20 +7,31 @@
 //! until that acknowledgement is on the chain.
 
 use anyhow::anyhow;
-use sourceorrery_core::{AuditEvent, AuditOperation, AuditQuery, SecretClient, timestamp};
+use sourceorrery_core::{
+    AuditEvent, AuditOperation, AuditQuery, Provider, RemoteVault, SecretClient, timestamp,
+};
 use sourceorrery_storage::{AuditVerification, SqliteVault};
 
-use crate::cli::AuditArgs;
+use crate::cli::{AuditArgs, AuditSubcommand};
 use crate::context::Ctx;
 use crate::output::{self, Cell, Table};
 use crate::prompt;
 
 pub fn run(ctx: &Ctx, args: &AuditArgs) -> anyhow::Result<()> {
+    if let Some(AuditSubcommand::Export(export)) = &args.command {
+        return crate::commands::audit_export::run(ctx, export);
+    }
     if args.verify {
         return verify(ctx);
     }
     if args.acknowledge {
         return acknowledge(ctx, args.yes);
+    }
+    // A remote vault has no local log: say where the provider keeps its
+    // trail instead of failing.
+    let name = ctx.vault_name()?;
+    if let Some(remote) = Ctx::remote_vault(&name)? {
+        return remote_trail(ctx, &name, &remote);
     }
     let operation = match &args.operation {
         Some(op) => Some(op.parse::<AuditOperation>().map_err(|err| {
@@ -52,6 +63,53 @@ pub fn run(ctx: &Ctx, args: &AuditArgs) -> anyhow::Result<()> {
         return Ok(());
     }
     print_events(&events)
+}
+
+/// Where a remote provider's audit trail lives and the query that shows
+/// SourceOrrery's operations in it; the provider's documentation page has
+/// the full form.
+pub fn trail_pointer(remote: &RemoteVault) -> (Provider, String, String) {
+    let provider = remote.provider();
+    let location = provider.audit_location().to_owned();
+    let query = match remote {
+        RemoteVault::HashicorpVault { mount, .. } => format!(
+            "on the server, with a file audit device: jq -c 'select(.type == \"response\" and \
+             (.request.path | startswith(\"{mount}/data/\") or \
+             startswith(\"{mount}/metadata/\")))' /var/log/vault/audit.log"
+        ),
+        RemoteVault::AwsSecretsManager { prefix, .. } => format!(
+            "aws cloudtrail lookup-events --lookup-attributes \
+             AttributeKey=EventSource,AttributeValue=secretsmanager.amazonaws.com --query \
+             'Events[].CloudTrailEvent' --output text | jq -c 'select(.requestParameters.secretId \
+             | startswith(\"{}\"))'",
+            prefix.as_deref().unwrap_or("")
+        ),
+    };
+    (provider, location, query)
+}
+
+fn remote_trail(ctx: &Ctx, name: &str, remote: &RemoteVault) -> anyhow::Result<()> {
+    let (provider, location, query) = trail_pointer(remote);
+    let docs = format!(
+        "https://sourceorrery.ai/providers/{}/#audit-trail",
+        provider.name()
+    );
+    if ctx.json() {
+        return output::json(&serde_json::json!({
+            "vault": name,
+            "provider": provider.name(),
+            "audit_trail": location,
+            "query": query,
+            "docs": docs,
+        }));
+    }
+    output::note(&format!(
+        "vault '{name}' is served by {}, which keeps its own audit trail in {location}; \
+         SourceOrrery's operations there show as the provider's own API calls. To see them: \
+         {query}. Details: {docs}",
+        provider.display_name()
+    ));
+    Ok(())
 }
 
 fn print_events(events: &[AuditEvent]) -> anyhow::Result<()> {

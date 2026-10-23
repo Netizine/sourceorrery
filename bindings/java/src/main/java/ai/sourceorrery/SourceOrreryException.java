@@ -38,7 +38,7 @@ public class SourceOrreryException extends RuntimeException {
 
     /** True when retrying later could succeed without administrative action. */
     public boolean isTransient() {
-        return "not_yet_valid".equals(code);
+        return "not_yet_valid".equals(code) || "provider_unavailable".equals(code);
     }
 
     /** The exception for a stable code. */
@@ -61,6 +61,8 @@ public class SourceOrreryException extends RuntimeException {
             case "manifest" -> new ManifestException(message, code, hint);
             case "permission_denied" -> new PermissionDeniedException(message, code, hint);
             case "storage", "io" -> new StorageException(message, code, hint);
+            case "unauthenticated" -> new UnauthenticatedException(message, code, hint);
+            case "provider_unavailable" -> new ProviderUnavailableException(message, code, hint);
             default -> new SourceOrreryException(message, code, hint);
         };
     }

@@ -26,7 +26,7 @@ public class SourceOrreryException : Exception
     public string Hint { get; }
 
     /// <summary>True when retrying later could succeed without administrative action.</summary>
-    public bool IsTransient => Code == "not_yet_valid";
+    public bool IsTransient => Code is "not_yet_valid" or "provider_unavailable";
 
     /// <summary>The exception for a stable code. Unknown codes map to this type and keep their code.</summary>
     public static SourceOrreryException ForCode(string code, string message, string hint = "")
@@ -50,6 +50,8 @@ public class SourceOrreryException : Exception
             "manifest" => new ManifestException(message, code, hint),
             "permission_denied" => new PermissionDeniedException(message, code, hint),
             "storage" or "io" => new StorageException(message, code, hint),
+            "unauthenticated" => new UnauthenticatedException(message, code, hint),
+            "provider_unavailable" => new ProviderUnavailableException(message, code, hint),
             _ => new SourceOrreryException(message, code, hint),
         };
     }
@@ -91,8 +93,14 @@ public class SecretExpiredException(string message, string code = "expired", str
 /// <summary><c>crypto</c>: the vault file failed an integrity check.</summary>
 public class IntegrityException(string message, string code = "crypto", string hint = "") : SourceOrreryException(message, code, hint);
 
-/// <summary><c>unsupported</c>: no OS credential store here; use a passphrase.</summary>
+/// <summary><c>unsupported</c>: no OS credential store here (use a passphrase), or a remote provider this build does not include.</summary>
 public class UnsupportedException(string message, string code = "unsupported", string hint = "") : SourceOrreryException(message, code, hint);
+
+/// <summary><c>unauthenticated</c>: the remote provider refused the process's credentials; give it the ones its own tools expect.</summary>
+public class UnauthenticatedException(string message, string code = "unauthenticated", string hint = "") : SourceOrreryException(message, code, hint);
+
+/// <summary><c>provider_unavailable</c>: the remote provider could not be reached; transient, so the call can be retried.</summary>
+public class ProviderUnavailableException(string message, string code = "provider_unavailable", string hint = "") : SourceOrreryException(message, code, hint);
 
 /// <summary><c>invalid_argument</c>: a malformed reference, version or option.</summary>
 public class InvalidArgumentException(string message, string code = "invalid_argument", string hint = "") : SourceOrreryException(message, code, hint);

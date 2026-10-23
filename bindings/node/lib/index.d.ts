@@ -23,6 +23,15 @@ export interface OpenOptions {
   passphraseFile?: string;
   /** Consult `SOURCEORRERY_PASSPHRASE` and `SOURCEORRERY_PASSPHRASE_FILE` (default `true`). */
   environment?: boolean;
+  /**
+   * The `sourceorrery.toml` whose `[vaults.<name>]` tables say which vaults
+   * are remote and where. Default: the nearest one above the current
+   * directory. A vault declared there is opened at its provider, with the
+   * credentials the provider's own tools expect from the environment (the
+   * manifest never holds any); a vault without a table is a local file.
+   * `Project.load` ignores it and uses the manifest it loads.
+   */
+  manifest?: string;
 }
 
 /** Metadata of one version. Never contains the value. */
@@ -173,6 +182,10 @@ export class InvalidNameError extends InvalidArgumentError {}
 export class ManifestError extends SourceOrreryError {}
 export class PermissionDeniedError extends SourceOrreryError {}
 export class StorageError extends SourceOrreryError {}
+/** `unauthenticated`: the remote provider has no credentials for this process, or they expired. */
+export class UnauthenticatedError extends SourceOrreryError {}
+/** `provider_unavailable`: the remote provider could not be reached. `transient` is true. */
+export class ProviderUnavailableError extends SourceOrreryError {}
 
 /** The error instance for a stable code; unknown codes keep their code. */
 export function errorFor(code: string, message: string, hint?: string): SourceOrreryError;

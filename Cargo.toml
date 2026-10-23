@@ -7,6 +7,9 @@ members = [
     "crates/sourceorrery-cli",
     "crates/sourceorrery",
     "crates/sourceorrery-ffi",
+    "crates/sourceorrery-provider",
+    "crates/sourceorrery-provider-vault",
+    "crates/sourceorrery-provider-aws",
     "tests/conformance",
 ]
 # Native extension crates build with their own toolchains (maturin, napi)
@@ -28,11 +31,16 @@ sourceorrery-core = { path = "crates/sourceorrery-core", version = "0.1.4" }
 sourceorrery-crypto = { path = "crates/sourceorrery-crypto", version = "0.1.4" }
 sourceorrery-storage = { path = "crates/sourceorrery-storage", version = "0.1.4", default-features = false }
 sourceorrery = { path = "crates/sourceorrery", version = "0.1.4", default-features = false }
+sourceorrery-provider = { path = "crates/sourceorrery-provider", version = "0.1.4" }
+sourceorrery-provider-vault = { path = "crates/sourceorrery-provider-vault", version = "0.1.4" }
+sourceorrery-provider-aws = { path = "crates/sourceorrery-provider-aws", version = "0.1.4" }
 
 # shared
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+async-trait = "0.1"
+tokio = { version = "1", default-features = false }
 zeroize = { version = "1.9", features = ["derive"] }
 time = { version = "0.3", features = ["serde-well-known", "formatting", "parsing", "macros"] }
 hex = "0.4"

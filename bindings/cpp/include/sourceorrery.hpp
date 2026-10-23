@@ -49,6 +49,8 @@ enum class ErrorKind {
     Storage,
     Io,
     Unsupported,
+    Unauthenticated,
+    ProviderUnavailable,
     Internal,
     Other,
 };
@@ -72,6 +74,8 @@ inline ErrorKind kind_for_code(std::string_view code) noexcept {
     if (code == "storage") return ErrorKind::Storage;
     if (code == "io") return ErrorKind::Io;
     if (code == "unsupported") return ErrorKind::Unsupported;
+    if (code == "unauthenticated") return ErrorKind::Unauthenticated;
+    if (code == "provider_unavailable") return ErrorKind::ProviderUnavailable;
     if (code == "internal") return ErrorKind::Internal;
     return ErrorKind::Other;
 }
@@ -93,8 +97,11 @@ public:
     /// What to do about it; empty when nothing specific applies.
     const std::string& hint() const noexcept { return hint_; }
     ErrorKind kind() const noexcept { return kind_; }
-    /// True when retrying later could succeed without administrative action.
-    bool transient() const noexcept { return kind_ == ErrorKind::NotYetValid; }
+    /// True when retrying later could succeed without administrative action:
+    /// `not_yet_valid` and `provider_unavailable`.
+    bool transient() const noexcept {
+        return kind_ == ErrorKind::NotYetValid || kind_ == ErrorKind::ProviderUnavailable;
+    }
     /// True for `disabled`, `not_yet_valid` and `expired`.
     bool policy() const noexcept {
         return kind_ == ErrorKind::Disabled || kind_ == ErrorKind::NotYetValid ||
@@ -124,8 +131,16 @@ class SecretDeletedError : public Error { using Error::Error; };
 class PolicyError : public Error { using Error::Error; };
 /// `crypto`.
 class IntegrityError : public Error { using Error::Error; };
-/// `unsupported`.
+/// `unsupported`: this platform or build lacks what the operation needs (an
+/// OS credential store, a remote provider).
 class UnsupportedError : public Error { using Error::Error; };
+/// `unauthenticated`: the remote provider has no credentials for this
+/// process, or they expired; they come from the provider's own environment,
+/// never from the manifest.
+class UnauthenticatedError : public Error { using Error::Error; };
+/// `provider_unavailable`: the remote provider could not be reached or
+/// answered with a server error. Transient.
+class ProviderUnavailableError : public Error { using Error::Error; };
 /// `invalid_argument`, `invalid_name`.
 class InvalidArgumentError : public Error { using Error::Error; };
 /// `manifest`.
@@ -157,6 +172,8 @@ inline std::string c_string(const char* text) { return text == nullptr ? std::st
     case ErrorKind::Expired: throw PolicyError(code, message, hint);
     case ErrorKind::Crypto: throw IntegrityError(code, message, hint);
     case ErrorKind::Unsupported: throw UnsupportedError(code, message, hint);
+    case ErrorKind::Unauthenticated: throw UnauthenticatedError(code, message, hint);
+    case ErrorKind::ProviderUnavailable: throw ProviderUnavailableError(code, message, hint);
     case ErrorKind::InvalidArgument:
     case ErrorKind::InvalidName: throw InvalidArgumentError(code, message, hint);
     case ErrorKind::Manifest: throw ManifestError(code, message, hint);
@@ -166,6 +183,23 @@ inline std::string c_string(const char* text) { return text == nullptr ? std::st
 
 inline void check(so_status status) {
     if (status != SO_STATUS_OK) throw_last_error(status);
+}
+
+/// The error for a library whose C ABI version is `found`, or none when it
+/// matches the `SO_ABI_VERSION` of the header this SDK was compiled
+/// against. Its code, `abi_mismatch`, is produced by the SDK itself, never
+/// by the core (ADR 0007).
+inline std::optional<Error> abi_mismatch(uint32_t found) {
+    if (found == SO_ABI_VERSION) return std::nullopt;
+    return Error("abi_mismatch",
+                 "the SourceOrrery native library implements C ABI version " + std::to_string(found) +
+                     "; this SDK was built for version " + std::to_string(SO_ABI_VERSION),
+                 "install the sourceorrery-ffi library of the release this SDK version belongs to");
+}
+
+/// Refuse a library built for another C ABI version before anything is opened.
+inline void require_abi() {
+    if (auto err = abi_mismatch(so_abi_version())) throw *err;
 }
 
 inline const uint8_t* ptr(std::string_view text) noexcept {
@@ -334,11 +368,18 @@ struct OpenOptions {
     std::optional<std::string> passphrase_file;
     /// Consult SOURCEORRERY_PASSPHRASE and SOURCEORRERY_PASSPHRASE_FILE.
     bool environment = true;
+    /// The sourceorrery.toml whose `[vaults.<name>]` tables say which vaults
+    /// are remote and where; nullopt uses the nearest one above the current
+    /// directory. A vault with a table is opened at its provider instead of
+    /// as a local file. Credentials come from the provider's own
+    /// environment, never from the manifest.
+    std::optional<std::string> manifest;
 
     std::string to_json() const {
         std::string json = "{";
         if (home) json += "\"home\":" + detail::json_escape(*home) + ",";
         if (passphrase_file) json += "\"passphrase_file\":" + detail::json_escape(*passphrase_file) + ",";
+        if (manifest) json += "\"manifest\":" + detail::json_escape(*manifest) + ",";
         json += std::string("\"environment\":") + (environment ? "true" : "false") + "}";
         return json;
     }
@@ -351,6 +392,7 @@ public:
     /// Open `vault`: OS credential store, then options.passphrase, then
     /// SOURCEORRERY_PASSPHRASE, then the passphrase file. Never prompts.
     static Reader open(std::string_view vault, const OpenOptions& options = {}) {
+        detail::require_abi();
         const std::string json = options.to_json();
         so_reader* handle = nullptr;
         detail::check(so_reader_open(detail::ptr(vault), vault.size(), detail::ptr(json), json.size(),
@@ -444,6 +486,7 @@ public:
     /// Load `manifest` (nullopt: the nearest sourceorrery.toml above the
     /// current directory). Options apply to every vault the manifest names.
     static Project load(std::optional<std::string> manifest = std::nullopt, const OpenOptions& options = {}) {
+        detail::require_abi();
         const std::string json = options.to_json();
         so_project* handle = nullptr;
         detail::check(so_project_load(detail::opt_ptr(manifest), detail::opt_len(manifest), detail::ptr(json),

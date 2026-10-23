@@ -78,7 +78,14 @@ int main() {
 the vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`, then
 `SOURCEORRERY_PASSPHRASE_FILE` unlock it. `Reader::open(vault, options)`
 takes a `sourceorrery::OpenOptions{home, passphrase, passphrase_file,
-environment}`.
+environment, manifest}`. `manifest` names the `sourceorrery.toml` whose
+`[vaults.<name>]` tables say which vaults are remote and at which provider
+(default: the nearest one above the current directory); a vault with such
+a table is opened at its provider instead of as a local file. Credentials
+come from the provider's own environment, never from the manifest: [HashiCorp
+Vault](../providers/hashicorp-vault.md) takes `VAULT_TOKEN` or the other
+sources it documents, [AWS Secrets Manager](../providers/aws-secrets-manager.md)
+the AWS default credential chain.
 
 | Call | Returns |
 |------|---------|
@@ -104,8 +111,11 @@ subclass: `VaultNotFoundError`, `VaultLockedError`,
 (also `version_not_found`), `SecretDeletedError`, `PolicyError`
 (`disabled`, `not_yet_valid`, `expired`), `IntegrityError`,
 `UnsupportedError`, `InvalidArgumentError` (also `invalid_name`),
-`ManifestError`. Each has `code()`, `message()`, `hint()`, `kind()`,
-`transient()` and `policy()`. See [the SDK overview](index.md#errors).
+`ManifestError`, `UnauthenticatedError` (the remote provider has no
+credentials for this process), `ProviderUnavailableError` (it could not be
+reached). Each has `code()`, `message()`, `hint()`, `kind()`,
+`transient()` (true for `not_yet_valid` and `provider_unavailable`) and
+`policy()`. See [the SDK overview](index.md#errors).
 
 ## Load a project
 

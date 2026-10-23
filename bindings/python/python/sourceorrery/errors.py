@@ -27,6 +27,8 @@ __all__ = [
     "ManifestError",
     "PermissionDeniedError",
     "StorageError",
+    "UnauthenticatedError",
+    "ProviderUnavailableError",
     "error_for",
 ]
 
@@ -55,7 +57,7 @@ class SourceOrreryError(Exception):
     @property
     def transient(self) -> bool:
         """True when retrying later could succeed without administrative action."""
-        return self.code == "not_yet_valid"
+        return self.code in _TRANSIENT_CODES
 
 
 class VaultNotFoundError(SourceOrreryError):
@@ -165,6 +167,26 @@ class StorageError(SourceOrreryError):
     default_code = "storage"
 
 
+class UnauthenticatedError(SourceOrreryError):
+    """``unauthenticated``: the remote provider has no credentials for this
+    process, or they expired; give it credentials the way its own tools
+    expect them (the manifest never holds any)."""
+
+    default_code = "unauthenticated"
+
+
+class ProviderUnavailableError(SourceOrreryError):
+    """``provider_unavailable``: the remote provider could not be reached or
+    answered with a server error. Transient: the call can be retried."""
+
+    default_code = "provider_unavailable"
+
+
+#: Codes for which :attr:`SourceOrreryError.transient` is true (mirrors
+#: ``SecretError::is_transient`` in the core).
+_TRANSIENT_CODES = frozenset({"not_yet_valid", "provider_unavailable"})
+
+
 _BY_CODE: dict[str, type[SourceOrreryError]] = {
     "vault_not_found": VaultNotFoundError,
     "locked": VaultLockedError,
@@ -184,6 +206,8 @@ _BY_CODE: dict[str, type[SourceOrreryError]] = {
     "permission_denied": PermissionDeniedError,
     "storage": StorageError,
     "io": StorageError,
+    "unauthenticated": UnauthenticatedError,
+    "provider_unavailable": ProviderUnavailableError,
 }
 
 

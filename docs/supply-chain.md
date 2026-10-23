@@ -30,6 +30,19 @@ itself.
   against the committed `Cargo.lock` (the Python and Node extensions have
   lock files of their own) and with `npm ci` against `package-lock.json`.
   A dependency changes only in a commit that changes a lock file.
+* **Pinned actions, automated updates.** Every third-party GitHub Action
+  the workflows use is referenced by the full commit SHA of a release,
+  with the version as a comment, so a moved or compromised tag cannot
+  change what runs in CI or in a release build. Dependabot
+  (`.github/dependabot.yml`) opens a weekly grouped pull request per
+  ecosystem for the actions and for the Rust, npm, Python, NuGet and
+  Maven dependencies (Rust lock files only; a range change is a deliberate
+  commit), and the `workflows` CI job runs zizmor over `.github/` so an
+  unpinned action or a shell step that expands an input fails the gate.
+* **Bills of materials and auditable binaries.** Every release carries a
+  CycloneDX document per shipped binary and target, and the CLI and the C
+  ABI library are built with `cargo auditable`, which embeds their
+  dependency list in the binary ([below](#software-bill-of-materials)).
 * **Immutable versions.** The workflow refuses a tag that already exists.
   A version is never rebuilt or replaced; a mistake is fixed by the next
   patch version.
@@ -60,7 +73,10 @@ way, from `release.yml` or `ReleasePackages.yaml` in
 | Maven Central | `ai.sourceorrery:sourceorrery` | A Central user token (Central has no trusted publishing); every file signed with the release key | The `.asc` signature next to each file |
 | Go module proxy | `github.com/netizine/sourceorrery/bindings/go` | Nothing uploaded: the tag `bindings/go/vX.Y.Z` | The Go checksum database |
 | Packagist | `sourceorrery/sourceorrery` | Nothing uploaded: the tag `vX.Y.Z` | The commit recorded in `composer.lock` |
-| GitHub Release | CLI and C ABI archives, wheels, jar, `.nupkg`, npm tarballs | The release workflow | `SHA256SUMS` and the workflow run linked from the release |
+| GitHub Release | CLI and C ABI archives, wheels, jar, `.nupkg`, npm tarballs, `SHA256SUMS` | The release workflow | A build provenance attestation per file (`gh attestation verify`), `SHA256SUMS`, and the workflow run linked from the release |
+| Homebrew tap | `sourceorrery` in `Netizine/homebrew-sourceorrery` | Nothing uploaded: the release workflow commits a formula naming the release archive for each platform and its SHA-256 | Homebrew checks the hash before installing; the formula is a readable file in the tap |
+| Scoop bucket | `sourceorrery` in `Netizine/scoop-sourceorrery` | Nothing uploaded: the release workflow commits a manifest naming the release archives and their SHA-256 | Scoop checks the hash before installing |
+| WinGet | `Netizine.SourceOrrery` | A pull request on `microsoft/winget-pkgs` with manifests naming the release archives and their SHA-256, validated there | WinGet checks `InstallerSha256` before installing |
 
 The wheels and sdist on PyPI, the npm tarballs and the jar on Maven
 Central are byte for byte the files attached to the GitHub Release, so
@@ -169,11 +185,67 @@ git ls-remote https://github.com/Netizine/sourceorrery refs/tags/v0.1.4
 
 ### Release archives
 
-Check every download against `SHA256SUMS`, as
-[Getting started](https://sourceorrery.ai/getting-started/) shows for the
-CLI. The file sits next to the archives, so it proves the download is
-intact, not that the release is authentic; for the files that are also on
-a registry, compare with the registry's hash as above.
+Every file on a GitHub Release, `SHA256SUMS` included, carries a **build
+provenance attestation**: a statement signed through Sigstore in the
+release workflow run, stored with the repository, naming the file's
+SHA-256, the commit and the workflow that built it. Check a download
+against it with the GitHub CLI (signed in, or `--owner` for a public
+repository without signing in):
+
+```bash
+gh attestation verify sourceorrery-0.1.4-x86_64-unknown-linux-gnu.tar.gz --repo Netizine/sourceorrery
+```
+
+The command fails for a file that was altered after the build or that did
+not come out of `release.yml` in `Netizine/sourceorrery`. It proves origin
+on a GitHub-hosted runner; it does not make the code safe, and no
+reproducible-build claim is made. The attestations are listed under
+*Attestations* on the repository's *Actions* tab as well.
+
+`SHA256SUMS` next to the archives proves a download is intact without the
+GitHub CLI, as [Getting started](https://sourceorrery.ai/getting-started/)
+shows; for the files that are also on a registry, compare with the
+registry's hash as above.
+
+### Software bill of materials
+
+Every GitHub Release carries one [CycloneDX](https://cyclonedx.org) 1.5
+document (`*.cdx.json`) per shipped binary and target, listed in
+`SHA256SUMS` and covered by the provenance attestation like every other
+file:
+
+| File | Describes |
+|------|-----------|
+| `sourceorrery-X.Y.Z-<target>.cdx.json` | the `sourceorrery` CLI binary in the archive of the same name |
+| `sourceorrery-ffi-X.Y.Z-<target>.cdx.json` | the C ABI library (`libsourceorrery_ffi.*`, `sourceorrery_ffi.dll`) in the `sourceorrery-ffi` archive, and the same library as embedded in the Java jar, the .NET package and the Go, C, C++ and PHP SDKs |
+| `sourceorrery-python-X.Y.Z-<target>.cdx.json` | the extension module inside the Python wheel for that platform |
+| `sourceorrery-node-X.Y.Z-<target>.cdx.json` | the addon inside the `@sourceorreryai/sdk-<platform>` package |
+
+Each lists every Rust crate compiled into that binary for that target,
+with name, version, licence and
+[package URL](https://github.com/package-url/purl-spec) (`pkg:cargo/…`),
+and the dependency graph between them; build-time-only dependencies are
+left out. The documents are rendered from the lock files by
+`cargo cyclonedx` in the release workflow, so they describe exactly what
+`cargo --locked` built. The language-level wrappers around the C ABI (the
+jar, the NuGet package, the npm main package, the Go module, the PHP
+package) have no third-party runtime dependencies of their own, so no
+separate document is published for them.
+
+```bash
+jq -r '.components[] | "\(.name) \(.version) \(.licenses[0].license.id // "")"' sourceorrery-0.2.0-x86_64-unknown-linux-gnu.cdx.json
+```
+
+The CLI and the C ABI library are also built with
+[`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable),
+which embeds the same dependency list in the binary itself, so a binary
+on disk can be checked against the RustSec advisory database without its
+SBOM:
+
+```bash
+cargo install cargo-audit --locked
+cargo audit bin ./sourceorrery
+```
 
 ## What SourceOrrery changes in your own supply chain
 
@@ -207,20 +279,17 @@ It does not change these limits:
 ## Not done yet
 
 > [!WARNING]
-> Checksums and provenance do not establish that code is safe. The release
-> archives are not signed, the binaries are not notarised or
-> Authenticode-signed, and no reproducible-build claim is made.
+> Checksums and provenance do not establish that code is safe. The
+> binaries are not notarised or Authenticode-signed, and no
+> reproducible-build claim is made.
 
 * Maven Central is published with a stored user token, because Central
   offers no trusted publishing; its files are GPG-signed instead.
-* The release archives have checksums but no signature or build
-  attestation.
 * macOS binaries are not signed or notarised; Windows binaries are not
   Authenticode-signed.
-* The workflows refer to third-party GitHub Actions by version tag rather
-  than by commit, and dependency updates are not automated.
-* There is no software bill of materials and no claim of reproducible
-  builds.
+* No claim of reproducible builds is made: an SBOM and an attestation say
+  what was built from which commit, not that a second build would be
+  byte-for-byte the same.
 
 These are on the [roadmap](roadmap.md). To report a package you suspect
 was tampered with, follow the
