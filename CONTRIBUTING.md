@@ -16,8 +16,8 @@ agents can trust. A few rules keep that trust intact.
    contract with every SDK. Add new ones; never rename or reuse.
 4. **No cryptography of our own.** Audited primitives only, wrapped in
    `sourceorrery-crypto`. Changes there need a second reviewer.
-5. **Names are Azure Key Vault compatible** so vaults can be mirrored to a
-   managed service later.
+5. **Names are portable** (letters, digits, hyphens; at most 127) so vaults
+   can be mirrored to a managed secrets service.
 
 ## Development
 

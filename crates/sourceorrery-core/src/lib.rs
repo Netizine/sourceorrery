@@ -9,8 +9,10 @@
 //! its async shape, [`AsyncSecretClient`], for backends that wait on the
 //! network).
 //!
-//! The model is deliberately close to Azure Key Vault's `SecretClient` so the
-//! mental model is familiar, while remaining independent of Azure itself.
+//! The model follows the `SecretClient` shape of the managed cloud secrets
+//! services (immutable versions, enable and disable, time windows, soft
+//! delete and recovery), so the mental model is familiar, while depending
+//! on none of them.
 //!
 //! ## Guarantees that belong to this crate
 //!

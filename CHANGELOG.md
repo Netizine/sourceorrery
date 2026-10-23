@@ -39,7 +39,7 @@ uses [Semantic Versioning](https://semver.org/).
   the SDK harness's new `--remote` scenarios.
 * Remote vaults in the manifest: a `[vaults.<name>]` table in
   `sourceorrery.toml` names a provider (`hashicorp-vault`,
-  `aws-secrets-manager`, `azure-key-vault`) and its addressing keys, and
+  `aws-secrets-manager`) and its addressing keys, and
   nothing else: there is no credential key, and an unknown key is a parse
   error. `SecretReader::open` resolves a vault name through the nearest
   manifest or the one `OpenOptions::manifest` names, `so_reader_open`
@@ -205,17 +205,17 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [0.1.3] - 2026-10-21
 
-The first release: an encrypted local secrets vault with an Azure Key
-Vault–style lifecycle, a CLI and an interactive vault manager, read-only
+The first release: an encrypted local secrets vault with a
+cloud-secrets-manager-style lifecycle, a CLI and an interactive vault manager, read-only
 SDKs for ten languages over one Rust core, and a release pipeline to every
 package registry.
 
 ### Added — core and encrypted vault
 
-* `sourceorrery-core`: the `SecretClient` contract modelled on Azure Key
-  Vault (set → a new immutable version, get the newest accessible version,
-  metadata-only listing, property updates, soft delete, recover, purge,
-  audit), stable append-only error codes, Azure Key Vault naming rules,
+* `sourceorrery-core`: the `SecretClient` contract modelled on the managed
+  cloud secrets services (set → a new immutable version, get the newest
+  accessible version, metadata-only listing, property updates, soft delete,
+  recover, purge, audit), stable append-only error codes, portable naming rules,
   enforced `not_before` / `expires_on`, `SecretBytes` (zeroising, redacted,
   never serialisable), `sourceorrery://` references and the
   `sourceorrery.toml` manifest, which cannot hold a value and whose errors

@@ -60,6 +60,7 @@ pub fn open_remote(name: &str, config: &RemoteVault) -> Result<Remote> {
                 descriptor,
             })
         }
+        #[cfg(not(all(feature = "provider-vault", feature = "provider-aws")))]
         provider => Err(not_built_in(name, provider)),
     }
 }

@@ -213,7 +213,7 @@ pub struct SecretNameArgs {
 
 #[derive(Debug, Args)]
 pub struct SecretSetArgs {
-    /// Secret name (letters, digits, hyphens; Azure Key Vault compatible).
+    /// Secret name (letters, digits, hyphens; at most 127 characters).
     pub name: String,
     /// Read the value from standard input (automatic when stdin is not a terminal).
     #[arg(long)]

@@ -20,24 +20,17 @@ pub enum Provider {
     HashicorpVault,
     /// AWS Secrets Manager.
     AwsSecretsManager,
-    /// Azure Key Vault.
-    AzureKeyVault,
 }
 
 impl Provider {
     /// Every provider, in the order they are documented.
-    pub const ALL: [Self; 3] = [
-        Self::HashicorpVault,
-        Self::AwsSecretsManager,
-        Self::AzureKeyVault,
-    ];
+    pub const ALL: [Self; 2] = [Self::HashicorpVault, Self::AwsSecretsManager];
 
     /// The manifest's `provider = "..."` value and the Cargo feature suffix.
     pub fn name(self) -> &'static str {
         match self {
             Self::HashicorpVault => "hashicorp-vault",
             Self::AwsSecretsManager => "aws-secrets-manager",
-            Self::AzureKeyVault => "azure-key-vault",
         }
     }
 
@@ -51,7 +44,6 @@ impl Provider {
         match self {
             Self::HashicorpVault => "HashiCorp Vault",
             Self::AwsSecretsManager => "AWS Secrets Manager",
-            Self::AzureKeyVault => "Azure Key Vault",
         }
     }
 
@@ -61,7 +53,6 @@ impl Provider {
         match self {
             Self::HashicorpVault => "the Vault server's audit devices",
             Self::AwsSecretsManager => "AWS CloudTrail",
-            Self::AzureKeyVault => "Azure Monitor (Key Vault diagnostic logs)",
         }
     }
 }
@@ -103,11 +94,6 @@ pub enum RemoteVault {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         endpoint_url: Option<String>,
     },
-    /// `provider = "azure-key-vault"`.
-    AzureKeyVault {
-        /// The vault's URL, `https://<name>.vault.azure.net`.
-        vault_url: String,
-    },
 }
 
 impl RemoteVault {
@@ -116,7 +102,6 @@ impl RemoteVault {
         match self {
             Self::HashicorpVault { .. } => Provider::HashicorpVault,
             Self::AwsSecretsManager { .. } => Provider::AwsSecretsManager,
-            Self::AzureKeyVault { .. } => Provider::AzureKeyVault,
         }
     }
 
@@ -147,7 +132,6 @@ impl RemoteVault {
                 }
                 location
             }
-            Self::AzureKeyVault { vault_url } => vault_url.clone(),
         }
     }
 
@@ -161,8 +145,7 @@ impl RemoteVault {
                 mount,
                 namespace,
             } => {
-                validate_url(address, &["http://", "https://"])
-                    .map_err(|reason| invalid("address", reason))?;
+                validate_url(address).map_err(|reason| invalid("address", reason))?;
                 if mount.is_empty() || mount.starts_with('/') || mount.ends_with('/') {
                     return Err(invalid(
                         "mount",
@@ -179,8 +162,7 @@ impl RemoteVault {
                 endpoint_url,
             } => {
                 if let Some(endpoint) = endpoint_url {
-                    validate_url(endpoint, &["http://", "https://"])
-                        .map_err(|reason| invalid("endpoint_url", reason))?;
+                    validate_url(endpoint).map_err(|reason| invalid("endpoint_url", reason))?;
                 }
                 let shape_ok = !region.is_empty()
                     && region
@@ -198,24 +180,19 @@ impl RemoteVault {
                     return Err(invalid("prefix", "must not be empty when given"));
                 }
             }
-            Self::AzureKeyVault { vault_url } => {
-                validate_url(vault_url, &["https://"])
-                    .map_err(|reason| invalid("vault_url", reason))?;
-            }
         }
         Ok(())
     }
 }
 
-/// A URL with one of `schemes`, a host and nothing suspicious: no user
-/// info (a `user:password@host` URL is a credential) and no query.
-fn validate_url(url: &str, schemes: &[&str]) -> std::result::Result<(), &'static str> {
-    let Some(rest) = schemes.iter().find_map(|s| url.strip_prefix(s)) else {
-        return Err(if schemes.len() == 1 {
-            "must start with https://"
-        } else {
-            "must start with http:// or https://"
-        });
+/// An `http://` or `https://` URL with a host and nothing suspicious: no
+/// user info (a `user:password@host` URL is a credential) and no query.
+fn validate_url(url: &str) -> std::result::Result<(), &'static str> {
+    let Some(rest) = ["http://", "https://"]
+        .iter()
+        .find_map(|s| url.strip_prefix(s))
+    else {
+        return Err("must start with http:// or https://");
     };
     let authority = rest.split('/').next().unwrap_or_default();
     if authority.is_empty() {
@@ -275,15 +252,6 @@ mod tests {
             assert!(text.contains(expected), "{address}: {text}");
             assert!(!text.contains("hunter2"), "{text}");
         }
-        assert!(
-            RemoteVault::AzureKeyVault {
-                vault_url: "http://insecure.vault.azure.net".to_owned(),
-            }
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("must start with https://")
-        );
     }
 
     #[test]

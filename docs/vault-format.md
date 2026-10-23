@@ -45,7 +45,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 
 | column | meaning |
 |--------|---------|
-| `name` | primary key, Azure Key Vault naming rules |
+| `name` | primary key, the secret naming rules (letters, digits, hyphens; at most 127) |
 | `created_on` | first version's time |
 | `deleted_on` | NULL while live |
 | `scheduled_purge_on` | `deleted_on + retention` |

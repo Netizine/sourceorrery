@@ -8,7 +8,7 @@ Two obvious designs: (a) store each secret directly in the OS credential
 store (Credential Manager, Keychain, Secret Service); (b) store secrets in
 our own encrypted file and use the OS store only to protect the file's key.
 
-(a) gives platform at-rest protection for free but none of the Key Vault
+(a) gives platform at-rest protection for free but none of the secrets-manager
 semantics: no versions, retention, policy fields, audit, or consistent
 cross-platform behaviour (Credential Manager limits blob size; Secret Service
 may be absent on servers). Each platform would behave differently.

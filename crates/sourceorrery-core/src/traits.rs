@@ -10,7 +10,7 @@ use crate::secret::{
 
 /// Everything a secret backend must be able to do.
 ///
-/// Modelled on Azure Key Vault's `SecretClient`. Semantics every
+/// Modelled on the `SecretClient` of managed cloud secrets services. Semantics every
 /// implementation must honour (the conformance suite checks them):
 ///
 /// * `set_secret` on an existing name creates a **new immutable version**;
@@ -134,7 +134,7 @@ pub trait SecretClient {
 /// The same operations with the same semantics (the table on
 /// [`SecretClient`] is the contract for both shapes); only the calling
 /// convention differs. Remote providers (HashiCorp Vault, AWS Secrets
-/// Manager, Azure Key Vault) implement this trait; the local vault stays
+/// Manager) implement this trait; the local vault stays
 /// synchronous. The adapters in the `sourceorrery-provider` crate turn one
 /// shape into the other, so the CLI, the C ABI and the conformance suite
 /// run unchanged against any backend.

@@ -11,7 +11,6 @@ the provider's own service is the remote end.
 |----------|--------------|-----------------|--------|
 | [HashiCorp Vault](hashicorp-vault.md), KV v2 | `"hashicorp-vault"` | `address` (`http://` or `https://`), `mount`, optional `namespace` | shipped (0.3.0) |
 | [AWS Secrets Manager](aws-secrets-manager.md) | `"aws-secrets-manager"` | `region`, optional `prefix`, optional `endpoint_url` | shipped (0.3.0) |
-| Azure Key Vault | `"azure-key-vault"` | `vault_url` (`https://`) | planned (milestone 4.5) |
 
 Opening a vault whose provider this build leaves out (its Cargo feature
 off) fails with `unsupported`, naming the provider; a provider that has not
@@ -43,10 +42,6 @@ provider = "aws-secrets-manager"
 region = "eu-west-1"
 prefix = "myapp/"                     # every secret name is placed under it
 # endpoint_url = "http://localhost:4566"   # a private endpoint or an emulator
-
-[vaults.azure-shared]
-provider = "azure-key-vault"
-vault_url = "https://myapp-kv.vault.azure.net"
 ```
 
 A vault name without a table is a local vault file, so a manifest written
@@ -56,15 +51,13 @@ before remote vaults existed is valid and means what it meant.
 the keys above; any other key (`token`, `access_key_id`, `client_secret`, a
 sub-table, a key from another provider) is a parse error that names the key
 and never repeats the text. A URL with user information
-(`https://user:pass@host`) or a query string is refused, as is `http://` for
-Azure Key Vault. Credentials come from where the provider's own tools find
-them:
+(`https://user:pass@host`) or a query string is refused. Credentials come
+from where the provider's own tools find them:
 
 | Provider | Credentials |
 |----------|-------------|
 | HashiCorp Vault | `VAULT_TOKEN`, or `vault login` for the identity the process runs as |
 | AWS Secrets Manager | the AWS default credential chain: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, an instance or task role, or a web identity |
-| Azure Key Vault | `az login`, a managed identity, or the `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_FEDERATED_TOKEN_FILE` workload-identity variables |
 
 ## Opening a remote vault
 
@@ -99,5 +92,4 @@ report as their base error type with the code preserved:
 A provider's "forbidden" is the existing `permission_denied`, a missing
 secret `not_found`, and a provider this build does not include
 `unsupported`. `audit_events` on a remote vault is `unsupported` too: the
-provider's own service keeps the log (Vault audit devices, CloudTrail,
-Azure Monitor).
+provider's own service keeps the log (Vault audit devices, CloudTrail).

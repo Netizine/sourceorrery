@@ -198,7 +198,7 @@ could be:
 
 ```toml
 [vaults.payments-sandbox]
-provider = "hashicorp-vault"                 # or aws-secrets-manager, azure-key-vault
+provider = "hashicorp-vault"                 # or aws-secrets-manager
 address = "https://vault.example.com:8200"
 mount = "secret"
 ```

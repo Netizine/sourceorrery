@@ -6,7 +6,7 @@
 
 SourceOrrery's contract, `SecretClient`, is synchronous because its one
 backend is a local encrypted file. Milestone 4 adds remote backends,
-HashiCorp Vault, AWS Secrets Manager and Azure Key Vault, whose every
+HashiCorp Vault and AWS Secrets Manager, whose every
 operation waits on the network. Applications that use those services are
 largely async Rust, while the CLI, the C ABI and every SDK built on it are
 synchronous and must keep working unchanged against any backend. There is
@@ -56,15 +56,15 @@ Providers that speak HTTP use `reqwest` with `rustls-tls` only, never
 OpenSSL, so the Linux release archives stay free of system TLS libraries.
 
 **Features.** The provider crates are optional dependencies behind Cargo
-features `remote` (all providers) and `provider-vault`, `provider-aws`,
-`provider-azure` in `sourceorrery` and the CLI, on by default in the CLI,
+features `remote` (all providers) and `provider-vault`, `provider-aws` in
+`sourceorrery` and the CLI, on by default in the CLI,
 the Rust SDK and the release archives of the C ABI, so `sourceorrery run`
 and every SDK reach a remote vault out of the box; `--no-default-features`
 builds stay local-only for size. The features are introduced with the first
 provider (M4.3), when there is something for them to gate.
 
 **Audit on a remote backend.** The provider's own service holds the audit
-trail (Vault audit devices, CloudTrail, Azure Monitor). `audit_events` on a
+trail (Vault audit devices, CloudTrail). `audit_events` on a
 remote client returns `unsupported` with a hint naming where the log is;
 the metadata-read recording the local vault does is not emulated. How both
 logs are collected is M4.8.

@@ -6,8 +6,8 @@ description: Install SourceOrrery 0.1.4 from the package registries, the GitHub 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 import Aside from '../../components/Aside.astro';
 
-SourceOrrery 0.1.4 is an encrypted local vault with an Azure Key
-Vault–style lifecycle, a CLI with an interactive vault manager, and
+SourceOrrery 0.1.4 is an encrypted local vault with a
+cloud-secrets-manager-style lifecycle, a CLI with an interactive vault manager, and
 read-only [SDKs](/sdks/) for Python, JavaScript/TypeScript, Rust, Java,
 .NET, Go, C, C++ and PHP. It works on Windows, macOS and Linux.
 
@@ -292,7 +292,7 @@ development credential for the walkthrough.
    sourceorrery secret set tls-key --from-file ./server.key --vault development
    ```
 
-   Names follow Azure Key Vault rules: letters, digits and hyphens, at most
+   Names are letters, digits and hyphens, at most
    127 characters.
 
 3. **Inspect without revealing.**

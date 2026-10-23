@@ -1,7 +1,7 @@
 # SourceOrrery — notes for coding agents
 
 SourceOrrery is a Rust workspace: an encrypted local secrets vault with an
-Azure Key Vault–style lifecycle API and a CLI. Read `docs/architecture.md`
+cloud-secrets-manager-style lifecycle API and a CLI. Read `docs/architecture.md`
 and `docs/threat-model.md` before changing anything security-relevant.
 
 ## Layout
@@ -140,7 +140,7 @@ Docker validates Linux (`rust:1-bookworm` needs `libdbus-1-dev pkg-config`).
 
 - Rust 2024 edition, `#![forbid(unsafe_code)]` in every crate.
 - Timestamps: RFC 3339 at the edges, Unix nanoseconds (i64) in SQLite.
-- Secret names: Azure Key Vault rules (letters, digits, hyphens; max 127).
+- Secret names: letters, digits, hyphens; max 127 (portable to the managed cloud secrets services).
   Vault names: lowercase, digits, hyphens; max 64.
 - Keep docs in `docs/` in sync with behaviour; `docs/cli.md` is the CLI
   reference.

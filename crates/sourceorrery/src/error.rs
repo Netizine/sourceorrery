@@ -250,11 +250,6 @@ fn credentials_hint(provider: Provider) -> &'static str {
              AWS_SECRET_ACCESS_KEY, AWS_PROFILE, an instance or task role, or a web identity; \
              the manifest holds the region only"
         }
-        Provider::AzureKeyVault => {
-            "Sign in with `az login`, or give the process a managed identity or the \
-             AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE workload-identity \
-             variables; the manifest holds the vault URL only"
-        }
     }
 }
 
@@ -531,12 +526,12 @@ mod tests {
             &SecretError::Unsupported("not built".into()),
             &Context {
                 vault: Some("prod"),
-                provider: Some(Provider::AzureKeyVault),
+                provider: Some(Provider::AwsSecretsManager),
                 ..Context::default()
             },
         );
         assert!(
-            err.hint().contains("Azure Key Vault provider"),
+            err.hint().contains("AWS Secrets Manager provider"),
             "{}",
             err.hint()
         );

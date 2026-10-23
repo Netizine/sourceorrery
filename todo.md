@@ -584,7 +584,7 @@ here changes the vault file or the C ABI's existing declarations.
 | M4.2 | Remote vaults in the manifest and the client: `[vaults.<name>]`, provider selection, error codes | manifest shape sign-off | M |
 | M4.3 | HashiCorp Vault (KV v2) provider | nothing: a Vault dev server runs in CI | L |
 | M4.4 | AWS Secrets Manager provider | nothing: LocalStack runs in CI | L |
-| M4.5 | Azure Key Vault provider | a test Key Vault and a GitHub OIDC federated credential, for a nightly job | L |
+| M4.5 | ~~A third, cloud-account-based provider~~ dropped: no further cloud accounts are paid for (your decision, 2026-10-23) | — | — |
 | M4.6 | Workload identity, RBAC, policy and revocation **through the providers** (re-scoped) | re-scope sign-off | M |
 | M4.7 | Rotation workflows: issue → validate → activate → retire, over any backend | design sign-off | L |
 | M4.8 | Audit export to standard sinks (central collection **without a server**, re-scoped) | re-scope sign-off | M |
@@ -592,16 +592,15 @@ here changes the vault file or the C ABI's existing declarations.
 
 Order: M4.1 and M4.2 first (everything else builds on them), then the
 providers easiest-to-test first (M4.3 Vault, M4.4 AWS, both against local
-emulators in CI; M4.5 Azure has no emulator and waits on your test vault),
-then M4.6 (mostly documentation and federation tests over the providers),
+emulators in CI; M4.5 was dropped), then M4.6 (mostly documentation and federation tests over the providers),
 M4.7 and M4.8 in either order, M4.9 last.
 
 Every PR follows the Part 1 rules, plus: a new provider passes the
 lifecycle conformance suite through the blocking adapter before it is
 called a provider; no value ever appears in a provider's request log,
 error or `Debug` output (the security suite's canary tests run against
-every backend); every new dependency tree is weighed (the AWS and Azure
-SDKs are large), appears in the SBOM, and passes `cargo audit`.
+every backend); every new dependency tree is weighed (the AWS SDK is
+large), appears in the SBOM, and passes `cargo audit`.
 
 ---
 
@@ -636,15 +635,15 @@ the workspace.
   against any provider. `AsyncLocal` implements `AsyncSecretClient` for
   `SqliteVault` through `spawn_blocking`, so async callers get the local
   vault too.
-- **Features.** Cargo feature `remote` (all three providers) and one per
-  provider (`provider-vault`, `provider-aws`, `provider-azure`) in
+- **Features.** Cargo feature `remote` (every provider) and one per
+  provider (`provider-vault`, `provider-aws`) in
   `sourceorrery` and in the CLI, **on by default** in the CLI and in the
   release archives of the C ABI, so `sourceorrery run` and every SDK reach
   a remote vault out of the box; `--no-default-features` builds stay
   local-only for size. Measure the binary and build-time cost in the first
   PR and record it in the ADR.
 - **Audit on remote backends.** The provider's own service holds the audit
-  trail (Vault audit devices, CloudTrail, Azure Monitor). `audit_events`
+  trail (Vault audit devices, CloudTrail). `audit_events`
   on a remote client returns `unsupported` with a hint naming where the
   log is; the metadata-read recording the local vault does is not
   emulated. M4.8 says how to collect from both.
@@ -698,10 +697,10 @@ it can never hold a value.
 **Design (recommended).**
 
 - `sourceorrery.toml` gains `[vaults.<name>]`, one table per remote vault,
-  with `provider = "hashicorp-vault" | "aws-secrets-manager" |
-  "azure-key-vault"` and that provider's addressing keys only: Vault
-  `address`, `mount`, optional `namespace`; AWS `region`, optional
-  `prefix`; Azure `vault_url`. Still `deny_unknown_fields`; no credential
+  with `provider = "hashicorp-vault" | "aws-secrets-manager"` and that
+  provider's addressing keys only: Vault `address`, `mount`, optional
+  `namespace`; AWS `region`, optional `prefix`, optional `endpoint_url`.
+  Still `deny_unknown_fields`; no credential
   key exists, so none can be written there. A vault name with no table is
   local, as today. `[project].vault` and `[secrets.<name>].vault` are
   unchanged, so an existing manifest is valid and means what it meant.
@@ -848,37 +847,15 @@ without a paid licence token.
 
 ---
 
-## M4.5. Azure Key Vault provider
+## M4.5. Dropped
 
-**Mapping.** The closest model to the contract (`SecretClient` is modelled
-on it): versions, `enabled`, `nbf`, `exp`, `content_type`, tags, soft
-delete, recover and purge map one to one; recovery level and retention
-come from the vault's properties.
-
-**Auth.** `azure_identity`'s default credential (environment, managed
-identity, workload identity federation, Azure CLI), with the official
-`azure_security_keyvault_secrets` crate.
-
-**Testing.** Key Vault has no emulator. Recorded-response unit tests cover
-the mapping in every CI run; a **nightly** job (and a manual dispatch)
-runs the conformance suite against a real test vault with a GitHub OIDC
-federated credential and no stored secret, skipped while the variables
-are absent.
-
-**What you need to create.** A test Key Vault (any cheap region; operations
-cost cents), an app registration with a federated credential for this
-repository's `main` branch and the nightly workflow, the role *Key Vault
-Secrets Officer* on that vault, and the repository variables
-`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
-`AZURE_KEYVAULT_URL`.
-
-**Steps.**
-
-- [ ] Crate `sourceorrery-provider-azure` (behind `provider-azure`).
-- [ ] Workflow `providers-nightly.yml` with the Azure job (skipped without
-      the variables), and the recorded-response tests in CI.
-- [ ] Docs: `docs/providers/azure-key-vault.md`; the roadmap's provider
-      line fully ticked.
+A third provider backed by a paid cloud account was planned here. Dropped
+on 2026-10-23 by your decision: the project does not take on another cloud
+account for it, and the name of that service is kept out of the repository
+so nothing suggests support for it. The two shipped providers close the
+roadmap's remote-providers line; a provider that needs no account, or one
+a contributor can test against an emulator, would follow the shape M4.3
+and M4.4 set.
 
 ---
 
@@ -896,10 +873,8 @@ provider and honoured by the client."*
 
 - [ ] Each provider authenticates with the platform identity where one
       exists, with no stored credential: Vault JWT/OIDC and Kubernetes
-      auth, AWS web identity and IMDS, Azure managed and workload
-      identity; CI proves the federated path where it can (the Azure
-      nightly job itself; Vault JWT auth against the dev server with a
-      local JWKS).
+      auth, AWS web identity and IMDS; CI proves the federated path where
+      it can (Vault JWT auth against the dev server with a local JWKS).
 - [ ] A revoked or expired identity is `unauthenticated`, a denied read
       `permission_denied`, both with hints naming the provider's console
       or command; `sourceorrery check` reports, per secret, whether the
@@ -976,8 +951,8 @@ documented."*
 - [ ] OTLP logs over HTTP (`--format otlp --endpoint URL`) behind a
       feature, for collectors that speak it directly; JSON Lines is the
       format Vector, Fluent Bit and friends read without it.
-- [ ] Per provider, where its trail is (Vault audit devices, CloudTrail,
-      Azure Monitor) and the one query that shows SourceOrrery's reads, in
+- [ ] Per provider, where its trail is (Vault audit devices, CloudTrail)
+      and the one query that shows SourceOrrery's reads, in
       the provider's docs page; `sourceorrery audit --vault <remote>`
       prints that pointer instead of an error.
 - [ ] Docs: `docs/cli.md`, `docs/enterprise.md`.

@@ -22,8 +22,9 @@ source code.
   identity, policy and secret lifecycle management.
 * **Cross-platform CLI.** A polished terminal interface on macOS, Windows and
   Linux.
-* **Azure Key Vault–inspired API.** Familiar `SecretClient`, `set_secret`,
-  `get_secret`, versioning and lifecycle operations, independent of Azure.
+* **Cloud-secrets-manager-style API.** Familiar `SecretClient`, `set_secret`,
+  `get_secret`, versioning and lifecycle operations, independent of any one
+  vendor.
 * **Multi-language SDKs.** Read-only clients for Python,
   JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP over one Rust
   implementation (shipped); a standard local protocol with the broker
@@ -168,7 +169,7 @@ differ only where its service cannot express the contract, and documents
 each difference; `audit_events` returning `unsupported` (the service keeps
 its own log) is the one common to all.
 
-A deliberate difference from Azure Key Vault: `not_before` and `expires_on`
+A deliberate difference from the managed cloud secrets services: `not_before` and `expires_on`
 are **enforced** on retrieval, not advisory.
 
 Rotation is intentionally not an operation yet. A new value is not a rotated
@@ -238,7 +239,7 @@ Docker or CI. Removing the last protector is refused.
 | Backend | Status |
 |---------|--------|
 | Encrypted SQLite vault, key in OS store or passphrase | Shipped (milestone 1) |
-| Remote provider (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault, SourceOrrery server) implementing the same contract | Planned (milestone 4) |
+| Remote providers (HashiCorp Vault, AWS Secrets Manager) implementing the same contract ([providers](providers/index.md)) | Shipped (0.3.0) |
 
 Headless Linux servers often have no Secret Service daemon. The fallback is a
 passphrase protector with an independently provisioned secret — never silent
@@ -371,8 +372,8 @@ until a keyring-capable CI matrix exists.
 ## 10. Three decisions made before the first line
 
 1. The Rust core owns all secret-management semantics.
-2. The contract is compatible with Azure Key Vault's conceptual model but
-   independent of Azure.
+2. The contract follows the conceptual model of the managed cloud secrets
+   services but is independent of any vendor.
 3. The threat model is explicit: eliminating `.env` files is valuable;
    protecting secrets from arbitrary code executed by an AI agent requires a
    separate authentication and isolation strategy.

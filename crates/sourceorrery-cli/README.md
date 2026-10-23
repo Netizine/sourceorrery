@@ -4,7 +4,7 @@
 
 `sourceorrery` replaces the plaintext `.env` file with an encrypted local
 vault. It stores each secret as immutable, versioned, encrypted values with
-an Azure Key Vault–style lifecycle (enable and disable, activation and
+a cloud-secrets-manager-style lifecycle (enable and disable, activation and
 expiry times, soft delete, recovery, purge), keeps a tamper-evident audit
 log of every access, and starts your application with its secrets in the
 environment from a manifest, `sourceorrery.toml`, that names the secrets

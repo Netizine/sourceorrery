@@ -4,7 +4,7 @@
 
 ## Context
 
-Azure Key Vault returns the newest version and fails if it is disabled.
+The managed cloud secrets services return the newest version and fail if it is disabled.
 During a rotation that goes wrong, operators want to roll back quickly
 without re-uploading the old value.
 

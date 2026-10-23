@@ -419,15 +419,12 @@ provider = "aws-secrets-manager"
 region = "eu-west-1"
 prefix = "myapp/"
 
-[vaults.azure]
-provider = "azure-key-vault"
-vault_url = "https://myapp-kv.vault.azure.net"
 "#;
 
     #[test]
     fn remote_vaults_are_parsed_and_resolved_by_name() {
         let manifest = Manifest::parse(REMOTE).unwrap();
-        assert_eq!(manifest.vaults.len(), 3);
+        assert_eq!(manifest.vaults.len(), 2);
         assert_eq!(manifest.vault_config("development"), VaultConfig::Local);
         let prod = manifest.remote_vault("prod-secrets").unwrap();
         assert_eq!(prod.provider(), crate::remote::Provider::HashicorpVault);
@@ -438,10 +435,6 @@ vault_url = "https://myapp-kv.vault.azure.net"
         assert_eq!(
             manifest.remote_vault("aws").unwrap().provider().name(),
             "aws-secrets-manager"
-        );
-        assert_eq!(
-            manifest.remote_vault("azure").unwrap().location(),
-            "https://myapp-kv.vault.azure.net"
         );
         // References are unchanged: the vault name resolves through the manifest.
         let entries = manifest.entries().unwrap();
@@ -471,16 +464,16 @@ vault_url = "https://myapp-kv.vault.azure.net"
                 "{head}[vaults.v]\nprovider = \"aws-secrets-manager\"\nregion = \"eu-west-1\"\n\
                  access_key_id = \"AKIA\"\nsecret_access_key = \"{CANARY}\"\n"
             ),
-            // An Azure client secret in a sub-table.
+            // A client secret in a sub-table.
             format!(
-                "{head}[vaults.v]\nprovider = \"azure-key-vault\"\n\
-                 vault_url = \"https://x.vault.azure.net\"\n\n[vaults.v.credential]\n\
+                "{head}[vaults.v]\nprovider = \"aws-secrets-manager\"\n\
+                 region = \"eu-west-1\"\n\n[vaults.v.credential]\n\
                  client_secret = \"{CANARY}\"\n"
             ),
             // A key from another provider's table.
             format!(
-                "{head}[vaults.v]\nprovider = \"azure-key-vault\"\n\
-                 vault_url = \"https://x.vault.azure.net\"\nregion = \"{CANARY}\"\n"
+                "{head}[vaults.v]\nprovider = \"aws-secrets-manager\"\n\
+                 region = \"eu-west-1\"\nmount = \"{CANARY}\"\n"
             ),
             // Credentials in the URL.
             format!(
@@ -513,8 +506,8 @@ vault_url = "https://myapp-kv.vault.azure.net"
     fn remote_vault_tables_are_validated() {
         let head = "[project]\nname = \"x\"\nvault = \"dev\"\n\n";
         let bad_name = format!(
-            "{head}[vaults.Bad_Name]\nprovider = \"azure-key-vault\"\n\
-             vault_url = \"https://x.vault.azure.net\"\n"
+            "{head}[vaults.Bad_Name]\nprovider = \"aws-secrets-manager\"\n\
+             region = \"eu-west-1\"\n"
         );
         let err = Manifest::parse(&bad_name).unwrap_err();
         assert!(err.to_string().contains("[vaults.Bad_Name]"), "{err}");

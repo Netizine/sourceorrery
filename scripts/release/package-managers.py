@@ -30,7 +30,7 @@ from pathlib import Path
 REPO = "Netizine/sourceorrery"
 HOMEPAGE = "https://sourceorrery.ai"
 DESCRIPTION = (
-    "Encrypted local secrets vault with an Azure Key Vault-style lifecycle API"
+    "Encrypted local secrets vault with a cloud-secrets-manager-style lifecycle API"
 )
 WINGET_ID = "Netizine.SourceOrrery"
 WINGET_MANIFEST_VERSION = "1.10.0"

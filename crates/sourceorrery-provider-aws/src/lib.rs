@@ -805,8 +805,10 @@ mod tests {
             settings.endpoint_url.as_deref(),
             Some("http://localhost:4566")
         );
-        let err = Settings::from_manifest(&RemoteVault::AzureKeyVault {
-            vault_url: "https://x.vault.azure.net".to_owned(),
+        let err = Settings::from_manifest(&RemoteVault::HashicorpVault {
+            address: "https://vault.example.com".to_owned(),
+            mount: "secret".to_owned(),
+            namespace: None,
         })
         .unwrap_err();
         assert_eq!(err.code(), "invalid_argument");

@@ -28,6 +28,6 @@ client. To create vaults and store secrets, install the CLI:
 
 Both adapters pass every operation and every error through untouched: the
 error code an application sees is the backend's, whichever shape it called.
-The remote providers themselves (HashiCorp Vault, AWS Secrets Manager,
-Azure Key Vault) are the next items of
+The remote providers themselves (HashiCorp Vault, AWS Secrets Manager)
+are the next items of
 [milestone 4](https://github.com/Netizine/sourceorrery/blob/main/docs/roadmap.md).

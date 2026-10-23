@@ -84,8 +84,8 @@ inspected by other processes with sufficient privileges.
 A vault that `sourceorrery.toml` declares in a `[vaults.<name>]` table
 ([providers](../providers/index.md)) is opened at its remote provider by
 the same `open` call, with the credentials the provider's own environment
-supplies (`VAULT_TOKEN`, the AWS credential chain, `az login` or a managed
-identity); the manifest holds the address only. Every SDK takes a
+supplies (`VAULT_TOKEN`, the AWS credential chain); the manifest holds the
+address only. Every SDK takes a
 `manifest` option next to `home` and `passphrase_file` naming the manifest
 to resolve through; the default is the nearest `sourceorrery.toml` above
 the current directory, and the project loader always uses the manifest it
@@ -110,7 +110,7 @@ core, so every language says the same thing.
 | `deleted` | `SecretDeleted…` | `sourceorrery secret recover` |
 | `crypto` | `Integrity…` | the file failed an integrity check: compare with a backup, run `audit --verify` |
 | `unsupported` | `Unsupported…` | no OS credential store here: add a passphrase protector; or this build has no provider for a remote vault |
-| `unauthenticated` (0.3.0) | `Unauthenticated…` | where the remote provider's own tools take credentials from (`VAULT_TOKEN`, the AWS credential chain, `az login`); never the manifest |
+| `unauthenticated` (0.3.0) | `Unauthenticated…` | where the remote provider's own tools take credentials from (`VAULT_TOKEN`, the AWS credential chain); never the manifest |
 | `provider_unavailable` (0.3.0) | `ProviderUnavailable…` | check that the provider is reachable and the address in `[vaults.<name>]` is right; transient, so retry |
 | `invalid_argument`, `invalid_name` | `InvalidArgument…`, `InvalidName…` | the reference and name rules |
 | `manifest` | `Manifest…` | fix `sourceorrery.toml`, check with `sourceorrery check` |
