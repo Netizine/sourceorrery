@@ -58,8 +58,11 @@ sourceorrery/
 │   ├── sourceorrery-cli        the `sourceorrery` binary
 │   ├── sourceorrery            the read-only client: CLI unlock order,
 │   │                           manifest loading, error hints (the Rust SDK)
-│   └── sourceorrery-ffi        stable C ABI (cbindgen header): read-only
-│                               so_reader_* for SDKs, so_vault_* for tooling
+│   ├── sourceorrery-ffi        stable C ABI (cbindgen header): read-only
+│   │                           so_reader_* for SDKs, so_vault_* for tooling
+│   └── sourceorrery-provider   Blocking / AsyncLocal adapters between the
+│                               sync and async shapes of the contract; the
+│                               base of the remote providers (milestone 4)
 ├── bindings/                   the other nine SDKs (see §7)
 ├── tests/conformance           lifecycle + security suite for every backend/SDK
 ├── scripts/ci, scripts/release fixture vault for SDK tests; version stamping
@@ -81,6 +84,8 @@ cli ──► storage ──► crypto
 
 sourceorrery (client) ──► storage, core
 sourceorrery-ffi ──────► sourceorrery (client), storage, core
+sourceorrery-provider ─► core, tokio       (providers ──► provider, core)
+tests/conformance ─────► storage, core; provider in its tests
 bindings/python, bindings/node ──► sourceorrery (client)      native extensions
 bindings/{java,dotnet,go,cpp,php} ──► sourceorrery-ffi (C ABI) foreign-function calls
 ```
@@ -123,6 +128,17 @@ pub trait SecretClient {
 }
 ```
 
+The contract has a second shape, `AsyncSecretClient`: the same methods as
+`async fn`, the same semantics, for backends that wait on the network (the
+remote providers of milestone 4, [ADR 0008](adr/0008-remote-providers.md)).
+It is object safe (`Box<dyn AsyncSecretClient>`, through `async-trait`) so a
+provider can be chosen at run time. `sourceorrery-provider` turns either
+shape into the other: `Blocking<A>` drives an async client on a Tokio
+runtime it owns or borrows, so the CLI, the C ABI and every SDK run
+unchanged against a remote provider; `AsyncLocal<C>` runs a synchronous
+client on Tokio's blocking pool, so async applications reach the local
+vault. Both pass every operation and every error through untouched.
+
 Semantics every implementation must honour:
 
 | Operation | Semantics |
@@ -138,6 +154,14 @@ Semantics every implementation must honour:
 | `recover_deleted_secret` | Restores all versions. |
 | `purge_deleted_secret` | Permanent. Only valid on a deleted secret. |
 | `audit_events` | Every operation above is recorded, successes and failures, never with a value; metadata reads appear as `secret_inspect`. Reading the log and verifying the chain are not recorded; acknowledging a detected truncation of it is (`audit_verify` / `success`). |
+
+The lifecycle conformance suite checks these as functions over
+`&dyn SecretClient` (`sourceorrery_conformance::lifecycle`), run against the
+SQLite vault directly and through the adapter pair, and by each remote
+provider's CI job through its `Blocking` adapter. A remote backend may
+differ only where its service cannot express the contract, and documents
+each difference; `audit_events` returning `unsupported` (the service keeps
+its own log) is the one common to all.
 
 A deliberate difference from Azure Key Vault: `not_before` and `expires_on`
 are **enforced** on retrieval, not advisory.

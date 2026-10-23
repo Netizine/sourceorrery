@@ -1,4 +1,4 @@
-//! The `SecretClient` contract.
+//! The `SecretClient` contract, in its synchronous and asynchronous shapes.
 
 use crate::audit::{AuditEvent, AuditQuery};
 use crate::error::{Result, SecretError};
@@ -39,8 +39,9 @@ use crate::secret::{
 ///   itself and verifying the chain are read-only and not recorded.
 ///
 /// The trait is synchronous because the first backend is a local encrypted
-/// store. Remote backends will get an `AsyncSecretClient` sibling; the
-/// semantics above are shared.
+/// store. Remote backends implement [`AsyncSecretClient`], the same contract
+/// in async form; the semantics above are shared, and the adapters in the
+/// `sourceorrery-provider` crate make every backend serve both shapes.
 pub trait SecretClient {
     /// Name of the vault this client is bound to.
     fn vault_name(&self) -> &str;
@@ -125,5 +126,118 @@ pub trait SecretClient {
             )));
         }
         self.get_secret(&reference.name, reference.version.as_deref())
+    }
+}
+
+/// [`SecretClient`] for backends that wait on the network.
+///
+/// The same operations with the same semantics (the table on
+/// [`SecretClient`] is the contract for both shapes); only the calling
+/// convention differs. Remote providers (HashiCorp Vault, AWS Secrets
+/// Manager, Azure Key Vault) implement this trait; the local vault stays
+/// synchronous. The adapters in the `sourceorrery-provider` crate turn one
+/// shape into the other, so the CLI, the C ABI and the conformance suite
+/// run unchanged against any backend.
+///
+/// The trait is object safe (`Box<dyn AsyncSecretClient>`) because a
+/// provider is chosen at run time from the manifest; `async-trait` supplies
+/// the boxing until native `async fn` in traits can be called through
+/// `dyn`. Implementations are `Send + Sync` so one client can serve many
+/// tasks.
+///
+/// Two differences a remote backend may legitimately show, both documented
+/// per provider: `audit_events` returns [`SecretError::Unsupported`] with a
+/// hint naming where the provider's own audit log lives (the local vault's
+/// recording of metadata reads is not emulated), and the operations that
+/// the provider's service completes asynchronously (`delete_secret` on
+/// some) return once the request is accepted.
+#[async_trait::async_trait]
+pub trait AsyncSecretClient: Send + Sync {
+    /// Name of the vault this client is bound to.
+    fn vault_name(&self) -> &str;
+
+    /// Create a new version of `name` holding `value`.
+    async fn set_secret(
+        &self,
+        name: &str,
+        value: SecretBytes,
+        options: SetSecretOptions,
+    ) -> Result<SecretProperties>;
+
+    /// Retrieve a version's value and metadata. `None` selects the newest
+    /// accessible version.
+    async fn get_secret(&self, name: &str, version: Option<&str>) -> Result<Secret>;
+
+    /// Retrieve metadata only, without evaluating access policy.
+    async fn get_secret_properties(
+        &self,
+        name: &str,
+        version: Option<&str>,
+    ) -> Result<SecretProperties>;
+
+    /// Metadata of the newest version of every live secret, by name.
+    async fn list_properties_of_secrets(&self) -> Result<Vec<SecretProperties>>;
+
+    /// One page of [`Self::list_properties_of_secrets`]; see
+    /// [`SecretClient::list_properties_of_secrets_page`].
+    async fn list_properties_of_secrets_page(
+        &self,
+        options: ListOptions,
+    ) -> Result<Page<SecretProperties>> {
+        Page::from_sorted(self.list_properties_of_secrets().await?, &options, |p| {
+            &p.name
+        })
+    }
+
+    /// Metadata of every version of `name`, newest first.
+    async fn list_properties_of_secret_versions(&self, name: &str)
+    -> Result<Vec<SecretProperties>>;
+
+    /// Change metadata of one version (`None` selects the newest).
+    async fn update_secret_properties(
+        &self,
+        name: &str,
+        version: Option<&str>,
+        update: UpdateSecretProperties,
+    ) -> Result<SecretProperties>;
+
+    /// Soft-delete all versions of `name`.
+    async fn delete_secret(&self, name: &str) -> Result<DeletedSecret>;
+
+    /// Inspect a soft-deleted secret.
+    async fn get_deleted_secret(&self, name: &str) -> Result<DeletedSecret>;
+
+    /// All soft-deleted secrets, by name.
+    async fn list_deleted_secrets(&self) -> Result<Vec<DeletedSecret>>;
+
+    /// One page of [`Self::list_deleted_secrets`]; see
+    /// [`SecretClient::list_deleted_secrets_page`].
+    async fn list_deleted_secrets_page(&self, options: ListOptions) -> Result<Page<DeletedSecret>> {
+        Page::from_sorted(self.list_deleted_secrets().await?, &options, |d| {
+            &d.properties.name
+        })
+    }
+
+    /// Undo a soft delete.
+    async fn recover_deleted_secret(&self, name: &str) -> Result<SecretProperties>;
+
+    /// Permanently remove a soft-deleted secret. Privileged.
+    async fn purge_deleted_secret(&self, name: &str) -> Result<()>;
+
+    /// Metadata-only audit trail, newest first; `unsupported` on a backend
+    /// whose service keeps its own log.
+    async fn audit_events(&self, query: AuditQuery) -> Result<Vec<AuditEvent>>;
+
+    /// Resolve a [`SecretReference`] against this vault.
+    async fn resolve(&self, reference: &SecretReference) -> Result<Secret> {
+        if reference.vault != self.vault_name() {
+            return Err(SecretError::InvalidArgument(format!(
+                "reference {reference} targets vault '{}' but this client is bound to '{}'",
+                reference.vault,
+                self.vault_name()
+            )));
+        }
+        self.get_secret(&reference.name, reference.version.as_deref())
+            .await
     }
 }

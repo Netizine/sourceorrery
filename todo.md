@@ -657,27 +657,33 @@ the workspace.
 
 **Steps.**
 
-- [ ] ADR 0008 with the above, the size and build-time measurements, and
+- [x] ADR 0008 with the above, the size and build-time measurements, and
       the list of semantics a provider may legitimately differ on (M4.4
       lists AWS's).
-- [ ] `sourceorrery-core`: `AsyncSecretClient` (async-trait), docs mirroring
+- [x] `sourceorrery-core`: `AsyncSecretClient` (async-trait), docs mirroring
       `SecretClient`, `CONTRACT_VERSION` unchanged (additive).
-- [ ] New crate `sourceorrery-provider` (the adapters, the provider
+- [x] New crate `sourceorrery-provider` (the adapters, the provider
       registry and the `VaultConfig` enum of M4.2; depends on tokio,
       reqwest; no provider yet). `Blocking`, `AsyncLocal`, unit tests that
       the adapters preserve every error code.
-- [ ] Conformance: `lifecycle(&dyn SecretClient)`; the SQLite tests call
+- [x] Conformance: `lifecycle(&dyn SecretClient)`; the SQLite tests call
       it; a test runs it through `Blocking<AsyncLocal<SqliteVault>>` so the
       adapter pair is proven before any provider exists.
-- [ ] Docs: `docs/architecture.md` gains the two-shape contract and the
+- [x] Docs: `docs/architecture.md` gains the two-shape contract and the
       adapters; `docs/adr/0008-remote-providers.md`; roadmap `AsyncSecretClient`
       box ticked.
 
-**Decisions for you.** (a) `async-trait` for dyn-compatibility
-(recommended) versus native `async fn` and no `dyn` (providers chosen at
-compile time only). (b) Remote providers on by default in the CLI, the
-Rust SDK and the C ABI archives (recommended: one behaviour everywhere)
-versus CLI only.
+**Decisions taken** (your "go with your recommendations"): (a)
+`async-trait` for dyn-compatibility; (b) remote providers on by default in
+the CLI, the Rust SDK and the C ABI archives.
+
+**Done, with two deviations from the steps above.** The provider crate
+depends on Tokio only: `reqwest` arrives with the first HTTP provider
+(M4.3) and the `VaultConfig` enum with the manifest work (M4.2), so neither
+is an unused dependency or an untested type here. The Cargo features
+(`remote`, `provider-*`) and the binary-size measurement of the CLI are
+likewise M4.3's, when there is a provider to gate and link; ADR 0008
+records the dependency and build-time cost of what exists now.
 
 ---
 

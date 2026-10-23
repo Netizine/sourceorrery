@@ -13,6 +13,7 @@ categories = ["cryptography", "authentication"]
 keywords = ["secrets", "vault", "key-vault", "audit", "policy"]
 
 [dependencies]
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

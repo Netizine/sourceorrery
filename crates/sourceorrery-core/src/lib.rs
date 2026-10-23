@@ -5,7 +5,9 @@
 //!
 //! This crate owns *semantics*. It contains no cryptography and no storage;
 //! it defines what a secret, a version, a policy decision and an audit event
-//! *are*, and the [`SecretClient`] contract every backend must honour.
+//! *are*, and the [`SecretClient`] contract every backend must honour (in
+//! its async shape, [`AsyncSecretClient`], for backends that wait on the
+//! network).
 //!
 //! The model is deliberately close to Azure Key Vault's `SecretClient` so the
 //! mental model is familiar, while remaining independent of Azure itself.
@@ -49,7 +51,7 @@ pub use secret::{
     DeletedSecret, RecoveryLevel, Secret, SecretBytes, SecretProperties, SecretReference,
     SetSecretOptions, UpdateSecretProperties, validate_secret_name, validate_version_id,
 };
-pub use traits::SecretClient;
+pub use traits::{AsyncSecretClient, SecretClient};
 pub use vault::{VaultDescriptor, validate_vault_name};
 
 /// Version of the public contract implemented by this crate.

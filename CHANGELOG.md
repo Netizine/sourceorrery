@@ -8,6 +8,17 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* `AsyncSecretClient`, the asynchronous shape of the contract, in
+  `sourceorrery-core` (ADR 0008): the same methods and semantics as
+  `SecretClient`, object safe, for the remote providers of milestone 4.
+  The new `sourceorrery-provider` crate holds the adapters between the two
+  shapes, `Blocking<A>` (an async client as a `SecretClient`, on a Tokio
+  runtime it owns or borrows) and `AsyncLocal<C>` (a synchronous client as
+  an `AsyncSecretClient`, on Tokio's blocking pool), which pass every
+  operation and every error code through unchanged. The lifecycle
+  conformance scenarios are now functions over `&dyn SecretClient`
+  (`sourceorrery_conformance::lifecycle`), run against the SQLite vault
+  directly and through the adapter pair.
 * `scripts/dev/keyring-smoke.sh` and `.ps1` exercise the OS-keyring
   protector against a real credential store (create, read, protector add
   and remove, destroy with and without `--keep-os-key`, the store inspected

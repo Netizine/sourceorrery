@@ -1,0 +1,25 @@
+[package]
+name = "sourceorrery-provider"
+description = "Adapters between SourceOrrery's synchronous and asynchronous secret clients; the base of the remote providers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+categories = ["asynchronous", "authentication"]
+keywords = ["secrets", "vault", "async", "tokio", "provider"]
+
+[dependencies]
+sourceorrery-core.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+time.workspace = true
+
+[lints]
+workspace = true

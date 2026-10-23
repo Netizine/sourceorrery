@@ -79,7 +79,13 @@ def main(argv: list[str]) -> int:
     # Workspace Cargo.toml.
     def cargo_toml(text: str) -> str:
         text = sub_once(r'^(version = )"[^"]+"', rf'\1"{version}"', text, ROOT / "Cargo.toml")
-        for crate in ("sourceorrery-core", "sourceorrery-crypto", "sourceorrery-storage", "sourceorrery"):
+        for crate in (
+            "sourceorrery-core",
+            "sourceorrery-crypto",
+            "sourceorrery-storage",
+            "sourceorrery",
+            "sourceorrery-provider",
+        ):
             text = sub_once(
                 rf'^({re.escape(crate)} = \{{ path = "crates/{re.escape(crate)}", version = )"[^"]+"',
                 rf'\1"{version}"',

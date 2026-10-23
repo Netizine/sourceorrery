@@ -1298,6 +1298,7 @@ dependencies = [
 name = "sourceorrery-core"
 version = "0.1.4"
 dependencies = [
+ "async-trait",
  "serde",
  "serde_json",
  "thiserror",

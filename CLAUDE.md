@@ -26,11 +26,22 @@ and `docs/threat-model.md` before changing anything security-relevant.
 - `crates/sourceorrery-ffi` — the C ABI (cbindgen header checked in CI).
   `so_reader_*` / `so_project_*` are read-only and are what SDKs link;
   `so_vault_*` is for tooling. The only crate allowed to use `unsafe`.
+- `crates/sourceorrery-provider` — the adapters between the two shapes of
+  the contract (`Blocking<A>`: an `AsyncSecretClient` as a `SecretClient`
+  on a Tokio runtime; `AsyncLocal<C>`: the reverse on the blocking pool)
+  and the base the remote providers build on (ADR 0008). Adapters pass
+  every call and error through unchanged; a provider's logic never lives
+  here. Tokio `rt` only; HTTP providers use `reqwest` with `rustls-tls`.
 - `bindings/{python,node,java,dotnet,go,cpp,php}` — the SDKs. Python and
   Node are native extensions over `crates/sourceorrery` (own workspace
   roots, own lock files); the rest call the C ABI. `bindings/README.md` is
   the C ABI reference and index.
 - `tests/conformance` — lifecycle + security suite every backend/SDK must pass.
+  The backend-independent lifecycle scenarios are `src/lifecycle.rs`,
+  functions over `&dyn SecretClient`; `lifecycle::lifecycle(fresh)` runs
+  them and every backend (and each adapter) must pass it. A new semantic
+  goes there, not in `tests/lifecycle.rs`, which keeps what only the SQLite
+  vault does.
   `tests/conformance/sdk/` is the cross-language harness: `scenarios.json`
   is the contract, `harness.py` drives one SDK's runner (`conformance/`
   under each binding, `examples/conformance.rs|.c` for Rust and C) and
