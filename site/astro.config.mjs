@@ -89,6 +89,7 @@ export default defineConfig({
 			lastUpdated: false,
 			credits: false,
 			sidebar: [
+				{ label: 'Why SourceOrrery?', slug: 'why-sourceorrery' },
 				{ label: 'Getting started', slug: 'getting-started' },
 				{
 					label: 'Guides',

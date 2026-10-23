@@ -31,6 +31,11 @@ const BLOB_URL = `${REPO_URL}/blob/main/`;
  * the one derived from the first paragraph.
  */
 const PAGES = {
+	'docs/why-sourceorrery.md': {
+		dest: 'why-sourceorrery.md',
+		description:
+			'Why SourceOrrery was created: the risks of plaintext development credentials, evidence from real incidents and security research, and the benefits and limits of a local vault.',
+	},
 	'docs/architecture.md': {
 		dest: 'architecture.md',
 		description:
@@ -132,6 +137,11 @@ const PAGES = {
 const DIRECTORIES = {
 	'docs/adr': '/decisions/',
 	'docs/sdks': '/sdks/',
+};
+
+/** Site-authored pages can be linked from docs/ without copying them. */
+const AUTHORED_PAGES = {
+	'site/src/content/docs/getting-started.mdx': '/getting-started/',
 };
 
 const ADR_SOURCE_DIR = 'docs/adr';
@@ -310,6 +320,7 @@ function rewriteLinks(markdown, source) {
 function resolveRepoPath(repoPath, source) {
 	if (PAGES[repoPath]) return destToHref(PAGES[repoPath].dest);
 	if (DIRECTORIES[repoPath]) return DIRECTORIES[repoPath];
+	if (AUTHORED_PAGES[repoPath]) return AUTHORED_PAGES[repoPath];
 	// Anything else in the repository (bindings/README.md, SECURITY.md, ...)
 	// is linked on GitHub.
 	console.warn(`sync-docs: ${source}: link to ${repoPath} is not on the site; pointing at GitHub`);
