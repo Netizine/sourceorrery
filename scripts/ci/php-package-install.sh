@@ -35,7 +35,7 @@ composer --working-dir="$work/project" install --no-interaction --no-progress --
 echo "--- the installed version is the tag"
 # Composer reports the tag as written (v9.9.9); the version it resolved is 9.9.9.
 installed="$(composer --working-dir="$work/project" show sourceorrery/sourceorrery --format=json | php -r 'echo json_decode(stream_get_contents(STDIN), true)["versions"][0];')"
-if [ "${installed#v}" != "$version" ]; then
+if [[ "${installed#v}" != "$version" ]]; then
     echo "::error::Composer installed sourceorrery/sourceorrery $installed, expected $version"
     exit 1
 fi
