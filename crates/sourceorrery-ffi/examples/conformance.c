@@ -18,8 +18,10 @@
 static const char *arg_value(int argc, char **argv, const char *key) {
     size_t len = strlen(key);
     for (int i = 2; i < argc; i++) {
-        if (strncmp(argv[i], key, len) == 0 && argv[i][len] == '=') {
-            return argv[i] + len + 1;
+        /* The value starts after the first '='; the name before it must be key. */
+        const char *equals = strchr(argv[i], '=');
+        if (equals != NULL && (size_t)(equals - argv[i]) == len && strncmp(argv[i], key, len) == 0) {
+            return &equals[1];
         }
     }
     return NULL;

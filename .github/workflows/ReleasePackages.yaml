@@ -77,6 +77,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_NET_RETRY: "10"
+  # Inputs reach scripts only through the environment, never spliced into them.
+  DRY_RUN: ${{ inputs.dry_run }}
 
 concurrency:
   group: release-packages
@@ -120,7 +122,7 @@ jobs:
           {
             echo "### Publishing $TAG ($version)"
             echo
-            echo "Dry run: ${{ inputs.dry_run }}"
+            echo "Dry run: $DRY_RUN"
             echo
             echo '```'
             gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name'
@@ -185,7 +187,8 @@ jobs:
         with:
           node-version: 24
       - name: npm with trusted publishing support
-        run: npm install -g npm@11 && npm --version
+        # An exact version, and no lifecycle scripts (npm has none to run).
+        run: npm install --global --ignore-scripts npm@11.21.1 && npm --version
       - name: Download the npm tarballs
         run: |
           gh release download "$TAG" --repo "$REPO" --pattern 'sourceorreryai-sdk-*.tgz' --dir dist \
@@ -509,7 +512,7 @@ jobs:
           module_tag="bindings/go/$TAG"
           if git ls-remote --exit-code --tags origin "refs/tags/$module_tag" >/dev/null; then
             echo "$module_tag exists"
-          elif [ "${{ inputs.dry_run }}" = "true" ]; then
+          elif [ "$DRY_RUN" = "true" ]; then
             echo "$module_tag does not exist; a real run would create it on $(git rev-parse HEAD)"
           else
             git config user.name "github-actions[bot]"
