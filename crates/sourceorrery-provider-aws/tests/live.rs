@@ -146,3 +146,35 @@ fn properties_apply_to_the_whole_secret() {
     assert_eq!(descriptor.backend, "aws-secrets-manager");
     assert_eq!(descriptor.retention_days, 30);
 }
+
+#[test]
+fn rotation_is_refused_before_anything_is_written() {
+    let Some(endpoint) = endpoint() else {
+        eprintln!("skipped: set {ENDPOINT_ENV} to run against Secrets Manager or an emulator");
+        return;
+    };
+    let client = fresh(&endpoint, &format!("rotation-{}/", std::process::id()));
+    set(&client, "api-key", "current");
+    // Rotation needs a disabled candidate next to the current version, which
+    // per-secret properties cannot hold: refused before anything is written.
+    assert_eq!(
+        client.capabilities(),
+        &[] as &[sourceorrery_core::Capability]
+    );
+    let err = sourceorrery_core::rotation::issue(
+        &client,
+        "api-key",
+        sourceorrery_core::SecretBytes::from("never-written"),
+        sourceorrery_core::timestamp::now(),
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), "unsupported");
+    assert!(err.to_string().contains("per secret"), "{err}");
+    assert_eq!(
+        client
+            .list_properties_of_secret_versions("api-key")
+            .unwrap()
+            .len(),
+        1
+    );
+}

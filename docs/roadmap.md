@@ -86,7 +86,7 @@ The 0.1.4 build includes these changes alongside milestones 1 and 2:
 - [x] Remote providers behind the same contract: HashiCorp Vault (`sourceorrery-provider-vault`, [docs](providers/hashicorp-vault.md)) and AWS Secrets Manager (`sourceorrery-provider-aws`, [docs](providers/aws-secrets-manager.md)); no SourceOrrery server: the providers' own services are the only remote ends
 - [x] `AsyncSecretClient` ([ADR 0008](adr/0008-remote-providers.md): the async shape of the contract in core, the `Blocking` and `AsyncLocal` adapters in `sourceorrery-provider`, and the lifecycle conformance suite as a function every backend runs)
 - [x] Workload identity through the providers' federation (OIDC, workload and Kubernetes identities, instance roles); RBAC, policy and revocation administered in the provider and honoured by the client ([enterprise.md](enterprise.md); no SourceOrrery server, so nothing of ours to administer centrally)
-- [ ] Rotation workflows with issuer cooperation (issue → validate → activate → retire)
+- [x] Rotation workflows with issuer cooperation (issue → validate → activate → retire): `sourceorrery secret rotate` over any vault with per-version properties, the issuer's side as commands in the manifest's `[rotation.<name>]` table ([rotation.md](rotation.md))
 - [ ] Central audit collection
 - [ ] Security review before "enterprise-ready" (the maintainer's own review, done locally over several days; not an engineering item)
 

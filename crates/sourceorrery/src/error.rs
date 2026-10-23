@@ -69,6 +69,9 @@ pub enum ErrorKind {
     /// `provider_unavailable`: the remote provider could not be reached or
     /// answered with a server error. Transient.
     ProviderUnavailable,
+    /// `rotation`: a rotation step was asked for in a state that does not
+    /// allow it (a CLI workflow; a reader never performs one).
+    Rotation,
     /// A code added after this client was written.
     Other,
 }
@@ -97,6 +100,7 @@ impl ErrorKind {
             "unsupported" => Self::Unsupported,
             "unauthenticated" => Self::Unauthenticated,
             "provider_unavailable" => Self::ProviderUnavailable,
+            "rotation" => Self::Rotation,
             _ => Self::Other,
         }
     }
@@ -452,6 +456,7 @@ mod tests {
             "unsupported",
             "unauthenticated",
             "provider_unavailable",
+            "rotation",
         ];
         for code in codes {
             assert_ne!(ErrorKind::from_code(code), ErrorKind::Other, "{code}");

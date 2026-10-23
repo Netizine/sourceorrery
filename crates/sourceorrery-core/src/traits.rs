@@ -8,6 +8,26 @@ use crate::secret::{
     UpdateSecretProperties,
 };
 
+/// Something the contract asks for that a backend's service may be unable
+/// to express. A backend that lacks one documents the difference (ADR 0008),
+/// reports it from [`SecretClient::capabilities`], and the conformance suite
+/// skips exactly the scenarios that need it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Capability {
+    /// `enabled`, `not_before`, `expires_on` and `content_type` belong to
+    /// one version, so disabling the newest version falls back to the one
+    /// before, and a new version can be written disabled next to the
+    /// current one. A service whose metadata is per secret applies them to
+    /// every version at once. Rotation ([`crate::rotation`]) needs this.
+    PerVersionProperties,
+}
+
+impl Capability {
+    /// Everything the local vault does.
+    pub const ALL: &'static [Self] = &[Self::PerVersionProperties];
+}
+
 /// Everything a secret backend must be able to do.
 ///
 /// Modelled on the `SecretClient` of managed cloud secrets services. Semantics every
@@ -45,6 +65,13 @@ use crate::secret::{
 pub trait SecretClient {
     /// Name of the vault this client is bound to.
     fn vault_name(&self) -> &str;
+
+    /// What of the contract this backend can express: everything, unless
+    /// the backend says otherwise. A workflow that needs a capability checks
+    /// here before it writes anything.
+    fn capabilities(&self) -> &'static [Capability] {
+        Capability::ALL
+    }
 
     /// Create a new version of `name` holding `value`.
     fn set_secret(
@@ -155,6 +182,11 @@ pub trait SecretClient {
 pub trait AsyncSecretClient: Send + Sync {
     /// Name of the vault this client is bound to.
     fn vault_name(&self) -> &str;
+
+    /// See [`SecretClient::capabilities`].
+    fn capabilities(&self) -> &'static [Capability] {
+        Capability::ALL
+    }
 
     /// Create a new version of `name` holding `value`.
     async fn set_secret(

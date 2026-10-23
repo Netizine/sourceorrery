@@ -64,6 +64,12 @@ exactly as for a local vault.
   conformance suite runs without the `PerVersionProperties` capability
   (ADR 0008), skipping the one scenario that needs it; the provider's own
   test covers what happens instead.
+* **No rotation workflow.** `sourceorrery secret rotate` needs a disabled
+  candidate next to the enabled current version, which per-secret
+  properties cannot hold; the provider reports no `PerVersionProperties`
+  capability and the workflow answers `unsupported` before writing anything
+  ([rotation](../rotation.md)). Secrets Manager's own rotation (Lambda
+  rotation functions) is the mechanism there.
 * **Tags are bounded.** A secret carries at most 50 tags, keys of at most
   128 and values of at most 256 characters; the properties above take up to
   five of them. Secrets Manager rejects a `set` or `update` beyond that

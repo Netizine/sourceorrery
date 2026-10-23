@@ -28,8 +28,8 @@ use aws_sdk_secretsmanager::operation::describe_secret::DescribeSecretOutput;
 use aws_sdk_secretsmanager::primitives::Blob;
 use aws_sdk_secretsmanager::types::{Filter, FilterNameStringType};
 use sourceorrery_core::{
-    AsyncSecretClient, AuditEvent, AuditQuery, DeletedSecret, Provider, RecoveryLevel, RemoteVault,
-    Result, Secret, SecretBytes, SecretError, SecretProperties, SetSecretOptions,
+    AsyncSecretClient, AuditEvent, AuditQuery, Capability, DeletedSecret, Provider, RecoveryLevel,
+    RemoteVault, Result, Secret, SecretBytes, SecretError, SecretProperties, SetSecretOptions,
     UpdateSecretProperties, VaultDescriptor, policy, timestamp, validate_secret_name,
 };
 use time::OffsetDateTime;
@@ -463,6 +463,11 @@ impl AwsClient {
 impl AsyncSecretClient for AwsClient {
     fn vault_name(&self) -> &str {
         &self.vault_name
+    }
+
+    /// Secrets Manager keeps properties per secret, not per version.
+    fn capabilities(&self) -> &'static [Capability] {
+        &[]
     }
 
     async fn set_secret(

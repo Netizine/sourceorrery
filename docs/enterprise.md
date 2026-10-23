@@ -169,8 +169,9 @@ life:
 So revocation ends new reads at once and ends what a running process can
 read on its next request, but cannot recall a value already in a
 process's memory or in a child's environment. Rotating the secret is what
-invalidates those (the [rotation workflow](roadmap.md#milestone-4--enterprise-integrations)
-is the next milestone item).
+invalidates those ([rotation.md](rotation.md): `sourceorrery secret rotate`
+issues, validates and activates a new version and retires the previous
+credential at the issuer).
 
 ## Checking what an identity may read
 

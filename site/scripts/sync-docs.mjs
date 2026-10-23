@@ -91,6 +91,11 @@ const PAGES = {
 		description:
 			'The AWS Secrets Manager provider: secrets under a prefix as a SourceOrrery vault, the default credential chain, how versions, tags and deletion map onto the service, and what differs from a local vault.',
 	},
+	'docs/rotation.md': {
+		dest: 'guides/rotation.md',
+		description:
+			'Rotating a credential with sourceorrery secret rotate: issue, validate, activate and retire, the hook commands the manifest names, the grace period, what is recorded in the versions, and where it does not work.',
+	},
 	'docs/enterprise.md': {
 		dest: 'guides/enterprise.md',
 		description:

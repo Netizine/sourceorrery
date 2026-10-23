@@ -78,6 +78,7 @@ a [remote vault](providers/index.md) by name; the `secret` commands,
 | `secret delete NAME` | Soft-delete all versions (recoverable until retention ends). Immediate in a purgeable vault. |
 | `secret recover NAME` | Undo a soft delete. |
 | `secret purge NAME [--yes]` | Permanently remove a soft-deleted secret. |
+| `secret rotate NAME [--manifest FILE] [--step rotate\|activate\|retire\|status] [--no-activate] [--retire-after D] [--now] [--stdin \| --from-file FILE] [--keep-trailing-newline] [--allow-empty]` | Rotate a credential: issue a new value (the manifest's `[rotation.NAME]` `issue` command, else stdin, a file or a prompt), validate it with the `validate` command, activate it (enable the new version, then disable the previous one), and retire the previous one with the `retire` command once `retire_after` (or `--retire-after`) has passed, in a later `--step retire` run; without a grace period, in the same run. State lives in `sourceorrery.rotation.*` tags; refusals carry the code `rotation`. `unsupported` on AWS Secrets Manager. See [rotation](rotation.md). |
 
 Status column values: `enabled`, `disabled`, `pending` (before `not_before`),
 `expired`.
@@ -208,6 +209,20 @@ There is no key for a credential, so `token = "..."` is a parse error like
 name without a table is a local vault file, as before. The providers, their
 keys and the commands that work against a remote vault are in
 [providers](providers/index.md).
+
+How a secret is rotated is a `[rotation.<name>]` table naming the commands
+`secret rotate` runs (each the program and its arguments, no shell) and the
+grace period; it cannot hold a value either:
+
+```toml
+[rotation.database-password]
+issue = ["./scripts/db-rotate.sh", "issue"]        # stdout is the new value
+validate = ["./scripts/db-rotate.sh", "validate"]  # exit 0 accepts the candidate
+retire = ["./scripts/db-rotate.sh", "retire"]      # revokes the previous credential
+retire_after = "7d"
+```
+
+See [rotation](rotation.md) for what each command receives.
 
 | Command | Description |
 |---------|-------------|

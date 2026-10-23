@@ -96,6 +96,7 @@ export default defineConfig({
 						{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' },
 						{ label: 'AI coding agents', slug: 'guides/ai-agents' },
 						{ label: 'Building from source', slug: 'guides/building-from-source' },
+						{ label: 'Rotating a secret', slug: 'guides/rotation' },
 						{ label: 'Enterprise: identity, policy, revocation', slug: 'guides/enterprise' },
 					],
 				},

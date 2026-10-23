@@ -836,3 +836,290 @@ fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
     assert!(stderr(&out).contains("token"), "{}", stderr(&out));
     assert!(!stderr(&out).contains("SMUGGLED"), "{}", stderr(&out));
 }
+
+/// Hook scripts for `secret rotate`: the issuer mints `next-<current>`, the
+/// validator compares the candidate with `EXPECTED` (or fails on
+/// `FAIL_VALIDATE`), and the retire hook records which version it was told
+/// to revoke. Written per platform; the manifest names them as argv.
+fn write_rotation_hooks(project: &Path) -> String {
+    let dir = project.join("hooks");
+    std::fs::create_dir_all(&dir).unwrap();
+    if cfg!(windows) {
+        std::fs::write(
+            dir.join("issue.cmd"),
+            "@echo off\r\necho next-%DATABASE_PASSWORD%\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("validate.cmd"),
+            "@echo off\r\nif defined FAIL_VALIDATE exit /b 3\r\n\
+             if not \"%DATABASE_PASSWORD%\"==\"%EXPECTED%\" exit /b 4\r\nexit /b 0\r\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("retire.cmd"),
+            "@echo off\r\nif not defined SOURCEORRERY_RETIRED_VERSION exit /b 5\r\n\
+             echo %SOURCEORRERY_RETIRED_VERSION%> retired.txt\r\n",
+        )
+        .unwrap();
+        "[rotation.database-password]\n\
+         issue = ['cmd', '/C', 'hooks\\issue.cmd']\n\
+         validate = ['cmd', '/C', 'hooks\\validate.cmd']\n\
+         retire = ['cmd', '/C', 'hooks\\retire.cmd']\n\
+         retire_after = \"7d\"\n"
+            .to_owned()
+    } else {
+        std::fs::write(
+            dir.join("issue.sh"),
+            "printf 'next-%s\\n' \"$DATABASE_PASSWORD\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("validate.sh"),
+            "[ -n \"$FAIL_VALIDATE\" ] && exit 3\n\
+             [ \"$DATABASE_PASSWORD\" = \"$EXPECTED\" ] || exit 4\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("retire.sh"),
+            "[ -n \"$SOURCEORRERY_RETIRED_VERSION\" ] || exit 5\n\
+             printf '%s' \"$SOURCEORRERY_RETIRED_VERSION\" > retired.txt\n",
+        )
+        .unwrap();
+        "[rotation.database-password]\n\
+         issue = ['sh', 'hooks/issue.sh']\n\
+         validate = ['sh', 'hooks/validate.sh']\n\
+         retire = ['sh', 'hooks/retire.sh']\n\
+         retire_after = \"7d\"\n"
+            .to_owned()
+    }
+}
+
+/// A project whose manifest declares the rotation hooks for
+/// `database-password`, holding `first-value`.
+fn rotation_project() -> Env {
+    let env = Env::new();
+    env.create_vault("development");
+    env.ok(&["init", "--project-name", "demo"]);
+    let manifest_path = env.project.path().join("sourceorrery.toml");
+    let mut manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    manifest.push('\n');
+    manifest.push_str(&write_rotation_hooks(env.project.path()));
+    std::fs::write(&manifest_path, manifest).unwrap();
+    env.set("development", "database-password", "first-value");
+    env
+}
+
+/// The versions of `database-password` as JSON, asserting how many.
+fn rotation_versions(env: &Env, expect: usize) -> Vec<serde_json::Value> {
+    let text = env.ok(&[
+        "secret",
+        "versions",
+        "database-password",
+        "--vault",
+        "development",
+        "-o",
+        "json",
+    ]);
+    let list: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    assert_eq!(list.len(), expect, "{text}");
+    list
+}
+
+fn rotation_tag(v: &serde_json::Value, key: &str) -> String {
+    v["tags"][key].as_str().unwrap_or("").to_owned()
+}
+
+#[test]
+fn rotation_runs_the_hooks_and_never_prints_a_value() {
+    let env = rotation_project();
+
+    // Issue → validate → activate, with a grace period before retirement.
+    let out = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("EXPECTED", "next-first-value")
+        .output()
+        .unwrap();
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(out.status.success(), "{text}");
+    assert!(text.contains("Activated version"), "{text}");
+    assert!(text.contains("retired after"), "{text}");
+    assert!(!text.contains("first-value"), "a value leaked: {text}");
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "database-password",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "next-first-value");
+    let list = rotation_versions(&env, 2);
+    let (new, old) = (&list[0], &list[1]);
+    assert_eq!(new["enabled"], true);
+    assert_eq!(rotation_tag(new, "sourceorrery.rotation.state"), "active");
+    assert_eq!(
+        rotation_tag(new, "sourceorrery.rotation.previous"),
+        old["version"].as_str().unwrap()
+    );
+    assert_ne!(rotation_tag(new, "sourceorrery.rotation.retire-on"), "");
+    assert_eq!(old["enabled"], false);
+    assert_eq!(
+        rotation_tag(old, "sourceorrery.rotation.state"),
+        "superseded"
+    );
+    let old_version = old["version"].as_str().unwrap().to_owned();
+
+    // Retirement waits for the grace period unless forced; the hook learns
+    // which version it is revoking.
+    let out = env.run(&[
+        "secret",
+        "rotate",
+        "database-password",
+        "--step",
+        "retire",
+        "-o",
+        "json",
+    ]);
+    assert!(!out.status.success());
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(
+        text.contains("\"rotation\"") && text.contains("grace"),
+        "{text}"
+    );
+    assert!(!env.project.path().join("retired.txt").exists());
+    let out = env.run(&[
+        "secret",
+        "rotate",
+        "database-password",
+        "--step",
+        "retire",
+        "--now",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let retired = std::fs::read_to_string(env.project.path().join("retired.txt")).unwrap();
+    assert_eq!(retired.trim(), old_version);
+    let list = rotation_versions(&env, 2);
+    assert_eq!(
+        rotation_tag(&list[0], "sourceorrery.rotation.state"),
+        "complete"
+    );
+    assert_eq!(
+        rotation_tag(&list[1], "sourceorrery.rotation.state"),
+        "retired"
+    );
+}
+
+#[test]
+fn a_failing_validator_leaves_the_current_version_in_place() {
+    let env = rotation_project();
+    // A failing validator leaves the candidate disabled and the current
+    // version current; nothing printed names either value.
+    let out = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("FAIL_VALIDATE", "1")
+        .output()
+        .unwrap();
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!out.status.success(), "{text}");
+    assert!(
+        text.contains("validate command exited with status 3"),
+        "{text}"
+    );
+    assert!(text.contains("stays current"), "{text}");
+    assert!(!text.contains("first-value"), "a value leaked: {text}");
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "database-password",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "first-value");
+    let list = rotation_versions(&env, 2);
+    assert_eq!(list[0]["enabled"], false);
+    assert_eq!(
+        rotation_tag(&list[0], "sourceorrery.rotation.state"),
+        "failed"
+    );
+
+    // Status, as JSON.
+    let text = env.ok(&[
+        "secret",
+        "rotate",
+        "database-password",
+        "--step",
+        "status",
+        "-o",
+        "json",
+    ]);
+    let status: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(status["current"].is_null(), "nothing was activated: {text}");
+    assert!(
+        status["candidate"].is_null(),
+        "a failed candidate is not waiting"
+    );
+    assert_eq!(status["grace"], "7d");
+    assert_eq!(status["versions"][0]["state"], "failed");
+    assert!(!text.contains("first-value"));
+}
+
+#[test]
+fn rotation_without_hooks_reads_stdin_and_activates_on_demand() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.ok(&["init", "--project-name", "demo"]);
+
+    // Without hooks the value comes from stdin, and without a grace period
+    // the previous version is retired in the same run.
+    env.set("development", "api-key", "k1");
+    let out = env.run_with_stdin(&["secret", "rotate", "api-key", "-o", "json"], "k2\n");
+    assert!(out.status.success(), "{}", stderr(&out));
+    let report: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(report["activated"], true);
+    assert_eq!(report["retired"], true);
+    assert!(report["retire_on"].is_null());
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "k2");
+
+    // --no-activate leaves a validated candidate that --step activate enables.
+    let out = env.run_with_stdin(&["secret", "rotate", "api-key", "--no-activate"], "k3\n");
+    assert!(out.status.success(), "{}", stderr(&out));
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "k2", "a validated candidate is not served");
+    let out = env.run_with_stdin(&["secret", "rotate", "api-key"], "k4\n");
+    assert!(
+        !out.status.success(),
+        "a waiting candidate blocks a new rotation"
+    );
+    assert!(
+        stderr(&out).contains("waiting for activation"),
+        "{}",
+        stderr(&out)
+    );
+    env.ok(&["secret", "rotate", "api-key", "--step", "activate"]);
+    let revealed = env.ok(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "development",
+        "--reveal",
+    ]);
+    assert_eq!(revealed.trim(), "k3");
+}

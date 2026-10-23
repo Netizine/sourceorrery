@@ -936,19 +936,44 @@ contract.
 
 **Steps.**
 
-- [ ] Core: `rotation.rs` (states, transitions, tags), `Manifest`
+- [x] Core: `rotation.rs` (states, transitions, tags), `Manifest`
       `[rotation.<secret>]` (hooks and grace, no values).
-- [ ] CLI: `secret rotate <name> [--issue-from-stdin] [--step issue|validate|activate|retire|all] [--retire-after D]`,
+      *Done. Two things the contract forced: there is no per-version
+      delete, so retire tags the previous version `retired` (it stays in
+      the vault, disabled) and runs the `retire` hook, which is where the
+      credential is revoked; and a disabled version cannot be read back,
+      so issue, validate and activate run in one process with the value in
+      memory, and a candidate left `issued` by a crash is marked failed by
+      the next rotation (never activated). States: issued, validated,
+      failed, active, complete, superseded, retired. New code `rotation`.
+      `SecretClient::capabilities` (default: everything) is new on the
+      contract; AWS reports none, so rotation there is `unsupported`
+      before anything is written.*
+- [x] CLI: `secret rotate <name> [--step rotate|activate|retire|status] [--no-activate] [--retire-after D] [--now] [--stdin|--from-file]`,
       hooks run as `run` runs commands, values only in the child's
       environment.
-- [ ] Conformance: a rotation over the SQLite vault and over
+      *Done: `commands/rotate.rs`. Hooks are an argv in the manifest (no
+      shell); the issue hook's stdout is the value, read straight into
+      `SecretBytes`; the issue hook gets the current value, validate the
+      candidate, retire the current value plus
+      `SOURCEORRERY_RETIRED_VERSION`. Without a grace period retirement
+      runs in the same process.*
+- [x] Conformance: a rotation over the SQLite vault and over
       `Blocking<AsyncLocal<...>>` with a fake issuer and a failing
       validator (the candidate stays disabled, the old version stays
       current); canaries on every hook invocation's logs.
-- [ ] Docs: `docs/rotation.md`, `docs/cli.md`.
+      *Done: two lifecycle scenarios (`needs: PerVersionProperties`) run by
+      every backend's suite, a test that a capability-less backend is
+      refused before writing, the AWS live test asserting the same, and a
+      CLI test with real hook scripts (sh and cmd) checking that nothing
+      the CLI prints names a value.*
+- [x] Docs: `docs/rotation.md`, `docs/cli.md`.
+      *Done, plus the architecture note, both provider pages, the agent
+      skill's command table (integrations regenerated) and the docs site.*
 
 **Decision for you.** Hooks as the issuer interface (recommended) versus
-built-in issuers now.
+built-in issuers now. *Applied as recommended: hooks only; a built-in
+issuer would be a hook SourceOrrery ships, later, if one is asked for.*
 
 ---
 

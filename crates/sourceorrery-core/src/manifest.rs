@@ -33,6 +33,42 @@ pub struct Manifest {
     /// here is a local vault file.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub vaults: BTreeMap<String, RemoteVault>,
+    /// How a secret is rotated (`sourceorrery secret rotate`), keyed by
+    /// secret name: the hook commands and the grace period, never a value.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rotation: BTreeMap<String, RotationSection>,
+}
+
+/// `[rotation.<secret>]` entry: the issuer's side of a rotation, as
+/// commands SourceOrrery runs the way `sourceorrery run` runs a program
+/// (program and arguments, no shell; values only in the child's
+/// environment). Every key is optional; without an `issue` command the new
+/// value is read from standard input.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RotationSection {
+    /// Produces the new value on its standard output (one trailing newline
+    /// is stripped). It runs with the current value in the secret's
+    /// environment variable, so it can authenticate to the issuer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<Vec<String>>,
+    /// Checks the candidate, which it receives in the secret's environment
+    /// variable; a non-zero exit status fails the rotation and leaves the
+    /// current version in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validate: Option<Vec<String>>,
+    /// Revokes the previous credential at the issuer once the grace period
+    /// has ended. It runs with the current (new) value in the secret's
+    /// environment variable and the retired version's id in
+    /// `SOURCEORRERY_RETIRED_VERSION`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retire: Option<Vec<String>>,
+    /// How long after activation the previous version is retired: a number
+    /// of days, hours or minutes (`7d`, `12h`, `30m`). Without it the
+    /// previous version is retired in the same run that activates the new
+    /// one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retire_after: Option<String>,
 }
 
 /// `[project]` section.
@@ -152,6 +188,7 @@ impl Manifest {
             },
             secrets,
             vaults: BTreeMap::new(),
+            rotation: BTreeMap::new(),
         }
     }
 
@@ -166,6 +203,11 @@ impl Manifest {
     /// The `[vaults.<vault>]` table, when `vault` is remote.
     pub fn remote_vault(&self, vault: &str) -> Option<&RemoteVault> {
         self.vaults.get(vault)
+    }
+
+    /// The `[rotation.<secret>]` table, when the secret has one.
+    pub fn rotation(&self, secret: &str) -> Option<&RotationSection> {
+        self.rotation.get(secret)
     }
 
     /// Check names, vaults, versions and environment variable names.
@@ -212,6 +254,32 @@ impl Manifest {
                     "secrets '{previous}' and '{name}' both map to environment variable {env} \
                      (names are compared case-insensitively for portability)"
                 )));
+            }
+        }
+        for (name, rotation) in &self.rotation {
+            if !self.secrets.contains_key(name) {
+                return Err(SecretError::Manifest(format!(
+                    "[rotation.{name}] names a secret that [secrets] does not declare"
+                )));
+            }
+            for (key, hook) in [
+                ("issue", &rotation.issue),
+                ("validate", &rotation.validate),
+                ("retire", &rotation.retire),
+            ] {
+                if let Some(argv) = hook
+                    && argv.first().is_none_or(|program| program.trim().is_empty())
+                {
+                    return Err(SecretError::Manifest(format!(
+                        "[rotation.{name}].{key} must name a program (an array of the program and \
+                         its arguments)"
+                    )));
+                }
+            }
+            if let Some(grace) = &rotation.retire_after {
+                crate::rotation::parse_grace(grace).map_err(|err| {
+                    SecretError::Manifest(format!("[rotation.{name}].retire_after: {err}"))
+                })?;
             }
         }
         Ok(())
@@ -500,6 +568,45 @@ prefix = "myapp/"
             "{err}"
         );
         assert!(!err.to_string().contains("nope"), "{err}");
+    }
+
+    #[test]
+    fn rotation_tables_name_hooks_and_a_grace_period_only() {
+        let head = "[project]\nname = \"x\"\nvault = \"dev\"\n\n[secrets.db]\n\n";
+        let manifest = Manifest::parse(&format!(
+            "{head}[rotation.db]\nissue = [\"./rotate.sh\", \"issue\"]\n\
+             validate = [\"./rotate.sh\", \"validate\"]\nretire_after = \"7d\"\n"
+        ))
+        .unwrap();
+        let rotation = manifest.rotation("db").unwrap();
+        assert_eq!(
+            rotation.issue.as_deref(),
+            Some(&["./rotate.sh".to_owned(), "issue".to_owned()][..])
+        );
+        assert!(rotation.retire.is_none());
+        assert_eq!(rotation.retire_after.as_deref(), Some("7d"));
+        assert!(manifest.rotation("other").is_none());
+        assert!(Manifest::parse(head).unwrap().rotation.is_empty());
+
+        let cases = [
+            // Not a declared secret.
+            format!("{head}[rotation.other]\nretire_after = \"7d\"\n"),
+            // A hook must name a program.
+            format!("{head}[rotation.db]\nissue = []\n"),
+            format!("{head}[rotation.db]\nvalidate = [\"  \"]\n"),
+            // A hook is an array, not a shell line.
+            format!("{head}[rotation.db]\nissue = \"./rotate.sh issue\"\n"),
+            // A grace period is days, hours or minutes.
+            format!("{head}[rotation.db]\nretire_after = \"7w\"\n"),
+            format!("{head}[rotation.db]\nretire_after = \"0d\"\n"),
+            // No value here either.
+            format!("{head}[rotation.db]\nvalue = \"hunter2\"\n"),
+        ];
+        for text in cases {
+            let err = Manifest::parse(&text).unwrap_err();
+            assert_eq!(err.code(), "manifest", "{text}");
+            assert!(!err.to_string().contains("hunter2"), "{err}");
+        }
     }
 
     #[test]

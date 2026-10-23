@@ -89,6 +89,7 @@ secret.
 | What exists, without values | `sourceorrery secret list`, `secret versions <name>`, `secret get <name>` |
 | Everything the manifest needs is present | `sourceorrery check` |
 | Disable or expire a version | `sourceorrery secret update <name> --disable`, `--expires 2027-01-01T00:00:00Z` |
+| Rotate a credential | `sourceorrery secret rotate <name>` (the new value comes from the manifest's `[rotation.<name>]` issue command, or the user types it) |
 | Who read what | `sourceorrery audit` |
 
 Every `set` adds an immutable version; a read takes the newest enabled

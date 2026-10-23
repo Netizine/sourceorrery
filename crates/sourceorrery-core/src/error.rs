@@ -136,6 +136,13 @@ pub enum SecretError {
     /// error. Transient: the same call may succeed later.
     #[error("{provider} is unavailable: {reason}")]
     ProviderUnavailable { provider: String, reason: String },
+
+    /// A rotation step was asked for in a state that does not allow it: a
+    /// validated candidate is already waiting, there is nothing to activate
+    /// or retire, or the grace period has not ended. The message carries
+    /// versions and times only.
+    #[error("rotation of '{name}': {reason}")]
+    Rotation { name: String, reason: String },
 }
 
 impl SecretError {
@@ -170,6 +177,7 @@ impl SecretError {
             Self::VaultMismatch { .. } => "vault_mismatch",
             Self::Unauthenticated { .. } => "unauthenticated",
             Self::ProviderUnavailable { .. } => "provider_unavailable",
+            Self::Rotation { .. } => "rotation",
         }
     }
 
@@ -248,6 +256,10 @@ mod tests {
             },
             SecretError::ProviderUnavailable {
                 provider: "p".into(),
+                reason: "r".into(),
+            },
+            SecretError::Rotation {
+                name: "a".into(),
                 reason: "r".into(),
             },
         ];

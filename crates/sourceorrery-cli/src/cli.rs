@@ -203,6 +203,59 @@ pub enum SecretCommand {
     Recover(SecretNameArgs),
     /// Permanently remove a soft-deleted secret.
     Purge(SecretPurgeArgs),
+    /// Rotate a secret: issue a new value (from the manifest's issue command, stdin or a prompt),
+    /// validate it, activate it, and retire the previous version after the grace period.
+    Rotate(SecretRotateArgs),
+}
+
+/// What `secret rotate` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RotationStep {
+    /// Issue, validate and activate a new version; retire the previous one at once unless a grace
+    /// period is set.
+    Rotate,
+    /// Activate the validated candidate a `--no-activate` run left behind.
+    Activate,
+    /// Retire the previous version once the grace period has ended (or now, with --now).
+    Retire,
+    /// Show where the secret's rotation stands.
+    Status,
+}
+
+#[derive(Debug, Args)]
+pub struct SecretRotateArgs {
+    /// Secret name.
+    pub name: String,
+    /// Manifest path (default: discovered upwards from the current directory). The manifest's
+    /// `[rotation.NAME]` table supplies the issue, validate and retire commands and the grace period.
+    #[arg(long, value_name = "FILE")]
+    pub manifest: Option<PathBuf>,
+    /// The step to run.
+    #[arg(long, value_enum, default_value_t = RotationStep::Rotate)]
+    pub step: RotationStep,
+    /// Stop after validation: the candidate stays disabled until `--step activate`.
+    #[arg(long)]
+    pub no_activate: bool,
+    /// Retire the previous version this long after activation (7d, 12h, 30m). Overrides the
+    /// manifest; without either, the previous version is retired in the same run.
+    #[arg(long, value_name = "DURATION")]
+    pub retire_after: Option<String>,
+    /// With --step retire: retire before the grace period has ended.
+    #[arg(long)]
+    pub now: bool,
+    /// Read the new value from standard input (automatic when stdin is not a terminal and the
+    /// manifest has no issue command).
+    #[arg(long)]
+    pub stdin: bool,
+    /// Read the new value from a file.
+    #[arg(long, value_name = "FILE", conflicts_with = "stdin")]
+    pub from_file: Option<PathBuf>,
+    /// Keep a trailing newline read from stdin or the issue command (stripped by default).
+    #[arg(long)]
+    pub keep_trailing_newline: bool,
+    /// Allow an empty value.
+    #[arg(long)]
+    pub allow_empty: bool,
 }
 
 #[derive(Debug, Args)]

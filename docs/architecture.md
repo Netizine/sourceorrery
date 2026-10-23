@@ -172,8 +172,15 @@ its own log) is the one common to all.
 A deliberate difference from the managed cloud secrets services: `not_before` and `expires_on`
 are **enforced** on retrieval, not advisory.
 
-Rotation is intentionally not an operation yet. A new value is not a rotated
-credential; real rotation needs the external issuer (milestone 4).
+Rotation is not an operation of the contract but a workflow over it
+(`core::rotation`, [rotation.md](rotation.md)): a new value is written as a
+disabled candidate, validated, enabled while the version it replaces is
+disabled, and the previous credential retired at the issuer after a grace
+period. Every step is an ordinary `set` or `update`, recorded in the
+versions' tags; the issuer's side is a command the CLI runs, because a new
+value is not a rotated credential until the issuer knows about it. It needs
+per-version properties (`SecretClient::capabilities`), which the local vault
+and HashiCorp Vault have and AWS Secrets Manager has not.
 
 A second, smaller contract, `VaultBackup`, covers backups: `export` takes
 a `Snapshot` of the secrets with every version's value (disabled and

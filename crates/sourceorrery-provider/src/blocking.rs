@@ -4,9 +4,9 @@ use std::fmt;
 use std::future::Future;
 
 use sourceorrery_core::{
-    AsyncSecretClient, AuditEvent, AuditQuery, DeletedSecret, ListOptions, Page, Result, Secret,
-    SecretBytes, SecretClient, SecretError, SecretProperties, SecretReference, SetSecretOptions,
-    UpdateSecretProperties,
+    AsyncSecretClient, AuditEvent, AuditQuery, Capability, DeletedSecret, ListOptions, Page,
+    Result, Secret, SecretBytes, SecretClient, SecretError, SecretProperties, SecretReference,
+    SetSecretOptions, UpdateSecretProperties,
 };
 use tokio::runtime::{Handle, Runtime};
 
@@ -127,6 +127,10 @@ impl<A: AsyncSecretClient> fmt::Debug for Blocking<A> {
 impl<A: AsyncSecretClient> SecretClient for Blocking<A> {
     fn vault_name(&self) -> &str {
         self.inner.vault_name()
+    }
+
+    fn capabilities(&self) -> &'static [Capability] {
+        self.inner.capabilities()
     }
 
     fn set_secret(

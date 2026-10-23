@@ -8,7 +8,13 @@ and `docs/threat-model.md` before changing anything security-relevant.
 
 - `crates/sourceorrery-core` — contracts and semantics only (no crypto, no I/O
   except manifest loading). `SecretClient` trait, `SecretError` codes,
-  policy, audit types, `sourceorrery.toml` manifest.
+  policy, audit types, `sourceorrery.toml` manifest, and `rotation`: the
+  issue → validate → activate → retire state machine over any client,
+  recorded in `sourceorrery.rotation.*` tags; it never runs a program or
+  reads a value (the CLI's `commands/rotate.rs` runs the manifest's hooks
+  the way `run` runs a command). `SecretClient::capabilities` is how a
+  backend says what it cannot express; rotation needs
+  `PerVersionProperties`.
 - `crates/sourceorrery-crypto` — wrappers over RustCrypto. No algorithms here.
 - `crates/sourceorrery-storage` — encrypted SQLite vault, key protectors,
   OS keyring access, vault registry (paths).

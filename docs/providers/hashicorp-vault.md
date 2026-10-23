@@ -88,6 +88,10 @@ as for a local vault.
 * **Two writers can race.** Nothing locks a secret between the metadata
   read and the write that follows it; Vault's own check-and-set is not used.
 
+`sourceorrery secret rotate` works against a Vault-backed vault like
+against a local one: the candidate, its state and the grace period are
+per-version properties in `custom_metadata` ([rotation](../rotation.md)).
+
 ## Errors
 
 | Situation | Code |

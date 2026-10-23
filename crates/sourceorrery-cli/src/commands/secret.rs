@@ -25,6 +25,7 @@ pub fn run(ctx: &Ctx, cmd: &SecretCommand) -> anyhow::Result<()> {
         SecretCommand::Delete(args) => delete(ctx, args),
         SecretCommand::Recover(args) => recover(ctx, args),
         SecretCommand::Purge(args) => purge(ctx, args),
+        SecretCommand::Rotate(args) => crate::commands::rotate::rotate(ctx, args),
     }
 }
 

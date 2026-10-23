@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use sourceorrery_core::{
-    AsyncSecretClient, AuditEvent, AuditQuery, DeletedSecret, ListOptions, Page, Result, Secret,
-    SecretBytes, SecretClient, SecretError, SecretProperties, SecretReference, SetSecretOptions,
-    UpdateSecretProperties,
+    AsyncSecretClient, AuditEvent, AuditQuery, Capability, DeletedSecret, ListOptions, Page,
+    Result, Secret, SecretBytes, SecretClient, SecretError, SecretProperties, SecretReference,
+    SetSecretOptions, UpdateSecretProperties,
 };
 
 /// An [`AsyncSecretClient`] that runs a [`SecretClient`] on Tokio's
@@ -94,6 +94,10 @@ where
 {
     fn vault_name(&self) -> &str {
         self.inner.vault_name()
+    }
+
+    fn capabilities(&self) -> &'static [Capability] {
+        self.inner.capabilities()
     }
 
     async fn set_secret(

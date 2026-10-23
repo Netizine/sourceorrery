@@ -8,6 +8,24 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* `sourceorrery secret rotate NAME` rotates a credential as a recorded
+  workflow over any vault: the new value is written as a disabled candidate
+  (from the manifest's `[rotation.NAME]` `issue` command, whose standard
+  output is the value and which receives the current value in the secret's
+  environment variable, or from stdin), validated by the `validate` command,
+  activated (enabled, then the previous version disabled, so one version is
+  always accessible) and the previous credential retired at the issuer by
+  the `retire` command once `retire_after` has passed, in a later
+  `--step retire` run. Hooks run the way `run` runs a program (an argv, no
+  shell; the value only in the child's environment). State lives in the
+  versions' `sourceorrery.rotation.*` tags, so a rotation survives a crash
+  and shows in `secret versions` and `--step status`; every step is an
+  ordinary `secret_set` or `secret_update` audit event. Refusals carry the
+  new code `rotation`. The core's `rotation` module is the state machine;
+  `SecretClient::capabilities` (new, default: everything) lets a backend
+  whose properties are per secret, AWS Secrets Manager, refuse rotation
+  with `unsupported` before anything is written. Two lifecycle conformance
+  scenarios cover activation and a failed validation (`docs/rotation.md`).
 * `sourceorrery check --access` reads each value and discards it, so the
   status says whether this identity may read the secret and not only
   inspect it: a remote provider's policy can allow metadata and deny

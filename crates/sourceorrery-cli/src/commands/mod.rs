@@ -3,6 +3,7 @@ pub mod backup;
 pub mod completions;
 pub mod import;
 pub mod project;
+pub mod rotate;
 pub mod secret;
 pub mod vault;
 

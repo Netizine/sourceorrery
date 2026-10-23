@@ -11,29 +11,19 @@
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use sourceorrery_core::rotation::{self, State};
 use sourceorrery_core::{
     ContinuationToken, ListOptions, SecretBytes, SecretClient, SecretProperties, SecretReference,
     SetSecretOptions, UpdateSecretProperties, timestamp,
 };
 use time::Duration;
 
-/// Something the contract asks for that a remote provider's service may be
-/// unable to express. A backend that lacks one documents the difference
-/// (ADR 0008) and runs the suite with [`lifecycle_with`], which skips the
-/// scenarios that need it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Capability {
-    /// `enabled`, `not_before`, `expires_on` and `content_type` belong to
-    /// one version, so disabling the newest version falls back to the one
-    /// before. A service whose metadata is per secret applies them to every
-    /// version at once.
-    PerVersionProperties,
-}
-
-impl Capability {
-    /// Everything the local vault does.
-    pub const ALL: &'static [Self] = &[Self::PerVersionProperties];
-}
+/// What the contract asks for that a backend may be unable to express; the
+/// core's enum, re-exported. A backend that lacks one documents the
+/// difference (ADR 0008), reports it from `SecretClient::capabilities`, and
+/// runs the suite with [`lifecycle_with`], which skips the scenarios that
+/// need it.
+pub use sourceorrery_core::Capability;
 
 /// One lifecycle scenario.
 #[derive(Debug, Clone, Copy)]
@@ -108,6 +98,16 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "errors_and_debug_output_never_carry_a_value",
         run: errors_and_debug_output_never_carry_a_value,
         needs: &[],
+    },
+    Scenario {
+        name: "rotation_activates_a_validated_candidate_and_supersedes_the_old_one",
+        run: rotation_activates_a_validated_candidate_and_supersedes_the_old_one,
+        needs: &[Capability::PerVersionProperties],
+    },
+    Scenario {
+        name: "rotation_keeps_the_current_version_when_validation_fails",
+        run: rotation_keeps_the_current_version_when_validation_fails,
+        needs: &[Capability::PerVersionProperties],
     },
 ];
 
@@ -662,6 +662,230 @@ fn many_versions_are_listed_and_read_correctly(client: &dyn SecretClient) {
 /// A value that no error, listing or `Debug` output may ever show.
 pub const CANARY: &str = "CANARY-7f3a9c1e-value-that-must-never-leak";
 
+fn state_of(client: &dyn SecretClient, name: &str, version: &str) -> (State, SecretProperties) {
+    let props = client.get_secret_properties(name, Some(version)).unwrap();
+    (State::of(&props).expect("a rotation state"), props)
+}
+
+fn rotation_activates_a_validated_candidate_and_supersedes_the_old_one(client: &dyn SecretClient) {
+    let now = timestamp::now();
+    let v1 = set(client, "db-password", "rotation-old-value");
+    let mut team = BTreeMap::new();
+    team.insert("team".to_owned(), "payments".to_owned());
+    client
+        .update_secret_properties(
+            "db-password",
+            None,
+            UpdateSecretProperties {
+                tags: Some(team),
+                content_type: Some(Some("text/plain".to_owned())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+    // Issue: a disabled candidate next to the current version, carrying the
+    // user's metadata and a pointer to what it replaces.
+    let issued = rotation::issue(client, "db-password", SecretBytes::from(CANARY), now).unwrap();
+    let candidate = issued.candidate.version.clone();
+    assert!(!issued.candidate.enabled);
+    assert_eq!(State::of(&issued.candidate), Some(State::Issued));
+    assert_eq!(issued.previous.as_ref().unwrap().version, v1.version);
+    assert_eq!(issued.candidate.tags[rotation::PREVIOUS_TAG], v1.version);
+    assert_eq!(issued.candidate.tags["team"], "payments");
+    assert_eq!(issued.candidate.content_type.as_deref(), Some("text/plain"));
+    let current = client.get_secret("db-password", None).unwrap();
+    assert_eq!(
+        current.properties.version, v1.version,
+        "the candidate is not served"
+    );
+    assert_eq!(current.value.expose(), b"rotation-old-value");
+
+    // Only a validated candidate can be activated.
+    let err = rotation::activate(client, "db-password", &candidate, None, now).unwrap_err();
+    assert_eq!(err.code(), "rotation");
+    assert!(!err.to_string().contains(CANARY));
+    rotation::validated(client, "db-password", &candidate).unwrap();
+    assert_eq!(
+        state_of(client, "db-password", &candidate).0,
+        State::Validated
+    );
+    assert_eq!(
+        client
+            .get_secret("db-password", None)
+            .unwrap()
+            .properties
+            .version,
+        v1.version,
+        "a validated candidate is still disabled"
+    );
+
+    // Activate: the candidate is enabled, then the old version disabled.
+    let grace = Duration::days(7);
+    let activated =
+        rotation::activate(client, "db-password", &candidate, Some(grace), now).unwrap();
+    assert!(activated.current.enabled);
+    assert_eq!(State::of(&activated.current), Some(State::Active));
+    assert_eq!(activated.retire_on, Some(now + grace));
+    assert_eq!(
+        activated.current.tags[rotation::RETIRE_ON_TAG],
+        timestamp::format(now + grace)
+    );
+    let previous = activated.previous.unwrap();
+    assert!(!previous.enabled);
+    assert_eq!(State::of(&previous), Some(State::Superseded));
+    assert_eq!(previous.tags[rotation::SUPERSEDED_BY_TAG], candidate);
+    let served = client.get_secret("db-password", None).unwrap();
+    assert_eq!(served.properties.version, candidate);
+    assert_eq!(served.value.expose(), CANARY.as_bytes());
+    assert_eq!(
+        client
+            .get_secret("db-password", Some(&v1.version))
+            .unwrap_err()
+            .code(),
+        "disabled"
+    );
+    let status = rotation::status(client, "db-password").unwrap();
+    assert!(status.candidate.is_none());
+    assert_eq!(status.current.as_ref().unwrap().version, candidate);
+    let (awaiting, retire_on) = status.awaiting_retirement.unwrap();
+    assert_eq!(awaiting.version, v1.version);
+    // Read back from the tag, so at the precision of the timestamp format.
+    assert_eq!(
+        retire_on.map(timestamp::format),
+        Some(timestamp::format(now + grace))
+    );
+
+    retire_after_the_grace_period(client, &candidate, &v1.version, now, grace);
+
+    // The next rotation replaces the version this one activated.
+    let next = rotation::issue(client, "db-password", SecretBytes::from("third"), now).unwrap();
+    assert_eq!(next.previous.unwrap().version, candidate);
+    assert_eq!(next.candidate.tags["team"], "payments");
+
+    // Three versions, every one audited as ordinary set and update operations.
+    assert_eq!(
+        client
+            .list_properties_of_secret_versions("db-password")
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+/// The retire half of a rotation: refused inside the grace period, allowed
+/// when due or forced, and recorded on both versions.
+fn retire_after_the_grace_period(
+    client: &dyn SecretClient,
+    candidate: &str,
+    old: &str,
+    now: time::OffsetDateTime,
+    grace: Duration,
+) {
+    // Retire: refused inside the grace period, allowed when forced or due.
+    let err = rotation::retirement(client, "db-password", now, false).unwrap_err();
+    assert_eq!(err.code(), "rotation");
+    assert!(err.to_string().contains("grace"), "{err}");
+    let due = rotation::retirement(client, "db-password", now + grace, false).unwrap();
+    assert_eq!(due.previous.version, old);
+    let forced = rotation::retirement(client, "db-password", now, true).unwrap();
+    let done = rotation::retire(client, "db-password", &forced, now).unwrap();
+    assert_eq!(State::of(&done.previous), Some(State::Retired));
+    assert!(!done.previous.enabled);
+    assert!(done.previous.tags.contains_key(rotation::RETIRED_ON_TAG));
+    assert_eq!(State::of(&done.current), Some(State::Complete));
+    assert!(!done.current.tags.contains_key(rotation::RETIRE_ON_TAG));
+    assert_eq!(
+        rotation::retirement(client, "db-password", now, true)
+            .unwrap_err()
+            .code(),
+        "rotation",
+        "nothing is left to retire"
+    );
+    let status = rotation::status(client, "db-password").unwrap();
+    assert!(status.awaiting_retirement.is_none());
+    assert_eq!(status.current.unwrap().version, candidate);
+}
+
+fn rotation_keeps_the_current_version_when_validation_fails(client: &dyn SecretClient) {
+    let now = timestamp::now();
+    let v1 = set(client, "api-key", "keep-me");
+
+    // A candidate that fails validation stays disabled; the current version
+    // is untouched.
+    let failed = rotation::issue(client, "api-key", SecretBytes::from(CANARY), now).unwrap();
+    let marked = rotation::fail(client, "api-key", &failed.candidate.version).unwrap();
+    assert_eq!(State::of(&marked), Some(State::Failed));
+    assert!(!marked.enabled);
+    let served = client.get_secret("api-key", None).unwrap();
+    assert_eq!(served.properties.version, v1.version);
+    assert_eq!(served.value.expose(), b"keep-me");
+    let err =
+        rotation::activate(client, "api-key", &failed.candidate.version, None, now).unwrap_err();
+    assert_eq!(err.code(), "rotation");
+    assert!(!err.to_string().contains(CANARY));
+
+    // A candidate left in `issued` (the process that held its value is gone)
+    // is marked failed by the next issue and never activated.
+    let abandoned = rotation::issue(client, "api-key", SecretBytes::from("lost"), now).unwrap();
+    let second = rotation::issue(client, "api-key", SecretBytes::from("second"), now).unwrap();
+    assert_eq!(
+        state_of(client, "api-key", &abandoned.candidate.version).0,
+        State::Failed
+    );
+    assert_eq!(second.previous.as_ref().unwrap().version, v1.version);
+    assert_eq!(
+        rotation::validated(client, "api-key", &abandoned.candidate.version)
+            .unwrap_err()
+            .code(),
+        "rotation"
+    );
+    rotation::validated(client, "api-key", &second.candidate.version).unwrap();
+
+    // A validated candidate waits for activation and blocks a new issue.
+    let err = rotation::issue(client, "api-key", SecretBytes::from(CANARY), now).unwrap_err();
+    assert_eq!(err.code(), "rotation");
+    assert!(err.to_string().contains(&second.candidate.version), "{err}");
+    assert!(!err.to_string().contains(CANARY));
+    assert_eq!(
+        rotation::status(client, "api-key")
+            .unwrap()
+            .candidate
+            .unwrap()
+            .version,
+        second.candidate.version
+    );
+
+    // Without a grace period the caller retires at once, forced.
+    let activated =
+        rotation::activate(client, "api-key", &second.candidate.version, None, now).unwrap();
+    assert_eq!(activated.retire_on, None);
+    assert_eq!(activated.previous.unwrap().version, v1.version);
+    let pending = rotation::retirement(client, "api-key", now, true).unwrap();
+    let done = rotation::retire(client, "api-key", &pending, now).unwrap();
+    assert_eq!(State::of(&done.previous), Some(State::Retired));
+    assert_eq!(
+        client.get_secret("api-key", None).unwrap().value.expose(),
+        b"second"
+    );
+
+    // A first version with nothing to replace is complete at once.
+    let first = rotation::issue(client, "brand-new", SecretBytes::from("v"), now).unwrap();
+    assert!(first.previous.is_none());
+    rotation::validated(client, "brand-new", &first.candidate.version).unwrap();
+    let activated = rotation::activate(
+        client,
+        "brand-new",
+        &first.candidate.version,
+        Some(Duration::hours(1)),
+        now,
+    )
+    .unwrap();
+    assert_eq!(State::of(&activated.current), Some(State::Complete));
+    assert!(activated.previous.is_none());
+    assert_eq!(activated.retire_on, None);
+}
+
 fn errors_and_debug_output_never_carry_a_value(client: &dyn SecretClient) {
     client
         .set_secret(
@@ -788,6 +1012,83 @@ mod tests {
         }
     }
 
+    /// [`Broken`] as a backend that keeps properties per secret.
+    struct PerSecret(Broken);
+
+    impl SecretClient for PerSecret {
+        fn vault_name(&self) -> &str {
+            self.0.vault_name()
+        }
+        fn capabilities(&self) -> &'static [Capability] {
+            &[]
+        }
+        fn set_secret(
+            &self,
+            n: &str,
+            v: SecretBytes,
+            o: SetSecretOptions,
+        ) -> Result<SecretProperties> {
+            self.0.set_secret(n, v, o)
+        }
+        fn get_secret(&self, n: &str, v: Option<&str>) -> Result<Secret> {
+            self.0.get_secret(n, v)
+        }
+        fn get_secret_properties(&self, n: &str, v: Option<&str>) -> Result<SecretProperties> {
+            self.0.get_secret_properties(n, v)
+        }
+        fn list_properties_of_secrets(&self) -> Result<Vec<SecretProperties>> {
+            self.0.list_properties_of_secrets()
+        }
+        fn list_properties_of_secret_versions(&self, n: &str) -> Result<Vec<SecretProperties>> {
+            self.0.list_properties_of_secret_versions(n)
+        }
+        fn update_secret_properties(
+            &self,
+            n: &str,
+            v: Option<&str>,
+            u: UpdateSecretProperties,
+        ) -> Result<SecretProperties> {
+            self.0.update_secret_properties(n, v, u)
+        }
+        fn delete_secret(&self, n: &str) -> Result<DeletedSecret> {
+            self.0.delete_secret(n)
+        }
+        fn get_deleted_secret(&self, n: &str) -> Result<DeletedSecret> {
+            self.0.get_deleted_secret(n)
+        }
+        fn list_deleted_secrets(&self) -> Result<Vec<DeletedSecret>> {
+            self.0.list_deleted_secrets()
+        }
+        fn recover_deleted_secret(&self, n: &str) -> Result<SecretProperties> {
+            self.0.recover_deleted_secret(n)
+        }
+        fn purge_deleted_secret(&self, n: &str) -> Result<()> {
+            self.0.purge_deleted_secret(n)
+        }
+        fn audit_events(&self, q: AuditQuery) -> Result<Vec<AuditEvent>> {
+            self.0.audit_events(q)
+        }
+    }
+
+    #[test]
+    fn rotation_refuses_a_backend_without_per_version_properties_before_writing() {
+        assert_eq!(
+            Broken.capabilities(),
+            Capability::ALL,
+            "the default is everything"
+        );
+        let err = rotation::issue(
+            &PerSecret(Broken),
+            "db",
+            SecretBytes::from(CANARY),
+            timestamp::now(),
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "unsupported");
+        assert!(err.to_string().contains("per secret"), "{err}");
+        assert!(!err.to_string().contains(CANARY));
+    }
+
     #[test]
     fn a_backend_without_a_capability_skips_what_needs_it() {
         let mut labels = Vec::new();
@@ -806,7 +1107,14 @@ mod tests {
             .filter(|s| !s.needs.is_empty())
             .map(|s| s.name)
             .collect();
-        assert_eq!(needing, ["get_returns_latest_accessible_version"]);
+        assert_eq!(
+            needing,
+            [
+                "get_returns_latest_accessible_version",
+                "rotation_activates_a_validated_candidate_and_supersedes_the_old_one",
+                "rotation_keeps_the_current_version_when_validation_fails",
+            ]
+        );
         assert!(
             !labels.iter().any(|l| l == needing[0]),
             "skipped scenarios never get a client"
