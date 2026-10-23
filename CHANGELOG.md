@@ -8,6 +8,20 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* `sourceorrery audit export` writes a local vault's audit log, oldest
+  first, for a collector: as JSON Lines on stdout (one object per event
+  plus `vault`, then a trailer with the count, the last id and the chain
+  verification, so a collector can tell a complete export from a truncated
+  log), or as OTLP/HTTP log records posted to `--endpoint` (or the
+  `OTEL_EXPORTER_OTLP_*` variables) with the verification as the last
+  record (Cargo feature `otlp`, on by default). `--since` starts from a
+  time; `--follow` keeps exporting new events as they are recorded.
+  `audit --vault <remote>` prints where the provider keeps its trail and
+  the query that shows SourceOrrery's operations there instead of an error
+  (`-o json`: `provider`, `audit_trail`, `query`, `docs`); `audit export`
+  on a remote vault is `unsupported` with the same pointer. The provider
+  pages gain an "Audit trail" section each, and `docs/enterprise.md`
+  "Collecting the audit trail".
 * `sourceorrery secret rotate NAME` rotates a credential as a recorded
   workflow over any vault: the new value is written as a disabled candidate
   (from the manifest's `[rotation.NAME]` `issue` command, whose standard

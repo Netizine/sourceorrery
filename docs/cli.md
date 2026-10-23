@@ -51,9 +51,11 @@ limit. Failed attempts are audited.
 > recoverable vault unless you deliberately need permanent deletion.
 
 `vault create`, `vault protector`, `vault destroy`, `vault migrate`,
-`audit`, `backup`, `restore` and `ui` are about the vault file and refuse
-a [remote vault](providers/index.md) by name; the `secret` commands,
-`check`, `run` and `import` work against either kind.
+`audit --verify`, `audit --acknowledge`, `audit export`, `backup`,
+`restore` and `ui` are about the vault file and refuse a
+[remote vault](providers/index.md) by name; plain `audit` on one prints
+where the provider keeps its trail; the `secret` commands, `check`, `run`
+and `import` work against either kind.
 
 | Command | Description |
 |---------|-------------|
@@ -91,6 +93,7 @@ Timestamps are RFC 3339, e.g. `2026-12-31T00:00:00Z`.
 sourceorrery audit [--secret NAME] [--operation OP] [--since TIME] [--limit N]
 sourceorrery audit --verify
 sourceorrery audit --acknowledge [--yes]
+sourceorrery audit export [--format jsonl|otlp] [--since TIME] [--follow] [--interval S] [--endpoint URL] [--header K=V]... [--batch N]
 ```
 
 Newest first, with each event's id. Operations: `vault_create`,
@@ -121,6 +124,46 @@ Detail holds the error code or a short note — never a value.
 The result is always printed (as JSON with `-o json`); when the chain is not
 intact the command also fails with exit status 1. Verification is read-only,
 but opening the vault to run it writes the usual `vault_open` row.
+
+### `audit export`: the log for a collector
+
+`audit export` writes the whole log, **oldest first**, for the place the
+organisation already collects logs, and ends with the chain verification
+so a collector can tell a complete export from a truncated log:
+
+* `--format jsonl` (default): one JSON object per line on stdout, the
+  event as `audit -o json` shows it plus `"vault"`, then one trailer line
+  `{"vault", "events", "last_id", "intact", "verification": {…}}` with
+  the fields of `audit --verify`. Vector, Fluent Bit and their kind read
+  it without help (`sourceorrery audit export --vault production |
+  vector --config …`, or a `file` source on a redirected file).
+* `--format otlp --endpoint URL`: the same records as OTLP/HTTP log records
+  (JSON encoding, `POST …/v1/logs`) in batches of `--batch` (500), for a
+  collector that speaks OTLP directly. Each event is a log record whose body
+  is `<operation> <outcome> [<secret>]`, severity `INFO`, `WARN` (denied) or
+  `ERROR` (failure), with the fields as attributes (`sourceorrery.vault`,
+  `sourceorrery.event.id`, `sourceorrery.operation`, `sourceorrery.outcome`,
+  `sourceorrery.actor`, `sourceorrery.secret`, `sourceorrery.version`,
+  `sourceorrery.detail`); the verification is the last record, body `audit
+  chain verification: intact|broken`, with `sourceorrery.audit.*`
+  attributes. The endpoint defaults to `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
+  else `OTEL_EXPORTER_OTLP_ENDPOINT` with `/v1/logs` appended; headers come
+  from `--header KEY=VALUE` and `OTEL_EXPORTER_OTLP_HEADERS`. A collector
+  that answers anything but 2xx fails the export, with the status in the
+  error. Built with the Cargo feature `otlp` (on by default); without it the
+  command says so and JSON Lines remains.
+* `--since TIME` starts from that time; `--follow` keeps the vault open and,
+  after the backlog and its trailer, exports each new event as it is
+  recorded (looking every `--interval` seconds, default 2) until stdout
+  closes or the process is stopped. Reading the log is not itself audited,
+  so following adds nothing to it.
+
+Exported records are the metadata the log holds, never a value. A remote
+vault has no local log: `audit --vault <remote>` prints where the
+provider keeps its trail and the query that shows SourceOrrery's
+operations there ([providers](providers/index.md); `-o json` gives
+`provider`, `audit_trail`, `query` and `docs`), and `audit export` on one
+is `unsupported` with the same pointer.
 
 ### A truncated log blocks the vault
 

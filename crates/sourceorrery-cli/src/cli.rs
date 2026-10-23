@@ -381,7 +381,11 @@ pub struct SecretPurgeArgs {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct AuditArgs {
+    /// `audit export`: the whole log for a collector.
+    #[command(subcommand)]
+    pub command: Option<AuditSubcommand>,
     /// Only events about this secret.
     #[arg(long, value_name = "NAME")]
     pub secret: Option<String>,
@@ -405,6 +409,51 @@ pub struct AuditArgs {
     /// With --acknowledge: confirm without prompting (automation).
     #[arg(long, short = 'y', requires = "acknowledge")]
     pub yes: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuditSubcommand {
+    /// Write the audit log, oldest first, as JSON Lines on stdout or as OTLP logs to a collector,
+    /// ending with the chain verification so a collector can tell a complete export from a
+    /// truncated log. --follow keeps going as new events are recorded.
+    Export(AuditExportArgs),
+}
+
+/// How `audit export` writes events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AuditFormat {
+    /// One JSON object per line on stdout; the last line is the verification trailer.
+    Jsonl,
+    /// OTLP/HTTP log records (JSON encoding) posted to --endpoint; the verification is the last record.
+    Otlp,
+}
+
+#[derive(Debug, Args)]
+pub struct AuditExportArgs {
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = AuditFormat::Jsonl)]
+    pub format: AuditFormat,
+    /// Only events at or after this time (RFC 3339).
+    #[arg(long, value_name = "TIME")]
+    pub since: Option<String>,
+    /// After the existing log, keep exporting new events as they are recorded, until stdout
+    /// closes or the process is stopped.
+    #[arg(long)]
+    pub follow: bool,
+    /// With --follow: seconds between looks at the log.
+    #[arg(long, value_name = "SECONDS", default_value_t = 2)]
+    pub interval: u64,
+    /// With --format otlp: the collector's logs endpoint (default: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+    /// else OTEL_EXPORTER_OTLP_ENDPOINT with /v1/logs appended).
+    #[arg(long, value_name = "URL")]
+    pub endpoint: Option<String>,
+    /// With --format otlp: an HTTP header to send, repeatable (KEY=VALUE; also read from
+    /// OTEL_EXPORTER_OTLP_HEADERS).
+    #[arg(long = "header", value_name = "KEY=VALUE")]
+    pub headers: Vec<String>,
+    /// With --format otlp: log records per request.
+    #[arg(long, value_name = "N", default_value_t = 500)]
+    pub batch: usize,
 }
 
 #[derive(Debug, Args)]

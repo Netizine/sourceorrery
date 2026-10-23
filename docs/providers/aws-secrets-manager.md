@@ -86,10 +86,36 @@ exactly as for a local vault.
   provider writes into a tag when it changes properties.
 * **Listing costs one request per secret**, after the `ListSecrets` pages.
   The paged methods cut pages out of that listing.
-* **No audit log.** `audit_events` is `unsupported`; `sourceorrery audit`
-  refuses a remote vault by name.
+* **No audit log of SourceOrrery's own.** `audit_events` is `unsupported`;
+  `sourceorrery audit --vault <name>` points at CloudTrail (below) and
+  `audit export` refuses.
 * **Two writers can race.** Nothing locks a secret between the describe
   and the write that follows it.
+
+## Audit trail
+
+AWS CloudTrail holds the trail; SourceOrrery writes no log of its own for a
+remote vault, and `sourceorrery audit --vault <name>` prints this pointer.
+Secrets Manager's API calls are management events, recorded by default
+with the identity the process authenticated as: a read is
+`GetSecretValue` (preceded by `DescribeSecret` and `ListSecretVersionIds`
+for the policy decision), a write `CreateSecret` or `PutSecretValue`,
+property changes `TagResource` and `UntagResource`, soft delete
+`DeleteSecret`, recovery `RestoreSecret`. One query shows SourceOrrery's
+operations on the vault's prefix:
+
+```sh
+aws cloudtrail lookup-events \
+  --lookup-attributes AttributeKey=EventSource,AttributeValue=secretsmanager.amazonaws.com \
+  --start-time 2026-10-01T00:00:00Z --query 'Events[].CloudTrailEvent' --output text \
+  | jq -c 'select(.requestParameters.secretId | startswith("myapp/"))
+           | {eventTime, eventName, who: .userIdentity.arn, secret: .requestParameters.secretId, errorCode}'
+```
+
+A CloudTrail Lake event data store, or a trail delivered to S3 and read by
+a collector, gives the same records continuously; route them where
+`sourceorrery audit export` from the local vaults goes
+([enterprise.md](../enterprise.md#collecting-the-audit-trail)).
 
 ## Errors
 

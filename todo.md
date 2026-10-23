@@ -987,22 +987,38 @@ documented."*
 
 **Steps.**
 
-- [ ] `sourceorrery audit export [--format jsonl] [--since T] [--follow]`:
+- [x] `sourceorrery audit export [--format jsonl] [--since T] [--follow]`:
       the chain as one JSON object per event (metadata only, as today),
       `--follow` tailing new events, with the chain verification result in
       a trailer so a collector can tell a complete export from a truncated
       log.
-- [ ] OTLP logs over HTTP (`--format otlp --endpoint URL`) behind a
+      *Done: `commands/audit_export.rs`. Oldest first; each line is the
+      event plus `vault`; the trailer carries `events`, `last_id`,
+      `intact` and the `audit --verify` fields. `--follow` polls the open
+      vault every `--interval` seconds (reading the log is not audited)
+      and ends quietly when stdout closes. No core change: the storage
+      query is asked for everything and paged by id in the CLI.*
+- [x] OTLP logs over HTTP (`--format otlp --endpoint URL`) behind a
       feature, for collectors that speak it directly; JSON Lines is the
       format Vector, Fluent Bit and friends read without it.
-- [ ] Per provider, where its trail is (Vault audit devices, CloudTrail)
+      *Done, shipped with JSON Lines: OTLP/JSON built by hand over
+      `reqwest::blocking` (feature `otlp`, on by default; no new transitive
+      stack, reqwest and rustls were already in the binary through the
+      Vault provider). `OTEL_EXPORTER_OTLP_*` honoured; batches of
+      `--batch`; a non-2xx answer fails the export.*
+- [x] Per provider, where its trail is (Vault audit devices, CloudTrail)
       and the one query that shows SourceOrrery's reads, in
       the provider's docs page; `sourceorrery audit --vault <remote>`
       prints that pointer instead of an error.
-- [ ] Docs: `docs/cli.md`, `docs/enterprise.md`.
+      *Done: "Audit trail" sections on both provider pages; the CLI prints
+      the location, the query for the vault's mount or prefix and the docs
+      link (exit 0; `-o json` structured). `audit export` on a remote vault
+      is `unsupported` with the same pointer, so a pipeline notices.*
+- [x] Docs: `docs/cli.md`, `docs/enterprise.md`.
 
 **Decision for you.** The re-scoped wording, and whether OTLP ships with
-JSON Lines or later.
+JSON Lines or later. *Applied: the re-scoped wording on the roadmap, and
+OTLP shipped now, since it cost no new dependency stack.*
 
 ---
 

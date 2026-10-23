@@ -809,7 +809,8 @@ fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
         vec!["vault", "protector", "list", "--vault", "prod"],
         vec!["vault", "destroy", "prod", "--yes"],
         vec!["vault", "migrate", "prod"],
-        vec!["audit", "--vault", "prod"],
+        vec!["audit", "--verify", "--vault", "prod"],
+        vec!["audit", "--acknowledge", "--yes", "--vault", "prod"],
         vec!["backup", "--vault", "prod", "--out", "x.sobackup"],
     ] {
         let out = env.run(&args);
@@ -821,6 +822,11 @@ fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
         );
     }
     assert!(!env.project.path().join("x.sobackup").exists());
+    // Listing the audit log of a remote vault points at the provider's own
+    // trail instead, without touching the network.
+    let out = env.run(&["audit", "--vault", "prod"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stderr(&out).contains("audit devices"), "{}", stderr(&out));
 
     // A credential in the manifest is a parse error that never echoes it.
     std::fs::write(
@@ -1122,4 +1128,301 @@ fn rotation_without_hooks_reads_stdin_and_activates_on_demand() {
         "--reveal",
     ]);
     assert_eq!(revealed.trim(), "k3");
+}
+
+/// What a fake collector saw per request: the path, the `X-Token` header
+/// and the body.
+type CollectedRequests = Vec<(String, Option<String>, serde_json::Value)>;
+
+/// Accept OTLP/HTTP posts on a local port, answering `status`, and record
+/// each request's path, one header and the body it carried.
+fn otlp_collector(
+    status: u16,
+    requests: usize,
+) -> (String, std::thread::JoinHandle<CollectedRequests>) {
+    use std::io::{BufRead, BufReader, Read};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/logs", listener.local_addr().unwrap());
+    let handle = std::thread::spawn(move || {
+        let mut seen = Vec::new();
+        for _ in 0..requests {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            let path = request_line.split_whitespace().nth(1).unwrap().to_owned();
+            let mut length = 0;
+            let mut token = None;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let line = line.trim_end();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':') {
+                    match name.to_ascii_lowercase().as_str() {
+                        "content-length" => length = value.trim().parse().unwrap(),
+                        "x-token" => token = Some(value.trim().to_owned()),
+                        _ => {}
+                    }
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let records: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let reply = format!(
+                "HTTP/1.1 {status} {}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}",
+                if status == 200 { "OK" } else { "Error" }
+            );
+            reader.get_mut().write_all(reply.as_bytes()).unwrap();
+            seen.push((path, token, records));
+        }
+        seen
+    });
+    (endpoint, handle)
+}
+
+#[test]
+fn audit_export_writes_json_lines_with_a_verification_trailer() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "k", CANARY);
+    env.ok(&["secret", "get", "k", "--vault", "dev", "--reveal"]);
+
+    let text = env.ok(&["audit", "export", "--vault", "dev"]);
+    assert!(!text.contains(CANARY), "a value leaked: {text}");
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let (trailer, events) = lines.split_last().unwrap();
+    assert!(events.len() >= 4, "{text}");
+    let ids: Vec<u64> = events.iter().map(|e| e["id"].as_u64().unwrap()).collect();
+    assert!(ids.windows(2).all(|w| w[0] < w[1]), "oldest first: {ids:?}");
+    assert!(events.iter().all(|e| e["vault"] == "dev"));
+    assert!(
+        events
+            .iter()
+            .any(|e| e["operation"] == "secret_get" && e["outcome"] == "success")
+    );
+    assert_eq!(trailer["vault"], "dev");
+    assert_eq!(trailer["events"], events.len());
+    assert_eq!(trailer["last_id"], *ids.last().unwrap());
+    assert_eq!(trailer["intact"], true);
+    assert_eq!(trailer["verification"]["truncations"], 0);
+
+    // --since cuts the backlog; the trailer still comes.
+    let text = env.ok(&[
+        "audit",
+        "export",
+        "--vault",
+        "dev",
+        "--since",
+        "2099-01-01T00:00:00Z",
+    ]);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 1, "{text}");
+    let trailer: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(trailer["events"], 0);
+    assert!(trailer["last_id"].is_null());
+
+    // A truncated log exports with a trailer that says so.
+    truncate_audit_log(env.home.path(), "dev", 1);
+    let out = env.run(&["secret", "get", "k", "--vault", "dev"]);
+    assert!(
+        !out.status.success(),
+        "the truncation is detected and blocks"
+    );
+    let text = env.ok(&["audit", "export", "--vault", "dev"]);
+    let trailer: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    assert_eq!(trailer["intact"], false);
+    assert_eq!(trailer["verification"]["truncations"], 1);
+    assert_eq!(trailer["verification"]["unacknowledged"], 1);
+}
+
+#[test]
+fn audit_export_follow_streams_new_events() {
+    use std::io::{BufRead, BufReader};
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "k", "v1");
+
+    let mut child = env
+        .cmd(&[
+            "audit",
+            "export",
+            "--vault",
+            "dev",
+            "--follow",
+            "--interval",
+            "1",
+        ])
+        .spawn()
+        .unwrap();
+    drop(child.stdin.take());
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let wait = std::time::Duration::from_secs(30);
+    // The backlog ends with the trailer.
+    loop {
+        let line = rx.recv_timeout(wait).expect("the backlog and its trailer");
+        if line.contains("\"verification\"") {
+            break;
+        }
+    }
+    // A new event appears without restarting the export.
+    env.set("dev", "k", "v2");
+    let line = loop {
+        let line = rx.recv_timeout(wait).expect("the new event");
+        if line.contains("\"secret_set\"") {
+            break line;
+        }
+    };
+    let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(event["secret_name"], "k");
+    assert!(!line.contains("v2"));
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[test]
+fn audit_export_posts_otlp_log_records() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "k", CANARY);
+
+    // Every event plus the verification record, in batches of two, with the
+    // header the collector asked for. The vault has create, open, set and
+    // the export's own open: four events, so two batches of two carry the
+    // events and a third the verification.
+    let (endpoint, collector) = otlp_collector(200, 3);
+    let out = env
+        .cmd(&[
+            "audit",
+            "export",
+            "--vault",
+            "dev",
+            "--format",
+            "otlp",
+            "--endpoint",
+            &endpoint,
+            "--header",
+            "X-Token=secret-token",
+            "--batch",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let requests = collector.join().unwrap();
+    assert_eq!(requests.len(), 3);
+    let mut records = Vec::new();
+    for (path, token, body) in &requests {
+        assert_eq!(path, "/v1/logs");
+        assert_eq!(token.as_deref(), Some("secret-token"));
+        let resource = &body["resourceLogs"][0];
+        assert!(
+            resource["resource"]["attributes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a["key"] == "service.name" && a["value"]["stringValue"] == "sourceorrery")
+        );
+        records.extend(
+            resource["scopeLogs"][0]["logRecords"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .cloned(),
+        );
+    }
+    assert_eq!(records.len(), 5, "{records:?}");
+    assert!(!serde_json::to_string(&records).unwrap().contains(CANARY));
+    let last = records.last().unwrap();
+    assert_eq!(
+        last["body"]["stringValue"],
+        "audit chain verification: intact"
+    );
+    assert_eq!(last["severityText"], "INFO");
+    let set = records
+        .iter()
+        .find(|r| {
+            r["body"]["stringValue"]
+                .as_str()
+                .unwrap()
+                .starts_with("secret_set success")
+        })
+        .expect("the set event");
+    assert!(set["timeUnixNano"].as_str().unwrap().len() > 10);
+    assert!(
+        set["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["key"] == "sourceorrery.secret" && a["value"]["stringValue"] == "k")
+    );
+
+    // A collector that refuses fails the export, with the status in the error.
+    let (endpoint, collector) = otlp_collector(503, 1);
+    let out = env.run(&[
+        "audit",
+        "export",
+        "--vault",
+        "dev",
+        "--format",
+        "otlp",
+        "--endpoint",
+        &endpoint,
+    ]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("503"), "{}", stderr(&out));
+    collector.join().unwrap();
+
+    // No endpoint anywhere is an error.
+    let out = env
+        .cmd(&["audit", "export", "--vault", "dev", "--format", "otlp"])
+        .env_remove("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .env_remove("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("--endpoint"), "{}", stderr(&out));
+}
+
+#[test]
+fn audit_on_a_remote_vault_points_at_the_providers_trail() {
+    let env = Env::new();
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"x\"\nvault = \"dev\"\n\n[vaults.remote]\n\
+         provider = \"aws-secrets-manager\"\nregion = \"eu-west-1\"\nprefix = \"myapp/\"\n",
+    )
+    .unwrap();
+    let text = env.ok(&["audit", "--vault", "remote", "-o", "json"]);
+    let pointer: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(pointer["provider"], "aws-secrets-manager");
+    assert_eq!(pointer["audit_trail"], "AWS CloudTrail");
+    assert!(pointer["query"].as_str().unwrap().contains("myapp/"));
+    assert!(pointer["docs"].as_str().unwrap().ends_with("#audit-trail"));
+    let out = env.run(&["audit", "--vault", "remote"]);
+    assert!(out.status.success());
+    assert!(stderr(&out).contains("CloudTrail"), "{}", stderr(&out));
+
+    // An export has nothing of ours to export there.
+    let out = env.run(&["audit", "export", "--vault", "remote"]);
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(
+        err.contains("unsupported") && err.contains("CloudTrail"),
+        "{err}"
+    );
 }

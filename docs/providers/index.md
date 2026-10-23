@@ -70,9 +70,12 @@ revocation reaches.
   identity may use; `vault list` shows remote vaults with their provider
   and location, and `vault info` shows what the provider reports. Commands
   about the vault file itself (`vault create`, `vault protector`,
-  `vault destroy`, `vault migrate`, `audit`, `backup`, `restore`, `ui`)
-  refuse a remote vault by name with a message saying they work on local
-  vaults only; the provider's own service holds its audit trail.
+  `vault destroy`, `vault migrate`, `audit --verify`, `audit
+  --acknowledge`, `audit export`, `backup`, `restore`, `ui`) refuse a
+  remote vault by name with a message saying they work on local vaults
+  only; the provider's own service holds its audit trail, and `audit
+  --vault <remote>` prints where it is and the query that shows
+  SourceOrrery's operations there (each provider page, "Audit trail").
 * **Rust.** `OpenOptions::manifest(path)` names the manifest to resolve
   through; by default `SecretReader::open` uses the nearest
   `sourceorrery.toml` above the current directory, like `sourceorrery run`.

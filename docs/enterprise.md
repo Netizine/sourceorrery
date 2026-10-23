@@ -27,7 +27,7 @@ against a real Vault server and a Secrets Manager emulator
 | **Roles** | the policies attached to the login role | the IAM role the identity assumes | none of its own; the process is whatever the provider says it is |
 | **Policy** | ACL policies on `<mount>/data/<name>` and `<mount>/metadata/<name>` | IAM policies on the secret's ARN (`secretsmanager:GetSecretValue`, `DescribeSecret`, `ListSecretVersionIds`, ...) | the `enabled` flag and the time window of each version, evaluated by the core from the properties it stores at the provider; a denied call is `permission_denied` |
 | **Revocation** | `vault token revoke`, a lease that expires, a disabled role or auth mount | a revoked session, a removed trust policy, a deny statement | takes effect on the next request (below) |
-| **Audit** | the server's audit devices | CloudTrail | `audit_events` on a remote vault is `unsupported`; the CLI's `audit` works on local vaults only |
+| **Audit** | the server's audit devices | CloudTrail | `audit_events` on a remote vault is `unsupported`; `sourceorrery audit --vault <remote>` prints where the trail is and the query that shows SourceOrrery's operations; a local vault's log is exported with `audit export` ([below](#collecting-the-audit-trail)) |
 
 A **local** vault has no identity beyond the OS account that can unlock
 it: anyone who can read the file and reach its protector reads every
@@ -172,6 +172,33 @@ process's memory or in a child's environment. Rotating the secret is what
 invalidates those ([rotation.md](rotation.md): `sourceorrery secret rotate`
 issues, validates and activates a new version and retires the previous
 credential at the issuer).
+
+## Collecting the audit trail
+
+There is no SourceOrrery server to collect audit logs into, so collection
+means getting every trail to the place the organisation already keeps
+logs:
+
+* **A local vault** keeps a keyed hash chain of metadata-only events
+  ([threat model](threat-model.md)). `sourceorrery audit export` writes it
+  oldest first as JSON Lines on stdout, or posts it as OTLP/HTTP log
+  records to a collector (`--format otlp --endpoint URL`, or the standard
+  `OTEL_EXPORTER_OTLP_*` variables), and ends with the chain verification
+  as a trailer, so the collector can tell a complete export from a
+  truncated log; `--follow` keeps exporting new events as they are
+  recorded. A sidecar that runs `sourceorrery audit export --follow
+  --format otlp` next to the application, with the vault's passphrase from
+  `SOURCEORRERY_PASSPHRASE_FILE`, is the whole set-up; so is a cron job
+  with `--since` and a `file` source on the redirected output
+  ([cli.md](cli.md#audit-export-the-log-for-a-collector)).
+* **A remote vault's** trail is the provider's: Vault's audit devices and
+  CloudTrail record SourceOrrery's operations as the provider's own API
+  calls, with the identity the process authenticated as. `sourceorrery
+  audit --vault <remote>` prints where the trail is and the query that
+  shows those operations; each provider page has the full form under
+  "Audit trail" ([HashiCorp Vault](providers/hashicorp-vault.md#audit-trail),
+  [AWS Secrets Manager](providers/aws-secrets-manager.md#audit-trail)).
+  Route those logs to the same collector and the two trails meet there.
 
 ## Checking what an identity may read
 

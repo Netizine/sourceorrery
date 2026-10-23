@@ -83,14 +83,39 @@ as for a local vault.
   `updated_on` of a changed version is the client's.
 * **Listing costs one request per secret**, after one `LIST`. The paged
   methods cut pages out of that listing.
-* **No audit log.** `audit_events` is `unsupported`; `sourceorrery audit`
-  refuses a remote vault by name.
+* **No audit log of SourceOrrery's own.** `audit_events` is `unsupported`;
+  `sourceorrery audit --vault <name>` points at the server's audit devices
+  (below) and `audit export` refuses.
 * **Two writers can race.** Nothing locks a secret between the metadata
   read and the write that follows it; Vault's own check-and-set is not used.
 
 `sourceorrery secret rotate` works against a Vault-backed vault like
 against a local one: the candidate, its state and the grace period are
 per-version properties in `custom_metadata` ([rotation](../rotation.md)).
+
+## Audit trail
+
+The Vault server's audit devices hold the trail; SourceOrrery writes no log
+of its own for a remote vault, and `sourceorrery audit --vault <name>`
+prints this pointer. With a file audit device enabled on the server (`vault
+audit enable file file_path=/var/log/vault/audit.log`), every operation
+SourceOrrery performs is a request against the mount, under the identity
+the process logged in as: a read is `read` on `<mount>/data/<name>` (with
+a `version` parameter when one was asked for), metadata and listings are
+requests under `<mount>/metadata/`, a write is `update` on
+`<mount>/data/<name>`, soft delete and recovery `update` on
+`<mount>/delete/<name>` and `<mount>/undelete/<name>`, purge `delete` on
+`<mount>/metadata/<name>`. One query shows them all (Vault hashes the
+values in its audit log itself):
+
+```sh
+jq -c 'select(.type == "response" and (.request.path | startswith("secret/data/") or startswith("secret/metadata/")))
+       | {time, op: .request.operation, path: .request.path, who: .auth.display_name, error}' /var/log/vault/audit.log
+```
+
+Route the device to the collector that receives `sourceorrery audit
+export` from the local vaults, and the two trails meet there
+([enterprise.md](../enterprise.md#collecting-the-audit-trail)).
 
 ## Errors
 

@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod audit_export;
 pub mod backup;
 pub mod completions;
 pub mod import;

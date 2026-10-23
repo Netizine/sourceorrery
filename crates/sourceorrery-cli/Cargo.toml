@@ -23,7 +23,7 @@ path = "src/main.rs"
 doc = false
 
 [features]
-default = ["os-keyring", "ui", "remote"]
+default = ["os-keyring", "ui", "remote", "otlp"]
 # Protect vault keys with the OS credential store. Disable for headless
 # servers that only use passphrase protectors.
 os-keyring = ["sourceorrery-storage/os-keyring"]
@@ -36,6 +36,9 @@ provider-aws = ["sourceorrery-provider/provider-aws"]
 # The interactive vault browser, `sourceorrery ui` (Ratatui). Nothing else
 # in the CLI depends on it; disable for minimal builds.
 ui = ["dep:ratatui"]
+# `audit export --format otlp`: OTLP/HTTP log records to a collector. JSON
+# Lines needs nothing and is always built.
+otlp = ["dep:reqwest"]
 
 [dependencies]
 sourceorrery-core.workspace = true
@@ -54,6 +57,7 @@ zeroize.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"], optional = true }
 
 [dev-dependencies]
 # Cheap Argon2id parameters for the vaults unit tests create.

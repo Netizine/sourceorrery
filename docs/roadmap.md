@@ -87,7 +87,7 @@ The 0.1.4 build includes these changes alongside milestones 1 and 2:
 - [x] `AsyncSecretClient` ([ADR 0008](adr/0008-remote-providers.md): the async shape of the contract in core, the `Blocking` and `AsyncLocal` adapters in `sourceorrery-provider`, and the lifecycle conformance suite as a function every backend runs)
 - [x] Workload identity through the providers' federation (OIDC, workload and Kubernetes identities, instance roles); RBAC, policy and revocation administered in the provider and honoured by the client ([enterprise.md](enterprise.md); no SourceOrrery server, so nothing of ours to administer centrally)
 - [x] Rotation workflows with issuer cooperation (issue → validate → activate → retire): `sourceorrery secret rotate` over any vault with per-version properties, the issuer's side as commands in the manifest's `[rotation.<name>]` table ([rotation.md](rotation.md))
-- [ ] Central audit collection
+- [x] Audit export: the local vault's chain as JSON Lines or OTLP log records, with the chain verification as a trailer, continuously with `--follow` (`sourceorrery audit export`); remote providers' trails located and documented, with the query that shows SourceOrrery's operations ([enterprise.md](enterprise.md#collecting-the-audit-trail))
 - [ ] Security review before "enterprise-ready" (the maintainer's own review, done locally over several days; not an engineering item)
 
 ## Milestone 5 — community expansion
