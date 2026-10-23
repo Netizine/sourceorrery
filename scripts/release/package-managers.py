@@ -17,12 +17,15 @@ release archive. The release workflow runs this after the release exists;
 
     python3 scripts/release/package-managers.py --version 0.1.4 \\
         --sha256sums SHA256SUMS --out dist/package-managers
+
+``--sha256sums`` and ``--out`` must lie under the working directory.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -34,6 +37,19 @@ DESCRIPTION = (
 )
 WINGET_ID = "Netizine.SourceOrrery"
 WINGET_MANIFEST_VERSION = "1.10.0"
+
+
+def under_working_directory(path: Path, what: str) -> Path:
+    """``path`` resolved, once it is known to lie under the working directory.
+
+    The script reads and writes only inside the checkout it runs in, so an
+    argument cannot point it at another file.
+    """
+    root = os.path.realpath(os.getcwd())
+    resolved = os.path.realpath(path)
+    if resolved != root and not resolved.startswith(root + os.sep):
+        raise ValueError(f"{what} must be under the working directory: {path}")
+    return Path(resolved)
 
 # target triple -> (Homebrew os, Homebrew arch) / Scoop and WinGet architecture
 BREW_TARGETS = {
@@ -252,13 +268,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=REPO, help=f"GitHub repository (default {REPO})")
     args = parser.parse_args(argv)
     try:
-        sums = parse_sha256sums(args.sha256sums.read_text())
+        sums = parse_sha256sums(under_working_directory(args.sha256sums, "--sha256sums").read_text())
+        out = under_working_directory(args.out, "--out")
         files = render_all(args.version, sums, args.release_date, args.repo)
-    except (RenderError, OSError) as err:
+    except (RenderError, ValueError, OSError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
     for rel, text in files.items():
-        path = args.out / rel
+        path = out / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, newline="\n")
         print(path)

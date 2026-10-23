@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import unittest
 from pathlib import Path
 
@@ -107,6 +108,19 @@ class Rendering(unittest.TestCase):
             pm.render_all("v0.1.4", self.sums, "2026-10-22")
         with self.assertRaises(pm.RenderError):
             pm.render_all(VERSION, self.sums, "22/10/2026")
+
+
+class WorkingDirectory(unittest.TestCase):
+    def test_files_are_read_and_written_only_under_the_working_directory(self) -> None:
+        cwd = Path(os.path.realpath(os.getcwd()))
+        self.assertEqual(pm.under_working_directory(Path("dist"), "--out"), cwd / "dist")
+        self.assertEqual(pm.under_working_directory(Path("."), "--out"), cwd)
+        with self.assertRaises(ValueError):
+            pm.under_working_directory(cwd.parent / "SHA256SUMS", "--sha256sums")
+        with self.assertRaises(ValueError):
+            pm.under_working_directory(Path("..") / "dist", "--out")
+        argv = ["--version", VERSION, "--release-date", "2026-01-01", "--out", "dist"]
+        self.assertEqual(pm.main(argv + ["--sha256sums", str(cwd.parent / "SHA256SUMS")]), 1)
 
 
 if __name__ == "__main__":

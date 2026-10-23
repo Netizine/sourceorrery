@@ -9,18 +9,33 @@ version was bumped, the differences are listed and allowed.
 
     python3 scripts/ci/abi-check.py --baseline old.h --current new.h
 
+Both headers must lie under the working directory.
 ``scripts/ci/abi_check_test.py`` tests the parser and the verdict.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 ABI_MACRO = "SO_ABI_VERSION"
+
+
+def under_working_directory(path: Path, what: str) -> Path:
+    """``path`` resolved, once it is known to lie under the working directory.
+
+    The script reads and writes only inside the checkout it runs in, so an
+    argument cannot point it at another file.
+    """
+    root = os.path.realpath(os.getcwd())
+    resolved = os.path.realpath(path)
+    if resolved != root and not resolved.startswith(root + os.sep):
+        raise ValueError(f"{what} must be under the working directory: {path}")
+    return Path(resolved)
 
 
 @dataclass
@@ -184,9 +199,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--current", required=True, type=Path, help="the header to check")
     parser.add_argument("--baseline-name", default="previous release", help="label for the report")
     args = parser.parse_args(argv)
-    ok, report = verdict(
-        parse(args.baseline.read_text()), parse(args.current.read_text()), args.baseline_name
-    )
+    try:
+        baseline = under_working_directory(args.baseline, "--baseline").read_text()
+        current = under_working_directory(args.current, "--current").read_text()
+    except (ValueError, OSError) as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 2
+    ok, report = verdict(parse(baseline), parse(current), args.baseline_name)
     print(report)
     return 0 if ok else 1
 

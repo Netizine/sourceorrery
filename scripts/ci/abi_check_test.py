@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -124,6 +125,18 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(decls.structs["so_bytes"], "uint8_t *ptr;size_t len;")
         self.assertEqual(decls.enums["so_status.SO_STATUS_ERROR"], "1")
         self.assertTrue(ac.verdict(decls, decls, "self")[0])
+
+
+class WorkingDirectory(unittest.TestCase):
+    def test_headers_are_read_only_from_the_working_directory(self) -> None:
+        cwd = Path(os.path.realpath(os.getcwd()))
+        self.assertEqual(ac.under_working_directory(Path("a") / ".." / "b.h", "x"), cwd / "b.h")
+        self.assertEqual(ac.under_working_directory(cwd / "sub" / "c.h", "x"), cwd / "sub" / "c.h")
+        with self.assertRaises(ValueError):
+            ac.under_working_directory(cwd.parent / "outside.h", "--baseline")
+        with self.assertRaises(ValueError):
+            ac.under_working_directory(Path("..") / "outside.h", "--baseline")
+        self.assertEqual(ac.main(["--baseline", str(cwd.parent / "x.h"), "--current", "y.h"]), 2)
 
 
 if __name__ == "__main__":

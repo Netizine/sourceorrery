@@ -194,7 +194,9 @@ int main() {
         // A vault the manifest declares in [vaults.<name>] is opened at its
         // remote provider (HashiCorp Vault, at an address where nothing
         // listens); a vault without a table is still the local file.
-        const auto dir = std::filesystem::temp_directory_path() / "sourceorrery-cpp-remote";
+        // Written beside the fixture's own manifest: that directory belongs
+        // to this test run, unlike the shared temporary directory.
+        const auto dir = std::filesystem::path(manifest).parent_path() / "cpp-remote";
         std::filesystem::create_directories(dir);
         const std::string remote_manifest = (dir / "sourceorrery.toml").string();
         {

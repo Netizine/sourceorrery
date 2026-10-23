@@ -123,8 +123,9 @@ jobs:
           set -euo pipefail
           git fetch --quiet --tags origin
           tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
-          git show "$tag:crates/sourceorrery-ffi/include/sourceorrery.h" > /tmp/baseline.h
-          python3 scripts/ci/abi-check.py --baseline /tmp/baseline.h \
+          mkdir -p target
+          git show "$tag:crates/sourceorrery-ffi/include/sourceorrery.h" > target/abi-baseline.h
+          python3 scripts/ci/abi-check.py --baseline target/abi-baseline.h \
             --current crates/sourceorrery-ffi/include/sourceorrery.h --baseline-name "$tag"
 
   # The native extension crates live outside the workspace (maturin and
