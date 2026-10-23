@@ -11,6 +11,11 @@ platform the addon is for, that @sourceorreryai/sdk installs it, and that
 vaults are managed with the sourceorrery CLI. The release workflow runs it
 right after `napi create-npm-dirs`; run it after regenerating the
 directories by hand too.
+
+Every manifest is checked against the directory it sits in before anything
+is written: the package must be named after the directory, ship the addon
+file napi names after it, and run on one os and cpu this script knows. One
+manifest that says otherwise stops the run with nothing rewritten.
 """
 
 from __future__ import annotations
@@ -18,10 +23,14 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parents[2]
 NPM_DIR = ROOT / "bindings" / "node" / "npm"
 MAIN = "@sourceorreryai/sdk"
+# `napi.binaryName` in bindings/node/package.json: a platform package ships
+# <binaryName>.<platform>.node and nothing else.
+ADDON = "sourceorrery"
 
 # (os, cpu) as npm writes them -> the platform a person would name.
 PLATFORMS = {
@@ -34,10 +43,37 @@ PLATFORMS = {
 }
 
 
+def fail(message: str) -> NoReturn:
+    sys.exit(f"npm-platform-packages: {message}")
+
+
+def load_manifest(path: Path) -> dict:
+    """The manifest at `path`, refused unless it describes the package its directory is for."""
+    platform = path.parent.name
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        fail(f"{path}: {err}")
+    if not isinstance(manifest, dict):
+        fail(f"{path}: not a JSON object")
+    expected = {"name": f"{MAIN}-{platform}", "main": f"{ADDON}.{platform}.node"}
+    for field, value in expected.items():
+        if manifest.get(field) != value:
+            fail(f"{path}: {field} is {manifest.get(field)!r}, expected {value!r}")
+    for field in ("os", "cpu"):
+        values = manifest.get(field)
+        if not (isinstance(values, list) and len(values) == 1 and isinstance(values[0], str)):
+            fail(f"{path}: {field} must name exactly one value")
+    libc = manifest.get("libc", [])
+    if not (isinstance(libc, list) and all(isinstance(value, str) for value in libc)):
+        fail(f"{path}: libc must be a list of strings")
+    return manifest
+
+
 def platform_label(manifest: dict) -> str:
     key = (manifest["os"][0], manifest["cpu"][0])
     if key not in PLATFORMS:
-        sys.exit(f"npm-platform-packages: no label for {manifest['name']} ({key[0]}, {key[1]})")
+        fail(f"no label for {manifest['name']} ({key[0]}, {key[1]})")
     label = PLATFORMS[key]
     if "glibc" in manifest.get("libc", []):
         label += " (glibc)"
@@ -87,13 +123,13 @@ Licence: MIT or Apache-2.0, at your option.
 """
 
 
-def main() -> None:
+def main(npm_dir: Path = NPM_DIR) -> None:
     manifests = []
-    for path in sorted(NPM_DIR.glob("*/package.json")):
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+    for path in sorted(npm_dir.glob("*/package.json")):
+        manifest = load_manifest(path)
         manifests.append((path, manifest, platform_label(manifest)))
     if not manifests:
-        sys.exit(f"npm-platform-packages: no platform packages under {NPM_DIR}")
+        fail(f"no platform packages under {npm_dir}")
 
     table = "\n".join(f"| `{m['name']}` | {label} |" for _, m, label in manifests)
     for path, manifest, label in manifests:
@@ -101,8 +137,13 @@ def main() -> None:
             f"SourceOrrery native addon for {label}, installed automatically by {MAIN}; "
             f"install {MAIN}, not this package"
         )
-        path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
-        (path.parent / "README.md").write_text(readme(manifest, label, table), encoding="utf-8", newline="\n")
+        # The paths written come from the directory listing above; nothing
+        # read from a manifest ever names a file.
+        with path.open("w", encoding="utf-8", newline="\n") as out:
+            json.dump(manifest, out, indent=2, ensure_ascii=False)
+            out.write("\n")
+        with (path.parent / "README.md").open("w", encoding="utf-8", newline="\n") as out:
+            out.write(readme(manifest, label, table))
         print(f"npm-platform-packages: {manifest['name']} ({label})")
 
 

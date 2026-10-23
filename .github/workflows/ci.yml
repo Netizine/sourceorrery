@@ -499,6 +499,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: python3 -m unittest -v scripts/release/package_managers_test.py
+      - run: python3 -m unittest -v scripts/release/npm_platform_packages_test.py
       - run: python3 -m unittest -v scripts/ci/abi_check_test.py
 
   # ADR 0007: the library built from this commit must still pass the
