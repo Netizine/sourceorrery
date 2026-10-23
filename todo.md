@@ -1029,3 +1029,171 @@ it is done, the wording in `README.md` and `docs/supply-chain.md` that
 hedges ("not yet audited") is updated by you or on your word, and the box
 is ticked.
 
+
+---
+
+# Part 3: Onboarding, a strong vault passphrase and a second factor
+
+The maintainer's request: guide a user from the first vault to the first
+`run` in the terminal (Ratatui), make the vault passphrase strong (a meter
+like a website's, or a generated one), offer recovery, offer a second
+factor (TOTP, enrolled with a QR code and verified), and let the user
+decide that revealing a secret needs the passphrase and the second factor,
+given the value of LLM API keys in particular.
+
+**Three things the cryptography fixes, stated before building.**
+
+1. *A second factor cannot recover a passphrase.* The vault key is wrapped
+   under a key derived from the passphrase; the TOTP secret is itself
+   stored encrypted under the vault key. A device code proves possession
+   of the device, it reconstructs nothing. Recovery therefore means
+   **recovery codes**: random 128-bit codes, each installed as a labelled
+   passphrase protector and shown once; any one of them unlocks the vault
+   when the passphrase is lost, after which the user sets a new passphrase
+   and new codes. A **passphrase hint** is offered too, with the warning it
+   deserves: it is stored in clear in the file (nothing can authenticate it
+   before unlock) and anyone holding the file reads it.
+2. *The second factor guards the interactive paths, not the application's.*
+   `secret get --reveal`, `backup` and changing the guard itself can ask
+   for the passphrase (even when the OS keyring unlocked the vault) and a
+   device code. `run` and the SDKs read values the way the application
+   does and cannot be gated without breaking it; the same-user adversary
+   row of the threat model does not change. What the guard adds: someone
+   at your unlocked machine, or holding your login's keyring, cannot print
+   a value or export the vault without the passphrase and the device.
+3. *The TOTP secret travels with the vault* (so a backup or an exported
+   file keeps the enrolment, as asked), encrypted under the vault key:
+   whoever has the passphrase and the file has the second factor too. It
+   is a second factor against the keyring-unlock path, not against a
+   passphrase thief with the file.
+
+**Order.** O1 and O2 are the foundations (no UI), O3 the commands, O4 the
+guided set-up, O5 the documents, O6 runs alongside each.
+
+## O1. Crypto: TOTP, codes, passphrase generation and strength
+
+- [x] `sourceorrery-crypto::totp`: RFC 6238 over HMAC-SHA1 (the algorithm
+      every authenticator app speaks; `hmac` + `sha1`), 30-second step,
+      6 digits, a window of one step either side, constant-time compare, a
+      replay guard (the last accepted counter is stored and a code for it
+      or an earlier step is refused); base32 (RFC 4648, no padding) for
+      the secret; the `otpauth://totp/...` URI; the RFC's test vectors as
+      tests. The secret is a `SecretBytes`; nothing here prints or logs it.
+      *Done (`TotpSecret`, zeroising, `Debug` redacted; the crypto crate
+      does not depend on core, so it is its own type).*
+- [x] `sourceorrery-crypto::random::recovery_code()`: 128 bits as
+      `xxxxx-xxxxx-...` over a 32-character alphabet without look-alikes;
+      `random::passphrase(len)` for a generated passphrase (letters, digits,
+      symbols, from the OS CSPRNG, with the entropy stated).
+      *Done: five groups of five from Crockford's alphabet (125 bits), with
+      `normalise_recovery_code` folding what a person reads back loosely;
+      `random_passphrase` over 77 characters, 6.27 bits each.*
+- [x] Passphrase strength in the CLI (`zxcvbn`, the estimator websites use:
+      a score 0-4, the guess count, and what weakened it), used by the
+      wizard's meter and by `vault create`, `vault protector add` and the
+      new `vault passphrase set` as a refusal below score 3 unless
+      `--allow-weak`. Decision recorded after measuring the binary.
+      *Decision: not `zxcvbn`. A probe binary with it is 3.2 MB stripped
+      (its dictionaries, `regex` and `fancy-regex`), against the "few
+      hundred KB" bar. `cli::strength` is a rule-based estimate instead:
+      character runs costed as words, numbers, years and separators, a
+      small common-password list with the usual substitutions, repeats and
+      sequences; honest about being an estimate. Applied: a typed
+      passphrase below "good" is refused unless `--allow-weak`; one from
+      the environment or a file (automation's) is warned about, so no
+      script breaks. `vault passphrase generate` and `check` exist now so
+      the refusal can point somewhere.*
+- [ ] A QR code drawn in the terminal (`qrcode`, rendered with half-block
+      characters) for the otpauth URI, in the wizard and in `vault 2fa
+      enable`; the URI itself is printed only on `--show-uri` for a user
+      who cannot scan. *Lands with its first consumer, `vault 2fa enable`
+      (O3).*
+
+## O2. Storage: the guard, the enrolment and the hint in the vault
+
+- [ ] Authenticated vault settings grow three optional fields, added to
+      the settings record only when present so every existing vault's tag
+      still verifies: `second_factor` (the TOTP secret sealed with the vault
+      key, its parameters and the last accepted counter), `reveal_guard`
+      (`passphrase`, `second_factor`: booleans), and nothing else;
+      `passphrase_hint` is a plain `vault_meta` row outside the tag,
+      readable before unlock and documented as forgeable.
+- [ ] `SqliteVault::verify_passphrase(&SecretBytes) -> Result<bool>`: tries
+      the passphrase against the passphrase protectors without reopening;
+      a rejection is audited (`vault_open` / `denied`, detail `guard`).
+- [ ] `SqliteVault::second_factor()` / `enrol_second_factor` /
+      `verify_second_factor(code)` / `disable_second_factor`; the counter
+      update is a keyed write; enrolment, verification outcomes and
+      disabling are audited under a new operation `second_factor`
+      (`AuditOperation` is append-only; the CLI's operation list and the
+      docs follow).
+- [ ] Recovery codes: `add_protector` with labels `recovery-1..N`; a
+      `recovery_codes()` view over the protectors; `backup`/`restore` carry
+      nothing extra (protectors are not in a backup, as today: a restored
+      vault has the protectors of the vault it is restored into).
+
+## O3. CLI: the commands and the guard
+
+- [ ] `vault passphrase set` (strength-checked, replaces the passphrase
+      protector's KEK: add new, remove old, in one transaction),
+      `vault passphrase hint [TEXT|--clear]`, `vault recovery codes
+      [--count N]` (prints the codes once, replaces earlier ones),
+      `vault 2fa enable|disable|status` (QR, verification before the
+      enrolment is kept; disabling needs a code), `vault guard
+      [--reveal passphrase,second-factor|none]` (changing the guard is
+      itself guarded).
+- [ ] `secret get --reveal` and `backup` honour the guard: passphrase from
+      the hidden prompt (or `SOURCEORRERY_PASSPHRASE`, which *is* the
+      passphrase), the code from the hidden prompt or `--code` /
+      `SOURCEORRERY_TOTP` for automation; a refusal is `permission_denied`
+      and audited on the secret (`secret_get` / `denied`, detail
+      `guard: ...`). The guard never applies to `run`, `check` or the SDKs.
+- [ ] `vault info` shows the guard, the enrolment (yes/no, never the
+      secret), the hint and the recovery codes' count.
+
+## O4. `sourceorrery setup`: first vault to first run, in the terminal
+
+- [ ] A Ratatui wizard in `src/ui/setup/` (feature `ui`): (1) the vault
+      (name; OS keyring when available and a passphrase; the passphrase
+      typed masked with a live strength meter, or generated and shown
+      once); (2) the first secret (name with the naming rules, value typed
+      masked or from a file, never shown); (3) recovery (codes shown once
+      with a "written down" confirmation; the optional hint with its
+      warning); (4) the second factor (QR, then a code to prove the
+      enrolment; skippable); (5) the guard (what revealing and exporting
+      will ask for); (6) the manifest written, `check` run, and the
+      `run -- <command>` line to use. Every value typed in the wizard lives
+      in a zeroising buffer and goes straight to the vault; the screens
+      show masks, strength, names and states.
+- [ ] Non-interactive sessions get the same steps as commands on stderr
+      and exit 1; `--vault`, `--project-name` and `--yes` pre-answer the
+      questions that have defaults.
+- [ ] Snapshot pages for every step and state (the `ui::snapshot` review).
+
+## O5. Documents
+
+- [ ] `docs/getting-started.md` rewritten around `sourceorrery setup`,
+      with the manual commands as the second path; README quick start.
+- [ ] `docs/cli.md`: the new commands and the guard; `docs/threat-model.md`:
+      the guard as a control with its limit, recovery codes, the hint, the
+      second factor's reach (the three points above); `docs/vault-format.md`:
+      the settings fields; CHANGELOG; the roadmap (a new section).
+
+## O6. Tests, alongside
+
+- [ ] RFC 6238 vectors; replay refused; window accepted; base32 round
+      trip; URI shape. Strength: a few known weak and strong inputs.
+- [ ] Storage: an older vault (no new fields) still verifies; the fields
+      survive a reopen; a tampered guard setting is refused with `crypto`;
+      `verify_passphrase` audits a rejection; the counter never goes back.
+- [ ] CLI: the guard asks and refuses; `SOURCEORRERY_PASSPHRASE` and
+      `--code` satisfy it in a script; recovery codes unlock; `vault 2fa`
+      round trip with a code computed by the test from the shown secret;
+      nothing printed carries a value, the TOTP secret or a code.
+- [ ] Wizard: driven through its `App` with the test backend, every step,
+      including the strength refusal and the "written down" gate.
+
+**Decisions for you.** (a) Recovery codes in place of "recovery with 2FA"
+(point 1); (b) the guard's reach (point 2); (c) `zxcvbn` if the binary
+stays within a few hundred KB of today, else a smaller estimator. Work
+proceeds on (a) and (b) as written unless you say otherwise.

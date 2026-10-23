@@ -15,7 +15,8 @@ use sourceorrery_provider::Remote;
 use sourceorrery_storage::{PassphrasePrompt, SqliteVault, UnlockProvider, VaultRegistry};
 
 use crate::cli::{Cli, OutputFormat};
-use crate::prompt;
+use crate::strength::{self, Score};
+use crate::{output, prompt};
 
 /// Environment variable that supplies a passphrase directly (CI only).
 pub const PASSPHRASE_ENV: &str = "SOURCEORRERY_PASSPHRASE";
@@ -169,12 +170,21 @@ impl Ctx {
 
     /// Obtain a passphrase for creating a protector: from the environment or
     /// file when configured, otherwise prompted twice.
-    pub fn new_passphrase(&self, purpose: &str) -> anyhow::Result<SecretBytes> {
+    ///
+    /// The strength estimate (`strength`) is applied to every source. A
+    /// passphrase typed at the prompt that rates below [`Score::REQUIRED`]
+    /// is refused unless `allow_weak`; one that automation supplies through
+    /// the environment or a file is its owner's business and only gets a
+    /// warning on stderr.
+    pub fn new_passphrase(&self, purpose: &str, allow_weak: bool) -> anyhow::Result<SecretBytes> {
         if let Some(pass) = passphrase_from_env() {
+            warn_if_weak(&pass, PASSPHRASE_ENV);
             return Ok(pass);
         }
         if let Some(file) = &self.passphrase_file {
-            return read_passphrase_file(file);
+            let pass = read_passphrase_file(file)?;
+            warn_if_weak(&pass, "the passphrase file");
+            return Ok(pass);
         }
         if !std::io::stdin().is_terminal() {
             return Err(anyhow!(
@@ -183,14 +193,54 @@ impl Ctx {
             ));
         }
         let first = prompt::read_hidden(&format!("Choose a passphrase {purpose}: "))?;
+        if first.is_empty() {
+            return Err(anyhow!("passphrase must not be empty"));
+        }
+        let estimate = strength::estimate(first.expose_utf8().unwrap_or_default());
+        if !estimate.acceptable() {
+            let reasons = if estimate.warnings.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", estimate.warnings.join(", "))
+            };
+            if !allow_weak {
+                return Err(anyhow!(
+                    "that passphrase rates {}{reasons}; a vault passphrase needs at least \
+                     \"{}\". Use a longer one, or several unrelated words (`sourceorrery \
+                     vault passphrase generate` makes one), or pass --allow-weak",
+                    estimate.score.label(),
+                    Score::REQUIRED.label()
+                ));
+            }
+            output::note(&format!(
+                "accepting a passphrase that rates {}{reasons} because --allow-weak was given",
+                estimate.score.label()
+            ));
+        }
         let second = prompt::read_hidden("Confirm passphrase: ")?;
         if first != second {
             return Err(anyhow!("passphrases do not match"));
         }
-        if first.is_empty() {
-            return Err(anyhow!("passphrase must not be empty"));
-        }
         Ok(first)
+    }
+}
+
+/// Say on stderr when a passphrase automation supplied is weak; the
+/// estimate never prints the passphrase, only what weakened it.
+fn warn_if_weak(pass: &SecretBytes, source: &str) {
+    let estimate = strength::estimate(pass.expose_utf8().unwrap_or_default());
+    if !estimate.acceptable() {
+        output::note(&format!(
+            "the passphrase from {source} rates {}{}; a vault passphrase should be at least \
+             \"{}\"",
+            estimate.score.label(),
+            if estimate.warnings.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", estimate.warnings.join(", "))
+            },
+            Score::REQUIRED.label()
+        ));
     }
 }
 

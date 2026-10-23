@@ -42,6 +42,7 @@ otlp = ["dep:reqwest"]
 
 [dependencies]
 sourceorrery-core.workspace = true
+sourceorrery-crypto.workspace = true
 sourceorrery-provider.workspace = true
 sourceorrery-storage.workspace = true
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
@@ -60,8 +61,6 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"], optional = true }
 
 [dev-dependencies]
-# Cheap Argon2id parameters for the vaults unit tests create.
-sourceorrery-crypto.workspace = true
 tempfile.workspace = true
 # Tests tamper with a vault file the way an attacker with write access would.
 rusqlite = { version = "0.40", features = ["bundled"] }

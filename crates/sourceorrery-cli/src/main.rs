@@ -10,6 +10,7 @@ mod dotenv;
 mod integrations;
 mod output;
 mod prompt;
+mod strength;
 #[cfg(feature = "ui")]
 mod ui;
 

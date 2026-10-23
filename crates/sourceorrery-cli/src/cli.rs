@@ -102,6 +102,9 @@ pub enum VaultCommand {
     /// Manage the key protectors that can unlock a vault.
     #[command(subcommand)]
     Protector(ProtectorCommand),
+    /// The vault passphrase: generate a strong one, or estimate one's strength.
+    #[command(subcommand)]
+    Passphrase(PassphraseCommand),
     /// Permanently delete a vault file and its OS-keyring entries.
     Destroy(VaultDestroyArgs),
     /// Upgrade a vault written by an older release to the current on-disk format.
@@ -131,6 +134,10 @@ pub struct VaultCreateArgs {
     /// Disable soft delete: deletions are immediate and permanent.
     #[arg(long)]
     pub purgeable: bool,
+    /// Accept a passphrase the strength estimate rates below "good" when it is typed at the
+    /// prompt. (A passphrase from SOURCEORRERY_PASSPHRASE or --passphrase-file is only warned about.)
+    #[arg(long)]
+    pub allow_weak: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -139,6 +146,23 @@ pub enum ProtectorChoice {
     OsKeyring,
     /// Key derived from a passphrase with Argon2id.
     Passphrase,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PassphraseCommand {
+    /// Print a random passphrase (letters, digits and symbols) to stdout, once. Pipe it where it
+    /// is needed, or write it down: it is not stored anywhere.
+    Generate(PassphraseGenerateArgs),
+    /// Read a passphrase from stdin or a hidden prompt and print its strength estimate: the
+    /// score, the estimated bits of guessing work and what weakened it. Nothing is stored.
+    Check,
+}
+
+#[derive(Debug, Args)]
+pub struct PassphraseGenerateArgs {
+    /// Characters to generate (at least 12; the default is about 125 bits of entropy).
+    #[arg(long, default_value_t = 20, value_name = "N")]
+    pub length: usize,
 }
 
 #[derive(Debug, Subcommand)]
@@ -159,6 +183,10 @@ pub struct ProtectorAddArgs {
     /// Unique label (default: the kind).
     #[arg(long)]
     pub label: Option<String>,
+    /// Accept a passphrase the strength estimate rates below "good" when it is typed at the
+    /// prompt.
+    #[arg(long)]
+    pub allow_weak: bool,
 }
 
 #[derive(Debug, Args)]

@@ -1,16 +1,18 @@
 //! `sourceorrery vault ...`
 
+use std::io::{IsTerminal, Write as _};
+
 use anyhow::anyhow;
 use sourceorrery_core::RecoveryLevel;
 use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, keystore};
 
-use crate::cli::{ProtectorAddArgs, ProtectorCommand, ProtectorRemoveArgs};
 use crate::cli::{
-    ProtectorChoice, VaultCommand, VaultCreateArgs, VaultDestroyArgs, VaultMigrateArgs,
+    PassphraseCommand, ProtectorAddArgs, ProtectorChoice, ProtectorCommand, ProtectorRemoveArgs,
+    VaultCommand, VaultCreateArgs, VaultDestroyArgs, VaultMigrateArgs,
 };
 use crate::context::Ctx;
 use crate::output::{self, Table};
-use crate::prompt;
+use crate::{prompt, strength};
 
 pub fn run(ctx: &Ctx, cmd: &VaultCommand) -> anyhow::Result<()> {
     match cmd {
@@ -18,8 +20,84 @@ pub fn run(ctx: &Ctx, cmd: &VaultCommand) -> anyhow::Result<()> {
         VaultCommand::List => list(ctx),
         VaultCommand::Info => info(ctx),
         VaultCommand::Protector(cmd) => protector(ctx, cmd),
+        VaultCommand::Passphrase(cmd) => passphrase(ctx, cmd),
         VaultCommand::Destroy(args) => destroy(ctx, args),
         VaultCommand::Migrate(args) => migrate(ctx, args),
+    }
+}
+
+/// `vault passphrase generate` and `vault passphrase check`: neither opens
+/// a vault; the generated passphrase is written to stdout once, as a
+/// password manager's generator would, and nothing is kept.
+fn passphrase(ctx: &Ctx, cmd: &PassphraseCommand) -> anyhow::Result<()> {
+    match cmd {
+        PassphraseCommand::Generate(args) => {
+            if args.length < 12 {
+                return Err(anyhow!("a generated passphrase has at least 12 characters"));
+            }
+            let text = sourceorrery_crypto::random_passphrase(args.length)?;
+            let bits = sourceorrery_crypto::random::passphrase_bits(args.length);
+            if ctx.json() {
+                return output::json(&serde_json::json!({
+                    "passphrase": *text,
+                    "length": args.length,
+                    "bits": bits,
+                }));
+            }
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(text.as_bytes())?;
+            stdout.write_all(b"\n")?;
+            stdout.flush()?;
+            drop(stdout);
+            output::note(&format!(
+                "{} characters, about {bits} bits of entropy; shown once and not stored",
+                args.length
+            ));
+            Ok(())
+        }
+        PassphraseCommand::Check => {
+            let text = if std::io::stdin().is_terminal() {
+                prompt::read_hidden("Passphrase to estimate: ")?
+            } else {
+                prompt::read_value(&prompt::ValueSource {
+                    from_file: None,
+                    stdin: true,
+                    keep_trailing_newline: false,
+                    confirm: false,
+                    allow_empty: true,
+                })?
+            };
+            let estimate = strength::estimate(text.expose_utf8().unwrap_or_default());
+            drop(text);
+            if ctx.json() {
+                return output::json(&serde_json::json!({
+                    "score": estimate.score as u8,
+                    "label": estimate.score.label(),
+                    "bits": estimate.bits,
+                    "acceptable": estimate.acceptable(),
+                    "warnings": estimate.warnings,
+                }));
+            }
+            let mut table = Table::new(["FIELD", "VALUE"]);
+            table.row([
+                "score".to_owned(),
+                format!("{} ({})", estimate.score as u8, estimate.score.label()),
+            ]);
+            table.row(["bits".to_owned(), estimate.bits.to_string()]);
+            table.row([
+                "acceptable".to_owned(),
+                if estimate.acceptable() { "yes" } else { "no" }.to_owned(),
+            ]);
+            table.row([
+                "weakened by".to_owned(),
+                if estimate.warnings.is_empty() {
+                    "-".to_owned()
+                } else {
+                    estimate.warnings.join(", ")
+                },
+            ]);
+            table.print()
+        }
     }
 }
 
@@ -39,7 +117,11 @@ fn migrate(ctx: &Ctx, args: &VaultMigrateArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn choose_protector(ctx: &Ctx, choice: Option<ProtectorChoice>) -> anyhow::Result<ProtectorSpec> {
+fn choose_protector(
+    ctx: &Ctx,
+    choice: Option<ProtectorChoice>,
+    allow_weak: bool,
+) -> anyhow::Result<ProtectorSpec> {
     let choice = match choice {
         Some(c) => c,
         None if keystore::available() => ProtectorChoice::OsKeyring,
@@ -57,7 +139,7 @@ fn choose_protector(ctx: &Ctx, choice: Option<ProtectorChoice>) -> anyhow::Resul
     match choice {
         ProtectorChoice::OsKeyring => Ok(ProtectorSpec::OsKeyring),
         ProtectorChoice::Passphrase => {
-            let passphrase = ctx.new_passphrase("for this vault")?;
+            let passphrase = ctx.new_passphrase("for this vault", allow_weak)?;
             Ok(ProtectorSpec::passphrase(passphrase))
         }
     }
@@ -72,7 +154,7 @@ fn create(ctx: &Ctx, args: &VaultCreateArgs) -> anyhow::Result<()> {
         },
         retention_days: args.retention_days,
     };
-    let spec = choose_protector(ctx, args.protector)?;
+    let spec = choose_protector(ctx, args.protector, args.allow_weak)?;
     let kind = spec.kind_label();
     let vault = ctx.registry.create(&args.name, options, spec)?;
     let descriptor = vault.descriptor()?;
@@ -239,13 +321,17 @@ fn protector(ctx: &Ctx, cmd: &ProtectorCommand) -> anyhow::Result<()> {
             }
             protector_table(&protectors)
         }
-        ProtectorCommand::Add(ProtectorAddArgs { kind, label }) => {
+        ProtectorCommand::Add(ProtectorAddArgs {
+            kind,
+            label,
+            allow_weak,
+        }) => {
             let vault = ctx.open_local_default("vault protector")?;
             let spec = match kind {
                 ProtectorChoice::OsKeyring => ProtectorSpec::OsKeyring,
-                ProtectorChoice::Passphrase => {
-                    ProtectorSpec::passphrase(ctx.new_passphrase("for the new protector")?)
-                }
+                ProtectorChoice::Passphrase => ProtectorSpec::passphrase(
+                    ctx.new_passphrase("for the new protector", *allow_weak)?,
+                ),
             };
             let info = vault.add_protector(spec, label.as_deref())?;
             if ctx.json() {

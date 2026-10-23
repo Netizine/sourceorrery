@@ -1426,3 +1426,72 @@ fn audit_on_a_remote_vault_points_at_the_providers_trail() {
         "{err}"
     );
 }
+
+#[test]
+fn passphrase_generate_and_check_estimate_strength_without_storing_anything() {
+    let env = Env::new();
+    let text = env.ok(&["vault", "passphrase", "generate"]);
+    let generated = text.trim();
+    assert_eq!(generated.chars().count(), 20, "{text}");
+    assert!(generated.bytes().all(|b| b.is_ascii_graphic()));
+    let again = env.ok(&["vault", "passphrase", "generate", "--length", "32"]);
+    assert_eq!(again.trim().chars().count(), 32);
+    assert_ne!(generated, again.trim());
+    let json = env.ok(&["vault", "passphrase", "generate", "-o", "json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["length"], 20);
+    assert_eq!(parsed["bits"], 125);
+    assert_eq!(parsed["passphrase"].as_str().unwrap().len(), 20);
+    let out = env.run(&["vault", "passphrase", "generate", "--length", "8"]);
+    assert!(!out.status.success());
+
+    // The generated passphrase rates strong; a common one does not, and the
+    // estimate never repeats what it was given.
+    let out = env.run_with_stdin(&["vault", "passphrase", "check", "-o", "json"], generated);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let estimate: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    // Random characters can land in runs the estimate costs as words, so a
+    // generated passphrase is asserted acceptable, not a fixed score.
+    assert_eq!(estimate["acceptable"], true, "{estimate}");
+    assert!(estimate["bits"].as_u64().unwrap() >= 44, "{estimate}");
+    let out = env.run_with_stdin(
+        &["vault", "passphrase", "check", "-o", "json"],
+        "Password1!\n",
+    );
+    let estimate: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(estimate["label"], "guessable", "{estimate}");
+    assert_eq!(estimate["acceptable"], false);
+    assert!(!stdout(&out).contains("Password1"));
+    let out = env.run_with_stdin(&["vault", "passphrase", "check"], "Harbour2024!\n");
+    let shown = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(shown.contains("a year"), "{shown}");
+    assert!(!shown.contains("Harbour"), "{shown}");
+}
+
+#[test]
+fn a_weak_passphrase_from_the_environment_is_warned_about_not_refused() {
+    let env = Env::new();
+    let out = env
+        .cmd(&["vault", "create", "weakly", "--protector", "passphrase"])
+        .env("SOURCEORRERY_PASSPHRASE", "dev-only")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("rates fair") || err.contains("rates weak"),
+        "{err}"
+    );
+    assert!(err.contains("SOURCEORRERY_PASSPHRASE"), "{err}");
+    assert!(
+        !err.contains("dev-only"),
+        "the passphrase itself is never printed: {err}"
+    );
+    // A strong one passes silently.
+    let out = env
+        .cmd(&["vault", "create", "strongly", "--protector", "passphrase"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("rates"), "{}", stderr(&out));
+}

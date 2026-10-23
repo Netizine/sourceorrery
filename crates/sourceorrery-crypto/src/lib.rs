@@ -24,13 +24,15 @@ pub mod kdf;
 pub mod key;
 pub mod mac;
 pub mod random;
+pub mod totp;
 
 pub use aead::{Ciphertext, NONCE_LEN, TAG_LEN, open, seal};
 pub use envelope::{unwrap_key, wrap_key};
 pub use kdf::{Argon2Params, SALT_LEN, derive_key};
 pub use key::{KEY_LEN, SymmetricKey};
 pub use mac::{MAC_LEN, derive_subkey, mac, verify_mac};
-pub use random::{random_bytes, random_hex};
+pub use random::{random_bytes, random_hex, random_passphrase, recovery_code};
+pub use totp::TotpSecret;
 
 use thiserror::Error;
 
@@ -58,6 +60,10 @@ pub enum CryptoError {
     /// Hex decoding failed.
     #[error("invalid hex encoding")]
     Hex,
+    /// An input had the wrong shape (a secret of the wrong size, text that
+    /// is not base32). Names the rule, never the input.
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 /// Result alias for this crate.

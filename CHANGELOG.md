@@ -8,6 +8,20 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* A vault passphrase typed at the prompt must rate at least "good" on a
+  strength estimate (a score 0 to 4 from the character runs, with common
+  passwords, dictionary-style words, repeated characters, keyboard and
+  alphabet sequences, years and short lengths counted against it; an
+  estimate from rules, no wordlist shipped) unless `--allow-weak`; a
+  passphrase supplied through `SOURCEORRERY_PASSPHRASE` or
+  `--passphrase-file` is accepted with a warning when it rates lower.
+  `vault passphrase generate` prints a random passphrase once (20
+  characters, about 125 bits, by default) and `vault passphrase check`
+  prints the estimate for one. The crypto crate gains `totp` (RFC 6238 over
+  HMAC-SHA1 with the RFC's test vectors, replay refusal and a one-step
+  window), recovery codes (125 bits over an alphabet without look-alikes)
+  and passphrase generation, for the second factor and the recovery that
+  follow.
 * `sourceorrery audit export` writes a local vault's audit log, oldest
   first, for a collector: as JSON Lines on stdout (one object per event
   plus `vault`, then a trailer with the count, the last id and the chain

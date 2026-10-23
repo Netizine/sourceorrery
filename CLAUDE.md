@@ -16,11 +16,16 @@ and `docs/threat-model.md` before changing anything security-relevant.
   backend says what it cannot express; rotation needs
   `PerVersionProperties`.
 - `crates/sourceorrery-crypto` — wrappers over RustCrypto. No algorithms here.
+  `totp` (RFC 6238 over HMAC-SHA1) and `random::{recovery_code,
+  random_passphrase}` live here too; `TotpSecret` is zeroising and redacted
+  like every key.
 - `crates/sourceorrery-storage` — encrypted SQLite vault, key protectors,
   OS keyring access, vault registry (paths).
 - `crates/sourceorrery-cli` — the `sourceorrery` binary. `src/ui/` is the
   Ratatui vault browser (`sourceorrery ui`, cargo feature `ui`, on by
-  default). `skills/` is the only source of the AI-agent skills that
+  default). `src/strength.rs` is the passphrase strength estimate (rules,
+  no wordlist: `zxcvbn` would add 3 MB); a typed passphrase below "good"
+  is refused, one from the environment or a file is warned about. `skills/` is the only source of the AI-agent skills that
   `init --integration` writes (embedded with `include_str!`; the CLI never
   fetches anything). `integrations/` and `plugins/sourceorrery/` at the
   root are generated from it: after editing a skill run
