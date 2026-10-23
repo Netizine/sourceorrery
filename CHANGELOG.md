@@ -4,7 +4,9 @@ All notable changes to SourceOrrery are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased] — 0.2.0
+## [Unreleased]
+
+## [0.2.0] - 2026-10-23
 
 This is a minor release because the Rust API changes: `Manifest` gains
 remote-vault and rotation fields, `OpenOptions` gains a manifest option,
