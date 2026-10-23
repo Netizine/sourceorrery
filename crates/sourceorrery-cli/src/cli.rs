@@ -68,6 +68,9 @@ pub enum OutputFormat {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Guided first run: a vault, a first secret, recovery, a second factor, the
+    /// reveal guard and the project manifest, step by step on the terminal.
+    Setup(SetupArgs),
     /// Create, inspect and manage vaults.
     #[command(subcommand)]
     Vault(VaultCommand),
@@ -95,6 +98,30 @@ pub enum Command {
     Ui(UiArgs),
     /// Generate shell completions.
     Completions(CompletionsArgs),
+}
+
+// ---------------------------------------------------------------------------
+// setup
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Args)]
+pub struct SetupArgs {
+    /// Name of the first secret.
+    #[arg(long, default_value = "database-password", value_name = "NAME")]
+    pub secret: String,
+    /// Project name for the manifest (default: current directory name).
+    #[arg(long, value_name = "NAME")]
+    pub project_name: Option<String>,
+    /// Where to write the manifest (default: ./sourceorrery.toml).
+    #[arg(long, value_name = "FILE")]
+    pub path: Option<PathBuf>,
+    /// Print the steps as commands on stderr instead of the guided screens.
+    #[arg(long)]
+    pub guide: bool,
+    /// Colours: the documentation site's dark or light palette, or the terminal's own.
+    #[cfg(feature = "ui")]
+    #[arg(long, value_enum, env = "SOURCEORRERY_THEME", default_value_t = UiTheme::Dark)]
+    pub theme: UiTheme,
 }
 
 // ---------------------------------------------------------------------------

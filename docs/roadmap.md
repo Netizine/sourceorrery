@@ -72,6 +72,13 @@ The 0.1.4 build includes these changes alongside milestones 1 and 2:
 - [x] PyPI and crates.io by trusted publishing (no stored token), with PyPI attestations
 - [x] Every registry page says what its package is, that vaults are managed with the CLI, and where the documentation is; each release archive carries a README
 
+## Next release — onboarding, a strong passphrase and a second factor
+
+- [x] `sourceorrery setup`: the guided first run, from a vault to `run`, as screens on the terminal, with the same six steps printed as commands where there is no terminal ([First run](getting-started.md))
+- [x] A vault passphrase typed at a prompt must rate "good" on a rule-based strength estimate (`vault passphrase check`, `vault passphrase generate`); one from the environment or a file is warned about, not refused
+- [x] Recovery codes (`vault recovery codes`) that unlock the vault in place of the passphrase, and a clear-text passphrase hint shown at the prompt; `vault passphrase set` to replace the passphrase with a code in hand
+- [x] An authenticator app as a second factor (`vault 2fa`, RFC 6238, the secret sealed inside the vault, a code accepted once) and the reveal guard (`vault guard`): `secret get --reveal` and `backup` ask for the passphrase, a code or both again; `run`, `check` and the SDKs are untouched ([CLI reference](cli.md#the-reveal-guard), [threat model](threat-model.md))
+
 ## Milestone 3 — local broker and agent isolation
 
 - [ ] Authenticated local protocol over Unix sockets / named pipes (length-prefixed, versioned)

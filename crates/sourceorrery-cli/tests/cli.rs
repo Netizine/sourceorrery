@@ -1552,7 +1552,7 @@ fn second_factor_and_guard_protect_reveal_and_export() {
         enrolled["uri"]
             .as_str()
             .unwrap()
-            .starts_with("otpauth://totp/SourceOrrery:vault%20dev?secret=")
+            .starts_with("otpauth://totp/SourceOrrery:dev?secret=")
     );
     assert_eq!(enrolled["verified"], false);
     let status = env.ok(&["vault", "2fa", "status", "--vault", "dev", "-o", "json"]);
@@ -1882,4 +1882,31 @@ fn recovery_codes_unlock_and_the_hint_is_shown_before_unlock() {
     let fresh = reissued["codes"][4].as_str().unwrap();
     let fresh = unlock_with(fresh);
     assert!(fresh.status.success(), "{}", stderr(&fresh));
+}
+
+#[test]
+fn setup_without_a_terminal_prints_the_steps_and_creates_nothing() {
+    let env = Env::new();
+    let out = env.run(&["setup"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    let guide = stderr(&out);
+    assert!(guide.contains("need an interactive terminal"), "{guide}");
+    assert!(guide.contains("sourceorrery vault create development --protector passphrase"));
+    assert!(guide.contains("sourceorrery vault 2fa enable --vault development"));
+    assert!(guide.contains("sourceorrery run -- <your command>"));
+    assert_eq!(env.ok(&["vault", "list", "-o", "json"]).trim(), "[]");
+    assert!(!env.project.path().join("sourceorrery.toml").exists());
+
+    let json = env.ok(&[
+        "setup", "--guide", "--vault", "staging", "--secret", "api-key", "-o", "json",
+    ]);
+    let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(json["vault"], "staging");
+    let steps = json["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 6);
+    assert_eq!(
+        steps[1]["commands"][0],
+        "sourceorrery secret set api-key --vault staging"
+    );
 }

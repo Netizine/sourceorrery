@@ -7,6 +7,7 @@ pub mod import;
 pub mod project;
 pub mod rotate;
 pub mod secret;
+pub mod setup;
 pub mod vault;
 
 use std::collections::BTreeMap;

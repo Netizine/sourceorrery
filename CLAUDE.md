@@ -25,7 +25,15 @@ and `docs/threat-model.md` before changing anything security-relevant.
   Ratatui vault browser (`sourceorrery ui`, cargo feature `ui`, on by
   default). `src/strength.rs` is the passphrase strength estimate (rules,
   no wordlist: `zxcvbn` would add 3 MB); a typed passphrase below "good"
-  is refused, one from the environment or a file is warned about. `skills/` is the only source of the AI-agent skills that
+  is refused, one from the environment or a file is warned about.
+  `src/ui/setup/` is `sourceorrery setup`, the guided first run (feature
+  `ui`): `wizard` is a state machine over `backend::Backend`, `view` draws
+  it, `backend::Live` does the work through the same storage calls the
+  commands use, and the tests and design snapshots drive it through the
+  fake. Hidden fields are drawn from their length only; the screens show
+  a generated passphrase and the recovery codes once, nothing else that
+  is secret. `commands/setup.rs` prints the same steps as commands when
+  there is no terminal. `skills/` is the only source of the AI-agent skills that
   `init --integration` writes (embedded with `include_str!`; the CLI never
   fetches anything). `integrations/` and `plugins/sourceorrery/` at the
   root are generated from it: after editing a skill run

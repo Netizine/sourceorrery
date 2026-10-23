@@ -46,6 +46,11 @@ const PAGES = {
 		description:
 			'How SourceOrrery is built and published: one release workflow, locked dependencies, trusted publishing and provenance, how to check what you installed, and what is not done yet.',
 	},
+	'docs/getting-started.md': {
+		dest: 'guides/first-run.md',
+		description:
+			'The guided first run, sourceorrery setup, and the same six steps as commands: a vault with a strong passphrase, a first database password, recovery codes and a hint, an authenticator app, the reveal guard and the project manifest.',
+	},
 	'docs/ai-agents.md': {
 		dest: 'guides/ai-agents.md',
 		description:
@@ -59,7 +64,7 @@ const PAGES = {
 	'docs/cli.md': {
 		dest: 'reference/cli.md',
 		description:
-			'Every sourceorrery command and option: vault, secret, audit, init, import, check, run, ui and completions, plus global options, unlocking and exit codes.',
+			'Every sourceorrery command and option: setup, vault, secret, audit, init, import, check, run, backup, restore, ui and completions, plus global options, unlocking, the reveal guard and exit codes.',
 	},
 	'docs/vault-format.md': {
 		dest: 'reference/vault-format.md',

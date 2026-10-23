@@ -150,7 +150,7 @@ fn enable(ctx: &Ctx, args: &TwoFactorEnableArgs) -> anyhow::Result<()> {
         let mut body = serde_json::json!({
             "vault": name,
             "key": secret.to_base32(),
-            "uri": secret.otpauth_uri("SourceOrrery", &format!("vault {name}")),
+            "uri": secret.otpauth_uri("SourceOrrery", &name),
             "verified": false,
         });
         if args.no_verify {

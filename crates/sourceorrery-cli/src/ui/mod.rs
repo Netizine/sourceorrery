@@ -33,6 +33,7 @@ mod fake;
 mod keys;
 mod search;
 mod session;
+pub mod setup;
 #[cfg(test)]
 mod snapshot;
 mod source;
@@ -190,13 +191,13 @@ fn describe(err: &anyhow::Error) -> String {
     format!("{err:#} ({code})")
 }
 
-fn suspend() -> anyhow::Result<()> {
+pub(crate) fn suspend() -> anyhow::Result<()> {
     disable_raw_mode()?;
     execute!(std::io::stdout(), LeaveAlternateScreen)?;
     Ok(())
 }
 
-fn resume(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+pub(crate) fn resume(terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
     execute!(std::io::stdout(), EnterAlternateScreen)?;
     enable_raw_mode()?;
     terminal.clear()?;

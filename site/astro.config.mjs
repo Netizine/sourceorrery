@@ -93,6 +93,7 @@ export default defineConfig({
 				{
 					label: 'Guides',
 					items: [
+						{ label: 'First run: the set-up wizard', slug: 'guides/first-run' },
 						{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' },
 						{ label: 'AI coding agents', slug: 'guides/ai-agents' },
 						{ label: 'Building from source', slug: 'guides/building-from-source' },

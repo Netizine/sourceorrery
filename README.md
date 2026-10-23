@@ -59,9 +59,21 @@ SourceOrrery takes a different line:
 
 ## Quick start
 
-Install the [CLI](https://sourceorrery.ai/getting-started/) first, then run
-these commands from your application's directory. Replace `npm start` with
-the command you normally use to start it.
+Install the [CLI](https://sourceorrery.ai/getting-started/) first, then,
+from your application's directory:
+
+```bash
+sourceorrery setup
+```
+
+Six screens take you from a vault to a running program: a vault with a
+strong passphrase (typed against a strength meter, or generated), a first
+database password (typed or generated, never shown), recovery codes and a
+hint, an authenticator app as a second factor, the reveal guard (whether
+`secret get --reveal` must ask for the passphrase and a code again), and
+the manifest. The same steps as commands, which the wizard prints when
+there is no terminal ([First run](docs/getting-started.md)); replace
+`npm start` with the command you normally use to start your application:
 
 ```bash
 # 1. Create a vault (key protected by the OS credential store when available)
@@ -78,6 +90,11 @@ sourceorrery secret get database-password --vault development
 sourceorrery init
 sourceorrery check
 sourceorrery run -- npm start      # DATABASE_PASSWORD is set in the child only
+
+# 5. Optional: recovery codes, an authenticator app, and the guard on --reveal
+sourceorrery vault recovery codes --vault development
+sourceorrery vault 2fa enable --vault development
+sourceorrery vault guard --reveal passphrase,second-factor --vault development
 ```
 
 Working headless (WSL, Docker, CI)? Add a passphrase protector to the same

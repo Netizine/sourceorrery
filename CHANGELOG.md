@@ -57,6 +57,22 @@ uses [Semantic Versioning](https://semver.org/).
   the prompt shows. `vault info` reports the guard, the enrolment, the
   recovery codes' labels and the hint (`docs/cli.md`, "The reveal
   guard"; `docs/threat-model.md`).
+* `sourceorrery setup`: the guided first run, six screens on the terminal
+  from the first vault to the first `run` (Cargo feature `ui`): the vault,
+  with a passphrase typed against a live strength meter or generated and
+  shown once, and the OS credential store as a second key where it
+  exists; the first secret, a database password typed against the same
+  meter or generated and stored unseen; recovery codes shown once behind
+  a "written down" tick box, and the hint; the second factor, as a QR code
+  to scan and one code to prove it; the reveal guard; and the manifest,
+  written and checked, with the `run` line. Hidden fields are drawn as
+  dots from their length and wiped afterwards; nothing typed as a secret
+  is kept by the screens. Without a terminal, or with `--guide`, the same
+  six steps are printed as commands (`-o json` too). `docs/getting-started.md`
+  is the walkthrough; the README's quick start begins with it. The
+  `otpauth://` URI `vault 2fa enable` shows leaves out the format's
+  default algorithm, digits and period, so the QR code is a version
+  smaller.
 * `sourceorrery audit export` writes a local vault's audit log, oldest
   first, for a collector: as JSON Lines on stdout (one object per event
   plus `vault`, then a trailer with the count, the last id and the chain

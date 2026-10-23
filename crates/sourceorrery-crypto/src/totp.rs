@@ -63,10 +63,12 @@ impl TotpSecret {
     }
 
     /// The `otpauth://totp/` URI an authenticator app enrols from.
-    /// `issuer` and `account` are shown in the app; neither is secret.
+    /// `issuer` and `account` are shown in the app; neither is secret. The
+    /// algorithm, digits and period are the format's defaults (SHA-1, 6,
+    /// 30), so they are left out: a shorter URI is a smaller QR code.
     pub fn otpauth_uri(&self, issuer: &str, account: &str) -> String {
         format!(
-            "otpauth://totp/{}:{}?secret={}&issuer={}&algorithm=SHA1&digits={DIGITS}&period={PERIOD_SECS}",
+            "otpauth://totp/{}:{}?secret={}&issuer={}",
             percent_encode(issuer),
             percent_encode(account),
             self.to_base32(),
@@ -285,7 +287,7 @@ mod tests {
         assert_eq!(
             uri,
             format!(
-                "otpauth://totp/SourceOrrery:vault%20development?secret={}&issuer=SourceOrrery&algorithm=SHA1&digits=6&period=30",
+                "otpauth://totp/SourceOrrery:vault%20development?secret={}&issuer=SourceOrrery",
                 secret.to_base32()
             )
         );

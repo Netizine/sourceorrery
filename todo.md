@@ -1185,7 +1185,7 @@ guided set-up, O5 the documents, O6 runs alongside each.
 
 ## O4. `sourceorrery setup`: first vault to first run, in the terminal
 
-- [ ] A Ratatui wizard in `src/ui/setup/` (feature `ui`): (1) the vault
+- [x] A Ratatui wizard in `src/ui/setup/` (feature `ui`): (1) the vault
       (name; OS keyring when available and a passphrase; the passphrase
       typed masked with a live strength meter, or generated and shown
       once); (2) the first secret (name with the naming rules, value typed
@@ -1197,19 +1197,39 @@ guided set-up, O5 the documents, O6 runs alongside each.
       `run -- <command>` line to use. Every value typed in the wizard lives
       in a zeroising buffer and goes straight to the vault; the screens
       show masks, strength, names and states.
-- [ ] Non-interactive sessions get the same steps as commands on stderr
+- [x] Non-interactive sessions get the same steps as commands on stderr
       and exit 1; `--vault`, `--project-name` and `--yes` pre-answer the
       questions that have defaults.
-- [ ] Snapshot pages for every step and state (the `ui::snapshot` review).
+- [x] Snapshot pages for every step and state (the `ui::snapshot` review).
+
+*O4 done: `ui/setup/{wizard,view,backend,fake,tests}.rs` and
+`commands/setup.rs`. Design calls made on the way: the vault always has a
+passphrase (the guard's "password" and what recovery codes stand in for),
+with the OS keyring as a second key ticked by default where it exists; an
+existing vault of the chosen name is opened (with the screen suspended for
+the prompt) rather than refused; the first secret's value, when generated,
+is never shown (read it with `secret get --reveal` or `run`), while a
+generated vault passphrase and the recovery codes are, once, behind a tick
+box; three missed codes remove the enrolment; letters are always text
+(controls are reached with Tab, Enter and Space), so nothing typed into a
+field is taken for a command. The QR code is drawn black on white in every
+colour theme, and the `otpauth://` URI leaves out the format's defaults so
+the code fits a 24-row terminal with the code field.*
 
 ## O5. Documents
 
-- [ ] `docs/getting-started.md` rewritten around `sourceorrery setup`,
+- [x] `docs/getting-started.md` rewritten around `sourceorrery setup`,
       with the manual commands as the second path; README quick start.
-- [ ] `docs/cli.md`: the new commands and the guard; `docs/threat-model.md`:
+- [x] `docs/cli.md`: the new commands and the guard; `docs/threat-model.md`:
       the guard as a control with its limit, recovery codes, the hint, the
       second factor's reach (the three points above); `docs/vault-format.md`:
       the settings fields; CHANGELOG; the roadmap (a new section).
+
+*O5 done: `docs/getting-started.md` (synced to the site as
+`guides/first-run`, with a sidebar entry and a pointer from the site's
+install page), the README quick start, `docs/cli.md` (`setup`), the
+threat model, the roadmap's "Next release" section, the changelog and
+`CLAUDE.md`.*
 
 ## O6. Tests, alongside
 
@@ -1228,7 +1248,7 @@ guided set-up, O5 the documents, O6 runs alongside each.
       left and spends the codes of steps -1, 0 and +1 in that order,
       since each is good once and only a later step is accepted after
       it.*
-- [ ] Wizard: driven through its `App` with the test backend, every step,
+- [x] Wizard: driven through its `App` with the test backend, every step,
       including the strength refusal and the "written down" gate.
 
 **Decisions for you.** (a) Recovery codes in place of "recovery with 2FA"

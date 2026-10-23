@@ -30,6 +30,28 @@ Unicode half blocks in colours chosen to read on dark and light
 backgrounds; when piped it is plain text. `SOURCEORRERY_BANNER=unicode|plain`
 forces a style.
 
+## `setup`: the guided first run
+
+```
+sourceorrery setup [--secret NAME] [--project-name NAME] [--path FILE] [--guide] [--theme dark|light|terminal]
+```
+
+Six screens on the terminal, from the first vault to the first `run`: the
+vault (a passphrase typed with a live strength meter, or generated and
+shown once; the OS credential store as a second key where it exists, or
+an existing vault used as it is), the first secret (`database-password` by
+default, typed against the same meter or generated and stored unseen),
+recovery (five recovery codes shown once behind a "written down" tick box,
+an optional hint), the second factor (a QR code to scan, kept once a code
+matched), the [reveal guard](#the-reveal-guard), and the project (the
+manifest written unless one exists, checked, and the `run` line). Every
+step is an ordinary command, which the last screen and
+[First run](getting-started.md) list; `--guide`, or no terminal, prints
+those steps instead (`-o json`: `vault`, `steps`). `--vault` names the
+vault (default `development`). Hidden fields are drawn as dots from their
+length; nothing typed as a secret is kept by the screens. Cargo feature
+`ui`; without it only the guide is printed.
+
 ## Unlocking
 
 The CLI tries OS-keyring protectors first (Windows Credential Manager,
@@ -59,7 +81,7 @@ only ever a reminder for the person reading it.
 > makes `secret delete` immediate and irreversible. Use the default
 > recoverable vault unless you deliberately need permanent deletion.
 
-`vault create`, `vault protector`, `vault destroy`, `vault migrate`,
+`setup`, `vault create`, `vault protector`, `vault destroy`, `vault migrate`,
 `audit --verify`, `audit --acknowledge`, `audit export`, `backup`,
 `restore` and `ui` are about the vault file and refuse a
 [remote vault](providers/index.md) by name; plain `audit` on one prints

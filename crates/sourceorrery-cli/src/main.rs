@@ -40,6 +40,7 @@ fn main() -> ExitCode {
     };
 
     let result = match command {
+        Command::Setup(args) => commands::setup::run(&ctx, args),
         Command::Vault(cmd) => commands::vault::run(&ctx, cmd),
         Command::Secret(cmd) => commands::secret::run(&ctx, cmd),
         Command::Audit(args) => commands::audit::run(&ctx, args),

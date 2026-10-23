@@ -250,6 +250,23 @@ This minimal build also omits the interactive `ui` command; add
 `--features ui` if you need it without OS-keyring support.
 </Aside>
 
+## Set up a project
+
+With the CLI installed, run the guided first run from your application's
+directory:
+
+```bash
+sourceorrery setup
+```
+
+Six screens take you from a vault with a strong passphrase to a running
+program: the vault, a first database password (typed against a strength
+meter or generated, never shown), recovery codes and a hint, an
+authenticator app as a second factor, the reveal guard, and the manifest.
+[First run](/guides/first-run/) walks through each screen and gives the
+same steps as commands, which the wizard prints where there is no
+terminal. The sections below are the manual path.
+
 ## First vault to first run
 
 Run these steps from the directory containing your application. Use a

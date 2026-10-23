@@ -3,6 +3,7 @@
 /architecture.md
 /security/threat-model.md
 /security/supply-chain.md
+/guides/first-run.md
 /guides/ai-agents.md
 /guides/building-from-source.mdx
 /reference/cli.md
@@ -12,6 +13,7 @@
 /providers/index.md
 /providers/hashicorp-vault.md
 /providers/aws-secrets-manager.md
+/guides/rotation.md
 /guides/enterprise.md
 /sdks/index.md
 /sdks/python.mdx
