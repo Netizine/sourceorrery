@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="logo.png" alt="SourceOrrery" width="128"> [![AI Code Assurance](https://sonarcloud.io/api/project_badges/ai_code_assurance?project=Netizine_sourceorrery)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
+  <img src="logo.png" alt="SourceOrrery" width="128"> 
 </p>
 
-# SourceOrrery
+# SourceOrrery [![AI Code Assurance](https://sonarcloud.io/api/project_badges/ai_code_assurance?project=Netizine_sourceorrery)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
 
 **Secrets belong to the runtime, not the repository.**
 
