@@ -561,3 +561,392 @@ releases are updates.
       `getting-started.mdx`, `docs/sdks/*.md`, `docs/building.md` and
       `docs/supply-chain.md` move to 0.2.0.
 - [ ] Milestone 3 starts from a clean roadmap.
+
+---
+
+# Part 2: Milestone 4, enterprise integrations
+
+Agreed changes to the roadmap's Milestone 4 before planning it: there is
+**no SourceOrrery server** (the providers' own services are the only
+remote ends, and the items that assumed a server are re-scoped below), and
+the **security review** before "enterprise-ready" is yours, done locally
+over several days, not an engineering item here. Milestone 3 (the broker)
+is independent of this work and keeps its number; Milestone 4 is simply
+being done first.
+
+The first release that carries these is **0.3.0**: remote providers and
+the async client are additive (a minor bump under ADR 0007), and nothing
+here changes the vault file or the C ABI's existing declarations.
+
+| # | Item | Needs from you | Size |
+|---|------|----------------|------|
+| M4.1 | `AsyncSecretClient`, the blocking adapter, and the provider architecture (ADR 0008) | ADR sign-off | M |
+| M4.2 | Remote vaults in the manifest and the client: `[vaults.<name>]`, provider selection, error codes | manifest shape sign-off | M |
+| M4.3 | HashiCorp Vault (KV v2) provider | nothing: a Vault dev server runs in CI | L |
+| M4.4 | AWS Secrets Manager provider | nothing: LocalStack runs in CI | L |
+| M4.5 | Azure Key Vault provider | a test Key Vault and a GitHub OIDC federated credential, for a nightly job | L |
+| M4.6 | Workload identity, RBAC, policy and revocation **through the providers** (re-scoped) | re-scope sign-off | M |
+| M4.7 | Rotation workflows: issue → validate → activate → retire, over any backend | design sign-off | L |
+| M4.8 | Audit export to standard sinks (central collection **without a server**, re-scoped) | re-scope sign-off | M |
+| M4.9 | Security review before "enterprise-ready" | **yours**: local review, several days | — |
+
+Order: M4.1 and M4.2 first (everything else builds on them), then the
+providers easiest-to-test first (M4.3 Vault, M4.4 AWS, both against local
+emulators in CI; M4.5 Azure has no emulator and waits on your test vault),
+then M4.6 (mostly documentation and federation tests over the providers),
+M4.7 and M4.8 in either order, M4.9 last.
+
+Every PR follows the Part 1 rules, plus: a new provider passes the
+lifecycle conformance suite through the blocking adapter before it is
+called a provider; no value ever appears in a provider's request log,
+error or `Debug` output (the security suite's canary tests run against
+every backend); every new dependency tree is weighed (the AWS and Azure
+SDKs are large), appears in the SBOM, and passes `cargo audit`.
+
+---
+
+## M4.1. `AsyncSecretClient`, the blocking adapter and the provider architecture
+
+**Current state.** `SecretClient` is synchronous because the one backend is
+a local SQLite file; its docs promise an `AsyncSecretClient` sibling for
+remote backends. The CLI, the `sourceorrery` crate (the Rust SDK), the C
+ABI and every binding call the sync trait. There is no async runtime in
+the workspace.
+
+**Design (recommended).**
+
+- **ADR 0008: Remote providers.** One contract, two shapes: `SecretClient`
+  (sync) and `AsyncSecretClient` (async, same methods, same semantics
+  table), with adapters both ways so every backend serves both. Providers
+  are crates behind the async trait; the local vault stays sync. Policy
+  (`enabled`, `not_before`, `expires_on`, latest-accessible) is evaluated
+  in core after the provider returns metadata, so every backend enforces
+  it identically. Values cross a provider as `SecretBytes` the moment they
+  leave the HTTP body, and never enter a log, an error or a `Debug`.
+- **The async trait.** `AsyncSecretClient` in core with the `async-trait`
+  crate, because providers are chosen at run time from the manifest and
+  must be `Box<dyn AsyncSecretClient + Send + Sync>`; native `async fn` in
+  traits is not dyn-compatible yet. Revisit when it is.
+- **Runtime and TLS.** Tokio, current-thread where the adapter owns it;
+  `reqwest` with `rustls-tls` only, no OpenSSL anywhere, so the Linux
+  release archives stay free of system TLS libraries.
+- **Adapters.** `Blocking<A: AsyncSecretClient>` implements `SecretClient`
+  by driving `A` on a runtime it owns (one per client, created lazily), so
+  the CLI, the C ABI, every binding and the conformance suite run unchanged
+  against any provider. `AsyncLocal` implements `AsyncSecretClient` for
+  `SqliteVault` through `spawn_blocking`, so async callers get the local
+  vault too.
+- **Features.** Cargo feature `remote` (all three providers) and one per
+  provider (`provider-vault`, `provider-aws`, `provider-azure`) in
+  `sourceorrery` and in the CLI, **on by default** in the CLI and in the
+  release archives of the C ABI, so `sourceorrery run` and every SDK reach
+  a remote vault out of the box; `--no-default-features` builds stay
+  local-only for size. Measure the binary and build-time cost in the first
+  PR and record it in the ADR.
+- **Audit on remote backends.** The provider's own service holds the audit
+  trail (Vault audit devices, CloudTrail, Azure Monitor). `audit_events`
+  on a remote client returns `unsupported` with a hint naming where the
+  log is; the metadata-read recording the local vault does is not
+  emulated. M4.8 says how to collect from both.
+- **Conformance.** The lifecycle suite becomes a function over
+  `&dyn SecretClient` (`sourceorrery_conformance::lifecycle(client)`), run
+  by the existing SQLite tests and by each provider's CI job through the
+  blocking adapter; the security suite stays SQLite-specific where it
+  tampers with the file, and its canary tests (no value in errors, audit,
+  `Debug`) gain a provider-generic form.
+
+**Steps.**
+
+- [ ] ADR 0008 with the above, the size and build-time measurements, and
+      the list of semantics a provider may legitimately differ on (M4.4
+      lists AWS's).
+- [ ] `sourceorrery-core`: `AsyncSecretClient` (async-trait), docs mirroring
+      `SecretClient`, `CONTRACT_VERSION` unchanged (additive).
+- [ ] New crate `sourceorrery-provider` (the adapters, the provider
+      registry and the `VaultConfig` enum of M4.2; depends on tokio,
+      reqwest; no provider yet). `Blocking`, `AsyncLocal`, unit tests that
+      the adapters preserve every error code.
+- [ ] Conformance: `lifecycle(&dyn SecretClient)`; the SQLite tests call
+      it; a test runs it through `Blocking<AsyncLocal<SqliteVault>>` so the
+      adapter pair is proven before any provider exists.
+- [ ] Docs: `docs/architecture.md` gains the two-shape contract and the
+      adapters; `docs/adr/0008-remote-providers.md`; roadmap `AsyncSecretClient`
+      box ticked.
+
+**Decisions for you.** (a) `async-trait` for dyn-compatibility
+(recommended) versus native `async fn` and no `dyn` (providers chosen at
+compile time only). (b) Remote providers on by default in the CLI, the
+Rust SDK and the C ABI archives (recommended: one behaviour everywhere)
+versus CLI only.
+
+---
+
+## M4.2. Remote vaults in the manifest and the client
+
+**Current state.** A vault is a name; `SecretReader::open(name)` and
+`Project::load` look it up in the local home directory. `sourceorrery.toml`
+has `[project].vault` and `[secrets.<name>].vault`, both names. References
+are `sourceorrery://<vault>/<name>`. The manifest rejects unknown fields so
+it can never hold a value.
+
+**Design (recommended).**
+
+- `sourceorrery.toml` gains `[vaults.<name>]`, one table per remote vault,
+  with `provider = "hashicorp-vault" | "aws-secrets-manager" |
+  "azure-key-vault"` and that provider's addressing keys only: Vault
+  `address`, `mount`, optional `namespace`; AWS `region`, optional
+  `prefix`; Azure `vault_url`. Still `deny_unknown_fields`; no credential
+  key exists, so none can be written there. A vault name with no table is
+  local, as today. `[project].vault` and `[secrets.<name>].vault` are
+  unchanged, so an existing manifest is valid and means what it meant.
+- Core: `VaultConfig` (`Local` or `Remote { provider, settings }`) parsed
+  and validated with the manifest (`sourceorrery check` reports a remote
+  vault it cannot reach, reading metadata only). `SecretReference` is
+  unchanged: the vault name resolves through the manifest.
+- Opening: `OpenOptions::manifest(path)` (default: discovered as
+  `Project::load` does) lets `SecretReader::open(name)` resolve a remote
+  vault; `so_reader_open` takes the same through its existing
+  `options_json` (an added key, compatible under ADR 0007); bindings pass
+  it through without logic (ADR 0005).
+- Errors, append-only codes: `unauthenticated` (no or expired credentials
+  for the provider; hint names what to set up), `provider_unavailable`
+  (network, 5xx; transient), while 403 maps to the existing
+  `permission_denied` and a missing secret to `not_found`. Bindings gain
+  the typed errors; "anything newer" keeps older bindings working.
+- CLI: `sourceorrery vault list` shows remote vaults from the manifest
+  with their provider; `vault info <remote>` shows the descriptor the
+  provider returns; the write commands work against a remote vault the
+  identity may write to (the contract is the same), `vault create`,
+  `protector`, `destroy`, `migrate`, `backup` and `restore` are local-only
+  and say so.
+
+**Steps.**
+
+- [ ] Core: `[vaults.<name>]`, `VaultConfig`, validation, the two error
+      codes, `Manifest::entries` carrying the config; tests including a
+      manifest that tries to smuggle a credential (rejected).
+- [ ] `sourceorrery-provider`: `open(config, options) ->
+      Box<dyn SecretClient>` choosing local or `Blocking<provider>`.
+- [ ] `sourceorrery` crate and the C ABI: `OpenOptions::manifest`,
+      `options_json.manifest`; the SDK harness gains a scenario with a
+      remote vault in the manifest once M4.3 exists.
+- [ ] CLI: the listing and info changes; local-only commands refuse a
+      remote vault with a clear message.
+- [ ] Docs: `docs/cli.md` manifest section, `docs/sdks/index.md`
+      (opening a remote vault), a new `docs/providers/index.md`.
+
+**Decision for you.** The manifest shape above, in particular that
+credentials are never in it (the environment, the platform identity or a
+credential file the provider's own SDK reads).
+
+---
+
+## M4.3. HashiCorp Vault (KV v2) provider
+
+**Mapping.** Secret name → `<mount>/data/<name>`; KV v2 versions → version
+ids (the integer as a string); `enabled`, `not_before`, `expires_on`,
+`content_type` and tags → `custom_metadata` keys under a `sourceorrery.`
+prefix (`sourceorrery.enabled`, `sourceorrery.tag.<key>`), per version
+where KV v2 allows it and otherwise per secret, documented; soft delete →
+KV v2 `delete` / `undelete` / `destroy` (`delete_secret`,
+`recover_deleted_secret`, `purge_deleted_secret`); `list_*` → `metadata`
+listing. The provider never logs a request body.
+
+**Auth.** Token (`VAULT_TOKEN`), AppRole, Kubernetes service account, and
+JWT/OIDC (the workload-identity path of M4.6), chosen from the
+environment the way the `vault` CLI does; `VAULT_ADDR` as the default
+address; `VAULT_NAMESPACE`.
+
+**Client.** A small hand-written `reqwest` client (the API surface is a
+dozen calls) rather than a third-party Vault crate: fewer dependencies,
+and full control over where response bodies go. Recorded-response unit
+tests for every mapping rule.
+
+**Steps.**
+
+- [ ] Crate `sourceorrery-provider-vault` (behind `provider-vault`).
+- [ ] CI job `provider-vault`: `hashicorp/vault` dev server in Docker, the
+      lifecycle conformance suite through the adapter, the canary tests,
+      the SDK harness with a remote vault in the manifest. In the gate.
+- [ ] Docs: `docs/providers/hashicorp-vault.md` (mapping table, auth,
+      what differs), roadmap line partly ticked.
+
+---
+
+## M4.4. AWS Secrets Manager provider
+
+**Mapping.** Secret name → secret id (`<prefix><name>`); versions → version
+ids with staging labels (`AWSCURRENT` is the newest; previous versions
+keep their ids); tags → secret tags (Secrets Manager tags are per secret,
+not per version); soft delete → `DeleteSecret` with the recovery window
+(`delete_secret`), `RestoreSecret` (`recover`), `ForceDeleteWithoutRecovery`
+(`purge`); retention → the recovery window (7 to 30 days).
+
+**Where AWS differs, honestly.** Versions carry no metadata of their own,
+so `enabled`, `not_before`, `expires_on` and `content_type` live in secret
+tags and apply to the secret, not to one version: `update_secret_properties`
+on a version other than the newest is `unsupported` with that explanation,
+and the docs say so. Values are never wrapped in an envelope to carry
+per-version metadata: the value stored is the value.
+
+**Client.** The official `aws-sdk-secretsmanager` with `aws-config`'s
+default credential chain (environment, profile, IMDS, web identity /
+OIDC), `rustls`. Weighed in ADR 0008: it is the largest dependency tree
+in the workspace.
+
+**Steps.**
+
+- [ ] Crate `sourceorrery-provider-aws` (behind `provider-aws`).
+- [ ] CI job `provider-aws`: LocalStack in Docker, conformance through the
+      adapter with the documented differences excluded by a capability
+      flag the suite reads, canaries, SDK harness scenario. In the gate.
+- [ ] Docs: `docs/providers/aws-secrets-manager.md`.
+
+---
+
+## M4.5. Azure Key Vault provider
+
+**Mapping.** The closest model to the contract (`SecretClient` is modelled
+on it): versions, `enabled`, `nbf`, `exp`, `content_type`, tags, soft
+delete, recover and purge map one to one; recovery level and retention
+come from the vault's properties.
+
+**Auth.** `azure_identity`'s default credential (environment, managed
+identity, workload identity federation, Azure CLI), with the official
+`azure_security_keyvault_secrets` crate.
+
+**Testing.** Key Vault has no emulator. Recorded-response unit tests cover
+the mapping in every CI run; a **nightly** job (and a manual dispatch)
+runs the conformance suite against a real test vault with a GitHub OIDC
+federated credential and no stored secret, skipped while the variables
+are absent.
+
+**What you need to create.** A test Key Vault (any cheap region; operations
+cost cents), an app registration with a federated credential for this
+repository's `main` branch and the nightly workflow, the role *Key Vault
+Secrets Officer* on that vault, and the repository variables
+`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`,
+`AZURE_KEYVAULT_URL`.
+
+**Steps.**
+
+- [ ] Crate `sourceorrery-provider-azure` (behind `provider-azure`).
+- [ ] Workflow `providers-nightly.yml` with the Azure job (skipped without
+      the variables), and the recorded-response tests in CI.
+- [ ] Docs: `docs/providers/azure-key-vault.md`; the roadmap's provider
+      line fully ticked.
+
+---
+
+## M4.6. Workload identity, RBAC, policy and revocation, through the providers
+
+**Re-scope.** Without a SourceOrrery server there is nothing of ours to
+administer centrally: identity, roles, policy and revocation are the
+provider's, and SourceOrrery's job is to use the platform identity and to
+honour the provider's decisions faithfully. Proposed roadmap wording:
+*"Workload identity through the providers' federation (OIDC, managed and
+Kubernetes identities); RBAC, policy and revocation administered in the
+provider and honoured by the client."*
+
+**Steps.**
+
+- [ ] Each provider authenticates with the platform identity where one
+      exists, with no stored credential: Vault JWT/OIDC and Kubernetes
+      auth, AWS web identity and IMDS, Azure managed and workload
+      identity; CI proves the federated path where it can (the Azure
+      nightly job itself; Vault JWT auth against the dev server with a
+      local JWKS).
+- [ ] A revoked or expired identity is `unauthenticated`, a denied read
+      `permission_denied`, both with hints naming the provider's console
+      or command; `sourceorrery check` reports, per secret, whether the
+      current identity may read it (metadata only).
+- [ ] No value cache across processes: a reader holds a value until it is
+      closed and never writes one to disk; documented as what revocation
+      can and cannot reach on a running process.
+- [ ] `docs/enterprise.md`: who decides what, per provider, with the
+      federation set-up for GitHub Actions, Kubernetes and VMs.
+
+**Decision for you.** The re-scoped wording for the roadmap line.
+
+---
+
+## M4.7. Rotation workflows: issue → validate → activate → retire
+
+**Design (recommended).** A rotation is a state machine in core over any
+`SecretClient`, driven by the CLI (`sourceorrery secret rotate <name>`) and
+usable from the Rust crate; it needs nothing from a provider beyond the
+contract.
+
+- **issue**: a new version is written **disabled**, with the candidate
+  value from an *issuer*: stdin, or a hook command named in the manifest
+  (`[rotation.<secret>] issue = "..."`) whose stdout is the value, read
+  into `SecretBytes`, never echoed.
+- **validate**: a hook command receives the candidate the way
+  `sourceorrery run` delivers secrets (environment of a child process,
+  never an argument) and its exit code decides.
+- **activate**: the new version is enabled and the previous one disabled,
+  in that order, so there is always one accessible version.
+- **retire**: the previous version is deleted after a grace period
+  (`--retire-after 7d`, or `retire_after` in the manifest), by a later run
+  of the same command, which resumes from the recorded state.
+- State is recorded in the versions' tags (`sourceorrery.rotation.*`),
+  so the workflow survives a crash and is visible in `secret versions`;
+  every step is an ordinary audited operation (`secret_set`,
+  `secret_update`, `secret_delete`) with the step named in `detail`.
+- Built-in issuers (database passwords, cloud keys) are out of scope here;
+  hooks make them possible without SourceOrrery knowing the issuer.
+
+**Steps.**
+
+- [ ] Core: `rotation.rs` (states, transitions, tags), `Manifest`
+      `[rotation.<secret>]` (hooks and grace, no values).
+- [ ] CLI: `secret rotate <name> [--issue-from-stdin] [--step issue|validate|activate|retire|all] [--retire-after D]`,
+      hooks run as `run` runs commands, values only in the child's
+      environment.
+- [ ] Conformance: a rotation over the SQLite vault and over
+      `Blocking<AsyncLocal<...>>` with a fake issuer and a failing
+      validator (the candidate stays disabled, the old version stays
+      current); canaries on every hook invocation's logs.
+- [ ] Docs: `docs/rotation.md`, `docs/cli.md`.
+
+**Decision for you.** Hooks as the issuer interface (recommended) versus
+built-in issuers now.
+
+---
+
+## M4.8. Audit export to standard sinks
+
+**Re-scope.** Without a server, "central audit collection" means getting
+every audit trail to the place the organisation already collects logs.
+Proposed roadmap wording: *"Audit export: the local vault's chain to
+JSON Lines and OTLP, continuously; remote providers' trails located and
+documented."*
+
+**Steps.**
+
+- [ ] `sourceorrery audit export [--format jsonl] [--since T] [--follow]`:
+      the chain as one JSON object per event (metadata only, as today),
+      `--follow` tailing new events, with the chain verification result in
+      a trailer so a collector can tell a complete export from a truncated
+      log.
+- [ ] OTLP logs over HTTP (`--format otlp --endpoint URL`) behind a
+      feature, for collectors that speak it directly; JSON Lines is the
+      format Vector, Fluent Bit and friends read without it.
+- [ ] Per provider, where its trail is (Vault audit devices, CloudTrail,
+      Azure Monitor) and the one query that shows SourceOrrery's reads, in
+      the provider's docs page; `sourceorrery audit --vault <remote>`
+      prints that pointer instead of an error.
+- [ ] Docs: `docs/cli.md`, `docs/enterprise.md`.
+
+**Decision for you.** The re-scoped wording, and whether OTLP ships with
+JSON Lines or later.
+
+---
+
+## M4.9. Security review before "enterprise-ready"
+
+Yours: a local review over several days. The roadmap line says so. When
+it is done, the wording in `README.md` and `docs/supply-chain.md` that
+hedges ("not yet audited") is updated by you or on your word, and the box
+is ticked.
+

@@ -83,12 +83,12 @@ The 0.1.4 build includes these changes alongside milestones 1 and 2:
 
 ## Milestone 4 — enterprise integrations
 
-- [ ] Remote providers behind the same contract: Azure Key Vault, AWS Secrets Manager, HashiCorp Vault, SourceOrrery server
+- [ ] Remote providers behind the same contract: HashiCorp Vault, AWS Secrets Manager, Azure Key Vault (no SourceOrrery server: the providers' own services are the only remote ends)
 - [ ] `AsyncSecretClient`
 - [ ] Workload identity federation, RBAC, centrally administered policy and revocation
 - [ ] Rotation workflows with issuer cooperation (issue → validate → activate → retire)
 - [ ] Central audit collection
-- [ ] Security review before "enterprise-ready"
+- [ ] Security review before "enterprise-ready" (the maintainer's own review, done locally over several days; not an engineering item)
 
 ## Milestone 5 — community expansion
 
