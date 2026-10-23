@@ -30,8 +30,17 @@ class MotoVersionTimestampsTests(unittest.TestCase):
         corrected, _ = fix.patch_source(ORIGINAL, "5.2.4")
         self.assertEqual(fix.patch_source(corrected, "5.2.4"), (corrected, False))
 
+    def test_pinned_docker_package_version_uses_the_same_source_guard(self):
+        corrected, changed = fix.patch_source(ORIGINAL, "5.2.4.dev0")
+        self.assertTrue(changed)
+        self.assertEqual(corrected, fix.patch_source(ORIGINAL, "5.2.4")[0])
+        self.assertEqual(fix.patch_source(corrected, "5.2.4.dev0"), (corrected, False))
+        modified = ORIGINAL.replace('"NextToken": ""', '"NextToken": "changed"')
+        with self.assertRaises(ValueError):
+            fix.patch_source(modified, "5.2.4.dev0")
+
     def test_other_versions_and_changed_method_bodies_are_rejected(self):
-        for version in ("5.2.3", "5.2.5", "5.2.4.dev1"):
+        for version in ("5.2.3", "5.2.5", "5.2.4.dev1", "5.2.5.dev0"):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 fix.patch_source(ORIGINAL, version)
         for source in (

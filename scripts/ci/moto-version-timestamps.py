@@ -28,6 +28,9 @@ from pathlib import Path
 
 MOTO_VERSION = "5.2.4"
 MOTO_IMAGE = f"motoserver/moto:{MOTO_VERSION}"
+# The pinned Docker image reports .dev0; the PyPI wheel reports the release.
+# Both must still match the exact upstream method fingerprint below.
+MOTO_PACKAGE_VERSIONS = (MOTO_VERSION, f"{MOTO_VERSION}.dev0")
 # Fingerprints cover every meaningful token of the original/patched method.
 # The original source fixture is in fixtures/moto_5_2_4_version_listing.py.
 # Tokens avoid ast.dump differences between the host and container Python.
@@ -52,8 +55,10 @@ def method_fingerprint(source: str) -> str:
 
 def patch_source(source: str, version: str) -> tuple[str, bool]:
     """Fail closed unless the installed method is exactly the known version."""
-    if version != MOTO_VERSION:
-        raise ValueError(f"expected Moto {MOTO_VERSION}, found {version}; review the workaround")
+    if version not in MOTO_PACKAGE_VERSIONS:
+        raise ValueError(
+            f"expected Moto {' or '.join(MOTO_PACKAGE_VERSIONS)}, found {version}; review the workaround"
+        )
     classes = [
         node for node in ast.parse(source).body
         if isinstance(node, ast.ClassDef) and node.name == "SecretsManagerBackend"
