@@ -4,6 +4,9 @@
 
 # SourceOrrery
 
+[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
+[![AI Code Assurance](https://sonarcloud.io/api/project_badges/ai_code_assurance?project=Netizine_sourceorrery)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
+
 **Secrets belong to the runtime, not the repository.**
 
 Documentation: **[sourceorrery.ai](https://sourceorrery.ai)**
