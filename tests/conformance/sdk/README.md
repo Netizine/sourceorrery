@@ -91,3 +91,14 @@ Add it to `scenarios.json` with an `about` line, run every runner you have
 locally, and let CI run the rest: each `sdk-*` job runs the harness after
 the language's own suite. A behaviour that needs a new runner `op` is a
 change to every runner, which is deliberate: the ops are the SDK surface.
+
+## Remote vaults
+
+Scenarios with `"requires": "remote"` read a vault that a manifest declares
+in `[vaults.<name>]`, through the `manifest` open option, and run only
+with `--remote`, when `SOURCEORRERY_TEST_REMOTE_VAULT` and
+`SOURCEORRERY_TEST_REMOTE_MANIFEST` name that vault and manifest. The
+provider CI jobs (`provider-vault`) set them up with the CLI and run the
+Rust and C runners; a runner takes part by passing a `manifest=` argument
+through to its SDK's open options.
+

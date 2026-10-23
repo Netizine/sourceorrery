@@ -18,8 +18,10 @@ publish = false
 crate-type = ["cdylib"]
 
 [features]
-default = ["os-keyring"]
+default = ["os-keyring", "remote"]
 os-keyring = ["sourceorrery/os-keyring"]
+# Every remote provider a manifest can name (`[vaults.<name>]`).
+remote = ["sourceorrery/remote"]
 
 [dependencies]
 sourceorrery = { path = "../../crates/sourceorrery", version = "0.1.4", default-features = false }

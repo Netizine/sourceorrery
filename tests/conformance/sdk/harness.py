@@ -52,15 +52,25 @@ ENV_VARIABLES = {
     "old_version": "SOURCEORRERY_TEST_OLD_VERSION",
 }
 
+# Variables the scenarios marked `"requires": "remote"` use: a vault that a
+# manifest declares as remote (`[vaults.<name>]`) and that manifest. Set by
+# the provider CI jobs, which run those scenarios with --remote; absent
+# otherwise, and the scenarios are skipped.
+REMOTE_VARIABLES = {
+    "remote_vault": "SOURCEORRERY_TEST_REMOTE_VAULT",
+    "remote_manifest": "SOURCEORRERY_TEST_REMOTE_MANIFEST",
+}
+
 
 class Failure(Exception):
     """One expectation that did not hold."""
 
 
-def variables() -> dict[str, str]:
+def variables(remote: bool = False) -> dict[str, str]:
     values = {}
     missing = []
-    for name, env in ENV_VARIABLES.items():
+    required = dict(ENV_VARIABLES, **REMOTE_VARIABLES) if remote else ENV_VARIABLES
+    for name, env in required.items():
         value = os.environ.get(env, "")
         if not value:
             missing.append(env)
@@ -207,6 +217,11 @@ def main() -> int:
     parser.add_argument("--only", action="append", default=[], help="run only this scenario id (repeatable)")
     parser.add_argument("--list", action="store_true", help="list scenarios and exit")
     parser.add_argument("--verbose", "-v", action="store_true", help="print every observation")
+    parser.add_argument(
+        "--remote",
+        action="store_true",
+        help="also run the scenarios that need a remote vault (SOURCEORRERY_TEST_REMOTE_VAULT and _MANIFEST)",
+    )
     options = parser.parse_args()
 
     scenarios = json.loads(SCENARIOS.read_text(encoding="utf-8"))["scenarios"]
@@ -224,11 +239,15 @@ def main() -> int:
         command[0] = str(ROOT / command[0])
     elif len(command) == 1 and not Path(command[0]).exists():
         sys.exit(f"harness: runner {command[0]} does not exist; build it first (see tests/conformance/sdk/README.md)")
-    values = variables()
+    values = variables(options.remote)
     label = options.runner or command[0]
 
     failures = 0
-    selected = [s for s in scenarios if not options.only or s["id"] in options.only]
+    selected = [
+        s
+        for s in scenarios
+        if (not options.only or s["id"] in options.only) and (options.remote or s.get("requires") != "remote")
+    ]
     for scenario in selected:
         try:
             observed, stderr = run_scenario(command, scenario, values)

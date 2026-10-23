@@ -262,10 +262,11 @@ fn update_changes_metadata_never_the_value(client: &dyn SecretClient) {
 }
 
 fn list_returns_metadata_for_live_secrets_only(client: &dyn SecretClient) {
-    set(client, "alpha", "1");
-    set(client, "beta", "2");
-    set(client, "beta", "3");
-    set(client, "gamma", "4");
+    // Values that no version id or timestamp can contain.
+    set(client, "alpha", "value-alpha");
+    set(client, "beta", "value-beta-old");
+    set(client, "beta", "value-beta-new");
+    set(client, "gamma", "value-gamma");
     client.delete_secret("gamma").unwrap();
 
     let listed = client.list_properties_of_secrets().unwrap();
@@ -278,9 +279,7 @@ fn list_returns_metadata_for_live_secrets_only(client: &dyn SecretClient) {
         "list shows the newest version"
     );
     let json = serde_json::to_string(&listed).unwrap();
-    for value in ["\"1\"", "\"2\"", "\"3\""] {
-        assert!(!json.contains(value), "metadata must not carry values");
-    }
+    assert!(!json.contains("value-"), "metadata must not carry values");
 }
 
 /// Fill an empty client with 23 live secrets created out of name order and

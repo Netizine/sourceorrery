@@ -99,7 +99,8 @@ Taken on the first implementation (this repository at this ADR's date, a
 | Crates added for `sourceorrery-provider` | 3 more (`tokio` with `rt` only, `pin-project-lite`, `memchr`); 37 crates in its graph against 33 for core |
 | Clean release build of `sourceorrery-core` | 10 s |
 | `sourceorrery-provider` on top of it (Tokio and the adapters) | 2 s |
-| `libtokio.rlib`, `rt` feature only | 2.7 MB before linking; what reaches a binary is measured when the CLI first links a provider (M4.3), together with the cost of each provider's SDK |
+| `libtokio.rlib`, `rt` feature only | 2.7 MB before linking |
+| The release CLI with the HashiCorp Vault provider (`remote` on, `reqwest` with `rustls`, Tokio, the provider) against the same build without it | 12.5 MB against 8.7 MB on x86_64 Linux: 3.8 MB for the HTTP and TLS stack, which the next providers share |
 
 ## Consequences
 

@@ -778,13 +778,27 @@ dozen calls) rather than a third-party Vault crate: fewer dependencies,
 and full control over where response bodies go. Recorded-response unit
 tests for every mapping rule.
 
+**Done, with notes.** Per-version properties live in one `custom_metadata`
+key per version (`sourceorrery.v<N>`, a compact JSON document) rather than
+one key per property: KV v2 has no per-version metadata at all, and the
+64-key limit of `custom_metadata` would otherwise be reached by a handful
+of versions. The remote SDK-harness scenarios (`requires: remote`,
+`--remote`) run through the Rust and C runners in the `provider-vault`
+job; the other runners pass `manifest` only to their project loader today
+and join when their own jobs get a provider. The CLI with the provider is
+3.8 MB larger than without (ADR 0008). The lifecycle fixture
+`list_returns_metadata_for_live_secrets_only` used the values `1`, `2`,
+`3`, which KV version ids made indistinguishable from metadata; the values
+are now distinctive strings. Vault's `max_versions` (10 by default) bounds
+history; the conformance job raises it on its mounts.
+
 **Steps.**
 
-- [ ] Crate `sourceorrery-provider-vault` (behind `provider-vault`).
-- [ ] CI job `provider-vault`: `hashicorp/vault` dev server in Docker, the
+- [x] Crate `sourceorrery-provider-vault` (behind `provider-vault`).
+- [x] CI job `provider-vault`: `hashicorp/vault` dev server in Docker, the
       lifecycle conformance suite through the adapter, the canary tests,
       the SDK harness with a remote vault in the manifest. In the gate.
-- [ ] Docs: `docs/providers/hashicorp-vault.md` (mapping table, auth,
+- [x] Docs: `docs/providers/hashicorp-vault.md` (mapping table, auth,
       what differs), roadmap line partly ticked.
 
 ---

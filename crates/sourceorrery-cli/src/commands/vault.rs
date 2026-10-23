@@ -191,7 +191,15 @@ fn info(ctx: &Ctx) -> anyhow::Result<()> {
             .map(|p| p.display().to_string())
             .unwrap_or_default(),
     ]);
-    table.row(["created".into(), output::fmt_time(descriptor.created_on)]);
+    // A remote provider does not report when its vault was created.
+    table.row([
+        "created".into(),
+        if descriptor.created_on == time::OffsetDateTime::UNIX_EPOCH {
+            "-".to_owned()
+        } else {
+            output::fmt_time(descriptor.created_on)
+        },
+    ]);
     table.row([
         "recovery".into(),
         format!("{:?}", descriptor.recovery_level).to_lowercase(),

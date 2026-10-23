@@ -62,8 +62,10 @@ A vault that `sourceorrery.toml` declares in a `[vaults.<name>]` table is
 opened at its remote provider by the same `SecretReader.open` call;
 `OpenOptions.defaults().withManifest(path)` names the manifest to resolve
 through (default: the nearest `sourceorrery.toml` above the current
-directory). Credentials come from the provider's own environment, such as
-`VAULT_TOKEN`; the manifest holds the address only, never a credential.
+directory). Credentials come from the provider's own environment, never
+from the manifest: HashiCorp Vault is the first provider, and its credential
+comes from `VAULT_TOKEN` or the other sources
+[the provider documents](../../docs/providers/hashicorp-vault.md).
 
 ## Errors and values
 

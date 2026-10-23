@@ -148,18 +148,20 @@ token for a short-lived upload token and uploads a signed attestation
    pypi.org; nothing reads it any more.
 
 **crates.io** (`sourceorrery-core`, `sourceorrery-crypto`,
-`sourceorrery-storage`, `sourceorrery-provider`, `sourceorrery`,
-`sourceorrery-ffi`, `sourceorrery-cli`, published in dependency order by
+`sourceorrery-storage`, `sourceorrery-provider-vault`,
+`sourceorrery-provider`, `sourceorrery`, `sourceorrery-ffi`,
+`sourceorrery-cli`, published in dependency order by
 `cargo publish --workspace`), with trusted publishing, so no token is
 stored anywhere. `rust-lang/crates-io-auth-action` trades the
 job's GitHub identity token for a crates.io token that lives 30 minutes
 and revokes it when the job ends. crates.io grants it only for crates
 whose settings name the workflow, so every crate needs the setting, or the
 publish stops at the first crate without it. A crate that does not exist
-on crates.io yet cannot have the setting: `sourceorrery-provider` (new in
-0.3.0) is published once by hand from the release commit
-(`cargo publish -p sourceorrery-provider`, with a crates.io token that is
-then revoked) before the workflow can publish the rest.
+on crates.io yet cannot have the setting: `sourceorrery-provider-vault`
+and `sourceorrery-provider` (new in 0.3.0) are published once by hand from
+the release commit (`cargo publish -p <crate>`, in that order, with a
+crates.io token that is then revoked) before the workflow can publish the
+rest.
 
 1. For each crate, *Settings → Trusted Publishing → Add →
    GitHub*: Repository owner `Netizine`, Repository name `sourceorrery`,

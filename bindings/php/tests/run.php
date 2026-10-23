@@ -184,8 +184,8 @@ expectThrow(fn() => Project::load($manifest . '.missing'), ManifestException::cl
 expectThrow(fn() => Project::load($manifest, new OpenOptions(passphrase: 'wrong', environment: false)), VaultLockedException::class, 'locked');
 
 // A vault the manifest declares in [vaults.<name>] is opened at its remote
-// provider, which this build does not include; a vault without a table is
-// still the local file.
+// provider (HashiCorp Vault, at an address where nothing listens); a vault
+// without a table is still the local file.
 $remoteDir = sys_get_temp_dir() . '/sourceorrery-php-remote-' . getmypid();
 mkdir($remoteDir, 0700, true);
 $remoteManifest = "$remoteDir/sourceorrery.toml";
@@ -193,13 +193,36 @@ file_put_contents(
     $remoteManifest,
     "[project]\nname = \"demo\"\nvault = \"$vault\"\n\n"
     . "[vaults.remote-x]\nprovider = \"hashicorp-vault\"\n"
-    . "address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n",
+    . "address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n",
 );
 $withManifest = new OpenOptions(manifest: $remoteManifest);
 check(str_contains($withManifest->toJson(), '"manifest":'), 'manifest reaches the options document');
-$remote = expectThrow(fn() => SecretReader::open('remote-x', $withManifest), UnsupportedException::class, 'unsupported', 'HashiCorp Vault provider');
-check($remote !== null && str_contains($remote->detail, 'HashiCorp Vault'), 'remote detail names the provider');
-check($remote !== null && !$remote->isTransient(), 'unsupported not transient');
+// With a credential the provider connects to the manifest's address: the
+// failure is transient and names the vault's table.
+$previousToken = getenv('VAULT_TOKEN');
+putenv('VAULT_TOKEN=test-token');
+$remote = expectThrow(fn() => SecretReader::open('remote-x', $withManifest), ProviderUnavailableException::class, 'provider_unavailable', '[vaults.remote-x]');
+check($remote !== null && str_contains($remote->detail, 'hashicorp-vault is unavailable'), 'remote detail names the provider');
+check($remote !== null && $remote->isTransient(), 'provider_unavailable is transient');
+// Without VAULT_TOKEN the process is unauthenticated before any request is
+// made, unless the developer has another Vault credential (such as
+// ~/.vault-token), in which case the address is still unreachable.
+putenv('VAULT_TOKEN');
+try {
+    SecretReader::open('remote-x', $withManifest);
+    check(false, 'expected a remote error without VAULT_TOKEN');
+} catch (SourceOrreryException $e) {
+    if ($e->code() === 'unauthenticated') {
+        check($e instanceof UnauthenticatedException, 'unauthenticated is typed');
+        check(str_contains($e->detail, 'not authenticated to hashicorp-vault'), 'unauthenticated detail names the provider');
+        check(str_contains($e->hint, 'VAULT_TOKEN'), 'unauthenticated hint names VAULT_TOKEN');
+        check(!$e->isTransient(), 'unauthenticated is not transient');
+    } else {
+        check($e->code() === 'provider_unavailable', "expected unauthenticated or provider_unavailable, got {$e->code()}");
+        check($e instanceof ProviderUnavailableException && $e->isTransient(), 'provider_unavailable is typed and transient');
+    }
+}
+putenv(is_string($previousToken) ? "VAULT_TOKEN=$previousToken" : 'VAULT_TOKEN');
 $local = SecretReader::open($vault, $withManifest);
 check($local->get('database-password')->value->expose() === LATEST, 'a vault without a table stays local');
 $local->close();

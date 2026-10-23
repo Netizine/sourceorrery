@@ -33,12 +33,24 @@ impl fmt::Debug for Remote {
 /// credentials is [`SecretError::Unauthenticated`]; one that cannot be
 /// reached is [`SecretError::ProviderUnavailable`].
 ///
-/// No provider is built in yet: every call returns `unsupported` until the
-/// first provider crate lands (milestone 4.3). The plumbing that resolves a
-/// vault name through the manifest and reaches this point is complete and
-/// tested, so a provider plugs in here alone.
+/// A provider this build leaves out (its Cargo feature off) is
+/// `unsupported`, naming the provider.
 pub fn open_remote(name: &str, config: &RemoteVault) -> Result<Remote> {
-    Err(not_built_in(name, config.provider()))
+    match config.provider() {
+        #[cfg(feature = "provider-vault")]
+        Provider::HashicorpVault => {
+            use sourceorrery_provider_vault::{Auth, Settings, VaultClient};
+            let settings = Settings::from_manifest(config)?;
+            let auth = Auth::from_env()?;
+            let client = crate::Blocking::connect(|| VaultClient::connect(name, &settings, auth))?;
+            let descriptor = client.inner().descriptor().clone();
+            Ok(Remote {
+                client: Box::new(client),
+                descriptor,
+            })
+        }
+        provider => Err(not_built_in(name, provider)),
+    }
 }
 
 /// The error for a provider this build does not include.

@@ -60,9 +60,11 @@ sourceorrery/
 │   │                           manifest loading, error hints (the Rust SDK)
 │   ├── sourceorrery-ffi        stable C ABI (cbindgen header): read-only
 │   │                           so_reader_* for SDKs, so_vault_* for tooling
-│   └── sourceorrery-provider   Blocking / AsyncLocal adapters between the
-│                               sync and async shapes of the contract; the
-│                               base of the remote providers (milestone 4)
+│   ├── sourceorrery-provider   Blocking / AsyncLocal adapters between the
+│   │                           sync and async shapes of the contract;
+│   │                           open_remote picks a provider for a manifest's
+│   │                           [vaults.<name>] table
+│   └── sourceorrery-provider-vault  HashiCorp Vault KV v2 behind the contract
 ├── bindings/                   the other nine SDKs (see §7)
 ├── tests/conformance           lifecycle + security suite for every backend/SDK
 ├── scripts/ci, scripts/release fixture vault for SDK tests; version stamping
@@ -84,7 +86,8 @@ cli ──► storage ──► crypto
 
 sourceorrery (client) ──► storage, core
 sourceorrery-ffi ──────► sourceorrery (client), storage, core
-sourceorrery-provider ─► core, tokio       (providers ──► provider, core)
+sourceorrery-provider ─► core, tokio; provider-vault (feature)
+sourceorrery-provider-vault ─► core, reqwest (rustls)
 tests/conformance ─────► storage, core; provider in its tests
 bindings/python, bindings/node ──► sourceorrery (client)      native extensions
 bindings/{java,dotnet,go,cpp,php} ──► sourceorrery-ffi (C ABI) foreign-function calls

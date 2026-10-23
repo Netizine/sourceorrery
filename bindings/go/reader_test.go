@@ -328,7 +328,7 @@ func manifestWithRemote(t *testing.T, fx fixture, remote string) string {
 	path := filepath.Join(t.TempDir(), "sourceorrery.toml")
 	content := fmt.Sprintf("[project]\nname = \"demo\"\nvault = %q\n\n"+
 		"[vaults.%s]\nprovider = \"hashicorp-vault\"\n"+
-		"address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n", fx.vault, remote)
+		"address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n", fx.vault, remote)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
@@ -338,11 +338,34 @@ func manifestWithRemote(t *testing.T, fx fixture, remote string) string {
 func TestAVaultTheManifestDeclaresRemoteIsOpenedAtItsProvider(t *testing.T) {
 	fx := loadFixture(t)
 	opts := &OpenOptions{Manifest: manifestWithRemote(t, fx, "remote-x")}
-	// This build has no provider, so the remote vault is refused by name.
+	// With a credential the provider connects to the manifest's address, where
+	// nothing listens: the failure is transient and names the vault's table.
+	t.Setenv("VAULT_TOKEN", "test-token")
 	_, err := Open("remote-x", opts)
-	e := expectErr(t, err, ErrUnsupported, "unsupported", "HashiCorp Vault provider")
-	if !strings.Contains(e.Message, "HashiCorp Vault") || e.Transient() {
+	e := expectErr(t, err, ErrProviderUnavailable, "provider_unavailable", "[vaults.remote-x]")
+	if !strings.Contains(e.Message, "hashicorp-vault is unavailable") || !e.Transient() {
 		t.Fatalf("unexpected remote error: %v", err)
+	}
+	// Without VAULT_TOKEN the process is unauthenticated before any request
+	// is made, unless the developer has another Vault credential (such as
+	// ~/.vault-token), in which case the address is still unreachable.
+	os.Unsetenv("VAULT_TOKEN")
+	_, err = Open("remote-x", opts)
+	e, ok := AsError(err)
+	if !ok {
+		t.Fatalf("expected *Error without VAULT_TOKEN, got %T: %v", err, err)
+	}
+	switch e.Code {
+	case "unauthenticated":
+		if !errors.Is(err, ErrUnauthenticated) || e.Transient() || !strings.Contains(e.Message, "not authenticated to hashicorp-vault") || !strings.Contains(e.Hint, "VAULT_TOKEN") {
+			t.Fatalf("unexpected unauthenticated error: %v", err)
+		}
+	case "provider_unavailable":
+		if !errors.Is(err, ErrProviderUnavailable) || !e.Transient() {
+			t.Fatalf("unexpected unavailable error: %v", err)
+		}
+	default:
+		t.Fatalf("unexpected remote error without VAULT_TOKEN: %v", err)
 	}
 	// A vault without a table is still the local file.
 	reader, err := Open(fx.vault, opts)

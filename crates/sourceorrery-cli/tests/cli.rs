@@ -727,7 +727,7 @@ fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
          [secrets.database-password]\n\n\
          [secrets.api-key]\nvault = \"prod\"\n\n\
          [vaults.prod]\nprovider = \"hashicorp-vault\"\n\
-         address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n",
+         address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n",
     )
     .unwrap();
 
@@ -738,9 +738,7 @@ fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
         "{out}"
     );
     assert!(
-        out.contains("prod")
-            && out.contains("hashicorp-vault")
-            && out.contains("vault.example.com"),
+        out.contains("prod") && out.contains("hashicorp-vault") && out.contains("127.0.0.1:1"),
         "{out}"
     );
     let json: serde_json::Value =
@@ -753,21 +751,41 @@ fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
     assert_eq!(rows[1]["kind"], "remote");
     assert_eq!(rows[1]["provider"], "hashicorp-vault");
 
-    // Contract commands reach the provider layer, which this build lacks.
-    let out = env.run(&["secret", "get", "api-key", "--vault", "prod", "-o", "json"]);
+    // Contract commands reach the HashiCorp Vault provider. With a token in
+    // the environment the provider connects, and nothing listens on port 1,
+    // so the outcome is `provider_unavailable`; without one it is
+    // `unauthenticated` before any connection (unless the developer running
+    // the tests has a ~/.vault-token).
+    let remote = |args: &[&str]| {
+        let mut cmd = env.cmd(args);
+        cmd.env("VAULT_TOKEN", "cli-test-token");
+        cmd.output().unwrap()
+    };
+    let out = remote(&["secret", "get", "api-key", "--vault", "prod", "-o", "json"]);
     assert!(!out.status.success());
     let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
-    assert_eq!(err["error"]["code"], "unsupported");
+    assert_eq!(err["error"]["code"], "provider_unavailable", "{err}");
     assert!(
         err["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("HashiCorp Vault"),
+            .contains("hashicorp-vault is unavailable"),
         "{err}"
     );
-    let out = env.run(&["check"]);
+    let out = env.run(&["secret", "get", "api-key", "--vault", "prod", "-o", "json"]);
     assert!(!out.status.success());
-    assert!(stdout(&out).contains("unsupported"), "{}", stdout(&out));
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert!(
+        err["error"]["code"] == "unauthenticated" || err["error"]["code"] == "provider_unavailable",
+        "{err}"
+    );
+    let out = remote(&["check"]);
+    assert!(!out.status.success());
+    assert!(
+        stdout(&out).contains("provider_unavailable"),
+        "{}",
+        stdout(&out)
+    );
     // The local vault is still read as before.
     assert!(stdout(&out).contains("ok"), "{}", stdout(&out));
 
@@ -795,7 +813,7 @@ fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
         env.project.path().join("sourceorrery.toml"),
         "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
          [vaults.prod]\nprovider = \"hashicorp-vault\"\n\
-         address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n\
+         address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n\
          token = \"hvs.SMUGGLED-TOKEN-CANARY\"\n",
     )
     .unwrap();

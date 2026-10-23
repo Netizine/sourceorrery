@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.nio.charset.StandardCharsets;
@@ -229,7 +230,10 @@ class ReaderTest {
         assertThrows(VaultLockedException.class, () -> Project.load(Optional.of(manifest), wrong));
     }
 
-    /** A vault the manifest declares in {@code [vaults.<name>]} goes to its provider, which this build lacks. */
+    /**
+     * A vault the manifest declares in {@code [vaults.<name>]} goes to its provider, whose credential
+     * comes from the environment, never the manifest.
+     */
     @Test
     void manifestDeclaresRemoteVaults(@TempDir Path dir) throws Exception {
         Path remoteManifest = dir.resolve("sourceorrery.toml");
@@ -240,17 +244,35 @@ class ReaderTest {
                 "",
                 "[vaults.remote-x]",
                 "provider = \"hashicorp-vault\"",
-                "address = \"https://vault.example.com:8200\"",
+                "address = \"http://127.0.0.1:1\"",
                 "mount = \"secret\"",
                 ""));
         OpenOptions options = OpenOptions.defaults().withManifest(remoteManifest);
         assertEquals(Optional.of(remoteManifest.toString()), options.manifest());
         assertTrue(options.toJson().contains("\"manifest\":"));
 
-        UnsupportedException err = assertThrows(UnsupportedException.class, () -> SecretReader.open("remote-x", options));
-        assertEquals("unsupported", err.code());
-        assertTrue(err.detail().contains("HashiCorp Vault"), err.detail());
-        assertTrue(err.hint().contains("HashiCorp Vault provider"), err.hint());
+        // Nothing listens on port 1. Without a Vault credential (VAULT_TOKEN, ~/.vault-token, AppRole,
+        // ...) the provider refuses before any request; with one it fails to connect. Java cannot set
+        // environment variables in-process, so whichever the environment produces is accepted, as long
+        // as the code matches the class and the message names the provider.
+        SourceOrreryException err = assertThrows(SourceOrreryException.class, () -> SecretReader.open("remote-x", options));
+        assertTrue(err.detail().contains("hashicorp-vault"), err.detail());
+        switch (err) {
+            case UnauthenticatedException unauthenticated -> {
+                assertEquals("unauthenticated", unauthenticated.code());
+                assertFalse(unauthenticated.isTransient());
+                assertTrue(unauthenticated.detail().contains("not authenticated to hashicorp-vault"), unauthenticated.detail());
+                assertTrue(unauthenticated.hint().contains("VAULT_TOKEN"), unauthenticated.hint());
+            }
+            case ProviderUnavailableException unavailable -> {
+                assertEquals("provider_unavailable", unavailable.code());
+                assertTrue(unavailable.isTransient());
+                assertTrue(unavailable.detail().contains("hashicorp-vault is unavailable"), unavailable.detail());
+                assertTrue(unavailable.hint().contains("[vaults.remote-x]"), unavailable.hint());
+            }
+            default -> fail("expected UnauthenticatedException or ProviderUnavailableException, got "
+                    + err.getClass().getName() + " (" + err.code() + "): " + err.getMessage());
+        }
 
         // A vault without a table is still the local file.
         try (SecretReader reader = SecretReader.open(vault, options); Secret secret = reader.get("database-password")) {

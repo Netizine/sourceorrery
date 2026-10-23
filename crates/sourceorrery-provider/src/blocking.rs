@@ -63,6 +63,25 @@ impl<A: AsyncSecretClient> Blocking<A> {
         })
     }
 
+    /// Build the client on the adapter's own runtime: `connect` is driven
+    /// to completion there, so a provider whose constructor is async (a
+    /// login, a mount check) is opened and wrapped in one step.
+    pub fn connect<F, Fut>(connect: F) -> Result<Self>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<A>>,
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| SecretError::Io(format!("cannot start the client's runtime: {err}")))?;
+        let client = runtime.block_on(connect())?;
+        Ok(Self {
+            inner: client,
+            driver: Driver::Owned(runtime),
+        })
+    }
+
     /// Wrap `client`, running its futures on the runtime behind `handle`.
     ///
     /// The calling thread must not belong to that runtime: a call from an

@@ -9,13 +9,13 @@ the provider's own service is the remote end.
 
 | Provider | `provider =` | Addressing keys | Status |
 |----------|--------------|-----------------|--------|
-| HashiCorp Vault, KV v2 | `"hashicorp-vault"` | `address` (`http://` or `https://`), `mount`, optional `namespace` | planned (milestone 4.3) |
+| [HashiCorp Vault](hashicorp-vault.md), KV v2 | `"hashicorp-vault"` | `address` (`http://` or `https://`), `mount`, optional `namespace` | shipped (0.3.0) |
 | AWS Secrets Manager | `"aws-secrets-manager"` | `region`, optional `prefix` | planned (milestone 4.4) |
 | Azure Key Vault | `"azure-key-vault"` | `vault_url` (`https://`) | planned (milestone 4.5) |
 
-The manifest shape, the client option and the error codes below are in
-place now; opening a remote vault fails with `unsupported` until its
-provider ships, with a message naming the provider.
+Opening a vault whose provider this build leaves out (its Cargo feature
+off) fails with `unsupported`, naming the provider; a provider that has not
+shipped yet is refused the same way.
 
 ## Declaring a remote vault
 

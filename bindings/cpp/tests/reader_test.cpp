@@ -45,6 +45,19 @@ static std::string env(const char* name) {
     return value == nullptr ? std::string() : std::string(value);
 }
 
+// Sets (or, with nullptr, removes) a variable in this process's environment.
+static void set_env(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value == nullptr ? "" : value);
+#else
+    if (value == nullptr) {
+        unsetenv(name);
+    } else {
+        setenv(name, value, 1);
+    }
+#endif
+}
+
 int main() {
     // An SDK refuses a library built for another C ABI version with a typed
     // error (ADR 0007); the installed library matches.
@@ -179,8 +192,8 @@ int main() {
 
     {
         // A vault the manifest declares in [vaults.<name>] is opened at its
-        // remote provider, which this build does not include; a vault without
-        // a table is still the local file.
+        // remote provider (HashiCorp Vault, at an address where nothing
+        // listens); a vault without a table is still the local file.
         const auto dir = std::filesystem::temp_directory_path() / "sourceorrery-cpp-remote";
         std::filesystem::create_directories(dir);
         const std::string remote_manifest = (dir / "sourceorrery.toml").string();
@@ -188,17 +201,44 @@ int main() {
             std::ofstream out(remote_manifest);
             out << "[project]\nname = \"demo\"\nvault = \"" << vault << "\"\n\n"
                 << "[vaults.remote-x]\nprovider = \"hashicorp-vault\"\n"
-                << "address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n";
+                << "address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n";
         }
         so::OpenOptions with_manifest;
         with_manifest.manifest = remote_manifest;
         CHECK(with_manifest.to_json().find("\"manifest\":") != std::string::npos);
-        expect_throw<so::UnsupportedError>([&] { so::Reader::open("remote-x", with_manifest); }, "unsupported", "HashiCorp Vault provider");
+        // With a credential the provider connects to the manifest's address:
+        // the failure is transient and names the vault's table.
+        const char* previous_token = std::getenv("VAULT_TOKEN");
+        const std::string saved_token = previous_token == nullptr ? std::string() : std::string(previous_token);
+        set_env("VAULT_TOKEN", "test-token");
+        expect_throw<so::ProviderUnavailableError>([&] { so::Reader::open("remote-x", with_manifest); }, "provider_unavailable", "[vaults.remote-x]");
         try { so::Reader::open("remote-x", with_manifest); } catch (const so::Error& err) {
-            CHECK(err.message().find("HashiCorp Vault") != std::string::npos);
-            CHECK(err.kind() == so::ErrorKind::Unsupported);
-            CHECK(!err.transient());
+            CHECK(err.message().find("hashicorp-vault is unavailable") != std::string::npos);
+            CHECK(err.kind() == so::ErrorKind::ProviderUnavailable);
+            CHECK(err.transient());
         }
+        // Without VAULT_TOKEN the process is unauthenticated before any
+        // request is made, unless the developer has another Vault credential
+        // (such as ~/.vault-token), in which case the address is still
+        // unreachable.
+        set_env("VAULT_TOKEN", nullptr);
+        try {
+            so::Reader::open("remote-x", with_manifest);
+            std::cerr << "expected a remote error without VAULT_TOKEN\n";
+            ++failures;
+        } catch (const so::Error& err) {
+            if (err.code() == "unauthenticated") {
+                CHECK(dynamic_cast<const so::UnauthenticatedError*>(&err) != nullptr);
+                CHECK(err.message().find("not authenticated to hashicorp-vault") != std::string::npos);
+                CHECK(err.hint().find("VAULT_TOKEN") != std::string::npos);
+                CHECK(!err.transient());
+            } else {
+                CHECK(err.code() == "provider_unavailable");
+                CHECK(dynamic_cast<const so::ProviderUnavailableError*>(&err) != nullptr);
+                CHECK(err.transient());
+            }
+        }
+        set_env("VAULT_TOKEN", previous_token == nullptr ? nullptr : saved_token.c_str());
         auto local = so::Reader::open(vault, with_manifest);
         CHECK(local.get("database-password").value.text() == latest);
         local.close();

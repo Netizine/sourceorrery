@@ -84,7 +84,9 @@ by default the nearest one above the current directory is used. A vault
 with such a table is opened at its provider instead of as a local file,
 and `ErrUnauthenticated` / `ErrProviderUnavailable` (transient) report
 its failures. Credentials come from the provider's own environment, never
-from the manifest.
+from the manifest: HashiCorp Vault is the first provider, and its credential
+comes from `VAULT_TOKEN` or the other sources
+[the provider documents](../../docs/providers/hashicorp-vault.md).
 
 ## Tests
 

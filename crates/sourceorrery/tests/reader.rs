@@ -348,7 +348,7 @@ fn manifest_with_remote(home: &Home, remote: &str) -> std::path::PathBuf {
              [secrets.database-password]\n\n\
              [secrets.api-key]\nvault = \"{remote}\"\n\n\
              [vaults.{remote}]\nprovider = \"hashicorp-vault\"\n\
-             address = \"https://vault.example.com:8200\"\nmount = \"secret\"\n"
+             address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n"
         ),
     )
     .unwrap();
@@ -381,18 +381,27 @@ fn a_vault_the_manifest_declares_remote_is_opened_at_its_provider() {
         CANARY.as_bytes()
     );
 
-    // With it, `prod` goes to the provider, which this build does not have.
+    // With it, `prod` goes to the HashiCorp Vault provider: without a token
+    // in this environment that is `unauthenticated`; with one (a developer's
+    // VAULT_TOKEN or ~/.vault-token) nothing listens on port 1, so it is
+    // `provider_unavailable`. Either way the local file of that name is not
+    // touched.
     let options = home.options().manifest(&manifest);
     let err = SecretReader::open_with("prod", &options).unwrap_err();
-    assert_eq!(err.code(), "unsupported");
-    assert_eq!(err.kind(), ErrorKind::Unsupported);
     assert!(
-        err.message().contains("HashiCorp Vault"),
+        matches!(
+            err.kind(),
+            ErrorKind::Unauthenticated | ErrorKind::ProviderUnavailable
+        ),
+        "{err}"
+    );
+    assert!(
+        err.message().contains("hashicorp-vault"),
         "{}",
         err.message()
     );
     assert!(
-        err.hint().contains("HashiCorp Vault provider"),
+        err.hint().contains("VAULT_TOKEN") || err.hint().contains("[vaults.prod]"),
         "{}",
         err.hint()
     );
@@ -408,7 +417,13 @@ fn a_vault_the_manifest_declares_remote_is_opened_at_its_provider() {
     // `Project::load` resolves vault names through the manifest it loads,
     // whatever the options say, so the remote vault fails the load.
     let err = Project::load(Some(&manifest), &home.options()).unwrap_err();
-    assert_eq!(err.code(), "unsupported");
+    assert!(
+        matches!(
+            err.kind(),
+            ErrorKind::Unauthenticated | ErrorKind::ProviderUnavailable
+        ),
+        "{err}"
+    );
 
     // An explicit manifest path that cannot be read is a manifest error.
     let err = SecretReader::open_with(

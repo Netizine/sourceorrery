@@ -23,10 +23,14 @@ path = "src/main.rs"
 doc = false
 
 [features]
-default = ["os-keyring", "ui"]
+default = ["os-keyring", "ui", "remote"]
 # Protect vault keys with the OS credential store. Disable for headless
 # servers that only use passphrase protectors.
 os-keyring = ["sourceorrery-storage/os-keyring"]
+# Every remote provider a manifest can name (`[vaults.<name>]`).
+remote = ["sourceorrery-provider/remote"]
+# HashiCorp Vault, KV version 2.
+provider-vault = ["sourceorrery-provider/provider-vault"]
 # The interactive vault browser, `sourceorrery ui` (Ratatui). Nothing else
 # in the CLI depends on it; disable for minimal builds.
 ui = ["dep:ratatui"]

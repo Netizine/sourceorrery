@@ -92,8 +92,10 @@ A vault that `sourceorrery.toml` declares in a `[vaults.<name>]` table
 the same call; `withManifest(path)` names the manifest to resolve through
 (default: the nearest `sourceorrery.toml` above the current directory;
 `Project.load` always uses the manifest it loads). Credentials come from
-the provider's own environment (`VAULT_TOKEN`, the AWS credential chain,
-`az login`), never from the manifest, which holds the address only.
+the provider's own environment, never from the manifest, which holds the
+address only. HashiCorp Vault is the first provider: its credential comes
+from `VAULT_TOKEN` or the other sources
+[the provider documents](../providers/hashicorp-vault.md).
 
 | Call | Returns |
 |------|---------|

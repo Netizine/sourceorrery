@@ -576,7 +576,8 @@ fn reader_options_take_a_manifest_that_declares_remote_vaults() {
     std::fs::write(
         &manifest,
         "[project]\nname = \"demo\"\nvault = \"dev\"\n\n[vaults.prod]\n\
-         provider = \"aws-secrets-manager\"\nregion = \"eu-west-1\"\n",
+         provider = \"hashicorp-vault\"\naddress = \"http://127.0.0.1:1\"\n\
+         mount = \"secret\"\n",
     )
     .unwrap();
     let options = format!(
@@ -606,13 +607,20 @@ fn reader_options_take_a_manifest_that_declares_remote_vaults() {
     assert_eq!(status, so_status::SO_STATUS_OK, "{}", last_code());
     close_reader(handle);
 
-    // The remote one reaches the provider layer, which this build lacks.
+    // The remote one reaches the HashiCorp Vault provider: `unauthenticated`
+    // without a token in the environment, `provider_unavailable` with one
+    // (nothing listens on port 1).
     let (status, handle) = open("prod");
     assert_eq!(status, so_status::SO_STATUS_ERROR);
     assert!(handle.is_null());
-    assert_eq!(last_code(), "unsupported");
+    let code = last_code();
     assert!(
-        last_hint().contains("AWS Secrets Manager provider"),
+        code == "unauthenticated" || code == "provider_unavailable",
+        "{code}: {}",
+        last_hint()
+    );
+    assert!(
+        last_hint().contains("VAULT_TOKEN") || last_hint().contains("[vaults.prod]"),
         "{}",
         last_hint()
     );

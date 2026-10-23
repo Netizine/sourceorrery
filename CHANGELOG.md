@@ -8,6 +8,20 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+* HashiCorp Vault is the first remote provider: `provider =
+  "hashicorp-vault"` in a `[vaults.<name>]` table serves a KV version 2
+  mount behind the same contract as a local vault (versions, per-version
+  properties in `custom_metadata`, soft delete as `delete`/`undelete`, purge
+  as metadata deletion; `docs/providers/hashicorp-vault.md`). Credentials
+  come from `VAULT_TOKEN`, `~/.vault-token`, an AppRole, a JWT or the
+  Kubernetes service account token, never the manifest. The crate
+  `sourceorrery-provider-vault` is a small `reqwest`/`rustls` client that
+  never logs a body; it is on by default in the CLI, the `sourceorrery`
+  crate, the C ABI library and the Python and Node extensions (feature
+  `provider-vault`, part of `remote`; `--no-default-features` builds stay
+  local-only). The `provider-vault` CI job runs the lifecycle conformance
+  suite against a Vault container and reads a Vault-backed vault through
+  the SDK harness's new `--remote` scenarios.
 * Remote vaults in the manifest: a `[vaults.<name>]` table in
   `sourceorrery.toml` names a provider (`hashicorp-vault`,
   `aws-secrets-manager`, `azure-key-vault`) and its addressing keys, and
@@ -20,9 +34,8 @@ uses [Semantic Versioning](https://semver.org/).
   the commands about the vault file (`vault create`, `vault protector`,
   `vault destroy`, `vault migrate`, `audit`, `backup`, `restore`, `ui`)
   refuse a remote vault by name. The error codes `unauthenticated` and
-  `provider_unavailable` (transient) are new. No provider is built in yet,
-  so opening a remote vault fails with `unsupported`, naming the provider
-  (`docs/providers/index.md`).
+  `provider_unavailable` (transient) are new; a provider the build leaves
+  out is `unsupported`, naming it (`docs/providers/index.md`).
 * `AsyncSecretClient`, the asynchronous shape of the contract, in
   `sourceorrery-core` (ADR 0008): the same methods and semantics as
   `SecretClient`, object safe, for the remote providers of milestone 4.

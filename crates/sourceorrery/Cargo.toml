@@ -13,10 +13,14 @@ categories = ["cryptography", "authentication", "config"]
 keywords = ["secrets", "vault", "dotenv", "keyring", "sdk"]
 
 [features]
-default = ["os-keyring"]
+default = ["os-keyring", "remote"]
 # Unlock vault keys from the OS credential store. Disable for headless
 # servers that only use passphrase protectors.
 os-keyring = ["sourceorrery-storage/os-keyring"]
+# Every remote provider a manifest can name (`[vaults.<name>]`).
+remote = ["sourceorrery-provider/remote"]
+# HashiCorp Vault, KV version 2.
+provider-vault = ["sourceorrery-provider/provider-vault"]
 
 [dependencies]
 sourceorrery-core.workspace = true

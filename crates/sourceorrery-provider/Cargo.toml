@@ -12,8 +12,16 @@ readme = "README.md"
 categories = ["asynchronous", "authentication"]
 keywords = ["secrets", "vault", "async", "tokio", "provider"]
 
+[features]
+default = []
+# Every remote provider.
+remote = ["provider-vault"]
+# HashiCorp Vault, KV version 2.
+provider-vault = ["dep:sourceorrery-provider-vault"]
+
 [dependencies]
 sourceorrery-core.workspace = true
+sourceorrery-provider-vault = { workspace = true, optional = true }
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 

@@ -89,8 +89,8 @@ identity); the manifest holds the address only. Every SDK takes a
 `manifest` option next to `home` and `passphrase_file` naming the manifest
 to resolve through; the default is the nearest `sourceorrery.toml` above
 the current directory, and the project loader always uses the manifest it
-loads. Until a provider ships, opening a remote vault fails with
-`unsupported`, naming the provider.
+loads. HashiCorp Vault is the first provider; a provider the build
+leaves out fails with `unsupported`, naming it.
 
 ## Errors
 

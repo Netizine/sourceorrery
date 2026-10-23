@@ -27,7 +27,6 @@ from sourceorrery import (
     SecretValue,
     SourceOrreryError,
     UnauthenticatedError,
-    UnsupportedError,
     VaultLockedError,
     VaultNotFoundError,
     VersionNotFoundError,
@@ -244,7 +243,7 @@ def test_provider_codes_map_to_typed_errors():
     assert ProviderUnavailableError("m").code == "provider_unavailable"
 
 
-def test_a_remote_vault_in_the_manifest_is_opened_at_its_provider(fixture, tmp_path):
+def test_a_remote_vault_in_the_manifest_is_opened_at_its_provider(fixture, tmp_path, monkeypatch):
     manifest = tmp_path / "sourceorrery.toml"
     manifest.write_text(
         "[project]\n"
@@ -253,17 +252,32 @@ def test_a_remote_vault_in_the_manifest_is_opened_at_its_provider(fixture, tmp_p
         "\n"
         "[vaults.remote-x]\n"
         'provider = "hashicorp-vault"\n'
-        'address = "https://vault.example.com:8200"\n'
+        'address = "http://127.0.0.1:1"\n'  # nothing listens here
         'mount = "secret"\n'
     )
     options = dict(home=fixture.home, passphrase=fixture.passphrase, environment=False)
 
-    # No provider is built in yet, so the remote vault is refused by name.
-    with pytest.raises(UnsupportedError) as info:
+    # With a credential, the remote vault is opened at its provider, which is not there.
+    monkeypatch.setenv("VAULT_TOKEN", "dummy-token-for-tests")
+    with pytest.raises(ProviderUnavailableError) as info:
         SecretReader("remote-x", manifest=manifest, **options)
-    assert info.value.code == "unsupported"
-    assert "HashiCorp Vault" in info.value.message
-    assert "HashiCorp Vault provider" in info.value.hint
+    assert info.value.code == "provider_unavailable"
+    assert info.value.transient
+    assert "hashicorp-vault is unavailable" in info.value.message
+    assert "[vaults.remote-x]" in info.value.hint
+
+    # Without one, the provider refuses before any request, unless the developer
+    # running the tests has a ~/.vault-token or another Vault credential around.
+    monkeypatch.delenv("VAULT_TOKEN", raising=False)
+    with pytest.raises((UnauthenticatedError, ProviderUnavailableError)) as info:
+        SecretReader("remote-x", manifest=manifest, **options)
+    if isinstance(info.value, UnauthenticatedError):
+        assert info.value.code == "unauthenticated"
+        assert not info.value.transient
+        assert "not authenticated to hashicorp-vault" in info.value.message
+        assert "VAULT_TOKEN" in info.value.hint
+    else:
+        assert info.value.code == "provider_unavailable"
 
     # A vault without a `[vaults.<name>]` table is still the local file.
     with SecretReader(fixture.vault, manifest=manifest, **options) as reader:

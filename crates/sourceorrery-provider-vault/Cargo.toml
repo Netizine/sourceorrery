@@ -1,0 +1,34 @@
+[package]
+name = "sourceorrery-provider-vault"
+description = "HashiCorp Vault (KV version 2) behind the SourceOrrery secret contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+categories = ["authentication", "asynchronous"]
+keywords = ["secrets", "vault", "hashicorp", "kv", "provider"]
+
+[dependencies]
+sourceorrery-core.workspace = true
+async-trait.workspace = true
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "http2"] }
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+sourceorrery-provider.workspace = true
+sourceorrery-conformance = { path = "../../tests/conformance" }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "sync"] }
+tempfile.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+
+[lints]
+workspace = true

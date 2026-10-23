@@ -624,6 +624,59 @@ jobs:
   # must be added here; give it `needs: changes` and the same `if:` as the
   # others so that docs-only changes skip it too.
   # ---------------------------------------------------------------------
+  provider-vault:
+    name: provider HashiCorp Vault
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    services:
+      vault:
+        image: hashicorp/vault:2.2.1
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: root
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: --cap-add=IPC_LOCK
+    env:
+      SOURCEORRERY_VAULT_TEST_ADDR: http://127.0.0.1:8200
+      VAULT_TOKEN: root
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Wait for the dev server
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8200/v1/sys/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "Vault did not come up"; exit 1
+      - uses: ./.github/actions/sdk-fixture
+      - name: Lifecycle conformance, canaries and error mapping against the server
+        run: cargo test --locked -p sourceorrery-provider-vault
+      - name: A remote vault in the manifest, through the CLI and the SDK harness
+        # The CLI writes the fixture through the provider; the Rust and C
+        # runners read it back through `manifest`, the way an application
+        # does (the scenarios marked `requires: remote`).
+        run: |
+          curl -sf -o /dev/null -X POST -H "X-Vault-Token: root"             -d '{"type":"kv","options":{"version":"2"}}' http://127.0.0.1:8200/v1/sys/mounts/harness-remote
+          remote="$RUNNER_TEMP/remote-project"
+          mkdir -p "$remote"
+          printf '[project]\nname = "remote-project"\nvault = "remote"\n\n[vaults.remote]\nprovider = "hashicorp-vault"\naddress = "http://127.0.0.1:8200"\nmount = "harness-remote"\n' > "$remote/sourceorrery.toml"
+          cd "$remote"
+          printf 'remote-secret-value' | "$SOURCEORRERY_CLI" secret set database-password --vault remote --stdin --content-type text/plain --tag env=remote
+          printf 'old' | "$SOURCEORRERY_CLI" secret set rotated-key --vault remote --stdin
+          printf 'new' | "$SOURCEORRERY_CLI" secret set rotated-key --vault remote --stdin
+          "$SOURCEORRERY_CLI" secret update rotated-key --vault remote --disable
+          "$SOURCEORRERY_CLI" vault list
+          "$SOURCEORRERY_CLI" check
+          cd "$GITHUB_WORKSPACE"
+          export SOURCEORRERY_TEST_REMOTE_VAULT=remote SOURCEORRERY_TEST_REMOTE_MANIFEST="$remote/sourceorrery.toml"
+          cargo build --release --locked -p sourceorrery --example conformance
+          python3 tests/conformance/sdk/harness.py --runner rust --remote
+          mkdir -p build
+          cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
+          LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" python3 tests/conformance/sdk/harness.py --runner c --remote
+
   ci:
     name: CI
     runs-on: ubuntu-latest
@@ -649,6 +702,7 @@ jobs:
       - scripts
       - abi-compat
       - keyring
+      - provider-vault
     steps:
       - name: Every job passed or was skipped
         env:

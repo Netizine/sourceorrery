@@ -82,7 +82,9 @@ A vault that the project's `sourceorrery.toml` declares in a
 instead of as a local file. Pass `{ manifest }` to name the manifest; the
 default is the nearest `sourceorrery.toml` above the current directory.
 Credentials come from the provider's own environment, never from the
-manifest.
+manifest: HashiCorp Vault is the first provider, and its credential comes
+from `VAULT_TOKEN` or the other sources
+[the provider documents](../../docs/providers/hashicorp-vault.md).
 
 ## Errors and values
 

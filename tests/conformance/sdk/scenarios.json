@@ -1,5 +1,5 @@
 {
-  "$comment": "Cross-language SDK conformance scenarios. Every SDK runner executes each scenario against the fixture vault from scripts/ci/fixture-vault.sh and tests/conformance/sdk/harness.py compares what it observed with `expect`. Variables: ${vault} ${home} ${passphrase} ${manifest} ${old_version} come from the SOURCEORRERY_TEST_* / SOURCEORRERY_* environment. Protocol: tests/conformance/sdk/README.md.",
+  "$comment": "Cross-language SDK conformance scenarios. Every SDK runner executes each scenario against the fixture vault from scripts/ci/fixture-vault.sh and tests/conformance/sdk/harness.py compares what it observed with `expect`. Variables: ${vault} ${home} ${passphrase} ${manifest} ${old_version} come from the SOURCEORRERY_TEST_* / SOURCEORRERY_* environment; scenarios with `requires: remote` use ${remote_vault} and ${remote_manifest} (a vault a manifest declares in [vaults.<name>]) and run only with --remote, in the provider CI jobs. Protocol: tests/conformance/sdk/README.md.",
   "scenarios": [
     {
       "id": "open-unknown-vault",
@@ -225,6 +225,49 @@
       "op": "load",
       "args": { "manifest": "${manifest}", "passphrase": "wrong", "environment": "false" },
       "expect": { "outcome": "error", "code": "locked" }
+    },
+    {
+      "id": "remote-get",
+      "requires": "remote",
+      "about": "A vault the manifest declares in `[vaults.<name>]` is read at its remote provider through the same `get`; `manifest` names the manifest to resolve through.",
+      "op": "get",
+      "args": { "vault": "${remote_vault}", "manifest": "${remote_manifest}", "name": "database-password" },
+      "expect": {
+        "outcome": "ok",
+        "value": "remote-secret-value",
+        "enabled": true,
+        "content_type": "text/plain",
+        "tags": { "env": "remote" },
+        "reference": "sourceorrery://${remote_vault}/database-password/${version}"
+      }
+    },
+    {
+      "id": "remote-descriptor",
+      "requires": "remote",
+      "about": "`open` on a remote vault reports the vault's name in its descriptor.",
+      "op": "open",
+      "args": { "vault": "${remote_vault}", "manifest": "${remote_manifest}" },
+      "expect": { "outcome": "ok", "descriptor.name": "${remote_vault}" }
+    },
+    {
+      "id": "remote-not-found",
+      "requires": "remote",
+      "about": "A missing secret in a remote vault is `not_found` with the same hint as a local one.",
+      "op": "get",
+      "args": { "vault": "${remote_vault}", "manifest": "${remote_manifest}", "name": "missing" },
+      "expect": {
+        "outcome": "error",
+        "code": "not_found",
+        "hint_contains": ["sourceorrery secret set missing --vault ${remote_vault}"]
+      }
+    },
+    {
+      "id": "remote-disabled-falls-back",
+      "requires": "remote",
+      "about": "Policy is evaluated in the core for a remote vault too: a disabled newest version falls back to the previous one.",
+      "op": "get",
+      "args": { "vault": "${remote_vault}", "manifest": "${remote_manifest}", "name": "rotated-key" },
+      "expect": { "outcome": "ok", "value": "old", "enabled": true }
     }
   ]
 }

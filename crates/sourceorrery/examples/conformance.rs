@@ -47,6 +47,9 @@ fn main() -> ExitCode {
     if kv.get("environment").is_some_and(|v| v == "false") {
         options = options.environment(false);
     }
+    if let Some(manifest) = kv.get("manifest") {
+        options = options.manifest(manifest);
+    }
 
     match run(&op, &kv, &vault, &options) {
         Ok(lines) => {

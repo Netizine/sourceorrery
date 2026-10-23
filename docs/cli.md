@@ -207,8 +207,7 @@ There is no key for a credential, so `token = "..."` is a parse error like
 `value`; credentials come from the provider's own environment. A vault
 name without a table is a local vault file, as before. The providers, their
 keys and the commands that work against a remote vault are in
-[providers](providers/index.md); until a provider ships, opening a remote
-vault fails with `unsupported`.
+[providers](providers/index.md).
 
 | Command | Description |
 |---------|-------------|
