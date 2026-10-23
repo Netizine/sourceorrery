@@ -204,9 +204,13 @@ jobs:
           python-version: "3.12"
       - name: Build and install the wheel
         shell: bash
+        # The tools come pinned with their hashes and as wheels only; the SDK is
+        # built by maturin itself and installed from that wheel, so pip runs no
+        # package's setup code.
         run: |
-          python -m pip install --upgrade pip maturin pytest
-          python -m pip install ./bindings/python
+          python -m pip install --require-hashes --only-binary :all: -r bindings/python/ci-requirements.txt
+          maturin build --release --locked -m bindings/python/Cargo.toml -o dist/python
+          python -m pip install --no-index --only-binary :all: --find-links dist/python sourceorrery
       - name: Tests
         shell: bash
         run: python -m pytest bindings/python/tests -v
@@ -238,7 +242,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm test
       - run: npm run typecheck

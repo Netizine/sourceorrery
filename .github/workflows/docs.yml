@@ -42,7 +42,8 @@ jobs:
           cache: npm
           cache-dependency-path: site/package-lock.json
 
-      - run: npm ci
+      # No package in the lock file needs an install script on Linux.
+      - run: npm ci --ignore-scripts
         env:
           FONTAWESOME_NPM_AUTH_TOKEN: ${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
 

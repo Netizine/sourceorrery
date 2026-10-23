@@ -394,7 +394,7 @@ jobs:
       # `npm ci` before stamping: the lock file matches the committed
       # package.json, whose platform packages are `file:npm/<platform>` links;
       # stamping turns those into the version the published package depends on.
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Stamp the version
         run: python3 ../../scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
       - name: Build the addon
@@ -432,7 +432,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Stamp the version
         run: python3 ../../scripts/release/set-version.py "${{ needs.preflight.outputs.version }}"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -450,9 +450,10 @@ jobs:
           # Regenerates the committed npm/<platform> manifests from the stamped package.json,
           # then replaces napi's one-line READMEs and the copied description with text that
           # says which platform each addon is for and to install @sourceorreryai/sdk instead.
-          npx napi create-npm-dirs
+          # The package.json scripts run the @napi-rs/cli pinned by the lock file.
+          npm run create-npm-dirs
           python3 ../../scripts/release/npm-platform-packages.py
-          npx napi artifacts --output-dir artifacts
+          npm run artifacts -- --output-dir artifacts
           ls -R npm
           ls -la index.js index.d.ts
       - name: Pack every package
@@ -775,7 +776,8 @@ jobs:
         with:
           node-version: 24
       - name: npm with trusted publishing support
-        run: npm install -g npm@11 && npm --version
+        # An exact version, and no lifecycle scripts (npm has none to run).
+        run: npm install --global --ignore-scripts npm@11.21.1 && npm --version
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-packages
