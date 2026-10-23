@@ -166,7 +166,7 @@ does and throws the first required secret's error if one cannot be read.
 
 ## Building from source
 
-You need Git, Rust 1.88 or newer installed with rustup, and a C compiler
+You need Git, Rust 1.91.1 or newer installed with rustup, and a C compiler
 (on Linux also `pkg-config` and `libdbus-1-dev`);
 [Building from source](../building.md#what-you-need) has the commands for
 each platform. For this SDK, also Node.js 20 or newer with npm.

@@ -18,7 +18,7 @@ sourceorrery = "0.1"
 [`sourceorrery` on crates.io](https://crates.io/crates/sourceorrery) is
 the read-only client every other SDK is built on. It depends on
 `sourceorrery-storage` directly (no C ABI in between), so it needs what
-the CLI needs to build: Rust 1.88 or newer and a C compiler for the
+the CLI needs to build: Rust 1.91.1 or newer and a C compiler for the
 bundled SQLite, and on Linux `pkg-config` and `libdbus-1-dev` for the
 Secret Service. The `os-keyring` feature (default) enables the OS
 credential store; for headless servers that only use passphrases, turn it
@@ -111,7 +111,7 @@ are left out.
 
 ## Building from source
 
-You need Git, Rust 1.88 or newer installed with rustup, and a C compiler
+You need Git, Rust 1.91.1 or newer installed with rustup, and a C compiler
 (on Linux also `pkg-config` and `libdbus-1-dev`);
 [Building from source](../building.md#what-you-need) has the commands for
 each platform.

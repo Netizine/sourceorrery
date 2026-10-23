@@ -13,7 +13,7 @@ wheels for Python 3.11+ on Windows, macOS and Linux (glibc), x64 and arm64,
 built with PyO3 and maturin, with no runtime dependencies, so nothing is
 compiled on install. `uv add sourceorrery` and `poetry add sourceorrery`
 install the same package. On any other platform pip builds the sdist,
-which needs Rust 1.88+ and a C compiler.
+which needs Rust 1.91.1+ and a C compiler.
 
 To pin the exact files you install, see
 [Supply chain](../supply-chain.md#pypi): the wheels on PyPI are byte for
@@ -61,7 +61,7 @@ To pin it, put the same URL in `requirements.txt` as
 `sourceorrery @ https://…/sourceorrery-0.1.4-cp311-abi3-win_amd64.whl`;
 append `#sha256=<hash>` with the hash from the release's `SHA256SUMS` and
 pip verifies the download. Any other platform builds the sdist from the same
-release (`sourceorrery-0.1.4.tar.gz`; Rust 1.88+ required) with
+release (`sourceorrery-0.1.4.tar.gz`; Rust 1.91.1+ required) with
 `pip install <its URL>`.
 
 ### From source
@@ -184,7 +184,7 @@ the GIL, so reads run in parallel.
 
 ## Building from source
 
-You need Git, Rust 1.88 or newer installed with rustup, and a C compiler
+You need Git, Rust 1.91.1 or newer installed with rustup, and a C compiler
 (on Linux also `pkg-config` and `libdbus-1-dev`);
 [Building from source](../building.md#what-you-need) has the commands for
 each platform. For this SDK, also Python 3.11 or newer with `pip`.

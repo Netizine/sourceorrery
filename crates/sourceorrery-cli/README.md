@@ -22,7 +22,7 @@ Documentation: **<https://sourceorrery.ai>** ·
 cargo install --locked sourceorrery-cli
 ```
 
-This builds the `sourceorrery` binary. It needs Rust 1.88 or newer and a C
+This builds the `sourceorrery` binary. It needs Rust 1.91.1 or newer and a C
 compiler for the bundled SQLite, and on Linux `pkg-config` and
 `libdbus-1-dev` for the Secret Service. `--locked` builds with the
 dependency versions the release was tested with.

@@ -88,7 +88,7 @@ lends its bytes as a span through `Use` or copies them out through
 
 ## Building from source
 
-From a clone of the repository, with Rust 1.88+, a C compiler and the .NET
+From a clone of the repository, with Rust 1.91.1+, a C compiler and the .NET
 10 SDK. The tests read a vault that the CLI creates; the fixture script
 also points `SOURCEORRERY_NATIVE_DIR` at the library just built. In Bash
 (Git Bash on Windows):

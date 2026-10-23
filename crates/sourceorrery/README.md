@@ -46,7 +46,7 @@ cargo add sourceorrery
 ```
 
 The crate reads the vault directly (there is no C ABI in between), so it
-needs what the CLI needs to build: Rust 1.88 or newer and a C compiler for
+needs what the CLI needs to build: Rust 1.91.1 or newer and a C compiler for
 the bundled SQLite, and on Linux `pkg-config` and `libdbus-1-dev` for the
 Secret Service. For headless servers that only use passphrases,
 `cargo add sourceorrery --no-default-features` drops the OS credential
