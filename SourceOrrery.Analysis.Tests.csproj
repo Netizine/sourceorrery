@@ -1,0 +1,18 @@
+<Project>
+  <!-- Set before SDK props; this project shares the repository root with Source. -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>build/sonar/tests/obj/</BaseIntermediateOutputPath>
+    <BaseOutputPath>build/sonar/tests/bin/</BaseOutputPath>
+  </PropertyGroup>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="scripts/sonar/Analysis.props" />
+  <PropertyGroup>
+    <SonarQubeTestProject>true</SonarQubeTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="@(AnalysisTestFile)" />
+    <ProjectReference Include="bindings/dotnet/SourceOrrery.Tests/SourceOrrery.Tests.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="bindings/dotnet/conformance/Conformance.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>

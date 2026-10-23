@@ -33,6 +33,10 @@ CI runs the same on Ubuntu, Windows and macOS, plus a build with
 Tests must not touch the real OS credential store: use passphrase
 protectors with `Argon2Params::TESTING` (see `tests/conformance`).
 
+The [coverage guide](docs/coverage.md) explains the multi-language coverage
+workflow, local report commands and SonarCloud setup. Coverage uses the
+existing SDK fixture and supplements the cross-platform CI tests.
+
 ## Pull requests
 
 * One logical change per PR, with tests. Behavioural changes to the
