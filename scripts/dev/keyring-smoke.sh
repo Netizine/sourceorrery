@@ -18,13 +18,13 @@
 set -uo pipefail
 
 cli="${1:-}"
-if [ -z "$cli" ]; then
+if [[ -z "$cli" ]]; then
   repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   for candidate in "$repo/target/release/sourceorrery" "$repo/target/debug/sourceorrery" "$(command -v sourceorrery || true)"; do
-    if [ -n "$candidate" ] && [ -x "$candidate" ]; then cli="$candidate"; break; fi
+    if [[ -n "$candidate" ]] && [[ -x "$candidate" ]]; then cli="$candidate"; break; fi
   done
 fi
-if [ -z "$cli" ] || [ ! -x "$cli" ]; then
+if [[ -z "$cli" ]] || [[ ! -x "$cli" ]]; then
   echo "keyring-smoke: no sourceorrery binary; pass its path or build the CLI" >&2
   exit 2
 fi
@@ -50,7 +50,7 @@ cleanup() {
   # Leave nothing behind: vaults still present are destroyed (which also
   # removes their keyring entries), then the home directory goes.
   for name in smoke smoke-copy keep keep-copy; do
-    if [ -e "$SOURCEORRERY_HOME/vaults/$name.sorvault" ]; then
+    if [[ -e "$SOURCEORRERY_HOME/vaults/$name.sorvault" ]]; then
       "$cli" vault destroy "$name" --yes >/dev/null 2>&1 </dev/null || true
     fi
   done
@@ -69,19 +69,19 @@ store_has() { # <account>
   esac
 }
 store_checks=true
-if [ "$os" != "Darwin" ] && ! command -v secret-tool >/dev/null 2>&1; then
+if [[ "$os" != "Darwin" ]] && ! command -v secret-tool >/dev/null 2>&1; then
   store_checks=false
   echo "SKIP  store inspection: secret-tool (libsecret-tools) is not installed; functional checks only"
 fi
 store_check() { # <description> <account> <present|absent>
-  if [ "$store_checks" != true ]; then echo "SKIP  $1"; return; fi
-  if [ "$3" = present ]; then check "$1" store_has "$2"; else check_not "$1" store_has "$2"; fi
+  if [[ "$store_checks" != true ]]; then echo "SKIP  $1"; return; fi
+  if [[ "$3" = present ]]; then check "$1" store_has "$2"; else check_not "$1" store_has "$2"; fi
 }
 
 echo "keyring-smoke: $("$cli" --version) on $(uname -srm)"
 case "$os" in
   Darwin) echo "  macOS $(sw_vers -productVersion 2>/dev/null); default keychain: $(security default-keychain 2>/dev/null | tr -d ' "')" ;;
-  *) echo "  $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME"); desktop: ${XDG_CURRENT_DESKTOP:-none}; session bus: $([ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && echo set || echo unset)" ;;
+  *) echo "  $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME"); desktop: ${XDG_CURRENT_DESKTOP:-none}; session bus: $([[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] && echo set || echo unset)" ;;
 esac
 echo "  home: $SOURCEORRERY_HOME"
 
@@ -109,7 +109,7 @@ store_check "the store holds the vault's entry ($account)" "$account" present
 canary="smoke-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 check "secret set through the keyring protector" bash -c 'printf "%s" "$1" | "$2" secret set canary --vault smoke --stdin' _ "$canary" "$cli"
 got="$("$cli" secret get canary --vault smoke --reveal --raw </dev/null 2>/dev/null || true)"
-if [ "$got" = "$canary" ]; then pass "secret get returns the stored value"; else fail "secret get returns the stored value"; fi
+if [[ "$got" = "$canary" ]]; then pass "secret get returns the stored value"; else fail "secret get returns the stored value"; fi
 check "a second process opens the vault without a prompt" "$cli" secret list --vault smoke </dev/null
 
 # 3. Protectors change: a passphrase joins, the keyring protector leaves and
@@ -148,4 +148,4 @@ store_check "no entry is left behind" "$keep_account" absent
 
 echo
 echo "keyring-smoke: $passed passed, $failed failed"
-[ "$failed" -eq 0 ]
+[[ "$failed" -eq 0 ]]

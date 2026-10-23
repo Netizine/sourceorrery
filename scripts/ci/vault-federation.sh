@@ -28,7 +28,7 @@ mkdir -p "$SOURCEORRERY_HOME" "$HOME" "$work/project"
 
 api() { # METHOD PATH [JSON]
   local method="$1" path="$2" body="${3:-}"
-  if [ -n "$body" ]; then
+  if [[ -n "$body" ]]; then
     curl -sS -f -o /dev/null -X "$method" -H "X-Vault-Token: $root" -d "$body" "$addr/v1/$path"
   else
     curl -sS -f -o /dev/null -X "$method" -H "X-Vault-Token: $root" "$addr/v1/$path"
@@ -36,7 +36,7 @@ api() { # METHOD PATH [JSON]
 }
 json() { # METHOD PATH [JSON] -> stdout
   local method="$1" path="$2" body="${3:-}"
-  if [ -n "$body" ]; then
+  if [[ -n "$body" ]]; then
     curl -sS -f -X "$method" -H "X-Vault-Token: $root" -d "$body" "$addr/v1/$path"
   else
     curl -sS -f -X "$method" -H "X-Vault-Token: $root" "$addr/v1/$path"
@@ -50,7 +50,7 @@ fail() { echo "FAIL  $1"; exit 1; }
 # Run the CLI with only the named environment, in the project directory.
 run_as() { # VAR=value... -- args
   local vars=()
-  while [ "$1" != "--" ]; do vars+=("$1"); shift; done; shift
+  while [[ "$1" != "--" ]]; do vars+=("$1"); shift; done; shift
   (cd "$work/project" && env -u VAULT_TOKEN -u VAULT_ROLE_ID -u VAULT_SECRET_ID -u VAULT_AUTH_ROLE -u VAULT_JWT_FILE -u VAULT_JWT \
      NO_COLOR=1 "${vars[@]}" "$cli" "$@")
 }

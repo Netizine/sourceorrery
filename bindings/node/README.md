@@ -98,7 +98,7 @@ a `using` block.
 
 ## Building from source
 
-From a clone of the repository, with Rust 1.88+, a C compiler and Node.js
+From a clone of the repository, with Rust 1.91.1+, a C compiler and Node.js
 20+. The tests read a vault that the CLI creates, so build that too; in
 Bash (Git Bash on Windows):
 

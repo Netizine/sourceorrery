@@ -27,7 +27,7 @@ is_docs() {
 zero=0000000000000000000000000000000000000000
 base=""
 head=HEAD
-if [ $# -eq 2 ]; then
+if [[ $# -eq 2 ]]; then
 	base="$1"
 	head="$2"
 else
@@ -36,7 +36,7 @@ else
 		# first parent is the base branch it merges into.
 		pull_request) base="HEAD^1" ;;
 		push)
-			if [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$zero" ] &&
+			if [[ -n "${BEFORE:-}" ]] && [[ "$BEFORE" != "$zero" ]] &&
 				git fetch --quiet --depth=1 origin "$BEFORE"; then
 				base="$BEFORE"
 			fi
@@ -45,7 +45,7 @@ else
 fi
 
 code=true
-if [ -n "$base" ] && files="$(git diff --name-only --no-renames "$base" "$head")" && [ -n "$files" ]; then
+if [[ -n "$base" ]] && files="$(git diff --name-only --no-renames "$base" "$head")" && [[ -n "$files" ]]; then
 	code=false
 	while IFS= read -r file; do
 		if is_docs "$file"; then

@@ -188,7 +188,9 @@ def test_reader_is_thread_safe(reader, fixture):
     def work() -> None:
         try:
             for _ in range(5):
-                assert reader.get("database-password").value.expose() == fixture.LATEST
+                # Recorded, not asserted: an assert here would be caught below.
+                if reader.get("database-password").value.expose() != fixture.LATEST:
+                    failures.append(RuntimeError("a thread read another value"))
             with pytest.raises(SecretNotFoundError):
                 reader.get("missing")
         except BaseException as exc:  # noqa: BLE001 - reported below

@@ -8,7 +8,7 @@
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 env_file="$repo/target/fixture.env"
-if [ ! -f "$env_file" ]; then
+if [[ ! -f "$env_file" ]]; then
   mkdir -p "$repo/target"
   bash "$repo/scripts/ci/fixture-vault.sh" > "$env_file"
 fi

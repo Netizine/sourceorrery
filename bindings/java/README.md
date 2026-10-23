@@ -79,7 +79,7 @@ or `use(...)`, and closing it zeroises them.
 
 ## Building from source
 
-From a clone of the repository, with Rust 1.88+, a C compiler, JDK 22+
+From a clone of the repository, with Rust 1.91.1+, a C compiler, JDK 22+
 and Maven. The tests read a vault that the CLI creates; the fixture script
 also points `SOURCEORRERY_NATIVE_DIR` at the library just built. In Bash
 (Git Bash on Windows):

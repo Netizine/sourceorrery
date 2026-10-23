@@ -63,8 +63,14 @@ for await (const file of htmlFiles(dist)) {
 	const html = await readFile(file, 'utf8');
 	for (const match of html.matchAll(/\s(?:href|src)="([^"]*)"/g)) {
 		const raw = match[1];
-		if (!raw || raw.startsWith('data:') || raw.startsWith('javascript:')) continue;
-		if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith('//')) continue; // external
+		if (!raw) continue;
+		// Browsers ignore leading whitespace and compare schemes case-insensitively.
+		const scheme = raw.trim().match(/^([a-z][a-z0-9+.-]*):/i)?.[1].toLowerCase();
+		if (scheme === 'javascript' || scheme === 'vbscript') {
+			problems.push(`${page} -> ${raw}: a ${scheme}: URL runs script; the site must not contain one`);
+			continue;
+		}
+		if (scheme || raw.startsWith('//')) continue; // external, data: or another scheme
 		const url = new URL(raw, `https://sourceorrery.ai${page}`);
 		checked += 1;
 		const target = await resolvePathname(url.pathname);

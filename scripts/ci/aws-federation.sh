@@ -23,7 +23,7 @@ pass() { echo "PASS  $1"; }
 fail() { echo "FAIL  $1"; exit 1; }
 run_as() { # VAR=value... -- args
   local vars=()
-  while [ "$1" != "--" ]; do vars+=("$1"); shift; done; shift
+  while [[ "$1" != "--" ]]; do vars+=("$1"); shift; done; shift
   (cd "$work/project" && env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE \
      -u AWS_WEB_IDENTITY_TOKEN_FILE -u AWS_ROLE_ARN -u AWS_ENDPOINT_URL \
      NO_COLOR=1 AWS_REGION="$region" AWS_EC2_METADATA_DISABLED=true "${vars[@]}" "$cli" "$@")

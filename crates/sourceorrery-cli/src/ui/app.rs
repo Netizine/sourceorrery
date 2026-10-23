@@ -1274,14 +1274,14 @@ pub mod tests {
             app.locks_in(Duration::from_secs(60)),
             Some(Duration::from_secs(540))
         );
-        assert_eq!(app.locks_in(Duration::from_secs(900)), Some(Duration::ZERO));
+        assert_eq!(app.locks_in(Duration::from_mins(15)), Some(Duration::ZERO));
         app.lock(true);
         assert!(app.locked.as_ref().is_some_and(|l| l.idle));
         assert_eq!(app.locks_in(Duration::ZERO), None);
 
         let mut never = app_with(&fake);
         assert_eq!(never.lock_after(), None);
-        assert_eq!(never.locks_in(Duration::from_secs(86_400)), None);
+        assert_eq!(never.locks_in(Duration::from_hours(24)), None);
         never.update(Action::Lock);
         assert!(never.session.is_none(), "L locks even without an idle lock");
     }

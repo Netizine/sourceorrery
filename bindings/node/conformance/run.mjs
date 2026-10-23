@@ -39,7 +39,7 @@ function run() {
       return [
         ['project.name', project.name],
         ['project.count', String(project.size)],
-        ['project.names', [...project].map((s) => s.name).sort().join(',')],
+        ['project.names', [...project].map((s) => s.name).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join(',')],
         ...[...project].map((s) => [`secret.${s.env}`, s.value.exposeText()]),
       ];
     } finally {

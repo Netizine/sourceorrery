@@ -48,7 +48,7 @@ pip install sourceorrery
 
 abi3 wheels for Python 3.11+ on Windows, macOS and Linux (glibc), x64 and
 arm64, with no runtime dependencies, so nothing is compiled on install.
-Other platforms build the sdist, which needs Rust 1.88+ and a C compiler.
+Other platforms build the sdist, which needs Rust 1.91.1+ and a C compiler.
 
 ## Unlocking
 
@@ -80,7 +80,7 @@ zeroised by `close()` or at the end of a `with` block.
 
 ## Building from source
 
-From a clone of the repository, with Rust 1.88+, a C compiler and Python
+From a clone of the repository, with Rust 1.91.1+, a C compiler and Python
 3.11+, in a virtual environment:
 
 ```bash

@@ -185,7 +185,7 @@ int main() {
         CHECK(project.env("ROTATED")->closed());
         expect_throw<so::ManifestError>([&] { so::Project::load(manifest + ".missing"); }, "manifest");
         so::OpenOptions wrong;
-        wrong.passphrase = "wrong";
+        wrong.passphrase = passphrase + "-wrong";
         wrong.environment = false;
         expect_throw<so::VaultLockedError>([&] { so::Project::load(manifest, wrong); }, "locked");
     }

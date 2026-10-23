@@ -31,12 +31,12 @@ exe=""
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*|Windows_NT) exe=".exe" ;; esac
 
 cli="${SOURCEORRERY_CLI:-}"
-if [ -z "$cli" ]; then
+if [[ -z "$cli" ]]; then
   for candidate in "$repo/target/release/sourceorrery$exe" "$repo/target/debug/sourceorrery$exe"; do
-    if [ -x "$candidate" ]; then cli="$candidate"; break; fi
+    if [[ -x "$candidate" ]]; then cli="$candidate"; break; fi
   done
 fi
-if [ -z "$cli" ] || [ ! -x "$cli" ]; then
+if [[ -z "$cli" ]] || [[ ! -x "$cli" ]]; then
   echo "fixture-vault: no CLI found; build it with 'cargo build --release -p sourceorrery-cli' or set SOURCEORRERY_CLI" >&2
   exit 1
 fi
@@ -71,7 +71,7 @@ cp "$home/vaults/$vault.sorvault" "$home/vaults/$vault-copy.sorvault"
 # Oldest version id of database-password (`versions` lists newest first).
 old_version="$("$cli" secret versions database-password --vault "$vault" -o json \
   | tr -d '\n' | grep -o '"version": *"[0-9a-f]*"' | tail -1 | grep -o '[0-9a-f]*"$' | tr -d '"')"
-if [ -z "$old_version" ]; then
+if [[ -z "$old_version" ]]; then
   echo "fixture-vault: could not read the version list" >&2
   exit 1
 fi
@@ -107,7 +107,7 @@ vars=(
   "SOURCEORRERY_NATIVE_DIR=$native_dir"
   "SOURCEORRERY_CLI=$cli"
 )
-if [ -n "${GITHUB_ENV:-}" ]; then
+if [[ -n "${GITHUB_ENV:-}" ]]; then
   printf '%s\n' "${vars[@]}" >> "$GITHUB_ENV"
   echo "fixture-vault: vault '$vault' created under $home; variables written to GITHUB_ENV"
 else
