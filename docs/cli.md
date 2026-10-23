@@ -106,8 +106,12 @@ versions, deleted-secret details), `protector_add`, `protector_remove`,
 per secret exported, with the version count), `secret_restore` (one per
 version written from a backup), `audit_verify`
 (a detected truncation with outcome `failure`, its acknowledgement with
-outcome `success`). Outcomes: `success`, `denied` (policy), `failure`.
-Detail holds the error code or a short note — never a value.
+outcome `success`), `guard` (the reveal guard: a passphrase re-check or a
+second-factor code with outcome `success` or `denied`, the second factor
+enrolled, verified or disabled, the guard or the passphrase hint changed;
+the detail names which). Outcomes: `success`, `denied` (policy), `failure`.
+Detail holds the error code or a short note — never a value, a code, a
+secret or the hint.
 
 `--verify` checks the log's keyed hash chain instead of listing it (see
 [vault-format.md](vault-format.md#audit-chain)) and prints:

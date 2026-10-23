@@ -22,6 +22,19 @@ uses [Semantic Versioning](https://semver.org/).
   window), recovery codes (125 bits over an alphabet without look-alikes)
   and passphrase generation, for the second factor and the recovery that
   follow.
+* The vault stores a **reveal guard** (what an interactive reveal or export
+  must present again: the passphrase, a second-factor code, both or
+  neither), a **second factor** (a TOTP secret sealed with the vault key,
+  with the last accepted step so a code is never accepted twice; an
+  enrolment counts only once one code has been accepted) and a
+  **passphrase hint** (in clear, shown at the prompt, never trusted, and
+  refused when it would itself unlock the vault). The guard and the
+  enrolment are part of the authenticated settings record, appended only
+  when present, so every existing vault's tag still verifies and a file
+  edit cannot switch the guard off. `SqliteVault::verify_passphrase`
+  checks a passphrase (or a recovery code) in place; every check, change
+  and refusal is audited under the new operation `guard`
+  (`docs/vault-format.md`).
 * `sourceorrery audit export` writes a local vault's audit log, oldest
   first, for a collector: as JSON Lines on stdout (one object per event
   plus `vault`, then a trailer with the count, the last id and the chain

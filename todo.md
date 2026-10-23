@@ -1111,26 +1111,42 @@ guided set-up, O5 the documents, O6 runs alongside each.
 
 ## O2. Storage: the guard, the enrolment and the hint in the vault
 
-- [ ] Authenticated vault settings grow three optional fields, added to
+- [x] Authenticated vault settings grow three optional fields, added to
       the settings record only when present so every existing vault's tag
       still verifies: `second_factor` (the TOTP secret sealed with the vault
       key, its parameters and the last accepted counter), `reveal_guard`
       (`passphrase`, `second_factor`: booleans), and nothing else;
       `passphrase_hint` is a plain `vault_meta` row outside the tag,
       readable before unlock and documented as forgeable.
-- [ ] `SqliteVault::verify_passphrase(&SecretBytes) -> Result<bool>`: tries
+      *Done: `sqlite::guard`; the fields are keyed in the canonical record
+      (`"second_factor"`, `"reveal_guard"`) so absence adds nothing; a
+      tampered row is `crypto` at open (tested). The hint is readable
+      before unlock through `VaultRegistry::passphrase_hint` and reaches
+      the prompt through `PassphrasePrompt::hint`.*
+- [x] `SqliteVault::verify_passphrase(&SecretBytes) -> Result<bool>`: tries
       the passphrase against the passphrase protectors without reopening;
       a rejection is audited (`vault_open` / `denied`, detail `guard`).
-- [ ] `SqliteVault::second_factor()` / `enrol_second_factor` /
+      *Done, audited under `guard` (`passphrase verified` / `incorrect
+      passphrase`) rather than `vault_open`, so the log tells a guard check
+      from an unlock.*
+- [x] `SqliteVault::second_factor()` / `enrol_second_factor` /
       `verify_second_factor(code)` / `disable_second_factor`; the counter
       update is a keyed write; enrolment, verification outcomes and
       disabling are audited under a new operation `second_factor`
       (`AuditOperation` is append-only; the CLI's operation list and the
       docs follow).
+      *Done; the one new operation is `guard` and covers all of it (its
+      detail names which). An enrolment is `verified` by its first
+      accepted code and counts for nothing before; a verified one must be
+      disabled before another is enrolled; disabling drops the guard's
+      demand for it.*
 - [ ] Recovery codes: `add_protector` with labels `recovery-1..N`; a
       `recovery_codes()` view over the protectors; `backup`/`restore` carry
       nothing extra (protectors are not in a backup, as today: a restored
       vault has the protectors of the vault it is restored into).
+      *Storage needs nothing new (a code is a labelled passphrase
+      protector, and `verify_passphrase` accepts one); the command lands
+      in O3.*
 
 ## O3. CLI: the commands and the guard
 

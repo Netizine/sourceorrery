@@ -67,6 +67,7 @@ pub(super) fn try_passphrases(
             protector_label: &labels,
             attempt,
             max_attempts: MAX_UNLOCK_ATTEMPTS,
+            hint: meta.passphrase_hint.as_deref(),
         };
         let Some(passphrase) = unlock.passphrase(&prompt)? else {
             reasons.push("no passphrase supplied".to_owned());

@@ -119,6 +119,14 @@ impl VaultRegistry {
         SqliteVault::create(&path, name, options, protector)
     }
 
+    /// The passphrase hint stored in the named vault's file, if any, read
+    /// without unlocking it. It is stored in clear and nothing authenticates
+    /// it before unlock: show it at a prompt, never trust it.
+    pub fn passphrase_hint(&self, name: &str) -> Result<Option<String>> {
+        let path = self.vault_path(name)?;
+        crate::sqlite::read_passphrase_hint(&path)
+    }
+
     /// Open and unlock an existing vault.
     ///
     /// A vault in an older on-disk format is refused with

@@ -45,7 +45,10 @@ pub use protector::{ProtectorInfo, ProtectorKind, ProtectorSpec};
 pub use registry::{DestroyReport, VaultRegistry};
 /// Argon2id cost parameters, as `ProtectorSpec::Passphrase` and `backup::seal` take them.
 pub use sourceorrery_crypto::Argon2Params;
-pub use sqlite::{Acknowledgement, CreateVaultOptions, OpenOptions, SqliteVault};
+pub use sqlite::{
+    Acknowledgement, CreateVaultOptions, MAX_HINT_LEN, OpenOptions, RevealGuard, SecondFactorInfo,
+    SqliteVault,
+};
 pub use unlock::{NoInteraction, PassphrasePrompt, StaticPassphrase, UnlockProvider};
 
 /// Backend identifier reported in [`sourceorrery_core::VaultDescriptor`].

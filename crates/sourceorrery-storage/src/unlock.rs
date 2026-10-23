@@ -13,6 +13,11 @@ pub struct PassphrasePrompt<'a> {
     pub attempt: u32,
     /// Maximum attempts the vault will make.
     pub max_attempts: u32,
+    /// The passphrase hint stored in the vault file, if any. Stored in
+    /// clear and unauthenticated (nothing can verify it before unlock), so
+    /// it is whatever the file says; a prompt may show it, nothing should
+    /// trust it.
+    pub hint: Option<&'a str>,
 }
 
 /// Supplies passphrases on demand. The CLI implements this with an

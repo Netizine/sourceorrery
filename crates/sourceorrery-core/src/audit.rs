@@ -57,6 +57,11 @@ pub enum AuditOperation {
     /// A version was written from a backup (`VaultBackup::restore`); one
     /// event per version, checkpointed like `secret_set`.
     SecretRestore,
+    /// The reveal guard: a passphrase re-check or a second-factor code
+    /// (`success` / `denied`), the second factor enrolled, verified or
+    /// disabled, the guard or the passphrase hint changed. The detail names
+    /// which; never a code, a secret or a hint.
+    Guard,
 }
 
 impl AuditOperation {
@@ -79,11 +84,12 @@ impl AuditOperation {
             Self::SecretInspect => "secret_inspect",
             Self::VaultBackup => "vault_backup",
             Self::SecretRestore => "secret_restore",
+            Self::Guard => "guard",
         }
     }
 
     /// Every operation, for documentation and exhaustive tests.
-    pub const ALL: [AuditOperation; 16] = [
+    pub const ALL: [AuditOperation; 17] = [
         Self::VaultCreate,
         Self::VaultOpen,
         Self::ProtectorAdd,
@@ -100,6 +106,7 @@ impl AuditOperation {
         Self::SecretInspect,
         Self::VaultBackup,
         Self::SecretRestore,
+        Self::Guard,
     ];
 }
 

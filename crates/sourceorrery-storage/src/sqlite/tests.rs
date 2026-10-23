@@ -185,3 +185,335 @@ fn listing_cost_does_not_grow_with_the_number_of_secrets() {
     );
     assert!(large_live <= 16, "a listing ran {large_live} statements");
 }
+
+mod guard {
+    //! The reveal guard, the second factor and the passphrase hint.
+
+    use super::*;
+    use crate::RevealGuard;
+    use crate::unlock::StaticPassphrase;
+
+    const PASSPHRASE: &str = "correct horse battery staple";
+
+    fn fresh(dir: &tempfile::TempDir) -> (std::path::PathBuf, SqliteVault) {
+        let path = dir.path().join("dev.sorvault");
+        let vault =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), spec()).unwrap();
+        (path, vault)
+    }
+
+    fn reopen(path: &Path) -> SqliteVault {
+        SqliteVault::open(path, &StaticPassphrase::new(PASSPHRASE)).unwrap()
+    }
+
+    fn guard_events(vault: &SqliteVault) -> Vec<(AuditOutcome, String)> {
+        vault
+            .audit_events(AuditQuery {
+                operation: Some(AuditOperation::Guard),
+                limit: Some(100),
+                ..Default::default()
+            })
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.outcome, e.detail.unwrap_or_default()))
+            .collect()
+    }
+
+    #[test]
+    fn a_vault_starts_with_no_guard_no_second_factor_and_no_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault) = fresh(&dir);
+        assert_eq!(vault.reveal_guard().unwrap(), RevealGuard::default());
+        assert!(vault.reveal_guard().unwrap().is_none());
+        assert!(vault.second_factor().unwrap().is_none());
+        assert!(vault.passphrase_hint().is_none());
+        assert!(
+            crate::sqlite::read_passphrase_hint(&path)
+                .unwrap()
+                .is_none()
+        );
+        // The settings tag of such a vault has the shape it always had.
+        drop(vault);
+        let vault = reopen(&path);
+        assert_eq!(guard_events(&vault), Vec::new());
+    }
+
+    #[test]
+    fn the_second_factor_is_enrolled_verified_replay_proof_and_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault) = fresh(&dir);
+        let now = timestamp::now();
+        let unix = u64::try_from(now.unix_timestamp()).unwrap();
+
+        // No enrolment: nothing to verify, and the guard cannot ask for it.
+        assert_eq!(
+            vault
+                .verify_second_factor("000000", now)
+                .unwrap_err()
+                .code(),
+            "invalid_argument"
+        );
+        let err = vault
+            .set_reveal_guard(RevealGuard {
+                passphrase: false,
+                second_factor: true,
+            })
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_argument");
+
+        // Enrolled, but unverified until one code is accepted.
+        let secret = vault.enrol_second_factor().unwrap();
+        let info = vault.second_factor().unwrap().unwrap();
+        assert!(!info.verified);
+        assert!(!format!("{secret:?}").contains(&secret.to_base32()));
+        assert!(!vault.verify_second_factor("123456", now).unwrap());
+        assert!(
+            vault
+                .set_reveal_guard(RevealGuard {
+                    passphrase: false,
+                    second_factor: true,
+                })
+                .is_err(),
+            "an unverified enrolment does not count"
+        );
+        let code = secret.code_at(unix);
+        assert!(vault.verify_second_factor(&code, now).unwrap());
+        assert!(vault.second_factor().unwrap().unwrap().verified);
+        // The same code is refused from now on; the next step's is accepted.
+        assert!(!vault.verify_second_factor(&code, now).unwrap());
+        let next = secret.code_at(unix + 30);
+        assert!(vault.verify_second_factor(&next, now).unwrap());
+        // A second enrolment needs the first disabled.
+        assert_eq!(
+            vault.enrol_second_factor().unwrap_err().code(),
+            "invalid_argument"
+        );
+
+        // The guard can ask for it now, and survives a reopen with the
+        // replay state.
+        let guard = RevealGuard {
+            passphrase: true,
+            second_factor: true,
+        };
+        assert_eq!(vault.set_reveal_guard(guard).unwrap(), guard);
+        drop(vault);
+        let vault = reopen(&path);
+        assert_eq!(vault.reveal_guard().unwrap(), guard);
+        assert_eq!(
+            vault.reveal_guard().unwrap().describe(),
+            "passphrase and second-factor"
+        );
+        assert!(vault.second_factor().unwrap().unwrap().verified);
+        assert!(
+            !vault.verify_second_factor(&next, now).unwrap(),
+            "replay after reopen"
+        );
+        assert!(
+            vault
+                .verify_second_factor(
+                    &secret.code_at(unix + 60),
+                    now + time::Duration::seconds(60)
+                )
+                .unwrap()
+        );
+
+        // Disabling drops the enrolment and the guard's demand for it.
+        vault.disable_second_factor().unwrap();
+        assert!(vault.second_factor().unwrap().is_none());
+        assert_eq!(
+            vault.reveal_guard().unwrap(),
+            RevealGuard {
+                passphrase: true,
+                second_factor: false,
+            }
+        );
+        assert_eq!(
+            vault.disable_second_factor().unwrap_err().code(),
+            "invalid_argument"
+        );
+        vault.set_reveal_guard(RevealGuard::default()).unwrap();
+        assert!(vault.reveal_guard().unwrap().is_none());
+
+        // Everything was audited, nothing of the secret or the codes shown.
+        let events = guard_events(&vault);
+        let text = format!("{events:?}");
+        assert!(
+            text.contains("second factor enrolled (unverified)"),
+            "{text}"
+        );
+        assert!(text.contains("second factor verified"), "{text}");
+        assert!(text.contains("second-factor code refused"), "{text}");
+        assert!(text.contains("second factor disabled"), "{text}");
+        assert!(
+            text.contains("reveal guard set: passphrase and second-factor"),
+            "{text}"
+        );
+        assert!(!text.contains(&secret.to_base32()));
+        assert!(!text.contains(&code));
+        assert!(events.iter().any(|(o, _)| *o == AuditOutcome::Denied));
+    }
+
+    #[test]
+    fn a_tampered_guard_setting_is_refused_at_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault) = fresh(&dir);
+        let secret = vault.enrol_second_factor().unwrap();
+        let now = timestamp::now();
+        let unix = u64::try_from(now.unix_timestamp()).unwrap();
+        assert!(
+            vault
+                .verify_second_factor(&secret.code_at(unix), now)
+                .unwrap()
+        );
+        vault
+            .set_reveal_guard(RevealGuard {
+                passphrase: true,
+                second_factor: true,
+            })
+            .unwrap();
+        drop(vault);
+
+        // Switching the guard off in the file breaks the settings tag.
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE vault_meta SET value = '{\"passphrase\":false,\"second_factor\":false}' \
+             WHERE key = 'reveal_guard'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let err = SqliteVault::open(&path, &StaticPassphrase::new(PASSPHRASE)).unwrap_err();
+        assert_eq!(err.code(), "crypto", "{err}");
+
+        // So does removing the enrolment.
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE vault_meta SET value = '{\"passphrase\":true,\"second_factor\":true}' \
+             WHERE key = 'reveal_guard'",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM vault_meta WHERE key = 'second_factor'", [])
+            .unwrap();
+        drop(conn);
+        let err = SqliteVault::open(&path, &StaticPassphrase::new(PASSPHRASE)).unwrap_err();
+        assert_eq!(err.code(), "crypto", "{err}");
+    }
+
+    #[test]
+    fn the_passphrase_is_verified_in_place_and_audited() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_path, vault) = fresh(&dir);
+        assert!(
+            vault
+                .verify_passphrase(&SecretBytes::from(PASSPHRASE))
+                .unwrap()
+        );
+        assert!(!vault.verify_passphrase(&SecretBytes::from("nope")).unwrap());
+        assert!(!vault.verify_passphrase(&SecretBytes::from("")).unwrap());
+        // A second passphrase protector (a recovery code) verifies too.
+        vault
+            .add_protector(
+                ProtectorSpec::Passphrase {
+                    passphrase: SecretBytes::from("7K3QXM9ZT2ABCDEFGHJKMNPQR"),
+                    params: Argon2Params::TESTING,
+                },
+                Some("recovery-1"),
+            )
+            .unwrap();
+        assert!(
+            vault
+                .verify_passphrase(&SecretBytes::from("7K3QXM9ZT2ABCDEFGHJKMNPQR"))
+                .unwrap()
+        );
+        assert!(
+            vault
+                .passphrase_unlocks_quietly(&SecretBytes::from(PASSPHRASE))
+                .unwrap()
+        );
+        let events = guard_events(&vault);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(o, d)| *o == AuditOutcome::Denied && d == "incorrect passphrase")
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|(o, d)| *o == AuditOutcome::Success && d == "passphrase verified")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn the_hint_is_stored_in_clear_readable_before_unlock_and_never_the_passphrase() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault) = fresh(&dir);
+        vault
+            .set_passphrase_hint(Some("  the usual four words  "))
+            .unwrap();
+        assert_eq!(
+            vault.passphrase_hint().as_deref(),
+            None,
+            "the handle keeps what it opened with"
+        );
+        assert_eq!(
+            crate::sqlite::read_passphrase_hint(&path)
+                .unwrap()
+                .as_deref(),
+            Some("the usual four words")
+        );
+        drop(vault);
+        let vault = reopen(&path);
+        assert_eq!(
+            vault.passphrase_hint().as_deref(),
+            Some("the usual four words")
+        );
+
+        for bad in [
+            "",
+            "   ",
+            "a\u{7}bell",
+            &"x".repeat(crate::MAX_HINT_LEN + 1),
+        ] {
+            assert_eq!(
+                vault.set_passphrase_hint(Some(bad)).unwrap_err().code(),
+                "invalid_argument",
+                "{bad:?}"
+            );
+        }
+        let err = vault.set_passphrase_hint(Some(PASSPHRASE)).unwrap_err();
+        assert_eq!(err.code(), "invalid_argument");
+        assert!(err.to_string().contains("passphrase itself"), "{err}");
+        assert!(!err.to_string().contains(PASSPHRASE));
+        assert_eq!(
+            crate::sqlite::read_passphrase_hint(&path)
+                .unwrap()
+                .as_deref(),
+            Some("the usual four words"),
+            "a refused hint changes nothing"
+        );
+
+        vault.set_passphrase_hint(None).unwrap();
+        assert!(
+            crate::sqlite::read_passphrase_hint(&path)
+                .unwrap()
+                .is_none()
+        );
+        let events = guard_events(&vault);
+        let text = format!("{events:?}");
+        assert!(text.contains("passphrase hint set"), "{text}");
+        assert!(text.contains("passphrase hint cleared"), "{text}");
+        assert!(
+            text.contains("hint refused: it unlocks the vault"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("four words"),
+            "the hint is not in the log: {text}"
+        );
+    }
+}

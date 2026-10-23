@@ -404,16 +404,30 @@ pub(crate) struct SettingsFields<'a> {
     /// `recovery_level` exactly as stored (its JSON string).
     pub recovery_level: &'a str,
     pub retention_days: u32,
+    /// The second-factor record exactly as stored (its JSON string), when
+    /// one is enrolled. Appended to the record only when present, under its
+    /// key, so a vault without one keeps the tag it always had.
+    pub second_factor: Option<&'a str>,
+    /// The reveal guard exactly as stored (its JSON string), when set.
+    pub reveal_guard: Option<&'a str>,
 }
 
 fn settings_canonical(fields: &SettingsFields<'_>) -> Vec<u8> {
-    Canonical::new(SETTINGS_DOMAIN, fields.vault_id)
+    let mut canonical = Canonical::new(SETTINGS_DOMAIN, fields.vault_id)
         .int(i64::from(fields.schema))
         .str(fields.name)
         .int(fields.created_on)
         .str(fields.recovery_level)
-        .int(i64::from(fields.retention_days))
-        .finish()
+        .int(i64::from(fields.retention_days));
+    // Keyed, so that an absent field adds nothing and the two cannot be
+    // mistaken for each other.
+    if let Some(second_factor) = fields.second_factor {
+        canonical = canonical.str("second_factor").str(second_factor);
+    }
+    if let Some(reveal_guard) = fields.reveal_guard {
+        canonical = canonical.str("reveal_guard").str(reveal_guard);
+    }
+    canonical.finish()
 }
 
 /// Hex HMAC over the settings record, stored under [`SETTINGS_KEY`].

@@ -175,6 +175,7 @@ mod tests {
             protector_label: "passphrase",
             attempt,
             max_attempts: 3,
+            hint: None,
         }
     }
 

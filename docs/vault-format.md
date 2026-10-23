@@ -28,7 +28,10 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `recovery_level` | `"recoverable"` or `"purgeable"` (JSON string) |
 | `retention_days` | 7–90 |
 | `audit_head` | `<id>:<hex HMAC>` — the newest keyed audit row; see *Audit chain* |
-| `settings_tag` | hex HMAC-SHA256 over the settings record (`schema_version`, `name`, `id`, `created_on`, `recovery_level`, `retention_days`); verified on every unlock |
+| `settings_tag` | hex HMAC-SHA256 over the settings record (`schema_version`, `name`, `id`, `created_on`, `recovery_level`, `retention_days`, and `second_factor` and `reveal_guard` when present); verified on every unlock |
+| `second_factor` | present once a second factor is enrolled: JSON `{"nonce", "ciphertext", "enrolled_on", "verified", "last_counter"}`; the TOTP secret sealed with the vault key under the AAD `sourceorrery/v3/second-factor/<id>`, whether one code has been accepted since enrolment, and the last accepted step (a code for it or an earlier step is refused). Covered by `settings_tag` |
+| `reveal_guard` | present when a reveal or export must present something again: JSON `{"passphrase", "second_factor"}`. Covered by `settings_tag`, so a file edit cannot switch it off |
+| `passphrase_hint` | the hint shown at the passphrase prompt, in clear, **not** covered by any tag: nothing can authenticate it before unlock, so it is whatever the file says. At most 120 characters; a hint that itself unlocks the vault is refused when set |
 
 ### `key_protectors`
 
@@ -199,7 +202,7 @@ from one kind of row, or another vault, never verifies for a different one.
 | secret | `sourceorrery/v2/secret` | vault id, name, created_on, deleted_on?, scheduled_purge_on?, recovery_id? |
 | audit row | `sourceorrery/v3/audit` | vault id, prev_hash, id, occurred_on, actor, operation, secret_name?, version?, outcome, detail?, keyed, state_tag?, version_tag? |
 | audit head | `sourceorrery/v2/audit-head` | vault id, id, hash |
-| settings | `sourceorrery/v2/settings` | vault id, schema_version, name, created_on, recovery_level, retention_days |
+| settings | `sourceorrery/v2/settings` | vault id, schema_version, name, created_on, recovery_level, retention_days, then `"second_factor"` and its JSON when enrolled, then `"reveal_guard"` and its JSON when set (each keyed and appended only when present, so a vault without them keeps the tag it always had) |
 
 `?` marks an optional field (`state_tag?` and `version_tag?` are optional
 byte strings); timestamps are their stored Unix-nanosecond integers. The

@@ -23,7 +23,10 @@
 
 mod audit;
 mod backup;
+mod guard;
 mod migrate;
+
+pub use self::guard::{MAX_HINT_LEN, RevealGuard, SecondFactorInfo};
 mod protectors;
 mod rows;
 mod schema;
@@ -66,9 +69,19 @@ use self::rows::{
     query_secret_names, query_secret_rows, select_version,
 };
 use self::schema::{
-    Meta, SCHEMA, crypto, db, nanos, open_connection, opt_nanos, read_meta, recovery_id, value_aad,
-    write_settings_tag,
+    GuardState, Meta, SCHEMA, crypto, db, nanos, open_connection, opt_nanos, read_meta,
+    recovery_id, value_aad, write_settings_tag,
 };
+
+/// The passphrase hint a vault file stores, read without unlocking it:
+/// in clear and unauthenticated, so it is whatever the file says.
+pub(crate) fn read_passphrase_hint(path: &Path) -> Result<Option<String>> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let conn = open_connection(path)?;
+    Ok(read_meta(&conn)?.passphrase_hint)
+}
 
 /// Maximum passphrase attempts per `open`.
 pub const MAX_UNLOCK_ATTEMPTS: u32 = 3;
@@ -168,6 +181,9 @@ pub struct SqliteVault {
     /// HKDF sub-key of `dek` that authenticates metadata and the audit chain.
     metadata_key: SymmetricKey,
     meta: Meta,
+    /// The second-factor enrolment and the reveal guard as they are now
+    /// (`meta.guard` is what the file said at open).
+    guard: Mutex<GuardState>,
     path: PathBuf,
     actor: Principal,
 }
@@ -226,6 +242,8 @@ impl SqliteVault {
             recovery_level_raw: recovery_level_raw.clone(),
             retention_days: options.retention_days,
             settings_tag: None,
+            guard: GuardState::default(),
+            passphrase_hint: None,
         };
         let rows: [(&str, String); 6] = [
             ("schema_version", SCHEMA_VERSION.to_string()),
@@ -267,6 +285,7 @@ impl SqliteVault {
             conn: Mutex::new(conn),
             dek,
             metadata_key,
+            guard: Mutex::new(meta.guard.clone()),
             meta,
             path: path.to_path_buf(),
             actor,
@@ -524,6 +543,7 @@ impl SqliteVault {
             conn: Mutex::new(conn),
             dek,
             metadata_key,
+            guard: Mutex::new(meta.guard.clone()),
             meta,
             path: path.to_path_buf(),
             actor,
