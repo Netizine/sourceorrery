@@ -21,6 +21,9 @@ pub fn run(ctx: &Ctx, cmd: &VaultCommand) -> anyhow::Result<()> {
         VaultCommand::Info => info(ctx),
         VaultCommand::Protector(cmd) => protector(ctx, cmd),
         VaultCommand::Passphrase(cmd) => passphrase(ctx, cmd),
+        VaultCommand::TwoFactor(cmd) => crate::commands::guard::two_factor(ctx, cmd),
+        VaultCommand::Guard(args) => crate::commands::guard::guard(ctx, args),
+        VaultCommand::Recovery(cmd) => crate::commands::guard::recovery(ctx, cmd),
         VaultCommand::Destroy(args) => destroy(ctx, args),
         VaultCommand::Migrate(args) => migrate(ctx, args),
     }
@@ -55,6 +58,8 @@ fn passphrase(ctx: &Ctx, cmd: &PassphraseCommand) -> anyhow::Result<()> {
             ));
             Ok(())
         }
+        PassphraseCommand::Set(args) => crate::commands::guard::passphrase_set(ctx, args),
+        PassphraseCommand::Hint(args) => crate::commands::guard::passphrase_hint(ctx, args),
         PassphraseCommand::Check => {
             let text = if std::io::stdin().is_terminal() {
                 prompt::read_hidden("Passphrase to estimate: ")?
@@ -256,10 +261,18 @@ fn info(ctx: &Ctx) -> anyhow::Result<()> {
         None => Vec::new(),
     };
     if ctx.json() {
-        return output::json(&serde_json::json!({
+        let mut body = serde_json::json!({
             "vault": descriptor,
             "protectors": protectors,
-        }));
+        });
+        if let Some(local) = vault.local() {
+            body["guard"] = serde_json::to_value(local.reveal_guard()?)?;
+            body["second_factor"] = serde_json::to_value(local.second_factor()?)?;
+            body["recovery_codes"] =
+                serde_json::to_value(crate::commands::guard::recovery_labels(local)?)?;
+            body["passphrase_hint"] = serde_json::to_value(local.passphrase_hint())?;
+        }
+        return output::json(&body);
     }
     let mut table = Table::new(["FIELD", "VALUE"]);
     table.row(["name".into(), descriptor.name.clone()]);
@@ -290,6 +303,9 @@ fn info(ctx: &Ctx) -> anyhow::Result<()> {
         "retention".into(),
         format!("{} days", descriptor.retention_days),
     ]);
+    if let Some(local) = vault.local() {
+        crate::commands::guard::info_rows(local, &mut table)?;
+    }
     table.print()?;
     if vault.local().is_none() {
         return Ok(());
@@ -327,6 +343,8 @@ fn protector(ctx: &Ctx, cmd: &ProtectorCommand) -> anyhow::Result<()> {
             allow_weak,
         }) => {
             let vault = ctx.open_local_default("vault protector")?;
+            // Another way to unlock the vault: a guarded change.
+            crate::commands::guard::enforce(ctx, &vault, "add a protector")?;
             let spec = match kind {
                 ProtectorChoice::OsKeyring => ProtectorSpec::OsKeyring,
                 ProtectorChoice::Passphrase => ProtectorSpec::passphrase(
@@ -347,6 +365,7 @@ fn protector(ctx: &Ctx, cmd: &ProtectorCommand) -> anyhow::Result<()> {
         }
         ProtectorCommand::Remove(ProtectorRemoveArgs { protector }) => {
             let vault = ctx.open_local_default("vault protector")?;
+            crate::commands::guard::enforce(ctx, &vault, "remove a protector")?;
             let note = vault.remove_protector(protector)?;
             if ctx.json() {
                 return output::json(&serde_json::json!({ "removed": protector, "note": note }));

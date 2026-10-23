@@ -101,6 +101,9 @@ treated as secrets. Users are told not to put sensitive information in them.
 | One unlock order, no prompt in a library | The Rust client owns the unlock order (OS credential store, an explicit passphrase, `SOURCEORRERY_PASSPHRASE`, `SOURCEORRERY_PASSPHRASE_FILE`); SDKs never prompt and never migrate a vault (`crates/sourceorrery`) |
 | Values guarded in every language | A value stays in native memory until the application closes it and is zeroised then (`so_bytes_free`, `SecretBytes`); the wrapper prints as `[REDACTED]` and refuses serialisation where the language allows; bytes leave only through an explicit call (`docs/sdks`) |
 | Same behaviour in every SDK | One scenario list, judged by one harness, runs against every SDK in CI on Ubuntu, Windows and macOS (`tests/conformance/sdk`) |
+| A second check before a person sees a value | The reveal guard (`vault guard`) makes `secret get --reveal`, `backup` and every change to how the vault unlocks ask for the vault passphrase again, a TOTP code from an authenticator app, or both, even when the OS keyring unlocked the vault. The guard and the TOTP secret (sealed with the vault key, with the last accepted step so a code is never accepted twice) live in the authenticated settings record, so a file edit cannot switch the guard off. `run`, `check`, `ui` and the SDKs are untouched: the guard is for the moments a person or an agent at the CLI asks to see a value, not a boundary (`storage::sqlite::guard`, `cli::commands::guard`) |
+| A vault is not lost with its passphrase | `vault recovery codes` installs up to 7 random 125-bit codes as passphrase protectors, shown once; one unlocks the vault in place of the passphrase, and `vault passphrase set` then replaces it. A passphrase hint is stored in clear and shown at the prompt; it is refused when it would itself unlock the vault, and it is never trusted (see gap 12) |
+| Typed passphrases rated before they are accepted | A passphrase typed at the prompt must rate "good" on a rule-based estimate (common passwords, dictionary-style words, repeats, sequences, years, short lengths; no wordlist shipped) unless `--allow-weak`; `vault passphrase generate` offers one from the OS random source (`cli::strength`) |
 | Release integrity | Locked builds, `cargo audit`, one release workflow from one commit, trusted publishing on every registry that offers it (npm, PyPI, crates.io, NuGet) with provenance on npm and PyPI, signatures on Maven Central, checksums on the release ([Supply chain](supply-chain.md)) |
 
 ## Known gaps
@@ -181,6 +184,17 @@ treated as secrets. Users are told not to put sensitive information in them.
     vault's threat model allows, and remember that restoring it writes
     every version into the target, audited but not reversible except by
     deleting the secrets again.
+12. **The reveal guard and the hint are for people, not against a
+    process.** The guard is satisfied by `SOURCEORRERY_PASSPHRASE` and
+    `SOURCEORRERY_TOTP` (or `--code`), so anything that runs as you and
+    holds both passes it as a script would; and a code read from the
+    phone is good for thirty seconds either side of its step, once. The
+    passphrase hint is a `vault_meta` row outside every tag, readable and
+    writable before unlock: a tamperer can plant one (it is sanitised
+    before it is shown, so it cannot drive the terminal), and it must
+    never be the passphrase in disguise. Recovery codes are passphrase
+    protectors: as strong as the Argon2 parameters they are wrapped under,
+    and as safe as the paper they are written on.
 
 ## Planned (milestone 3): the hard problem
 

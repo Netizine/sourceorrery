@@ -42,6 +42,16 @@ pub struct Cli {
     /// Increase diagnostic output (-v, -vv, -vvv). Never prints secret values.
     #[arg(short, long, global = true, action = ArgAction::Count)]
     pub verbose: u8,
+    /// Second-factor code for an operation the vault's reveal guard protects (automation;
+    /// otherwise it is asked for). Codes are valid for about a minute and never reused.
+    #[arg(
+        long,
+        global = true,
+        env = "SOURCEORRERY_TOTP",
+        value_name = "CODE",
+        hide_env_values = true
+    )]
+    pub code: Option<String>,
 
     /// With no subcommand, `sourceorrery` prints its banner and a quick start.
     #[command(subcommand)]
@@ -102,9 +112,20 @@ pub enum VaultCommand {
     /// Manage the key protectors that can unlock a vault.
     #[command(subcommand)]
     Protector(ProtectorCommand),
-    /// The vault passphrase: generate a strong one, or estimate one's strength.
+    /// The vault passphrase: generate a strong one, estimate one's strength, change it, or set
+    /// the hint shown at the prompt.
     #[command(subcommand)]
     Passphrase(PassphraseCommand),
+    /// The second factor (an authenticator app, TOTP): enable with a QR code, verify, disable,
+    /// status.
+    #[command(name = "2fa", subcommand)]
+    TwoFactor(TwoFactorCommand),
+    /// What revealing a secret or exporting the vault must present again: the passphrase, a
+    /// second-factor code, both or nothing. Without --reveal, show the current guard.
+    Guard(GuardArgs),
+    /// Recovery codes: one-time passphrases that unlock the vault when the passphrase is lost.
+    #[command(subcommand)]
+    Recovery(RecoveryCommand),
     /// Permanently delete a vault file and its OS-keyring entries.
     Destroy(VaultDestroyArgs),
     /// Upgrade a vault written by an older release to the current on-disk format.
@@ -156,6 +177,75 @@ pub enum PassphraseCommand {
     /// Read a passphrase from stdin or a hidden prompt and print its strength estimate: the
     /// score, the estimated bits of guessing work and what weakened it. Nothing is stored.
     Check,
+    /// Change the vault passphrase: the current one is asked for (or taken from
+    /// SOURCEORRERY_PASSPHRASE), the new one typed twice and strength-checked.
+    Set(PassphraseSetArgs),
+    /// Set, show or clear the hint shown at the passphrase prompt. Stored in clear in the vault
+    /// file and readable by anyone who has it; a hint that unlocks the vault is refused.
+    Hint(PassphraseHintArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PassphraseSetArgs {
+    /// Read the new passphrase from a file (automation) instead of prompting.
+    #[arg(long, value_name = "FILE")]
+    pub new_from_file: Option<PathBuf>,
+    /// Accept a new passphrase the strength estimate rates below "good".
+    #[arg(long)]
+    pub allow_weak: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PassphraseHintArgs {
+    /// The hint (at most 120 characters). Without it, the current hint is shown.
+    pub text: Option<String>,
+    /// Remove the hint.
+    #[arg(long, conflicts_with = "text")]
+    pub clear: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TwoFactorCommand {
+    /// Enrol an authenticator: draws a QR code, then asks for one code to prove the enrolment.
+    Enable(TwoFactorEnableArgs),
+    /// Prove an enrolment made with --no-verify by entering one code.
+    Verify,
+    /// Remove the second factor (a code is asked for while the enrolment is verified).
+    Disable,
+    /// Whether a second factor is enrolled and verified, and what the guard asks for.
+    Status,
+}
+
+#[derive(Debug, Args)]
+pub struct TwoFactorEnableArgs {
+    /// Also print the otpauth:// URI and the key, for an authenticator that cannot scan.
+    #[arg(long)]
+    pub show_uri: bool,
+    /// Leave the enrolment unverified instead of asking for a code now (`vault 2fa verify`
+    /// completes it). With -o json the key is printed, for automation.
+    #[arg(long)]
+    pub no_verify: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct GuardArgs {
+    /// What a reveal or export must present: `passphrase`, `second-factor`,
+    /// `passphrase,second-factor` or `none`.
+    #[arg(long, value_name = "WHAT")]
+    pub reveal: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RecoveryCommand {
+    /// Generate recovery codes (replacing any earlier ones) and print them once.
+    Codes(RecoveryCodesArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RecoveryCodesArgs {
+    /// How many codes (1 to 7; they count against the eight passphrase protectors a vault holds).
+    #[arg(long, default_value_t = 5, value_name = "N")]
+    pub count: usize,
 }
 
 #[derive(Debug, Args)]

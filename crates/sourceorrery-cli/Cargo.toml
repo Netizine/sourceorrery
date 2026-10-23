@@ -59,6 +59,7 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"], optional = true }
+qrcode = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true

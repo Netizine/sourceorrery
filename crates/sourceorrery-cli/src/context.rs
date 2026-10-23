@@ -31,6 +31,9 @@ pub struct Ctx {
     pub vault_flag: Option<String>,
     pub passphrase_file: Option<PathBuf>,
     pub verbose: u8,
+    /// `--code` / `SOURCEORRERY_TOTP`: a second-factor code for a guarded
+    /// operation, consumed by the first guard check.
+    pub code: Option<String>,
 }
 
 impl Ctx {
@@ -45,6 +48,7 @@ impl Ctx {
             vault_flag: cli.vault.clone(),
             passphrase_file: cli.passphrase_file.clone(),
             verbose: cli.verbose,
+            code: cli.code.clone(),
         })
     }
 
@@ -186,6 +190,33 @@ impl Ctx {
             warn_if_weak(&pass, "the passphrase file");
             return Ok(pass);
         }
+        Self::prompt_new_passphrase(purpose, allow_weak)
+    }
+
+    /// The passphrase automation supplies (`SOURCEORRERY_PASSPHRASE`, then
+    /// `--passphrase-file`), if any; the sources an unlock tries first.
+    pub fn passphrase_from_sources(&self) -> anyhow::Result<Option<SecretBytes>> {
+        if let Some(pass) = passphrase_from_env() {
+            return Ok(Some(normalise_if_recovery_code(pass)));
+        }
+        match &self.passphrase_file {
+            Some(file) => {
+                read_passphrase_file(file).map(|pass| Some(normalise_if_recovery_code(pass)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// A passphrase from a file, trailing newline removed.
+    pub fn passphrase_from_file(file: &Path) -> anyhow::Result<SecretBytes> {
+        let pass = read_passphrase_file(file)?;
+        warn_if_weak(&pass, "the passphrase file");
+        Ok(pass)
+    }
+
+    /// A new passphrase typed twice at the hidden prompt, strength-checked:
+    /// below [`Score::REQUIRED`] it is refused unless `allow_weak`.
+    pub fn prompt_new_passphrase(purpose: &str, allow_weak: bool) -> anyhow::Result<SecretBytes> {
         if !std::io::stdin().is_terminal() {
             return Err(anyhow!(
                 "cannot prompt for a passphrase: stdin is not a terminal. \
@@ -244,6 +275,32 @@ fn warn_if_weak(pass: &SecretBytes, source: &str) {
     }
 }
 
+/// A recovery code is installed in its normalised form (upper case, no
+/// hyphens); what a person reads back from paper is normalised the same
+/// way when it has the shape of one, so hyphens, case and the look-alike
+/// letters do not matter. Anything else is returned as typed. Applied to
+/// every passphrase that unlocks a vault, from the prompt, the environment
+/// or a file, and never to a passphrase being set (an SDK unlocking with
+/// the same environment variable does not normalise).
+pub fn normalise_if_recovery_code(typed: SecretBytes) -> SecretBytes {
+    let Some(text) = typed.expose_utf8() else {
+        return typed;
+    };
+    let normalised = sourceorrery_crypto::random::normalise_recovery_code(text);
+    let expected =
+        sourceorrery_crypto::random::CODE_GROUPS * sourceorrery_crypto::random::CODE_GROUP_LEN;
+    if normalised.len() == expected
+        && normalised
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b.is_ascii_uppercase())
+        && text.len() >= expected
+        && text.len() <= expected + sourceorrery_crypto::random::CODE_GROUPS + 4
+    {
+        return SecretBytes::from_string(normalised.to_string());
+    }
+    typed
+}
+
 fn passphrase_from_env() -> Option<SecretBytes> {
     std::env::var(PASSPHRASE_ENV)
         .ok()
@@ -276,19 +333,29 @@ impl UnlockProvider for Unlocker {
         // Non-interactive sources are tried once only; a wrong value is wrong.
         if prompt.attempt == 1 {
             if let Some(pass) = passphrase_from_env() {
-                return Ok(Some(pass));
+                return Ok(Some(normalise_if_recovery_code(pass)));
             }
             if let Some(file) = &self.file {
                 return read_passphrase_file(file)
-                    .map(Some)
+                    .map(|pass| Some(normalise_if_recovery_code(pass)))
                     .map_err(|err| sourceorrery_core::SecretError::Io(err.to_string()));
             }
         }
         if !self.interactive {
             return Ok(None);
         }
+        if prompt.attempt == 1
+            && let Some(hint) = prompt.hint
+        {
+            // The hint is text from the file, unauthenticated: sanitised
+            // like every other line shown before unlock.
+            eprintln!("Hint: {}", output::sanitize(hint));
+        }
         let text = if prompt.attempt == 1 {
-            format!("Passphrase for vault '{}': ", prompt.vault)
+            format!(
+                "Passphrase (or a recovery code) for vault '{}': ",
+                prompt.vault
+            )
         } else {
             format!(
                 "Passphrase for vault '{}' (attempt {} of {}): ",
@@ -296,7 +363,7 @@ impl UnlockProvider for Unlocker {
             )
         };
         prompt::read_hidden(&text)
-            .map(Some)
+            .map(|typed| Some(normalise_if_recovery_code(typed)))
             .map_err(|err| sourceorrery_core::SecretError::Io(err.to_string()))
     }
 }

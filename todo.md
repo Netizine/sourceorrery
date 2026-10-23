@@ -1103,11 +1103,12 @@ guided set-up, O5 the documents, O6 runs alongside each.
       the environment or a file (automation's) is warned about, so no
       script breaks. `vault passphrase generate` and `check` exist now so
       the refusal can point somewhere.*
-- [ ] A QR code drawn in the terminal (`qrcode`, rendered with half-block
+- [x] A QR code drawn in the terminal (`qrcode`, rendered with half-block
       characters) for the otpauth URI, in the wizard and in `vault 2fa
       enable`; the URI itself is printed only on `--show-uri` for a user
-      who cannot scan. *Lands with its first consumer, `vault 2fa enable`
-      (O3).*
+      who cannot scan. *Done in O3: `cli::qr` (two module rows per text
+      line, error correction M, the standard quiet zone), drawn on
+      stderr by `vault 2fa enable`; the wizard reuses it in O4.*
 
 ## O2. Storage: the guard, the enrolment and the hint in the vault
 
@@ -1140,17 +1141,20 @@ guided set-up, O5 the documents, O6 runs alongside each.
       accepted code and counts for nothing before; a verified one must be
       disabled before another is enrolled; disabling drops the guard's
       demand for it.*
-- [ ] Recovery codes: `add_protector` with labels `recovery-1..N`; a
+- [x] Recovery codes: `add_protector` with labels `recovery-1..N`; a
       `recovery_codes()` view over the protectors; `backup`/`restore` carry
       nothing extra (protectors are not in a backup, as today: a restored
       vault has the protectors of the vault it is restored into).
       *Storage needs nothing new (a code is a labelled passphrase
       protector, and `verify_passphrase` accepts one); the command lands
-      in O3.*
+      in O3.* *Done: `replace_recovery_codes` swaps the set in one
+      transaction (they count against the 8-protector limit),
+      `recovery_codes()` lists them, `replace_passphrase` changes the
+      passphrase without touching them.*
 
 ## O3. CLI: the commands and the guard
 
-- [ ] `vault passphrase set` (strength-checked, replaces the passphrase
+- [x] `vault passphrase set` (strength-checked, replaces the passphrase
       protector's KEK: add new, remove old, in one transaction),
       `vault passphrase hint [TEXT|--clear]`, `vault recovery codes
       [--count N]` (prints the codes once, replaces earlier ones),
@@ -1158,14 +1162,26 @@ guided set-up, O5 the documents, O6 runs alongside each.
       enrolment is kept; disabling needs a code), `vault guard
       [--reveal passphrase,second-factor|none]` (changing the guard is
       itself guarded).
-- [ ] `secret get --reveal` and `backup` honour the guard: passphrase from
+      *Done (`commands/guard.rs`). Also `vault 2fa verify` for an
+      enrolment made with `--no-verify`, and the global `--code` /
+      `SOURCEORRERY_TOTP`. A code is read from `--code` or a terminal,
+      never from a pipe, so a script without one is refused, not hung.
+      A recovery code typed anywhere a passphrase goes (prompt,
+      environment, file) is normalised before use.*
+- [x] `secret get --reveal` and `backup` honour the guard: passphrase from
       the hidden prompt (or `SOURCEORRERY_PASSPHRASE`, which *is* the
       passphrase), the code from the hidden prompt or `--code` /
       `SOURCEORRERY_TOTP` for automation; a refusal is `permission_denied`
       and audited on the secret (`secret_get` / `denied`, detail
       `guard: ...`). The guard never applies to `run`, `check` or the SDKs.
-- [ ] `vault info` shows the guard, the enrolment (yes/no, never the
-      secret), the hint and the recovery codes' count.
+      *Done; `vault protector add|remove` pass it too (new ways to
+      unlock are a guarded change). The refusal is audited under `guard`
+      (the check that failed), not on the secret, since no read
+      happened.*
+- [x] `vault info` shows the guard, the enrolment (yes/no, never the
+      secret), the hint and the recovery codes' count. *Done (labels
+      rather than a count; JSON `guard`, `second_factor`,
+      `recovery_codes`, `passphrase_hint`).*
 
 ## O4. `sourceorrery setup`: first vault to first run, in the terminal
 
@@ -1197,15 +1213,21 @@ guided set-up, O5 the documents, O6 runs alongside each.
 
 ## O6. Tests, alongside
 
-- [ ] RFC 6238 vectors; replay refused; window accepted; base32 round
+- [x] RFC 6238 vectors; replay refused; window accepted; base32 round
       trip; URI shape. Strength: a few known weak and strong inputs.
-- [ ] Storage: an older vault (no new fields) still verifies; the fields
+      *O1.*
+- [x] Storage: an older vault (no new fields) still verifies; the fields
       survive a reopen; a tampered guard setting is refused with `crypto`;
       `verify_passphrase` audits a rejection; the counter never goes back.
-- [ ] CLI: the guard asks and refuses; `SOURCEORRERY_PASSPHRASE` and
+      *O2 (`sqlite::tests::guard`, `protectors_replace`).*
+- [x] CLI: the guard asks and refuses; `SOURCEORRERY_PASSPHRASE` and
       `--code` satisfy it in a script; recovery codes unlock; `vault 2fa`
       round trip with a code computed by the test from the shown secret;
       nothing printed carries a value, the TOTP secret or a code.
+      *O3 (`tests/cli.rs`): the test waits for a step with 20 seconds
+      left and spends the codes of steps -1, 0 and +1 in that order,
+      since each is good once and only a later step is accepted after
+      it.*
 - [ ] Wizard: driven through its `App` with the test backend, every step,
       including the strength refusal and the "written down" gate.
 

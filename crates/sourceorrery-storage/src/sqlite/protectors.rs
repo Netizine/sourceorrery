@@ -7,8 +7,8 @@ use std::path::Path;
 
 use rusqlite::{Connection, params};
 use sourceorrery_core::audit::{AuditOperation, AuditOutcome};
-use sourceorrery_core::{Result, SecretError, timestamp};
-use sourceorrery_crypto::{Ciphertext, SymmetricKey, envelope, kdf, random};
+use sourceorrery_core::{Result, SecretBytes, SecretError, timestamp};
+use sourceorrery_crypto::{Argon2Params, Ciphertext, SymmetricKey, envelope, kdf, random};
 
 use super::audit::AuditWriter;
 use super::schema::{
@@ -113,6 +113,9 @@ pub(super) fn try_passphrases(
 }
 
 /// The OS-keyring account this vault creates for a protector.
+/// Label prefix of the recovery-code protectors.
+pub const RECOVERY_LABEL_PREFIX: &str = "recovery-";
+
 pub(super) fn keyring_account_name(vault_id: &str, protector_id: &str) -> String {
     format!("vault/{vault_id}/{protector_id}")
 }
@@ -422,6 +425,163 @@ impl SqliteVault {
         )?;
         tx.commit().map_err(db)?;
         Ok(info)
+    }
+
+    /// The passphrase protector `passphrase` unlocks, if any. No audit row.
+    fn passphrase_protector(
+        &self,
+        conn: &Connection,
+        passphrase: &SecretBytes,
+    ) -> Result<Option<ProtectorRecord>> {
+        for protector in read_protectors(conn)? {
+            let ProtectorKind::Passphrase { salt, params } = &protector.kind else {
+                continue;
+            };
+            if !params.within_limits() {
+                continue;
+            }
+            let salt =
+                hex::decode(salt).map_err(|_| SecretError::Storage("corrupt salt".to_owned()))?;
+            let kek = kdf::derive_key(passphrase.expose(), &salt, *params).map_err(crypto)?;
+            if let Ok((dek, _)) = try_unwrap(&self.meta, &protector, &kek)
+                && dek == self.dek
+            {
+                return Ok(Some(protector));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Replace the passphrase protector `current` unlocks with one for
+    /// `new`, keeping its label, in one transaction: the old wrapping is
+    /// gone the moment the new one exists. `current` not unlocking anything
+    /// is `permission_denied`. Audited as `protector_remove` then
+    /// `protector_add`.
+    pub fn replace_passphrase(
+        &self,
+        current: &SecretBytes,
+        new: SecretBytes,
+        params: Argon2Params,
+    ) -> Result<ProtectorInfo> {
+        let op = AuditOperation::ProtectorAdd;
+        let mut conn = self.lock()?;
+        let tx = self.begin(&mut conn, op)?;
+        let Some(old) = self.passphrase_protector(&tx, current)? else {
+            return self.fail(
+                tx,
+                op,
+                None,
+                None,
+                SecretError::PermissionDenied(
+                    "the current passphrase does not unlock this vault".to_owned(),
+                ),
+            );
+        };
+        tx.execute("DELETE FROM key_protectors WHERE id = ?1", params![old.id])
+            .map_err(db)?;
+        let spec = ProtectorSpec::Passphrase {
+            passphrase: new,
+            params,
+        };
+        let info = match add_protector(&tx, &self.meta, &self.dek, spec, Some(&old.label)) {
+            Ok(info) => info,
+            Err(err) => return self.fail(tx, op, None, None, err),
+        };
+        self.audit(
+            &tx,
+            AuditOperation::ProtectorRemove,
+            None,
+            None,
+            AuditOutcome::Success,
+            Some(&format!("{} (replaced)", old.label)),
+        )?;
+        self.audit(
+            &tx,
+            op,
+            None,
+            None,
+            AuditOutcome::Success,
+            Some(&info.label),
+        )?;
+        tx.commit().map_err(db)?;
+        Ok(info)
+    }
+
+    /// Replace every recovery code with one protector per code in `codes`,
+    /// labelled `recovery-1` onwards, in one transaction (audited as one
+    /// `protector_remove` per old code and one `protector_add` per new).
+    /// The codes count against the passphrase-protector limit.
+    pub fn replace_recovery_codes(
+        &self,
+        codes: Vec<SecretBytes>,
+        params: Argon2Params,
+    ) -> Result<Vec<ProtectorInfo>> {
+        let op = AuditOperation::ProtectorAdd;
+        let mut conn = self.lock()?;
+        let tx = self.begin(&mut conn, op)?;
+        if codes.is_empty() {
+            return self.fail(
+                tx,
+                op,
+                None,
+                None,
+                SecretError::InvalidArgument("at least one recovery code is needed".to_owned()),
+            );
+        }
+        let old: Vec<ProtectorRecord> = read_protectors(&tx)?
+            .into_iter()
+            .filter(|p| p.label.starts_with(RECOVERY_LABEL_PREFIX))
+            .collect();
+        for protector in &old {
+            tx.execute(
+                "DELETE FROM key_protectors WHERE id = ?1",
+                params![protector.id],
+            )
+            .map_err(db)?;
+        }
+        let mut added = Vec::with_capacity(codes.len());
+        for (i, code) in codes.into_iter().enumerate() {
+            let label = format!("{RECOVERY_LABEL_PREFIX}{}", i + 1);
+            let spec = ProtectorSpec::Passphrase {
+                passphrase: code,
+                params,
+            };
+            match add_protector(&tx, &self.meta, &self.dek, spec, Some(&label)) {
+                Ok(info) => added.push(info),
+                Err(err) => return self.fail(tx, op, None, None, err),
+            }
+        }
+        for protector in &old {
+            self.audit(
+                &tx,
+                AuditOperation::ProtectorRemove,
+                None,
+                None,
+                AuditOutcome::Success,
+                Some(&format!("{} (replaced)", protector.label)),
+            )?;
+        }
+        for info in &added {
+            self.audit(
+                &tx,
+                op,
+                None,
+                None,
+                AuditOutcome::Success,
+                Some(&info.label),
+            )?;
+        }
+        tx.commit().map_err(db)?;
+        Ok(added)
+    }
+
+    /// The recovery-code protectors (`recovery-*`), without the codes.
+    pub fn recovery_codes(&self) -> Result<Vec<ProtectorInfo>> {
+        Ok(self
+            .protectors()?
+            .into_iter()
+            .filter(|p| p.label.starts_with(RECOVERY_LABEL_PREFIX))
+            .collect())
     }
 
     /// Remove a protector by id or label. The last protector cannot be

@@ -517,3 +517,129 @@ mod guard {
         );
     }
 }
+
+mod protectors_replace {
+    //! Replacing the passphrase and the recovery codes.
+
+    use super::*;
+    use crate::RECOVERY_LABEL_PREFIX;
+    use crate::unlock::StaticPassphrase;
+
+    const PASSPHRASE: &str = "correct horse battery staple";
+
+    #[test]
+    fn the_passphrase_is_replaced_in_one_step_keeping_its_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dev.sorvault");
+        let vault =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), spec()).unwrap();
+        let err = vault
+            .replace_passphrase(
+                &SecretBytes::from("wrong"),
+                SecretBytes::from("new-one-with-length"),
+                Argon2Params::TESTING,
+            )
+            .unwrap_err();
+        assert_eq!(err.code(), "permission_denied");
+        let info = vault
+            .replace_passphrase(
+                &SecretBytes::from(PASSPHRASE),
+                SecretBytes::from("new-one-with-length"),
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        assert_eq!(info.label, "passphrase");
+        assert_eq!(vault.protectors().unwrap().len(), 1);
+        drop(vault);
+        assert_eq!(
+            SqliteVault::open(&path, &StaticPassphrase::new(PASSPHRASE))
+                .unwrap_err()
+                .code(),
+            "locked"
+        );
+        let vault =
+            SqliteVault::open(&path, &StaticPassphrase::new("new-one-with-length")).unwrap();
+        let ops: Vec<AuditOperation> = vault
+            .audit_events(AuditQuery {
+                limit: Some(20),
+                ..Default::default()
+            })
+            .unwrap()
+            .into_iter()
+            .map(|e| e.operation)
+            .collect();
+        assert!(ops.contains(&AuditOperation::ProtectorRemove));
+        assert!(ops.contains(&AuditOperation::ProtectorAdd));
+    }
+
+    #[test]
+    fn recovery_codes_are_replaced_as_a_set_and_unlock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dev.sorvault");
+        let vault =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), spec()).unwrap();
+        assert_eq!(vault.recovery_codes().unwrap(), Vec::new());
+        assert_eq!(
+            vault
+                .replace_recovery_codes(Vec::new(), Argon2Params::TESTING)
+                .unwrap_err()
+                .code(),
+            "invalid_argument"
+        );
+        let first = vault
+            .replace_recovery_codes(
+                vec![
+                    SecretBytes::from("CODEONE000000000000000001"),
+                    SecretBytes::from("CODETWO000000000000000002"),
+                ],
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        assert_eq!(
+            first.iter().map(|p| p.label.as_str()).collect::<Vec<_>>(),
+            [
+                format!("{RECOVERY_LABEL_PREFIX}1"),
+                format!("{RECOVERY_LABEL_PREFIX}2")
+            ]
+        );
+        assert_eq!(vault.recovery_codes().unwrap().len(), 2);
+        assert_eq!(vault.protectors().unwrap().len(), 3);
+        // Replacing drops the old set entirely.
+        let second = vault
+            .replace_recovery_codes(
+                vec![SecretBytes::from("CODETHREE0000000000000003")],
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(vault.recovery_codes().unwrap().len(), 1);
+        assert_eq!(vault.protectors().unwrap().len(), 2);
+        drop(vault);
+        assert_eq!(
+            SqliteVault::open(&path, &StaticPassphrase::new("CODEONE000000000000000001"))
+                .unwrap_err()
+                .code(),
+            "locked"
+        );
+        let vault =
+            SqliteVault::open(&path, &StaticPassphrase::new("CODETHREE0000000000000003")).unwrap();
+        assert!(
+            vault
+                .verify_passphrase(&SecretBytes::from(PASSPHRASE))
+                .unwrap()
+        );
+        // The limit on passphrase protectors counts the codes.
+        let too_many: Vec<SecretBytes> = (0..8)
+            .map(|i| SecretBytes::from(format!("CODE{i}00000000000000000000")))
+            .collect();
+        let err = vault
+            .replace_recovery_codes(too_many, Argon2Params::TESTING)
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_argument");
+        assert_eq!(
+            vault.recovery_codes().unwrap().len(),
+            1,
+            "a refused set changes nothing"
+        );
+    }
+}

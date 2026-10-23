@@ -1495,3 +1495,391 @@ fn a_weak_passphrase_from_the_environment_is_warned_about_not_refused() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(!stderr(&out).contains("rates"), "{}", stderr(&out));
 }
+
+// ---------------------------------------------------------------------------
+// Part 3: the reveal guard, second factor, recovery codes and the hint
+// ---------------------------------------------------------------------------
+
+/// The current TOTP step, after waiting (at most a few seconds) for one with
+/// enough of it left that the codes a test computes for the steps before,
+/// at and after it stay inside the verifier's window while the test runs.
+fn fresh_totp_step() -> u64 {
+    use sourceorrery_crypto::totp::{PERIOD_SECS, counter_at, seconds_left};
+    loop {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        if seconds_left(now) >= 20 {
+            return counter_at(now);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(
+            seconds_left(now).min(PERIOD_SECS),
+        ));
+    }
+}
+
+fn totp_code(key: &str, step: u64) -> String {
+    sourceorrery_crypto::TotpSecret::from_base32(key)
+        .unwrap()
+        .code(step)
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one enrolment, one TOTP window, every door tried
+fn second_factor_and_guard_protect_reveal_and_export() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "api-key", CANARY);
+    let backup = env.project.path().join("dev.sobackup");
+    let backup = backup.to_str().unwrap();
+
+    // Enrol without verifying: the key is shown once, as JSON here.
+    let enrolled: serde_json::Value = serde_json::from_str(&env.ok(&[
+        "vault",
+        "2fa",
+        "enable",
+        "--vault",
+        "dev",
+        "--no-verify",
+        "-o",
+        "json",
+    ]))
+    .unwrap();
+    let key = enrolled["key"].as_str().unwrap().to_owned();
+    assert_eq!(key.len(), 32);
+    assert!(
+        enrolled["uri"]
+            .as_str()
+            .unwrap()
+            .starts_with("otpauth://totp/SourceOrrery:vault%20dev?secret=")
+    );
+    assert_eq!(enrolled["verified"], false);
+    let status = env.ok(&["vault", "2fa", "status", "--vault", "dev", "-o", "json"]);
+    let status: serde_json::Value = serde_json::from_str(&status).unwrap();
+    assert_eq!(status["enrolled"], true);
+    assert_eq!(status["verified"], false);
+
+    // Until it is verified the guard cannot ask for it.
+    let early = env.run(&[
+        "vault",
+        "guard",
+        "--reveal",
+        "second-factor",
+        "--vault",
+        "dev",
+    ]);
+    assert!(!early.status.success());
+    assert!(stderr(&early).contains("verif"), "{}", stderr(&early));
+
+    // Verify with the code of the previous step; the window allows it.
+    let step = fresh_totp_step();
+    let verified = env.ok(&[
+        "vault",
+        "2fa",
+        "verify",
+        "--vault",
+        "dev",
+        "--code",
+        &totp_code(&key, step - 1),
+        "-o",
+        "json",
+    ]);
+    let verified: serde_json::Value = serde_json::from_str(&verified).unwrap();
+    assert_eq!(verified["accepted"], true);
+
+    // A code is only ever accepted once.
+    let replay = env.run(&[
+        "vault",
+        "2fa",
+        "verify",
+        "--vault",
+        "dev",
+        "--code",
+        &totp_code(&key, step - 1),
+    ]);
+    assert!(!replay.status.success());
+    assert!(
+        stderr(&replay).contains("already used"),
+        "{}",
+        stderr(&replay)
+    );
+
+    // Turn the guard on (changing it passes the current guard: none).
+    let set = env.ok(&[
+        "vault",
+        "guard",
+        "--reveal",
+        "passphrase,second-factor",
+        "--vault",
+        "dev",
+        "-o",
+        "json",
+    ]);
+    let set: serde_json::Value = serde_json::from_str(&set).unwrap();
+    assert_eq!(set["reveal"]["passphrase"], true);
+    assert_eq!(set["reveal"]["second_factor"], true);
+
+    // Reading metadata needs nothing new.
+    assert!(
+        env.ok(&["secret", "list", "--vault", "dev"])
+            .contains("api-key")
+    );
+
+    // Revealing without a code is refused and nothing is printed.
+    let refused = env.run(&["secret", "get", "api-key", "--vault", "dev", "--reveal"]);
+    assert!(!refused.status.success());
+    assert!(!stdout(&refused).contains(CANARY));
+    assert!(stderr(&refused).contains("--code"), "{}", stderr(&refused));
+    assert!(
+        stderr(&refused).contains("permission denied"),
+        "{}",
+        stderr(&refused)
+    );
+
+    // A code from well outside the window is refused too.
+    let wrong = env.run(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "dev",
+        "--reveal",
+        "--code",
+        &totp_code(&key, step + 7),
+    ]);
+    assert!(!wrong.status.success());
+    assert!(!stdout(&wrong).contains(CANARY));
+
+    // With the current step's code the value is shown, once.
+    let shown = env.ok(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "dev",
+        "--reveal",
+        "--code",
+        &totp_code(&key, step),
+    ]);
+    assert!(shown.contains(CANARY));
+    let again = env.run(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "dev",
+        "--reveal",
+        "--code",
+        &totp_code(&key, step),
+    ]);
+    assert!(!again.status.success(), "a code was accepted twice");
+    assert!(!stdout(&again).contains(CANARY));
+
+    // The export asks for the same things.
+    let export = env.run(&["backup", "--vault", "dev", "--out", backup]);
+    assert!(!export.status.success());
+    assert!(
+        stderr(&export).contains("export the vault"),
+        "{}",
+        stderr(&export)
+    );
+    assert!(!Path::new(backup).exists());
+
+    // Without the passphrase the guard refuses as well, whatever the code.
+    let no_pass = env
+        .cmd(&[
+            "secret", "get", "api-key", "--vault", "dev", "--reveal", "--code", "000000",
+        ])
+        .env_remove("SOURCEORRERY_PASSPHRASE")
+        .output()
+        .unwrap();
+    assert!(!no_pass.status.success());
+    assert!(!stdout(&no_pass).contains(CANARY));
+
+    // `vault info` describes the guard without any secret.
+    let info = env.ok(&["vault", "info", "--vault", "dev", "-o", "json"]);
+    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
+    assert_eq!(info["guard"]["second_factor"], true);
+    assert_eq!(info["second_factor"]["verified"], true);
+    assert!(!info.to_string().contains(&key));
+
+    // Disabling the second factor needs one more code (the next step's);
+    // the guard then asks for the passphrase alone.
+    let disabled = env.ok(&[
+        "vault",
+        "2fa",
+        "disable",
+        "--vault",
+        "dev",
+        "--code",
+        &totp_code(&key, step + 1),
+        "-o",
+        "json",
+    ]);
+    let disabled: serde_json::Value = serde_json::from_str(&disabled).unwrap();
+    assert_eq!(disabled["second_factor"], false);
+    assert_eq!(disabled["guard"]["passphrase"], true);
+    assert_eq!(disabled["guard"]["second_factor"], false);
+    let shown = env.ok(&["secret", "get", "api-key", "--vault", "dev", "--reveal"]);
+    assert!(shown.contains(CANARY));
+
+    // Every guard decision is in the audit trail; no code or key is.
+    let audit = env.ok(&["audit", "--vault", "dev", "-o", "json"]);
+    assert!(audit.contains("\"guard\""));
+    assert!(!audit.contains(&key));
+    assert!(!audit.contains(CANARY));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // one set of codes, every way of typing one
+fn recovery_codes_unlock_and_the_hint_is_shown_before_unlock() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "api-key", CANARY);
+
+    let issued = env.ok(&[
+        "vault", "recovery", "codes", "--vault", "dev", "--count", "2", "-o", "json",
+    ]);
+    let issued: serde_json::Value = serde_json::from_str(&issued).unwrap();
+    let codes: Vec<String> = issued["codes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(codes.len(), 2);
+    assert_eq!(issued["replaced"], 0);
+    assert_eq!(
+        issued["labels"],
+        serde_json::json!(["recovery-1", "recovery-2"])
+    );
+    for code in &codes {
+        assert_eq!(code.len(), 29, "{code}");
+        assert_eq!(code.matches('-').count(), 4, "{code}");
+    }
+    let info = env.ok(&["vault", "info", "--vault", "dev", "-o", "json"]);
+    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
+    assert_eq!(
+        info["recovery_codes"],
+        serde_json::json!(["recovery-1", "recovery-2"])
+    );
+    assert!(!info.to_string().contains(&codes[0]));
+
+    // A code unlocks the vault in place of the passphrase, however it is
+    // written: lower case, with or without hyphens, from the environment or
+    // a file.
+    let unlock_with = |pass: &str| -> Output {
+        env.cmd(&["secret", "list", "--vault", "dev"])
+            .env("SOURCEORRERY_PASSPHRASE", pass)
+            .output()
+            .unwrap()
+    };
+    let out = unlock_with(&codes[0].to_lowercase());
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("api-key"));
+    let out = unlock_with(&codes[0].replace('-', ""));
+    assert!(out.status.success(), "{}", stderr(&out));
+    let mut wrong = codes[0].clone();
+    wrong.replace_range(0..1, if codes[0].starts_with('A') { "B" } else { "A" });
+    let out = unlock_with(&wrong);
+    assert!(!out.status.success());
+    assert!(!stdout(&out).contains("api-key"));
+
+    let file = env.project.path().join("recovery.txt");
+    std::fs::write(&file, format!("{}\n", codes[1].to_lowercase())).unwrap();
+    let out = env
+        .cmd(&[
+            "secret",
+            "list",
+            "--vault",
+            "dev",
+            "--passphrase-file",
+            file.to_str().unwrap(),
+        ])
+        .env_remove("SOURCEORRERY_PASSPHRASE")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    // The hint lives in clear in the file; it cannot be the passphrase.
+    let bad = env.run(&["vault", "passphrase", "hint", PASSPHRASE, "--vault", "dev"]);
+    assert!(!bad.status.success());
+    env.ok(&[
+        "vault",
+        "passphrase",
+        "hint",
+        "the usual one, with the year",
+        "--vault",
+        "dev",
+    ]);
+    let hint = env.ok(&[
+        "vault",
+        "passphrase",
+        "hint",
+        "--vault",
+        "dev",
+        "-o",
+        "json",
+    ]);
+    let hint: serde_json::Value = serde_json::from_str(&hint).unwrap();
+    assert_eq!(hint["hint"], "the usual one, with the year");
+    let info = env.ok(&["vault", "info", "--vault", "dev", "-o", "json"]);
+    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
+    assert_eq!(info["passphrase_hint"], "the usual one, with the year");
+    env.ok(&["vault", "passphrase", "hint", "--clear", "--vault", "dev"]);
+    let hint = env.ok(&[
+        "vault",
+        "passphrase",
+        "hint",
+        "--vault",
+        "dev",
+        "-o",
+        "json",
+    ]);
+    let hint: serde_json::Value = serde_json::from_str(&hint).unwrap();
+    assert!(hint["hint"].is_null());
+
+    // Changing the passphrase keeps the recovery codes; a weak replacement
+    // from a file is warned about, not refused.
+    let new_file = env.project.path().join("new.txt");
+    std::fs::write(&new_file, "Orbit-Lantern-Copper-Nine-42\n").unwrap();
+    let changed = env.ok(&[
+        "vault",
+        "passphrase",
+        "set",
+        "--new-from-file",
+        new_file.to_str().unwrap(),
+        "--vault",
+        "dev",
+        "-o",
+        "json",
+    ]);
+    let changed: serde_json::Value = serde_json::from_str(&changed).unwrap();
+    assert_eq!(changed["kind"], "passphrase");
+    let old = unlock_with(PASSPHRASE);
+    assert!(!old.status.success(), "the old passphrase still unlocks");
+    let new = unlock_with("Orbit-Lantern-Copper-Nine-42");
+    assert!(new.status.success(), "{}", stderr(&new));
+    let code = unlock_with(&codes[1]);
+    assert!(code.status.success(), "{}", stderr(&code));
+
+    // New codes replace the old ones.
+    let reissued = env
+        .cmd(&["vault", "recovery", "codes", "--vault", "dev", "-o", "json"])
+        .env("SOURCEORRERY_PASSPHRASE", "Orbit-Lantern-Copper-Nine-42")
+        .output()
+        .unwrap();
+    assert!(reissued.status.success(), "{}", stderr(&reissued));
+    let reissued: serde_json::Value = serde_json::from_str(&stdout(&reissued)).unwrap();
+    assert_eq!(reissued["replaced"], 2);
+    assert_eq!(reissued["codes"].as_array().unwrap().len(), 5);
+    let stale = unlock_with(&codes[1]);
+    assert!(
+        !stale.status.success(),
+        "a replaced recovery code still unlocks"
+    );
+    let fresh = reissued["codes"][4].as_str().unwrap();
+    let fresh = unlock_with(fresh);
+    assert!(fresh.status.success(), "{}", stderr(&fresh));
+}

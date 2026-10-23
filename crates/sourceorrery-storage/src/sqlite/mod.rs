@@ -27,6 +27,7 @@ mod guard;
 mod migrate;
 
 pub use self::guard::{MAX_HINT_LEN, RevealGuard, SecondFactorInfo};
+pub use self::protectors::RECOVERY_LABEL_PREFIX;
 mod protectors;
 mod rows;
 mod schema;

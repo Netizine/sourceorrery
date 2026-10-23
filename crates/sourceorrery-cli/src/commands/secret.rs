@@ -68,6 +68,11 @@ fn get(ctx: &Ctx, args: &SecretGetArgs) -> anyhow::Result<()> {
         eprintln!("(value not shown; pass --reveal to print it)");
         return Ok(());
     }
+    // A reveal is what the vault's guard protects; the application's reads
+    // (`run`, the SDKs) are not asked.
+    if let Some(local) = vault.local() {
+        crate::commands::guard::enforce(ctx, local, "reveal a secret")?;
+    }
     let secret = vault.get_secret(&args.name, args.version.as_deref())?;
     if ctx.json() {
         let mut body = serde_json::to_value(&secret.properties)?;

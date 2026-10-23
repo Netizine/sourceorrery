@@ -2,6 +2,7 @@ pub mod audit;
 pub mod audit_export;
 pub mod backup;
 pub mod completions;
+pub mod guard;
 pub mod import;
 pub mod project;
 pub mod rotate;

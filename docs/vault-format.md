@@ -38,7 +38,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | column | meaning |
 |--------|---------|
 | `id` | 16 hex chars, random |
-| `label` | unique human label (`os-keyring`, `passphrase`, `ci`, …) |
+| `label` | unique human label (`os-keyring`, `passphrase`, `ci`, …); recovery codes are passphrase protectors labelled `recovery-1..N`, replaced as a set by `vault recovery codes` |
 | `kind_json` | `{"kind":"os-keyring","service":"sourceorrery","account":"vault/<vault id>/<id>"}` or `{"kind":"passphrase","salt":"<hex 16 bytes>","params":{"memory_kib":65536,"iterations":3,"parallelism":1}}` |
 | `wrapped_nonce` | 24-byte XChaCha20 nonce |
 | `wrapped_dek` | DEK encrypted under the protector's KEK; AAD `sourceorrery/v<schema>/protector/<vault id>/<protector id>`, so the wrapped key is bound to the on-disk format it was written for (`v3` now; an older `v<n>` only on protectors not yet re-wrapped since a migration) |

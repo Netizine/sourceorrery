@@ -35,6 +35,28 @@ uses [Semantic Versioning](https://semver.org/).
   checks a passphrase (or a recovery code) in place; every check, change
   and refusal is audited under the new operation `guard`
   (`docs/vault-format.md`).
+* The commands for all of it. `vault 2fa enable` enrols an authenticator
+  app (a QR code drawn on stderr, the `otpauth://` URI only with
+  `--show-uri`, the base32 key once with `-o json`) and keeps the
+  enrolment only once a code from the app has matched (`--no-verify` and
+  `vault 2fa verify` for later); `vault 2fa disable` and `status`.
+  `vault guard --reveal passphrase,second-factor|none` sets what
+  `secret get --reveal`, `backup`, `vault protector add|remove`, `vault
+  recovery codes`, `vault 2fa enable` and `vault guard` itself must
+  present again: the passphrase from where an unlock takes it, the code
+  from the new global `--code` / `SOURCEORRERY_TOTP` or a prompt on the
+  terminal (never a pipe); a refusal is `permission_denied` and prints
+  nothing of the value. `run`, `check`, `ui` and the SDKs are untouched.
+  `vault recovery codes [--count N]` prints up to 7 recovery codes once
+  and installs them as passphrase protectors `recovery-1..N`, replacing
+  earlier ones; a code unlocks the vault wherever a passphrase is
+  accepted (prompt, `SOURCEORRERY_PASSPHRASE`, a file), with case,
+  hyphens and look-alike letters ignored. `vault passphrase set` replaces
+  the passphrase after checking the current one (and a code when the
+  guard asks); `vault passphrase hint [TEXT|--clear]` manages the hint
+  the prompt shows. `vault info` reports the guard, the enrolment, the
+  recovery codes' labels and the hint (`docs/cli.md`, "The reveal
+  guard"; `docs/threat-model.md`).
 * `sourceorrery audit export` writes a local vault's audit log, oldest
   first, for a collector: as JSON Lines on stdout (one object per event
   plus `vault`, then a trailer with the count, the last id and the chain

@@ -20,6 +20,20 @@ pub fn read_hidden(prompt: &str) -> anyhow::Result<SecretBytes> {
     Ok(SecretBytes::from_string(text))
 }
 
+/// Prompt on stderr and read one visible line from stdin (a six-digit
+/// code, a name): the input is not a secret but the prompt is still
+/// sanitised. Trailing whitespace is removed.
+pub fn read_line(prompt: &str) -> anyhow::Result<String> {
+    let mut stderr = std::io::stderr();
+    stderr.write_all(output::sanitize(prompt).as_bytes())?;
+    stderr.flush()?;
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .context("failed to read input")?;
+    Ok(answer.trim_end().to_owned())
+}
+
 /// Ask a yes/no question on stderr. Non-interactive sessions answer "no".
 pub fn confirm(question: &str) -> anyhow::Result<bool> {
     if !std::io::stdin().is_terminal() {

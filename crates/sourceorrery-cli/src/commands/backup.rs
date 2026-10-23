@@ -89,6 +89,8 @@ pub fn backup(ctx: &Ctx, args: &BackupArgs) -> anyhow::Result<()> {
         ));
     }
     let vault = ctx.open_local_default("backup")?;
+    // An export carries every value: the vault's guard applies.
+    crate::commands::guard::enforce(ctx, &vault, "export the vault")?;
     let passphrase = new_backup_passphrase()?;
     let snapshot = vault.export(&ExportOptions {
         secrets: (!args.secret.is_empty()).then(|| args.secret.clone()),
