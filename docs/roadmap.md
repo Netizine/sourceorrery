@@ -1,13 +1,14 @@
 # Roadmap
 
-This documentation targets **0.1.4**: the encrypted local vault, CLI,
-read-only SDKs, `.env` import and skills for AI coding agents. The build
-also refuses a vault file filed under another vault's name and uses trusted
-publishing for PyPI and crates.io ([release scope](#release-014)). Checked
-items below are implemented; unchecked items remain planned.
+This documentation is prepared for **0.2.0**: the encrypted local vault,
+CLI and read-only SDKs, guided setup, `.env` import, agent integrations,
+and optional AWS Secrets Manager and HashiCorp Vault providers
+([release scope](#release-020)). Checked items below are implemented;
+unchecked items remain planned. Implementation does not mean a package has
+already been published.
 
 > [!IMPORTANT]
-> The authenticated local broker is milestone 3, after 0.1.4. SourceOrrery
+> The authenticated local broker remains milestone 3. SourceOrrery
 > does not yet isolate secrets from processes running with the same user's
 > credentials. See the [threat model](threat-model.md).
 
@@ -33,7 +34,7 @@ items below are implemented; unchecked items remain planned.
 - [x] Listing cost: one scan of the checkpoint rows and one statement each over the names, rows and versions of a listing window, and `list_*_page` with a name-based continuation token in core, with conformance tests (`secret list --limit N --after NAME`)
 - [x] `backup` / `restore`: an encrypted export of a vault or of named secrets, every version with its value, restored as new versions through the audited write path ([format](backup-format.md))
 - [x] Pre-built CLI archives for six targets on the GitHub release, with `SHA256SUMS`
-- [x] `cargo install --locked sourceorrery-cli --version 0.1.4`
+- [x] Cargo installation of the CLI (`cargo install --locked sourceorrery-cli --version 0.2.0` after publication)
 - [x] Package managers: Homebrew, WinGet, Scoop
 - [x] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`, deployed by Azure Static Web Apps
 
@@ -72,7 +73,16 @@ The 0.1.4 build includes these changes alongside milestones 1 and 2:
 - [x] PyPI and crates.io by trusted publishing (no stored token), with PyPI attestations
 - [x] Every registry page says what its package is, that vaults are managed with the CLI, and where the documentation is; each release archive carries a README
 
-## Next release — onboarding, a strong passphrase and a second factor
+## Release: 0.2.0
+
+Alongside the 0.1.4 features above, this build includes remote providers
+(milestone 4 below), encrypted backup and restore, paged listings, ABI
+compatibility checks, release provenance and software bills of materials,
+and multi-language coverage reports for SonarCloud. The provider crates
+require their first publication before their trusted publishers can be set
+up; see the [release procedure](release.md).
+
+### Onboarding, a strong passphrase and a second factor
 
 - [x] `sourceorrery setup`: the guided first run, from a vault to `run`, as screens on the terminal, with the same six steps printed as commands where there is no terminal ([First run](getting-started.md))
 - [x] A vault passphrase typed at a prompt must rate "good" on a rule-based strength estimate (`vault passphrase check`, `vault passphrase generate`); one from the environment or a file is warned about, not refused

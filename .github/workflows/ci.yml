@@ -272,13 +272,13 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          inc="-I crates/sourceorrery-ffi/include -I bindings/cpp/include"
-          cc -Wall -Wextra -Werror $inc crates/sourceorrery-ffi/examples/get_secret.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o get_secret_c
-          c++ -std=c++17 -Wall -Wextra -Werror $inc bindings/cpp/examples/get_secret.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o get_secret_cpp
-          c++ -std=c++17 -Wall -Wextra -Werror $inc bindings/cpp/tests/reader_test.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o reader_test
+          inc=(-I crates/sourceorrery-ffi/include -I bindings/cpp/include)
+          cc -Wall -Wextra -Werror "${inc[@]}" crates/sourceorrery-ffi/examples/get_secret.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o get_secret_c
+          c++ -std=c++17 -Wall -Wextra -Werror "${inc[@]}" bindings/cpp/examples/get_secret.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o get_secret_cpp
+          c++ -std=c++17 -Wall -Wextra -Werror "${inc[@]}" bindings/cpp/tests/reader_test.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o reader_test
           mkdir -p build
-          cc -Wall -Wextra -Werror $inc crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
-          c++ -std=c++17 -Wall -Wextra -Werror $inc bindings/cpp/conformance/run.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_cpp
+          cc -Wall -Wextra -Werror "${inc[@]}" crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
+          c++ -std=c++17 -Wall -Wextra -Werror "${inc[@]}" bindings/cpp/conformance/run.cpp -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_cpp
           export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" DYLD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR"
           ./reader_test
           ./get_secret_c "$SOURCEORRERY_TEST_VAULT" database-password
@@ -506,6 +506,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: python3 -m unittest -v scripts/release/package_managers_test.py
       - run: python3 -m unittest -v scripts/release/npm_platform_packages_test.py
+      - run: python3 -m unittest -v scripts/release/set_version_test.py
+      - run: python3 -m unittest -v scripts/release/test_publish_crates.py
       - run: python3 -m unittest -v scripts/ci/abi_check_test.py
 
   # ADR 0007: the library built from this commit must still pass the
@@ -601,6 +603,8 @@ jobs:
       - name: Smoke test against GNOME Keyring on a private session bus
         if: runner.os == 'Linux'
         run: |
+          # Expansion belongs to the child shell inside the private session.
+          # shellcheck disable=SC2016
           dbus-run-session -- bash -c '
             eval "$(printf "\n" | gnome-keyring-daemon --unlock 2>/dev/null)"
             eval "$(printf "\n" | gnome-keyring-daemon --start 2>/dev/null)"

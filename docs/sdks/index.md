@@ -38,10 +38,11 @@ Why each technology: [ADR 0006](../adr/0006-binding-technologies.md).
 
 ## Installing
 
-Each language page opens with its package registry: 0.1.4 is on PyPI,
-npm (under the `@sourceorreryai` scope), crates.io, Maven Central, NuGet
-and Packagist, and the Go module on pkg.go.dev. Next comes the
-[v0.1.4 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4),
+Each language page opens with its package registry. The 0.2.0 release targets
+PyPI, npm (under the `@sourceorreryai` scope), crates.io, Maven Central, NuGet
+and Packagist, and the Go module on pkg.go.dev. Until 0.2.0 is published,
+build from source. Next comes the
+[v0.2.0 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0),
 which carries the same packages (wheels, npm tarballs, the jar, the NuGet
 package) and the C ABI archive that the Go, C, C++ and PHP SDKs load. Each
 page ends with building that SDK from source;
@@ -112,8 +113,8 @@ core, so every language says the same thing.
 | `deleted` | `SecretDeleted…` | `sourceorrery secret recover` |
 | `crypto` | `Integrity…` | the file failed an integrity check: compare with a backup, run `audit --verify` |
 | `unsupported` | `Unsupported…` | no OS credential store here: add a passphrase protector; or this build has no provider for a remote vault |
-| `unauthenticated` (0.3.0) | `Unauthenticated…` | where the remote provider's own tools take credentials from (`VAULT_TOKEN`, the AWS credential chain); never the manifest |
-| `provider_unavailable` (0.3.0) | `ProviderUnavailable…` | check that the provider is reachable and the address in `[vaults.<name>]` is right; transient, so retry |
+| `unauthenticated` (0.2.0) | `Unauthenticated…` | where the remote provider's own tools take credentials from (`VAULT_TOKEN`, the AWS credential chain); never the manifest |
+| `provider_unavailable` (0.2.0) | `ProviderUnavailable…` | check that the provider is reachable and the address in `[vaults.<name>]` is right; transient, so retry |
 | `invalid_argument`, `invalid_name` | `InvalidArgument…`, `InvalidName…` | the reference and name rules |
 | `manifest` | `Manifest…` | fix `sourceorrery.toml`, check with `sourceorrery check` |
 | `abi_mismatch` (Go, Java, .NET, PHP, C++) | the base type | the native library implements another C ABI version than the SDK was built for: install the `sourceorrery-ffi` library of the SDK's release. Raised by the SDK itself before anything is opened, never by the core ([ADR 0007](../adr/0007-versioning-and-compatibility.md)) |

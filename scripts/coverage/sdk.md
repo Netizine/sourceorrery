@@ -1,5 +1,11 @@
 # SDK and documentation tooling coverage
 
+For the normal local workflow, use `bash scripts/coverage/run.sh --check` and
+`bash scripts/coverage/run.sh` on Ubuntu. On Windows, use
+`pwsh scripts/coverage/run.ps1 -Target site` or `-Target dotnet` for one report.
+See [the coverage guide](../../docs/coverage.md) for prerequisites and GitHub's
+automatic reports. These local entry points do not upload or need a Sonar token.
+
 These helpers collect coverage from the existing tests. Run them from the
 repository root on Ubuntu after creating the shared SDK fixture with
 `.github/actions/sdk-fixture` (or `scripts/ci/fixture-vault.sh`). The SDK modes
@@ -9,7 +15,8 @@ skip their vault checks. They do not build extensions or install dependencies.
 ## Prerequisites
 
 - Python 3.11 or newer, as declared in `bindings/python/pyproject.toml`; CI uses
-  3.12. Install `coverage==7.17.0` and `pytest>=8` in that interpreter.
+  3.12. Install the hash-locked `scripts/coverage/requirements.txt` in that
+  interpreter; it shares the SDK CI's pytest pin.
 - Node 22.19 or newer for the documentation site's dependencies. Install the
   pinned public coverage tool with
   `npm ci --prefix scripts/coverage --global=false --ignore-scripts`.

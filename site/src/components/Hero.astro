@@ -17,6 +17,7 @@ import { Image } from 'astro:assets';
 import { LinkButton } from '@astrojs/starlight/components';
 import FAIcon from './FAIcon.astro';
 import BrandText from './BrandText.astro';
+import packageInfo from '../../package.json';
 
 const { data } = Astro.locals.starlightRoute.entry;
 const isHome = Astro.locals.starlightRoute.id === '';
@@ -40,7 +41,7 @@ const art =
 const alt = (image && 'alt' in image && image.alt) || '';
 
 const meta = [
-	{ label: 'Status', value: '0.1.4 · local-first' },
+	{ label: 'Status', value: `${packageInfo.version} · local-first` },
 	{ label: 'Licence', value: 'MIT or Apache-2.0' },
 	{
 		label: 'Source',

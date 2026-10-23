@@ -3,10 +3,11 @@
 SourceOrrery makes three different promises and keeps them separate. Users,
 documentation and marketing must never blur them.
 
-This page describes the 0.1.4 build: the CLI with its vault manager
-(`sourceorrery ui`), the encrypted vault, and the read-only SDKs for ten
-languages over the C ABI and the Rust client (milestones 1 and 2 of the
-[roadmap](roadmap.md)). How the packages themselves are built, published
+This page describes the 0.2.0 build: the CLI with its vault manager
+(`sourceorrery ui`), the encrypted vault, optional AWS Secrets Manager and
+HashiCorp Vault providers, and the read-only SDKs for ten languages over
+the C ABI and the Rust client. See the [roadmap](roadmap.md) for remaining
+work. How the packages themselves are built, published
 and checked is in [Supply chain](supply-chain.md).
 
 > [!WARNING]
@@ -20,7 +21,7 @@ and checked is in [Supply chain](supply-chain.md).
 | # | Guarantee | Meaning | Today |
 |---|-----------|---------|-------|
 | 1 | **At-rest protection** | Values stored by SourceOrrery are encrypted. Its metadata commands, errors and audit records omit values. | **Provided within that boundary.** Input files, exposed copies, child processes and application logs remain the caller's responsibility. |
-| 2 | **Access control** | Only authorised identities can retrieve a given secret; access is per secret, revocable and audited. | **Local only.** Whoever can unlock the vault is its administrator. Per-secret policy against verified identities arrives with the broker. |
+| 2 | **Access control** | Only authorised identities can retrieve a given secret; access is per secret, revocable and audited. | **Provider-dependent.** Whoever can unlock a local vault is its administrator. Remote providers enforce their own identity and policy controls; SourceOrrery does not add a local isolation boundary. |
 | 3 | **Agent isolation** | An untrusted agent or process running as the *same OS user* cannot impersonate an authorised application or modify it to disclose secrets. | **Not provided.** Requires an independently authenticated broker plus OS-level isolation (milestone 3). SourceOrrery will never claim this without an external boundary. |
 
 > [!IMPORTANT]

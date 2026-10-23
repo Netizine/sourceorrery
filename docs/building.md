@@ -14,6 +14,7 @@ Every build compiles Rust, so every build needs:
 | Tool | Version | Why |
 |------|---------|-----|
 | Git | any recent | to clone the repository |
+| Python | 3.11 or newer | to run the version-stamping script |
 | Rust, installed with rustup | 1.91.1 or newer | the core. `rust-toolchain.toml` selects the stable channel with `rustfmt` and `clippy`; rustup installs it on the first `cargo` command in the checkout |
 | A C compiler | | the bundled SQLite is compiled from C: the Visual Studio Build Tools on Windows, the Xcode Command Line Tools on macOS, gcc or clang on Linux |
 | `pkg-config` and the D-Bus headers | Linux only | the Secret Service (the OS credential store); not needed for a build with `--no-default-features` |
@@ -72,25 +73,27 @@ Each SDK needs its own toolchain on top:
 
 ## Get the code
 
+Until 0.2.0 is published, build `main`. After publication, use
+`git checkout v0.2.0` in place of `git checkout main` for the release source.
+
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.1.4          # the release; stay on main for the newest changes
+git checkout main
 ```
 
-A build from source carries the version committed in the repository, not
-the release number: the release workflow stamps that into every manifest
-as it builds. To give your build the release's version, stamp it the same
-way before building:
+A build from source carries the version committed in the repository;
+the current `main` branch is stamped **0.2.0**. To set the version for a
+local build, use Python 3.11 or newer:
 
 ```bash
-python scripts/release/set-version.py 0.1.4
+python scripts/release/set-version.py 0.2.0 --keep-node-links
 ```
 
-It edits the manifests in your checkout (`git checkout .` undoes it). For
-the Node package, run `npm ci` in `bindings/node` before stamping, as the
-release does: stamping replaces the package's local links to its platform
-packages with that version.
+The script updates package manifests and lockfiles. `--keep-node-links`
+preserves the Node package's local platform-package links, so `npm ci`
+continues to work from this checkout. The release workflow omits that
+option when preparing packages for publication.
 
 ## The CLI and the C ABI
 

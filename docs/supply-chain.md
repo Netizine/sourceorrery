@@ -8,7 +8,7 @@ what is not done yet. The [threat model](threat-model.md) covers the vault
 itself.
 
 > [!NOTE]
-> This page describes the **0.1.4** release workflow. Verify the actual
+> This page describes the **0.2.0** release workflow. Verify the actual
 > package's version, workflow run and available attestations when installing;
 > a configured publishing method is not itself proof about a downloaded file.
 
@@ -105,7 +105,7 @@ provenance, with links to the commit and the workflow run.
 ### NuGet
 
 ```bash
-dotnet nuget verify --all ~/.nuget/packages/sourceorrery/0.1.4/sourceorrery.0.1.4.nupkg
+dotnet nuget verify --all ~/.nuget/packages/sourceorrery/0.2.0/sourceorrery.0.2.0.nupkg
 ```
 
 Expect `Signature type: Repository` with the subject
@@ -121,9 +121,9 @@ F14C 928F CC55 C651 7F1A  E1E7 DAFA E59A 4372 DBC2
 
 ```bash
 gpg --keyserver keyserver.ubuntu.com --recv-keys F14C928FCC55C6517F1AE1E7DAFAE59A4372DBC2
-curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.1.4/sourceorrery-0.1.4.jar
-curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.1.4/sourceorrery-0.1.4.jar.asc
-gpg --verify sourceorrery-0.1.4.jar.asc sourceorrery-0.1.4.jar    # Good signature from "SourceOrrery Releases ..."
+curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.2.0/sourceorrery-0.2.0.jar
+curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.2.0/sourceorrery-0.2.0.jar.asc
+gpg --verify sourceorrery-0.2.0.jar.asc sourceorrery-0.2.0.jar    # Good signature from "SourceOrrery Releases ..."
 ```
 
 ### PyPI
@@ -144,7 +144,7 @@ check that the two agree, then require them:
 
 ```text
 # requirements.txt
-sourceorrery==0.1.4 \
+sourceorrery==0.2.0 \
     --hash=sha256:<hash of the wheel for each platform you deploy to>
 ```
 
@@ -161,7 +161,7 @@ pip install --require-hashes -r requirements.txt
 every build. Install the CLI with `--locked`:
 
 ```bash
-cargo install --locked sourceorrery-cli --version 0.1.4
+cargo install --locked sourceorrery-cli --version 0.2.0
 ```
 
 The crate ships the lock file the release was built and tested with;
@@ -180,7 +180,7 @@ Packagist serves the repository at the release tag, and `composer.lock`
 records the commit it installed. Compare it with the tag:
 
 ```bash
-git ls-remote https://github.com/Netizine/sourceorrery refs/tags/v0.1.4
+git ls-remote https://github.com/Netizine/sourceorrery refs/tags/v0.2.0
 ```
 
 ### Release archives
@@ -193,7 +193,7 @@ against it with the GitHub CLI (signed in, or `--owner` for a public
 repository without signing in):
 
 ```bash
-gh attestation verify sourceorrery-0.1.4-x86_64-unknown-linux-gnu.tar.gz --repo Netizine/sourceorrery
+gh attestation verify sourceorrery-0.2.0-x86_64-unknown-linux-gnu.tar.gz --repo Netizine/sourceorrery
 ```
 
 The command fails for a file that was altered after the build or that did

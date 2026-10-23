@@ -17,18 +17,20 @@ file with an encrypted local vault, a cloud-secrets-manager-style lifecycle API
 declares *which* secrets a project needs without ever holding their values.
 
 > [!WARNING]
-> **Version 0.1.4 — core, encrypted vault, CLI with an interactive vault
-> manager, and read-only SDKs (milestones 1 and 2).**
+> **Version 0.2.0 — development build with an encrypted local vault,
+> optional AWS Secrets Manager and HashiCorp Vault providers, a CLI with
+> an interactive vault manager, and read-only SDKs.**
 > Local-first and usable today on Windows, macOS and Linux, from Python,
 > JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP
-> ([docs/sdks](docs/sdks/index.md)). The authenticated local broker and
-> remote providers are on the [roadmap](docs/roadmap.md). Not yet audited;
+> ([docs/sdks](docs/sdks/index.md)). The authenticated local broker remains
+> on the [roadmap](docs/roadmap.md). Not yet audited;
 > do not treat it as a production secret store.
 
 > [!NOTE]
-> This documentation targets **0.1.4**, including `.env` import, agent skills
-> installed by `init --integration`, and the `vault_mismatch` check. See the
-> [release roadmap](docs/roadmap.md#release-014).
+> This documentation is prepared for **0.2.0**, including guided setup,
+> `.env` import, agent integrations and remote providers. Until the release
+> is published, use a source build. See the
+> [release roadmap](docs/roadmap.md#release-020).
 
 ## Why
 
@@ -215,17 +217,17 @@ they are not SourceOrrery. Read more in
 
 ## Install
 
-SourceOrrery 0.1.4 can be installed three ways (step by step in
+SourceOrrery 0.2.0 can be installed three ways (step by step in
 [Getting started](https://sourceorrery.ai/getting-started/)):
 
-- **From the package registries.** The CLI: `brew install Netizine/sourceorrery/sourceorrery` (macOS, Linux), `winget install Netizine.SourceOrrery`, `scoop install sourceorrery` (bucket `Netizine/scoop-sourceorrery`) or `cargo install --locked sourceorrery-cli --version 0.1.4`.
+- **From the package registries.** The CLI: `brew install Netizine/sourceorrery/sourceorrery` (macOS, Linux), `winget install Netizine.SourceOrrery`, `scoop install sourceorrery` (bucket `Netizine/scoop-sourceorrery`) or `cargo install --locked sourceorrery-cli --version 0.2.0`.
   The SDKs: `pip install sourceorrery`, `npm install @sourceorreryai/sdk`,
   `cargo add sourceorrery`, `ai.sourceorrery:sourceorrery` on Maven Central,
   `dotnet add package SourceOrrery`,
-  `go get github.com/netizine/sourceorrery/bindings/go@v0.1.4` and
+  `go get github.com/netizine/sourceorrery/bindings/go@v0.2.0` and
   `composer require sourceorrery/sourceorrery`.
 - **From the GitHub release.** The
-  [v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4)
+  [v0.2.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0)
   has the CLI for Windows, macOS and Linux (x64 and arm64), the C ABI
   library with its headers, and every SDK package, with `SHA256SUMS`.
 - **From source**, below.
@@ -236,17 +238,20 @@ the registry supports it) and how to check what you installed:
 
 ## Build from source
 
-Requires Git, Python 3 for version stamping, Rust 1.91.1+ installed with rustup,
+Requires Git, Python 3.11+ for version stamping, Rust 1.91.1+ installed with rustup,
 a C compiler for the
 bundled SQLite (the Visual Studio Build Tools on Windows, the Xcode
 Command Line Tools on macOS, gcc or clang on Linux) and, on Linux,
 `pkg-config` and `libdbus-1-dev` for the Secret Service.
 
+Until 0.2.0 is published, build `main`. After publication, use
+`git checkout v0.2.0` in place of `git checkout main` for the release source.
+
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.1.4
-python scripts/release/set-version.py 0.1.4                      # Python 3; stamps this local build
+git checkout main
+python scripts/release/set-version.py 0.2.0 --keep-node-links
 cargo build --release -p sourceorrery-cli -p sourceorrery-ffi   # the CLI and the C ABI, in target/release
 cargo test --workspace
 cargo install --locked --path crates/sourceorrery-cli           # the CLI into ~/.cargo/bin
@@ -261,7 +266,7 @@ SDK test vault and the conformance harness:
 
 1. **Core and local CLI** — shipped.
 2. **Read-only SDKs** for Python, JavaScript/TypeScript, Rust, Java, .NET,
-   Go, C, C++ and PHP, and a release pipeline — included in 0.1.4, with
+   Go, C, C++ and PHP, and a release pipeline — included in 0.2.0, with
    trusted publishing for PyPI and crates.io. Supply-chain
    hardening continues: signed archives, notarised binaries.
 3. Authenticated local broker, capability tokens, agent-aware profiles.

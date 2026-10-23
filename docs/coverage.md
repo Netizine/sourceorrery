@@ -1,10 +1,21 @@
 # Test coverage and SonarCloud
 
-SourceOrrery 0.1.4 generates coverage with each language's test tools and
+SourceOrrery 0.2.0 generates coverage with each language's test tools and
 imports the reports into the existing
 [SonarCloud project](https://sonarcloud.io/project/overview?id=Netizine_sourceorrery).
 The `Coverage and SonarCloud` workflow runs on Ubuntu, alongside the normal
 cross-platform CI. It uses the same disposable SDK vault and existing tests.
+
+**GitHub generates the reports for you.** After a push to `main` or a trusted
+pull request, open **Actions → Coverage and SonarCloud**. A successful run
+uploads the combined analysis to SonarCloud using the repository's
+`SONAR_TOKEN` secret and keeps a downloadable **coverage-reports** artifact.
+Local coverage is optional; adding the secret does not require running a
+scanner or installing every language toolchain on your computer.
+
+The artifact contains XML, LCOV and Go coverage data for analysis tools.
+Use the SonarCloud project's **Measures → Coverage** view for the combined
+results, or the workflow logs for individual test and coverage summaries.
 
 ## Enable CI analysis
 
@@ -27,7 +38,7 @@ Automatic Analysis cannot import these reports.
 The project key is **`Netizine_sourceorrery`**, the organization key is
 **`netizine-3`**, and the server is **`https://sonarcloud.io`** (EU). These
 public identifiers are in `scripts/sonar/scan.sh`; the scanner reads the
-workspace version (`0.1.4`) from `Cargo.toml`. No project variables are
+workspace version from `Cargo.toml`. No project variables are
 required. Without `SONAR_TOKEN`, the
 workflow still generates coverage artifacts and explicitly warns that no
 Sonar analysis was uploaded.
@@ -44,7 +55,7 @@ All paths below are relative to the checkout root. The artifact named
 
 | Implementation | Measurement | Report imported by Sonar |
 |---|---|---|
-| Rust core, CLI, Rust SDK and C ABI | `cargo-llvm-cov`; workspace tests, C smoke test and Rust/C/C++ conformance | `coverage/rust-combined.lcov` |
+| Rust core, CLI, providers, Rust SDK and C ABI | `cargo-llvm-cov`; workspace tests, C smoke test and Rust/C/C++ conformance | `coverage/rust-combined.lcov` |
 | Python native extension | Instrumented PyO3 build, exercised by Python tests | Merged into `coverage/rust-combined.lcov` |
 | Node native extension | Instrumented N-API build, exercised by Node tests | Merged into `coverage/rust-combined.lcov` |
 | Python API | coverage.py, branch coverage enabled | `coverage/python.xml` (Cobertura) |
@@ -61,6 +72,13 @@ Rust and is measured there. TypeScript declarations also have no executable
 lines; TypeScript callers use the measured JavaScript wrapper. Rust reports
 from the three native builds are merged with `lcov`, retaining execution
 of shared Rust dependencies from all three runtimes.
+
+Workspace membership determines which Rust crates run, including the provider
+crates. CI starts disposable HashiCorp Vault and Moto services for their
+endpoint-dependent lifecycle tests. These tests use synthetic data and emulator
+credentials, with no production cloud account. The normal CI also runs remote
+CLI/SDK conformance and Vault federation checks; those separate jobs do not
+currently contribute their execution to the coverage report.
 
 Coverage measures exercised code, not correctness or security. Stable Rust
 executes doctests without collecting their coverage; Rust coverage of
@@ -104,6 +122,13 @@ therefore exists when analysis starts. Dependencies and generated files
 are excluded from source indexing, rather than removing the valid
 `extends` setting to silence the warning.
 
+The Node SDK's own typecheck uses its TypeScript 7 dependency. SonarCloud
+currently documents support through
+[TypeScript 6.0.3](https://docs.sonarsource.com/sonarqube-cloud/analyzing-source-code/languages/javascript-typescript-css/).
+The maintained configurations use compatible options, but newer TypeScript
+features may receive incomplete semantic analysis. JavaScript execution coverage
+still comes from the independent c8 reports; the project compiler is retained.
+
 Java analysis receives its compiled classes, test dependencies and JDK.
 C/C++ analysis receives `coverage/compile_commands.json`, generated from
 the actual SDK driver compilations. All reports and analysis run in the
@@ -111,49 +136,97 @@ same checkout so absolute compiler and coverage paths remain valid.
 
 ## Generate reports locally
 
-The complete workflow in `.github/workflows/coverage.yml` is the reference
-for tool versions and setup. The native coverage script requires Linux:
-use Ubuntu or a suitable Linux development environment for the full run.
-Java and .NET's opt-in coverage commands can also run on their other
-supported platforms.
+Local commands collect reports without uploading anything and do not need
+`SONAR_TOKEN`. The scripts check prerequisites before running tests and do not
+install global tools.
 
-After installing the toolchains and coverage dependencies shown in that
-workflow, use a fresh SDK fixture as described in
-[Building from source](building.md#the-sdk-test-vault). Keep those exported
-fixture variables in the same shell. Do not use a personal vault.
+### Windows: run one report
 
-```bash
-# Before tests: install each project's dependencies and generate Astro types.
-npm ci --prefix bindings/node
-npm ci --prefix scripts/coverage
-npm ci --prefix site
-npm run sync --prefix site
-npm run astro --prefix site -- sync
+For the documentation tooling, install Node 24 (minimum 22.19), then use
+PowerShell from the repository root:
 
-# These also measure the Rust extensions; do not repeat sdk.sh python/node.
-bash scripts/coverage/native.sh
-bash scripts/coverage/native.sh python
-bash scripts/coverage/native.sh node
-lcov --add-tracefile coverage/rust.lcov \
-  --add-tracefile coverage/rust-python.lcov \
-  --add-tracefile coverage/rust-node.lcov \
-  --output-file coverage/rust-combined.lcov
-
-bash scripts/coverage/sdk.sh site
-bash scripts/coverage/sdk.sh go
-bash scripts/coverage/sdk.sh php
-mvn --batch-mode -f bindings/java/pom.xml -Pcoverage clean verify
-dotnet test bindings/dotnet/SourceOrrery.Tests/SourceOrrery.Tests.csproj \
-  -c Release -p:CollectCoverage=true
-
-python scripts/sonar/check-reports.py
-python scripts/sonar/check-scope.py
+```powershell
+npm ci --ignore-scripts --prefix scripts/coverage
+# If site dependencies are not already installed:
+npm ci --ignore-scripts --prefix site
+pwsh scripts/coverage/run.ps1 -Target site -Check
+pwsh scripts/coverage/run.ps1 -Target site
 ```
 
-For a Sonar upload, use the workflow's additional Java dependency-copy and
-`.NET begin → build → test → end` steps. The scanner must start **before**
-the .NET build; importing reports with a second independent scan would
-replace the project's analysis rather than combine languages.
+This runs the site's existing Node tests and writes
+`coverage/site/lcov.info`. Installing site dependencies requires the existing
+Font Awesome npm authentication configuration; collecting an installed site's
+coverage does not contact that service.
+
+For the .NET SDK, install the .NET 10 SDK, Rust and Git for Windows, then run:
+
+```powershell
+pwsh scripts/coverage/run.ps1 -Target dotnet -Check
+pwsh scripts/coverage/run.ps1 -Target dotnet
+```
+
+The .NET command builds the CLI and C ABI, creates a new test vault under
+`coverage/`, runs the SDK tests, and writes `coverage/dotnet.xml`. It restores
+the calling process's environment afterwards. A single-language report is
+useful for local changes; GitHub produces the combined project report.
+
+### Ubuntu: run all reports
+
+The full run needs Ubuntu/Linux because native C++ coverage uses GCC and gcov.
+Use Rust with the workspace's declared minimum version, Node 24, Python 3.12,
+Go 1.24+, JDK 25+, Maven, the .NET 10 SDK, and PHP 8.2+ with FFI and Xdebug.
+The pinned setup in `.github/workflows/coverage.yml` is the reference.
+
+On Ubuntu 24.04, after installing those language toolchains, prepare the
+coverage dependencies once:
+
+```bash
+sudo apt-get install build-essential pkg-config libdbus-1-dev lcov python3-venv
+python3 -m venv coverage/venv
+. coverage/venv/bin/activate
+python -m pip install --require-hashes --only-binary :all: -r scripts/coverage/requirements.txt
+rustup component add llvm-tools-preview
+cargo install --locked cargo-llvm-cov --version 0.9.1
+npm ci --ignore-scripts --prefix bindings/node
+npm ci --ignore-scripts --prefix scripts/coverage
+npm ci --ignore-scripts --prefix site
+```
+
+Then one entry point generates the reports:
+
+```bash
+bash scripts/coverage/run.sh --check
+bash scripts/coverage/run.sh
+```
+
+The runner creates a fresh test vault, measures all workspace crates and SDKs,
+merges the Rust reports, and verifies every expected report. Generated files
+stay in ignored build, dependency and coverage directories. Existing test vaults
+and real secrets are not used.
+
+The provider server tests run when `SOURCEORRERY_VAULT_TEST_ADDR` and
+`SOURCEORRERY_AWS_TEST_ENDPOINT` point to disposable Vault and Moto instances,
+with their corresponding test credentials. Use the service images and environment
+in the coverage workflow as the reference. Without these endpoints, the local
+runner explicitly reports that those provider paths remain uncovered; ordinary
+workspace tests still run. Never point these lifecycle tests at production services.
+
+From Windows, an **already installed and configured** Ubuntu WSL distribution
+can run the same commands:
+
+```powershell
+pwsh scripts/coverage/run.ps1 -Target all -Distribution Ubuntu -Check
+pwsh scripts/coverage/run.ps1 -Target all -Distribution Ubuntu
+```
+
+Install the prerequisites and dependencies inside that Linux environment first.
+Its `node_modules` must contain Linux packages; a Windows dependency installation
+cannot be reused reliably. The wrapper does not install WSL or start Docker.
+
+CI calls the same runner's `collect`, `dotnet`, and `verify` stages, with the
+scanner's **begin → build → test → end** order around the .NET stage. Keep uploads
+in that workflow: a second independent scan would replace the project's analysis
+rather than combine languages.
 
 Missing fixtures fail the coverage scripts instead of silently skipping
 the SDK suites. `check-reports.py` rejects missing reports and reports with

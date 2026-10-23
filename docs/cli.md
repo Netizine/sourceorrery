@@ -1,7 +1,7 @@
 # CLI reference
 
 > [!NOTE]
-> This reference targets **0.1.4**, including `import` and
+> This reference targets **0.2.0**, including `import` and
 > `init --integration`. Check your installed version with
 > `sourceorrery --version`.
 

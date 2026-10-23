@@ -1,9 +1,9 @@
 # AI coding agents
 
 > [!NOTE]
-> This guide targets **0.1.4**. Install that CLI version before using
+> This guide targets **0.2.0**. Install that CLI version before using
 > `import` or `init --integration`; `sourceorrery --version` confirms the
-> installed version. See the [release roadmap](roadmap.md#release-014).
+> installed version. See the [release roadmap](roadmap.md#release-020).
 
 SourceOrrery ships two skills that let an AI coding agent install and use
 it, and move a project off `.env` files, while instructing the agent to keep

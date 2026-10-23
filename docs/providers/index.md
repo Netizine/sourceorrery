@@ -9,8 +9,8 @@ the provider's own service is the remote end.
 
 | Provider | `provider =` | Addressing keys | Status |
 |----------|--------------|-----------------|--------|
-| [HashiCorp Vault](hashicorp-vault.md), KV v2 | `"hashicorp-vault"` | `address` (`http://` or `https://`), `mount`, optional `namespace` | shipped (0.3.0) |
-| [AWS Secrets Manager](aws-secrets-manager.md) | `"aws-secrets-manager"` | `region`, optional `prefix`, optional `endpoint_url` | shipped (0.3.0) |
+| [HashiCorp Vault](hashicorp-vault.md), KV v2 | `"hashicorp-vault"` | `address` (`https://`, or `http://` on localhost), `mount`, optional `namespace` | implemented for 0.2.0 |
+| [AWS Secrets Manager](aws-secrets-manager.md) | `"aws-secrets-manager"` | `region`, optional `prefix`, optional `endpoint_url` | implemented for 0.2.0 |
 
 Opening a vault whose provider this build leaves out (its Cargo feature
 off) fails with `unsupported`, naming the provider; a provider that has not

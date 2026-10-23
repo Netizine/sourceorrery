@@ -15,6 +15,6 @@
     <RepositoryUrl>https://github.com/Netizine/sourceorrery</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <!-- Overridden by the release workflow: dotnet pack -p:Version=... -->
-    <Version>0.1.4</Version>
+    <Version>0.2.0</Version>
   </PropertyGroup>
 </Project>

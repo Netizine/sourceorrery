@@ -166,12 +166,17 @@ are still audited. `run` resolves every entry and starts the
 command with the values in its environment; a missing required secret aborts
 before the command starts.
 
-The vault file itself has to reach the runner. Vaults are local files and
-`*.sorvault` is gitignored on purpose; do not commit one. Use a
+For a local vault, the file itself has to reach the runner. `*.sorvault`
+is gitignored on purpose; do not commit one. Use a
 self-hosted runner with a persistent home directory, or a container image or
 volume provisioned with the vault, and provide the passphrase separately.
-Encrypted `backup` / `restore` and remote providers are on the
-[roadmap](/roadmap/).
+
+Version 0.2.0 also includes encrypted [backup and restore](/reference/cli/#backup-and-restore)
+for local vaults. A backup has its own passphrase and restores secret
+versions into a target vault; provision and unlock that vault separately.
+Alternatively, [remote providers](/providers/) retrieve secrets from AWS
+Secrets Manager or HashiCorp Vault using the provider's credentials, with
+no local vault file to copy.
 
 ## What a passphrase does not change
 

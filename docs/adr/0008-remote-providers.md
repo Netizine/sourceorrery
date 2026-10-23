@@ -121,3 +121,12 @@ Taken on the first implementation (this repository at this ADR's date, a
   declaration changes (ADR 0007: a minor release, 0.3.0).
 * Every future backend is judged by the same code as the local vault, and
   a backend that fails is reported scenario by scenario.
+
+## Release-planning amendment — 2026-10-23
+
+The provider work originally planned for 0.3.0 is included in **0.2.0**.
+The original release reference above is retained as decision history.
+This remains a minor release under ADR 0007: the new public `Manifest`
+and `OpenOptions` fields and `AuditOperation` variants can require changes
+to Rust callers. The C ABI and vault-file compatibility rules remain
+separate. See the [0.2.0 release scope](../roadmap.md#release-020).

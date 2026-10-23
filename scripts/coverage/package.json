@@ -1,7 +1,7 @@
 {
   "name": "sourceorrery-coverage-tools",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Isolated public-registry tooling for JavaScript coverage reports",
   "engines": {
     "node": ">=22.19.0"

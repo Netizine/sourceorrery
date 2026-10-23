@@ -4,7 +4,13 @@ All notable changes to SourceOrrery are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [Unreleased] — 0.2.0
+
+This is a minor release because the Rust API changes: `Manifest` gains
+remote-vault and rotation fields, `OpenOptions` gains a manifest option,
+and `AuditOperation` gains variants and a larger `ALL` array. Existing Rust
+struct literals and exhaustive matches may need changes. The C ABI and
+vault-file compatibility rules remain separate (ADR 0007).
 
 ### Security
 
@@ -56,6 +62,14 @@ The engineering pass of the milestone 4 security review
 
 ### Added
 
+* A CI coverage workflow for the Rust workspace and all SDK implementations,
+  plus JavaScript documentation tooling, with one SonarCloud analysis.
+  Python targets and source/test classification are explicit; Node and Astro
+  dependencies are installed before TypeScript analysis.
+  Local PowerShell and Ubuntu runners generate reports without uploading.
+* A provider bootstrap mode in the release workflow packages the real core
+  and three new provider crates before their first publication. Subsequent
+  release runs skip versions already published to crates.io.
 * A vault passphrase typed at the prompt must rate at least "good" on a
   strength estimate (a score 0 to 4 from the character runs, with common
   passwords, dictionary-style words, repeated characters, keyboard and
@@ -293,10 +307,6 @@ The engineering pass of the milestone 4 security review
 
 ### Added
 
-* A CI coverage workflow for the Rust workspace and all SDK implementations,
-  plus JavaScript documentation tooling, with one SonarCloud analysis.
-  Python targets and source/test classification are explicit; Node and Astro
-  dependencies are installed before TypeScript analysis.
 * `sourceorrery import <file>` moves a `.env` file into a vault: each value
   is stored as a secret (`DATABASE_URL` → `database-url`, tagged
   `imported-from`) and each key declared in `sourceorrery.toml`, appended

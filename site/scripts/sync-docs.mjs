@@ -84,7 +84,7 @@ const PAGES = {
 	'docs/roadmap.md': {
 		dest: 'roadmap.md',
 		description:
-			'Where SourceOrrery stands in 0.1.4: the local CLI, read-only SDKs, agent skills and supply-chain work, followed by the authenticated local broker and remote providers.',
+			'Where SourceOrrery stands in 0.2.0: local vaults, read-only SDKs, remote providers, guided setup and supply-chain work, with authenticated local isolation still planned.',
 	},
 	'docs/release.md': {
 		dest: 'reference/release.md',

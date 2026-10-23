@@ -1,6 +1,6 @@
 # sourceorrery.ai
 
-Documentation for the **SourceOrrery 0.1.4** build, using Astro 7 and Starlight.
+Documentation for the **SourceOrrery 0.2.0** build, using Astro 7 and Starlight.
 The public site is deployed separately; local changes do not publish it.
 
 ## Work on the documentation
@@ -38,7 +38,7 @@ generated: edit the original source instead.
 
 The homepage (`index.mdx`), `getting-started.mdx` and `guides/headless.md` are
 hand-written in `src/content/docs/`. Keep instructions and release links on
-0.1.4. The authenticated broker and agent isolation remain future work.
+0.2.0. The authenticated broker and agent isolation remain future work.
 
 Platform headings between `<!-- tabs: os -->` and `<!-- /tabs -->` in source
 Markdown become Starlight tabs. `syncKey="os"` remembers the selected platform

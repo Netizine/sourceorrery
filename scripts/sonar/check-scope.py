@@ -47,6 +47,8 @@ def main() -> None:
         "crates/sourceorrery-storage/src/sqlite/tests.rs",
         "crates/sourceorrery-cli/src/ui/view/tests.rs",
         "site/scripts/docs-tooling.test.mjs", "scripts/coverage/test_php_report.py",
+        "scripts/release/set_version_test.py", "scripts/release/test_publish_crates.py",
+        "scripts/release/package_managers_test.py", "scripts/ci/abi_check_test.py",
     }
     for label, expected, actual in [("production", expected_sources, sources), ("test", expected_tests, tests)]:
         if missing := expected - actual:

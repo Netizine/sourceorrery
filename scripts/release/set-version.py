@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Stamp one version into every package manifest in the repository.
 
-    python scripts/release/set-version.py 0.2.0          # write
-    python scripts/release/set-version.py 0.2.0 --check  # verify only
+    python scripts/release/set-version.py 0.2.0 --keep-node-links  # repository bump
+    python scripts/release/set-version.py 0.2.0                    # release build
+    python scripts/release/set-version.py 0.2.0 --check             # verify only
 
-The release workflow runs this before building, so the version typed into
+Requires Python 3.11 or later. The release workflow runs this before building,
+so the version typed into
 the workflow_dispatch form is the single source of truth. Touches:
 
   Cargo.toml                      [workspace.package] version and the
@@ -21,8 +23,9 @@ the workflow_dispatch form is the single source of truth. Touches:
                                   links so that `npm ci` resolves without the
                                   registry; stamping turns those into the
                                   version, which is what the published
-                                  package must depend on. `--check` accepts
-                                  either form.
+                                  package must depend on. --keep-node-links
+                                  preserves the repository links for local
+                                  development; --check accepts either form.
   bindings/java/pom.xml           the project version
   bindings/dotnet/Directory.Build.props             <Version>
 
@@ -32,36 +35,52 @@ v<version>), so nothing is stamped for them.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKSPACE_CRATES = [
-    "sourceorrery",
-    "sourceorrery-core",
-    "sourceorrery-crypto",
-    "sourceorrery-storage",
-    "sourceorrery-cli",
-    "sourceorrery-ffi",
-    "sourceorrery-conformance",
-    "sourceorrery-python",
-    "sourceorrery-node",
-]
+EXTENSION_MANIFESTS = ("bindings/python/Cargo.toml", "bindings/node/Cargo.toml")
 SEMVER = re.compile(r"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$")
 
 
+def local_crates() -> tuple[dict, set[str], dict[str, str]]:
+    """Read the workspace inventory so a new provider cannot be omitted silently."""
+    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]
+    members = set()
+    for pattern in workspace["members"]:
+        manifests = sorted(ROOT.glob(f"{pattern}/Cargo.toml"))
+        if not manifests:
+            raise SystemExit(f"set-version: no Cargo.toml for workspace member {pattern}")
+        for manifest in manifests:
+            package = tomllib.loads(manifest.read_text(encoding="utf-8"))["package"]
+            if package.get("version") != {"workspace": True}:
+                raise SystemExit(f"set-version: {manifest} must inherit the workspace version")
+            members.add(package["name"])
+    extensions = {
+        path: tomllib.loads((ROOT / path).read_text(encoding="utf-8"))["package"]["name"]
+        for path in EXTENSION_MANIFESTS
+    }
+    return workspace, members, extensions
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 2 or argv[1] in {"-h", "--help"}:
-        print(__doc__)
-        return 2
-    version = argv[1]
-    check = "--check" in argv[2:]
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, allow_abbrev=False)
+    parser.add_argument("version", help="version to stamp into all release packages")
+    parser.add_argument("--check", action="store_true", help="report mismatches without writing files")
+    parser.add_argument("--keep-node-links", action="store_true", help="preserve Node file:npm dependencies for repository bumps")
+    args = parser.parse_args(argv[1:])
+    version = args.version
+    check = args.check
     if not SEMVER.match(version):
         print(f"set-version: '{version}' is not a semantic version (expected e.g. 0.2.0)", file=sys.stderr)
         return 2
 
+    workspace, workspace_crates, extensions = local_crates()
+    crate_names = workspace_crates | set(extensions.values())
     changes: list[tuple[Path, str, str]] = []
 
     def edit(path: Path, transform) -> None:
@@ -79,17 +98,13 @@ def main(argv: list[str]) -> int:
     # Workspace Cargo.toml.
     def cargo_toml(text: str) -> str:
         text = sub_once(r'^(version = )"[^"]+"', rf'\1"{version}"', text, ROOT / "Cargo.toml")
-        for crate in (
-            "sourceorrery-core",
-            "sourceorrery-crypto",
-            "sourceorrery-storage",
-            "sourceorrery",
-            "sourceorrery-provider",
-            "sourceorrery-provider-vault",
-            "sourceorrery-provider-aws",
-        ):
+        for crate, dependency in workspace.get("dependencies", {}).items():
+            if not isinstance(dependency, dict) or "path" not in dependency or "version" not in dependency:
+                continue
+            if dependency.get("package", crate) not in workspace_crates:
+                continue
             text = sub_once(
-                rf'^({re.escape(crate)} = \{{ path = "crates/{re.escape(crate)}", version = )"[^"]+"',
+                rf'^({re.escape(crate)}\s*=\s*\{{[^\n]*?\bversion\s*=\s*)"[^"]+"',
                 rf'\1"{version}"',
                 text,
                 ROOT / "Cargo.toml",
@@ -99,20 +114,29 @@ def main(argv: list[str]) -> int:
     edit(ROOT / "Cargo.toml", cargo_toml)
 
     # Cargo.lock files: our crates' entries only.
-    def cargo_lock(path: Path):
+    def cargo_lock(path: Path, required: set[str]):
         def transform(text: str) -> str:
-            for crate in WORKSPACE_CRATES:
-                text = re.sub(
-                    rf'(\[\[package\]\]\nname = "{re.escape(crate)}"\nversion = )"[^"]+"',
-                    rf'\1"{version}"',
-                    text,
-                )
-            return text
+            blocks = re.split(r"(?=^\[\[package\]\])", text, flags=re.MULTILINE)
+            found = set()
+            for index, block in enumerate(blocks):
+                packages = tomllib.loads(block).get("package", [])
+                if not packages:
+                    continue
+                package = packages[0]
+                # A registry crate with the same name is not our local package.
+                if package["name"] in crate_names and "source" not in package:
+                    found.add(package["name"])
+                    blocks[index] = sub_once(r'^(version = )"[^"]+"', rf'\1"{version}"', block, path)
+            if missing := required - found:
+                raise SystemExit(f"set-version: {path} is missing local crates: {', '.join(sorted(missing))}")
+            return "".join(blocks)
 
         return transform
 
-    for lock in ("Cargo.lock", "bindings/python/Cargo.lock", "bindings/node/Cargo.lock"):
-        edit(ROOT / lock, cargo_lock(ROOT / lock))
+    edit(ROOT / "Cargo.lock", cargo_lock(ROOT / "Cargo.lock", workspace_crates))
+    for manifest, name in extensions.items():
+        lock = ROOT / Path(manifest).with_name("Cargo.lock")
+        edit(lock, cargo_lock(lock, {name}))
 
     # Extension crates.
     def extension_cargo(path: Path):
@@ -128,7 +152,7 @@ def main(argv: list[str]) -> int:
 
         return transform
 
-    for crate in ("bindings/python/Cargo.toml", "bindings/node/Cargo.toml"):
+    for crate in EXTENSION_MANIFESTS:
         edit(ROOT / crate, extension_cargo(ROOT / crate))
 
     edit(
@@ -143,7 +167,7 @@ def main(argv: list[str]) -> int:
         data = json.loads(text)
         data["version"] = version
         for name, spec in data.get("optionalDependencies", {}).items():
-            if name.startswith("@sourceorreryai/sdk-") and not (check and spec.startswith("file:")):
+            if name.startswith("@sourceorreryai/sdk-") and not ((check or args.keep_node_links) and spec.startswith("file:")):
                 data["optionalDependencies"][name] = version
         return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 

@@ -35,10 +35,11 @@ source code.
   server to get started.
 
 > [!NOTE]
-> In 0.1.4, retrieval uses the local vault and the caller's available unlock
-> credentials. The broker, verified workload identity, per-identity access
-> controls and remote vault providers describe the planned architecture,
-> not capabilities already enforced by the local SDKs.
+> In 0.2.0, retrieval uses an encrypted local vault or an optional AWS Secrets
+> Manager or HashiCorp Vault provider. Remote access uses the provider's
+> identity and policy controls; local access uses the caller's unlock
+> credentials. The authenticated local broker and same-user agent isolation
+> remain planned work, not guarantees of the local SDKs.
 
 One important qualification: removing `.env` files eliminates a major
 accidental-exposure route, but it does not protect against an AI agent or
@@ -246,7 +247,7 @@ Docker or CI. Removing the last protector is refused.
 | Backend | Status |
 |---------|--------|
 | Encrypted SQLite vault, key in OS store or passphrase | Shipped (milestone 1) |
-| Remote providers (HashiCorp Vault, AWS Secrets Manager) implementing the same contract ([providers](providers/index.md); identity, policy and revocation: [enterprise](enterprise.md)) | Shipped (0.3.0) |
+| Remote providers (HashiCorp Vault, AWS Secrets Manager) implementing the same contract ([providers](providers/index.md); identity, policy and revocation: [enterprise](enterprise.md)) | Implemented for 0.2.0 |
 
 Headless Linux servers often have no Secret Service daemon. The fallback is a
 passphrase protector with an independently provisioned secret — never silent

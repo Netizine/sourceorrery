@@ -28,9 +28,9 @@ repository and require `dev-main`.
 ### The native library, from the release
 
 The native library (`libsourceorrery_ffi.so` / `.dylib` /
-`sourceorrery_ffi.dll`) is in the `sourceorrery-ffi-0.1.4-<target>` archive
+`sourceorrery_ffi.dll`) is in the `sourceorrery-ffi-0.2.0-<target>` archive
 on the
-[v0.1.4 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4).
+[v0.2.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0).
 Download the one for your platform, unpack it, and name the directory in
 `SOURCEORRERY_NATIVE_DIR`:
 
@@ -39,9 +39,9 @@ Download the one for your platform, unpack it, and name the directory in
 #### Windows
 
 ```powershell
-$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.1.4"
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.2.0"
 $dir = "$env:LOCALAPPDATA\sourceorrery-ffi"
-Invoke-WebRequest "$release/sourceorrery-ffi-0.1.4-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
+Invoke-WebRequest "$release/sourceorrery-ffi-0.2.0-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
 Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 [Environment]::SetEnvironmentVariable("SOURCEORRERY_NATIVE_DIR", $dir, "User")
 ```
@@ -49,8 +49,8 @@ Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 #### macOS
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.4
-archive=sourceorrery-ffi-0.1.4-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.2.0
+archive=sourceorrery-ffi-0.2.0-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
@@ -59,8 +59,8 @@ export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
 #### Linux
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.1.4
-archive=sourceorrery-ffi-0.1.4-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.2.0
+archive=sourceorrery-ffi-0.2.0-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
 export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
@@ -180,7 +180,7 @@ loads:
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.1.4              # or stay on main for the newest changes
+git checkout v0.2.0              # or stay on main for the newest changes
 cargo build --release -p sourceorrery-ffi
 export SOURCEORRERY_NATIVE_DIR=/path/to/sourceorrery/target/release
 # PowerShell: $env:SOURCEORRERY_NATIVE_DIR = "C:\path\to\sourceorrery\target\release"

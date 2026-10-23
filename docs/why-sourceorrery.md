@@ -13,7 +13,7 @@ printing a secret, and give credentials a lifecycle beyond copying a line
 between `.env` files.
 
 > [!IMPORTANT]
-> **The boundary in 0.1.4:** SourceOrrery reduces plaintext storage and
+> **The boundary in 0.2.0:** SourceOrrery reduces plaintext storage and
 > accidental disclosure in development workflows. It does not isolate an
 > agent or other program that can unlock your vault with your OS credentials
 > or passphrase. The authenticated broker is planned work; see the
@@ -173,7 +173,7 @@ when ready.
 
 ## Why these design choices
 
-| Choice in 0.1.4 | Reason |
+| Choice in 0.2.0 | Reason |
 | --- | --- |
 | Encrypted local vault | Keep stored credential values out of plaintext project files, without requiring a cloud account or hosted service. |
 | OS credential store or passphrase protection | Protect the vault key rather than placing an unprotected key beside the encrypted data. |
@@ -181,6 +181,7 @@ when ready.
 | Metadata by default | Inspect names, versions and status without printing credentials; revealing a value is explicit. |
 | Versioning, time windows, recovery and audit | Manage changes and investigate use with more context than a copied configuration file provides. |
 | One Rust core and read-only SDKs | Keep retrieval behaviour consistent across supported languages and keep mutation out of the application-facing SDK API. |
+| Optional remote providers | Use AWS Secrets Manager or HashiCorp Vault when their existing identity and policy controls fit the application, while keeping references in the same manifest. |
 
 These choices also work for development without AI. A mistaken commit, an
 overly broad diagnostic and a compromised dependency do not require a model.
@@ -189,11 +190,13 @@ needs from the values used to run it.
 
 ## Where stronger controls are still needed
 
-SourceOrrery 0.1.4 is a local secrets tool. It has not been independently
-audited and should be used with development credentials, rather than treated
-as a production secret store. A program that can unlock the vault can read
-its secrets. A read-only SDK, a manifest and agent instructions do not change
-that boundary.
+SourceOrrery 0.2.0 supports local vaults and optional remote providers. It has
+not been independently audited and should be used with development credentials,
+rather than treated as a production secret store. A program that can unlock
+a local vault can read its secrets. Remote providers enforce their own
+identity and policy rules; code with an authorised provider credential can
+still request the values that credential permits. A read-only SDK, a
+manifest and agent instructions do not change those boundaries.
 
 When an agent must be unable to obtain a credential, that restriction needs
 to be enforced outside the agent: separate execution privileges, isolation,
@@ -201,7 +204,7 @@ and an authenticated service that authorises the operations it may perform.
 Network restrictions, narrowly scoped credentials, provider-side spending
 limits and rapid revocation can further reduce the consequences of misuse.
 The [planned broker](roadmap.md#milestone-3--local-broker-and-agent-isolation)
-addresses part of this future architecture; it is not included in 0.1.4.
+addresses part of this future architecture; it is not included in 0.2.0.
 
 If a credential has already been exposed, revoke or replace it at its issuer.
 Importing it into an encrypted vault does not remove copies from Git history,
