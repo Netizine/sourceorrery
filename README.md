@@ -6,11 +6,9 @@
 
 **Secrets belong to the runtime, not the repository.**
 
-Documentation: **[sourceorrery.ai](https://sourceorrery.ai)**
+Documentation: **[sourceorrery.ai](https://sourceorrery.ai)** [![AI Code Assurance](https://sonarcloud.io/api/project_badges/ai_code_assurance?project=Netizine_sourceorrery)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
 
-[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
-
-[![AI Code Assurance](https://sonarcloud.io/api/project_badges/ai_code_assurance?project=Netizine_sourceorrery)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
+[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery) [![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery) [![Security issues](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=software_quality_security_issues)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery) [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=coverage)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
 
 SourceOrrery is an open-source, Rust-native secrets platform for software
 development in the age of AI coding agents. It replaces the plaintext `.env`
