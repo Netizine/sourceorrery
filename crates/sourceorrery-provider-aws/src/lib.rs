@@ -99,8 +99,9 @@ fn unauthenticated(reason: String) -> SecretError {
 /// Map a service error code (and its message) to a `SecretError`. `what`
 /// names the secret for `not_found`.
 fn classify(code: Option<&str>, message: Option<&str>, what: &str) -> SecretError {
-    let detail = message.unwrap_or("no message");
-    let code_text = code.unwrap_or("unknown error");
+    // The service's own text, bounded and without control characters.
+    let detail = sourceorrery_core::text::foreign(message.unwrap_or("no message"));
+    let code_text = sourceorrery_core::text::foreign_bounded(code.unwrap_or("unknown error"), 60);
     match code {
         Some("ResourceNotFoundException") => SecretError::NotFound {
             name: what.to_owned(),
@@ -409,7 +410,13 @@ impl AwsClient {
             properties: props.properties(&self.vault_name, name, &newest.id, newest.created_on),
             deleted_on,
             scheduled_purge_on: Some(
-                deleted_on + time::Duration::days(i64::from(RECOVERY_WINDOW_DAYS)),
+                deleted_on
+                    .checked_add(time::Duration::days(i64::from(RECOVERY_WINDOW_DAYS)))
+                    .ok_or_else(|| {
+                        SecretError::Storage(format!(
+                            "'{name}' carries a deletion date out of range"
+                        ))
+                    })?,
             ),
             recovery_id: format!("sourceorrery://{}/deletedsecrets/{name}", self.vault_name),
         })

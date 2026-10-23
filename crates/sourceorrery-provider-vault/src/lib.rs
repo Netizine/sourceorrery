@@ -23,6 +23,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use reqwest::{Method, StatusCode};
+use sourceorrery_core::text;
 use sourceorrery_core::{
     AsyncSecretClient, AuditEvent, AuditQuery, DeletedSecret, Provider, RecoveryLevel, RemoteVault,
     Result, Secret, SecretBytes, SecretError, SecretProperties, SetSecretOptions,
@@ -168,15 +169,18 @@ impl VaultClient {
                     .and_then(|o| o.get("version"))
                     .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned));
                 if mount.data.kind != "kv" || version.as_deref() != Some("2") {
+                    // What the server says about itself is its text.
                     return Err(SecretError::InvalidArgument(format!(
                         "mount '{}' is {}{}, not a KV version 2 secrets engine",
                         self.mount,
                         if mount.data.kind.is_empty() {
                             "unknown".to_owned()
                         } else {
-                            mount.data.kind.clone()
+                            text::foreign_bounded(&mount.data.kind, 40)
                         },
-                        version.map(|v| format!(" version {v}")).unwrap_or_default()
+                        version
+                            .map(|v| format!(" version {}", text::foreign_bounded(&v, 40)))
+                            .unwrap_or_default()
                     )));
                 }
                 self.descriptor.id = mount.data.accessor;
@@ -186,7 +190,7 @@ impl VaultClient {
                 name: self.vault_name.clone(),
             }),
             StatusCode::FORBIDDEN => self.probe_mount().await,
-            status => Err(default_error(&path, status, &reply_errors(&reply))),
+            status => Err(default_error(&path, status, &reply.vault_errors())),
         }
     }
 
@@ -198,7 +202,7 @@ impl VaultClient {
             .await?;
         match reply.status {
             StatusCode::OK | StatusCode::FORBIDDEN => Ok(()),
-            StatusCode::NOT_FOUND if reply_errors(&reply).contains("no handler for route") => {
+            StatusCode::NOT_FOUND if reply.vault_errors().contains("no handler for route") => {
                 Err(SecretError::VaultNotFound {
                     name: self.vault_name.clone(),
                 })
@@ -207,7 +211,7 @@ impl VaultClient {
                 "mount '{}' is not a KV version 2 secrets engine",
                 self.mount
             ))),
-            status => Err(default_error(&path, status, &reply_errors(&reply))),
+            status => Err(default_error(&path, status, &reply.vault_errors())),
         }
     }
 
@@ -272,7 +276,7 @@ impl VaultClient {
             StatusCode::NOT_FOUND => Err(SecretError::NotFound {
                 name: name.to_owned(),
             }),
-            status => Err(default_error(path, status, &reply_errors(&reply))),
+            status => Err(default_error(path, status, &reply.vault_errors())),
         }
     }
 
@@ -286,7 +290,7 @@ impl VaultClient {
                 Ok(Some(parsed.data))
             }
             StatusCode::NOT_FOUND => Ok(None),
-            status => Err(default_error(&path, status, &reply_errors(&reply))),
+            status => Err(default_error(&path, status, &reply.vault_errors())),
         }
     }
 
@@ -389,7 +393,7 @@ impl VaultClient {
                     .collect()
             }
             StatusCode::NOT_FOUND => Vec::new(),
-            status => return Err(default_error(&path, status, &reply_errors(&reply))),
+            status => return Err(default_error(&path, status, &reply.vault_errors())),
         };
         names.sort();
         Ok(names)
@@ -410,16 +414,6 @@ impl VaultClient {
             }),
         }
     }
-}
-
-fn reply_errors(reply: &Reply) -> String {
-    #[derive(serde::Deserialize, Default)]
-    struct ErrorBody {
-        #[serde(default)]
-        errors: Vec<String>,
-    }
-    let parsed: ErrorBody = serde_json::from_slice(&reply.body).unwrap_or_default();
-    parsed.errors.join("; ")
 }
 
 #[async_trait]

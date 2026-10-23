@@ -34,11 +34,12 @@ pub struct VaultReady {
     pub created: bool,
 }
 
-/// An authenticator enrolment, shown once as a QR code.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// An authenticator enrolment, shown once as a QR code. Both texts hold
+/// the secret: wiped when dropped, never `Debug`-printed.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Enrolment {
-    pub uri: String,
-    pub key: String,
+    pub uri: Zeroizing<String>,
+    pub key: Zeroizing<String>,
 }
 
 /// One manifest entry as the setup check saw it.

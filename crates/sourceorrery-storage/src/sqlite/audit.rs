@@ -332,16 +332,92 @@ pub(super) fn write_head(
     id: i64,
     hash: &[u8; MAC_LEN],
 ) -> Result<()> {
+    let keyed = keyed_count(conn)?;
     conn.execute(
         "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![
             integrity::AUDIT_HEAD_KEY,
-            integrity::head_value(key, vault_id, id, hash)
+            integrity::head_value(key, vault_id, id, hash, keyed)
         ],
     )
     .map_err(db)?;
     Ok(())
+}
+
+/// Rows flagged as written with the metadata key.
+pub(super) fn keyed_count(conn: &Connection) -> Result<u64> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE keyed = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db)?;
+    Ok(u64::try_from(count).unwrap_or_default())
+}
+
+/// Walk the chain from the newest acknowledgement (history before it was
+/// reviewed and accepted by the vault's owner) to the end, checking that
+/// every row links to the row before it and that its hash verifies. `None`
+/// when the chain holds; otherwise a short, value-free description naming
+/// the first row that does not, suitable as audit detail.
+///
+/// This is the check the head alone cannot make: the head names the newest
+/// keyed row and counts the keyed rows, which catches rows removed from the
+/// end and keyed rows removed from the middle, but not a row replaced by a
+/// forgery between two others. Run at unlock, once, over the rows that
+/// matter; every operation after that relies on the head.
+pub(super) fn chain_problem(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+) -> Result<Option<String>> {
+    // The newest authentic acknowledgement, if any: the walk starts after it.
+    let mut acks = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events
+             WHERE operation = '{}' AND outcome = '{}' AND keyed = 1
+             ORDER BY id DESC",
+            AuditOperation::AuditVerify.as_str(),
+            AuditOutcome::Success.as_str()
+        ))
+        .map_err(db)?;
+    let mut start: Option<(i64, [u8; MAC_LEN])> = None;
+    for row in acks.query_map([], chain_row).map_err(db)? {
+        let row = row.map_err(db)?;
+        if row.is_acknowledgement() && row.authentic(key, vault_id) {
+            start = Some((row.id(), integrity::hash_or_zero(row.hash.as_deref())));
+            break;
+        }
+    }
+    let (after, mut prev) = start.unwrap_or((0, integrity::ZERO_HASH));
+    let zero = integrity::zero_key();
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events WHERE id > ?1 ORDER BY id"
+        ))
+        .map_err(db)?;
+    for row in stmt.query_map(params![after], chain_row).map_err(db)? {
+        let row = row.map_err(db)?;
+        let row_key = if row.keyed { key } else { &zero };
+        let fields = row.fields(vault_id);
+        let linked = row.prev_hash.as_deref() == Some(prev.as_slice());
+        let authentic = integrity::verify_audit_hash(row_key, &prev, &fields, row.hash.as_deref());
+        if !(linked && authentic) {
+            return Ok(Some(format!(
+                "audit chain broken at event {}: {}",
+                row.id(),
+                if linked {
+                    "its hash does not verify"
+                } else {
+                    "it does not follow the row before it (a row was removed or replaced)"
+                }
+            )));
+        }
+        prev = integrity::hash_or_zero(row.hash.as_deref());
+    }
+    Ok(None)
 }
 
 pub(super) fn read_head(conn: &Connection) -> Result<Option<String>> {
@@ -470,14 +546,27 @@ pub(super) fn head_problem(
         (None, Some(_)) => Some("audit chain head missing".to_owned()),
         (Some(_), None) => Some("audit chain head stale: no keyed rows remain".to_owned()),
         (Some(head), Some((id, hash))) => {
-            if integrity::head_matches(key, vault_id, &head, id, &hash) {
+            let keyed = keyed_count(conn)?;
+            if integrity::head_matches(key, vault_id, &head, id, &hash, keyed) {
                 None
             } else {
-                Some(match integrity::head_id(&head) {
-                    Some(head_id) if head_id > id => {
-                        format!("rows removed after event {id} (head was event {head_id})")
+                Some(match integrity::parse_head(&head) {
+                    Some(record) if record.id > id => {
+                        format!(
+                            "rows removed after event {id} (head was event {})",
+                            record.id
+                        )
                     }
-                    Some(head_id) => format!("audit chain head stale (head was event {head_id})"),
+                    Some(record) if record.id == id && record.keyed.is_some_and(|n| n != keyed) => {
+                        format!(
+                            "keyed audit rows removed or altered inside the log (the head records \
+                             {}, {keyed} remain)",
+                            record.keyed.unwrap_or_default()
+                        )
+                    }
+                    Some(record) => {
+                        format!("audit chain head stale (head was event {})", record.id)
+                    }
                     None => "audit chain head invalid".to_owned(),
                 })
             }

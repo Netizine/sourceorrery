@@ -9,14 +9,33 @@ crate, the C ABI and every SDK (Cargo feature `provider-vault`, part of
 ```toml
 [vaults.production]
 provider = "hashicorp-vault"
-address = "https://vault.example.com:8200"   # http:// or https://, no user info
+address = "https://vault.example.com:8200"   # https://; http:// only for localhost; no user info
 mount = "secret"                              # the KV v2 engine's mount path
 namespace = "platform"                        # optional; Vault Enterprise
 ```
 
 `VAULT_NAMESPACE` supplies the namespace when the table has none, and
 `VAULT_CACERT` a PEM root certificate for a private CA. TLS verification is
-never disabled.
+never disabled. The token travels with every request, so `http://` is
+accepted only for `localhost`, `127.0.0.0/8` or `::1` (a dev server), no
+redirect is ever followed (a 3xx answer is `provider_unavailable`), and a
+proxy named by `HTTP_PROXY` / `HTTPS_PROXY` is honoured as the Vault CLI
+honours it, except for a loopback address.
+
+## What the server's metadata decides
+
+SourceOrrery keeps a version's `enabled` flag, its time window, its
+content type and tags, the deletion marker and the rotation state in the
+secret's `custom_metadata`. Vault authenticates nothing there: whoever may
+`update` `<mount>/metadata/<name>` can re-enable a disabled version, clear
+a window, undelete a secret or mark an old version as a validated rotation
+candidate, and the client cannot tell. Grant `update` on the `metadata`
+path as you would grant policy administration, and keep it off the
+identities that only read (`read` on `data` and `metadata`). Two writers
+without `cas_required` on the mount can also overwrite each other's
+metadata ("can race" above). The local vault's tags and checkpoints have
+no counterpart here; see the [threat model](../threat-model.md), known
+gap 14.
 
 ## Credentials
 

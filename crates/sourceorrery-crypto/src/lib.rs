@@ -31,7 +31,7 @@ pub use envelope::{unwrap_key, wrap_key};
 pub use kdf::{Argon2Params, SALT_LEN, derive_key};
 pub use key::{KEY_LEN, SymmetricKey};
 pub use mac::{MAC_LEN, derive_subkey, mac, verify_mac};
-pub use random::{random_bytes, random_hex, random_passphrase, recovery_code};
+pub use random::{random_bytes, random_hex, random_passphrase, recovery_code, recovery_code_form};
 pub use totp::TotpSecret;
 
 use thiserror::Error;

@@ -38,10 +38,14 @@ The key is Argon2id of the passphrase with the header's parameters and
 salt, 32 bytes. The verifier is opened first: if it does not open, the
 passphrase is wrong (`backup_passphrase`) and nothing else is read. Then
 the payload is opened with the magic and the header bytes, exactly as
-stored, as additional authenticated data. Changing any header field, the
-nonce or any byte of the payload makes that fail (`crypto`); the two
-refusals are told apart so that a typo and a tampered file do not read the
-same.
+stored, as additional authenticated data. Changing the `format`, `vault`,
+`vault_id` or `created_on` fields, the nonce or any byte of the payload
+makes that fail (`crypto`), so a typo and a tampered file do not read the
+same. An edit to the `kdf` parameters, the `salt` or the `verifier`
+itself changes the derived key, so a correct passphrase fails the verifier
+and the file reads as `backup_passphrase`: those three fields are
+authenticated only once the passphrase is right, which is also when a
+tampered one can do no harm.
 
 Inside the payload:
 

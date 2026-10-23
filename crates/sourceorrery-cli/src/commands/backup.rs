@@ -33,9 +33,13 @@ fn passphrase_from_env() -> Option<SecretBytes> {
 }
 
 /// The passphrase a new backup is sealed under: the environment, or a
-/// prompt answered twice.
-fn new_backup_passphrase() -> anyhow::Result<SecretBytes> {
+/// prompt answered twice. A backup holds every value and only this
+/// passphrase protects it, so it is rated like a vault passphrase: a typed
+/// one must reach "good" unless `allow_weak`; one from the environment is
+/// warned about.
+fn new_backup_passphrase(allow_weak: bool) -> anyhow::Result<SecretBytes> {
     if let Some(pass) = passphrase_from_env() {
+        crate::context::warn_if_weak(&pass, BACKUP_PASSPHRASE_ENV);
         return Ok(pass);
     }
     if !std::io::stdin().is_terminal() {
@@ -43,15 +47,7 @@ fn new_backup_passphrase() -> anyhow::Result<SecretBytes> {
             "cannot prompt for the backup passphrase: stdin is not a terminal. Set {BACKUP_PASSPHRASE_ENV}."
         ));
     }
-    let first = prompt::read_hidden("Choose a passphrase for the backup: ")?;
-    let second = prompt::read_hidden("Confirm passphrase: ")?;
-    if first != second {
-        return Err(anyhow!("passphrases do not match"));
-    }
-    if first.is_empty() {
-        return Err(anyhow!("passphrase must not be empty"));
-    }
-    Ok(first)
+    Ctx::prompt_new_passphrase("for the backup", allow_weak)
 }
 
 /// The passphrase of an existing backup: the environment, or one prompt.
@@ -91,14 +87,14 @@ pub fn backup(ctx: &Ctx, args: &BackupArgs) -> anyhow::Result<()> {
     let vault = ctx.open_local_default("backup")?;
     // An export carries every value: the vault's guard applies.
     crate::commands::guard::enforce(ctx, &vault, "export the vault")?;
-    let passphrase = new_backup_passphrase()?;
+    let passphrase = new_backup_passphrase(args.allow_weak)?;
     let snapshot = vault.export(&ExportOptions {
         secrets: (!args.secret.is_empty()).then(|| args.secret.clone()),
         include_deleted: args.include_deleted,
     })?;
     let bytes = backup::seal(&snapshot, &passphrase, Argon2Params::default())?;
     drop(passphrase);
-    write_private(&args.out, &bytes)?;
+    write_private(&args.out, &bytes, args.force)?;
 
     let report = BackupReport {
         vault: vault.vault_name().to_owned(),
@@ -137,20 +133,35 @@ pub fn backup(ctx: &Ctx, args: &BackupArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Write the file for the current user only (0600 on Unix), replacing any
-/// existing file in one step.
-fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+/// Write the file for the current user only (0600 on Unix). The file is
+/// always created new, so the mode applies and a symbolic link in its
+/// place is never followed; with `replace` an existing file is removed
+/// first rather than truncated, so a file that was readable by others does
+/// not keep its mode under the export.
+fn write_private(path: &Path, bytes: &[u8], replace: bool) -> anyhow::Result<()> {
     use std::io::Write as _;
+    if replace {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err).with_context(|| format!("cannot replace {}", path.display()));
+            }
+        }
+    }
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("cannot write {}", path.display()))?;
+    let mut file = options.open(path).with_context(|| {
+        format!(
+            "cannot write {} (an existing file is replaced only with --force)",
+            path.display()
+        )
+    })?;
     file.write_all(bytes)?;
     file.sync_all()?;
     Ok(())

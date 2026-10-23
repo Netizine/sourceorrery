@@ -95,7 +95,7 @@ The 0.1.4 build includes these changes alongside milestones 1 and 2:
 - [x] Workload identity through the providers' federation (OIDC, workload and Kubernetes identities, instance roles); RBAC, policy and revocation administered in the provider and honoured by the client ([enterprise.md](enterprise.md); no SourceOrrery server, so nothing of ours to administer centrally)
 - [x] Rotation workflows with issuer cooperation (issue → validate → activate → retire): `sourceorrery secret rotate` over any vault with per-version properties, the issuer's side as commands in the manifest's `[rotation.<name>]` table ([rotation.md](rotation.md))
 - [x] Audit export: the local vault's chain as JSON Lines or OTLP log records, with the chain verification as a trailer, continuously with `--follow` (`sourceorrery audit export`); remote providers' trails located and documented, with the query that shows SourceOrrery's operations ([enterprise.md](enterprise.md#collecting-the-audit-trail))
-- [ ] Security review before "enterprise-ready" (the maintainer's own review, done locally over several days; not an engineering item)
+- [ ] Security review before "enterprise-ready" (the maintainer's own review, done locally over several days; not an engineering item). The engineering pass that precedes it, with what it found and fixed, is [docs/security-review.md](security-review.md)
 
 ## Milestone 5 — community expansion
 

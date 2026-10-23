@@ -11,7 +11,7 @@
 use hmac::{Hmac, KeyInit, Mac};
 use sha1::Sha1;
 use subtle::ConstantTimeEq;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::random;
 use crate::{CryptoError, Result};
@@ -58,22 +58,23 @@ impl TotpSecret {
     }
 
     /// The secret as unpadded base32 (RFC 4648), the form enrolment shows.
-    pub fn to_base32(&self) -> String {
-        base32_encode(&self.0)
+    /// As much a secret as the bytes: zeroised when dropped.
+    pub fn to_base32(&self) -> Zeroizing<String> {
+        Zeroizing::new(base32_encode(&self.0))
     }
 
     /// The `otpauth://totp/` URI an authenticator app enrols from.
     /// `issuer` and `account` are shown in the app; neither is secret. The
     /// algorithm, digits and period are the format's defaults (SHA-1, 6,
     /// 30), so they are left out: a shorter URI is a smaller QR code.
-    pub fn otpauth_uri(&self, issuer: &str, account: &str) -> String {
-        format!(
+    pub fn otpauth_uri(&self, issuer: &str, account: &str) -> Zeroizing<String> {
+        Zeroizing::new(format!(
             "otpauth://totp/{}:{}?secret={}&issuer={}",
             percent_encode(issuer),
             percent_encode(account),
-            self.to_base32(),
+            *self.to_base32(),
             percent_encode(issuer)
-        )
+        ))
     }
 
     /// The code for `counter` (RFC 4226 dynamic truncation, [`DIGITS`] digits).
@@ -285,10 +286,10 @@ mod tests {
         let secret = rfc_secret();
         let uri = secret.otpauth_uri("SourceOrrery", "vault development");
         assert_eq!(
-            uri,
+            *uri,
             format!(
                 "otpauth://totp/SourceOrrery:vault%20development?secret={}&issuer=SourceOrrery",
-                secret.to_base32()
+                *secret.to_base32()
             )
         );
         assert_eq!(format!("{secret:?}"), "TotpSecret([REDACTED])");

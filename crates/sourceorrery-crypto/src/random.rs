@@ -57,6 +57,23 @@ pub fn recovery_code() -> Result<Zeroizing<String>> {
     Ok(code)
 }
 
+/// The form a typed passphrase takes as a recovery code, when it has the
+/// shape of one: [`CODE_GROUPS`] × [`CODE_GROUP_LEN`] characters of the
+/// code alphabet once normalised, typed with at most a few separators.
+/// `None` for anything else, so a passphrase that happens to be 25 letters
+/// long is never mistaken for a code: an unlock tries the passphrase as
+/// typed first and this form second.
+pub fn recovery_code_form(typed: &str) -> Option<Zeroizing<String>> {
+    let expected = CODE_GROUPS * CODE_GROUP_LEN;
+    if typed.len() > expected + CODE_GROUPS + 4 {
+        return None;
+    }
+    let normalised = normalise_recovery_code(typed);
+    let shaped =
+        normalised.len() == expected && normalised.bytes().all(|b| CODE_ALPHABET.contains(&b));
+    shaped.then_some(normalised)
+}
+
 /// Normalise a recovery code as a person typed it: uppercase, hyphens and
 /// spaces removed, the look-alikes Crockford's alphabet maps (I and L to 1,
 /// O to 0) folded, so what was written down unlocks even when read back

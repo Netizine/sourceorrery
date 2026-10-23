@@ -348,44 +348,95 @@ pub(crate) fn verify_audit_hash(
     hash.is_some_and(|hash| crypto::verify_mac(key, &fields.canonical(prev_hash), hash).is_ok())
 }
 
-fn head_canonical(vault_id: &str, id: i64, hash: &[u8]) -> Vec<u8> {
-    Canonical::new(AUDIT_HEAD_DOMAIN, vault_id)
+/// The head's MAC input: the newest keyed row and, since the count was
+/// added, how many keyed rows the log holds. A head written before the
+/// count existed (`keyed` is `None`) is accepted by [`head_matches`] until
+/// the next keyed write replaces it; the full chain walk at unlock covers
+/// such a file in the meantime.
+fn head_canonical(vault_id: &str, id: i64, hash: &[u8], keyed: Option<u64>) -> Vec<u8> {
+    let canonical = Canonical::new(AUDIT_HEAD_DOMAIN, vault_id)
         .int(id)
-        .bytes(hash)
-        .finish()
+        .bytes(hash);
+    match keyed {
+        Some(keyed) => canonical
+            .str("keyed")
+            .int(i64::try_from(keyed).unwrap_or(i64::MAX))
+            .finish(),
+        None => canonical.finish(),
+    }
 }
 
 /// `vault_meta` value recording that row `id` with chain hash `hash` is the
-/// newest row written with the metadata key: `<id>:<hex HMAC>`.
-pub(crate) fn head_value(key: &SymmetricKey, vault_id: &str, id: i64, hash: &[u8]) -> String {
-    let mac = crypto::mac(key, &head_canonical(vault_id, id, hash));
-    format!("{id}:{}", hex::encode(mac))
+/// newest row written with the metadata key, and that `keyed` rows carry
+/// the key: `<id>:<keyed>:<hex HMAC>`. The count is what lets a write
+/// notice a keyed row removed from the middle of the log without walking
+/// it: a removed or demoted row changes the count under a MAC the
+/// tamperer cannot recompute.
+pub(crate) fn head_value(
+    key: &SymmetricKey,
+    vault_id: &str,
+    id: i64,
+    hash: &[u8],
+    keyed: u64,
+) -> String {
+    let mac = crypto::mac(key, &head_canonical(vault_id, id, hash, Some(keyed)));
+    format!("{id}:{keyed}:{}", hex::encode(mac))
+}
+
+/// A parsed head record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HeadRecord {
+    /// The newest keyed row it names.
+    pub(crate) id: i64,
+    /// Keyed rows in the log when it was written; `None` for a head
+    /// written before the count existed.
+    pub(crate) keyed: Option<u64>,
+    mac: Vec<u8>,
+}
+
+/// Parse a head record, in either form.
+pub(crate) fn parse_head(head: &str) -> Option<HeadRecord> {
+    let parts: Vec<&str> = head.split(':').collect();
+    let (id, keyed, mac_hex) = match parts.as_slice() {
+        [id, mac_hex] => (id, None, mac_hex),
+        [id, keyed, mac_hex] => (id, Some(keyed.parse::<u64>().ok()?), mac_hex),
+        _ => return None,
+    };
+    Some(HeadRecord {
+        id: id.parse().ok()?,
+        keyed,
+        mac: hex::decode(mac_hex).ok()?,
+    })
 }
 
 /// The row id a head record claims, if it parses.
+#[cfg(test)]
 pub(crate) fn head_id(head: &str) -> Option<i64> {
-    head.split_once(':')
-        .and_then(|(id, _)| id.parse::<i64>().ok())
+    parse_head(head).map(|h| h.id)
 }
 
-/// True when `head` was produced by [`head_value`] for exactly this row.
+/// True when `head` was produced by [`head_value`] for exactly this row
+/// and, when the head carries a count, exactly `keyed` keyed rows.
 pub(crate) fn head_matches(
     key: &SymmetricKey,
     vault_id: &str,
     head: &str,
     id: i64,
     hash: &[u8],
+    keyed: u64,
 ) -> bool {
-    let Some((head_id, mac_hex)) = head.split_once(':') else {
+    let Some(record) = parse_head(head) else {
         return false;
     };
-    if head_id.parse::<i64>().ok() != Some(id) {
+    if record.id != id || record.keyed.is_some_and(|n| n != keyed) {
         return false;
     }
-    let Ok(mac) = hex::decode(mac_hex) else {
-        return false;
-    };
-    crypto::verify_mac(key, &head_canonical(vault_id, id, hash), &mac).is_ok()
+    crypto::verify_mac(
+        key,
+        &head_canonical(vault_id, id, hash, record.keyed),
+        &record.mac,
+    )
+    .is_ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -710,16 +761,28 @@ mod tests {
         };
         assert!(!verify_audit_hash(&k, &h1, &unkeyed, Some(&h2)));
 
-        let head = head_value(&k, "vault", 2, &h2);
-        assert!(head_matches(&k, "vault", &head, 2, &h2));
-        assert!(!head_matches(&k, "vault", &head, 1, &h1));
-        assert!(!head_matches(&k, "other", &head, 2, &h2));
-        assert!(!head_matches(&key(4), "vault", &head, 2, &h2));
-        assert!(!head_matches(&k, "vault", "garbage", 2, &h2));
-        assert!(!head_matches(&k, "vault", "2:zz", 2, &h2));
+        let head = head_value(&k, "vault", 2, &h2, 2);
+        assert!(head_matches(&k, "vault", &head, 2, &h2, 2));
+        assert!(!head_matches(&k, "vault", &head, 1, &h1, 2));
+        assert!(!head_matches(&k, "other", &head, 2, &h2, 2));
+        assert!(!head_matches(&key(4), "vault", &head, 2, &h2, 2));
+        assert!(!head_matches(&k, "vault", "garbage", 2, &h2, 2));
+        assert!(!head_matches(&k, "vault", "2:zz", 2, &h2, 2));
+        assert!(
+            !head_matches(&k, "vault", &head, 2, &h2, 1),
+            "a keyed row removed from the middle changes the count"
+        );
         assert_eq!(head_id(&head), Some(2));
         assert_eq!(head_id("garbage"), None);
         assert_eq!(head_id("x:abcd"), None);
+        // A head written before the count existed is accepted with any
+        // count until it is rewritten.
+        let legacy_mac = crypto::mac(&k, &head_canonical("vault", 2, &h2, None));
+        let legacy = format!("2:{}", hex::encode(legacy_mac));
+        assert!(head_matches(&k, "vault", &legacy, 2, &h2, 7));
+        assert!(!head_matches(&k, "vault", &legacy, 3, &h2, 7));
+        assert_eq!(parse_head(&legacy).unwrap().keyed, None);
+        assert_eq!(parse_head(&head).unwrap().keyed, Some(2));
     }
 
     #[test]

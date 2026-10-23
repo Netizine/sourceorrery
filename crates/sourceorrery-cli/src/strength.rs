@@ -234,9 +234,9 @@ pub fn estimate(passphrase: &str) -> Estimate {
     let candidates: [Zeroizing<String>; 5] = [
         lower.clone(),
         stripped.clone(),
-        Zeroizing::new(unleet(&lower)),
-        Zeroizing::new(unleet(&stripped)),
-        Zeroizing::new(reverse(&lower)),
+        unleet(&lower),
+        unleet(&stripped),
+        reverse(&lower),
     ];
     if candidates
         .iter()
@@ -254,7 +254,7 @@ pub fn estimate(passphrase: &str) -> Estimate {
 
     // Deductions and warnings.
     let unique = {
-        let mut seen: Vec<char> = Vec::with_capacity(len);
+        let mut seen: Zeroizing<Vec<char>> = Zeroizing::new(Vec::with_capacity(len));
         for c in chars.iter() {
             if !seen.contains(c) {
                 seen.push(*c);
@@ -430,10 +430,13 @@ fn class_of(c: char) -> Class {
     }
 }
 
-/// Undo the usual letter-for-digit substitutions (`p4ssw0rd`).
-fn unleet(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
+/// Undo the usual letter-for-digit substitutions (`p4ssw0rd`). Built in
+/// place into a zeroising buffer of the right size: no intermediate copy
+/// of the passphrase is left behind.
+fn unleet(text: &str) -> Zeroizing<String> {
+    let mut out = Zeroizing::new(String::with_capacity(text.len()));
+    for c in text.chars() {
+        out.push(match c {
             '4' | '@' => 'a',
             '3' => 'e',
             '1' | '!' | '|' => 'i',
@@ -441,18 +444,22 @@ fn unleet(text: &str) -> String {
             '5' | '$' => 's',
             '7' => 't',
             other => other,
-        })
-        .collect()
+        });
+    }
+    out
 }
 
-fn reverse(text: &str) -> String {
-    text.chars().rev().collect()
+fn reverse(text: &str) -> Zeroizing<String> {
+    let mut out = Zeroizing::new(String::with_capacity(text.len()));
+    out.extend(text.chars().rev());
+    out
 }
 
 /// The longest run of consecutive characters from one of [`SEQUENCES`],
 /// forwards or backwards.
 fn longest_run(lower: &str) -> usize {
-    let chars: Vec<char> = lower.chars().collect();
+    let mut chars: Zeroizing<Vec<char>> = Zeroizing::new(Vec::with_capacity(lower.len()));
+    chars.extend(lower.chars());
     let mut best = 0;
     for sequence in SEQUENCES {
         let seq: Vec<char> = sequence.chars().collect();

@@ -486,6 +486,11 @@ pub fn validate_secret_name(name: &str) -> Result<()> {
             "may contain only ASCII letters, digits and hyphens",
         ));
     }
+    if name.starts_with('-') || name.ends_with('-') {
+        // A leading hyphen reads as an option on a command line, and a
+        // name that is only hyphens says nothing; neither is portable.
+        return Err(invalid("must not start or end with a hyphen"));
+    }
     Ok(())
 }
 

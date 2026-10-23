@@ -36,6 +36,7 @@ pub mod policy;
 pub mod remote;
 pub mod rotation;
 pub mod secret;
+pub mod text;
 pub mod timestamp;
 pub mod traits;
 pub mod vault;

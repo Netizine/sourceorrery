@@ -40,18 +40,9 @@ impl Reply {
     /// The `errors` strings Vault put in a failure body, joined, truncated.
     /// They are Vault's own diagnostics (`permission denied`, a missing
     /// field name) and never hold a secret value.
-    fn vault_errors(&self) -> String {
+    pub(crate) fn vault_errors(&self) -> String {
         let parsed: ErrorBody = serde_json::from_slice(&self.body).unwrap_or_default();
-        let mut text = parsed.errors.join("; ");
-        if text.len() > 200 {
-            let mut end = 200;
-            while !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            text.truncate(end);
-            text.push('…');
-        }
-        text
+        sourceorrery_core::text::foreign(&parsed.errors.join("; "))
     }
 }
 
@@ -83,11 +74,19 @@ impl Transport {
     /// A transport for `address` (`https://host:8200`, no trailing slash
     /// needed). `ca_pem` adds a root certificate for a private CA.
     pub fn new(address: &str, namespace: Option<String>, ca_pem: Option<&[u8]>) -> Result<Self> {
+        // No redirect is ever followed: the token goes in a header that a
+        // cross-host redirect would carry along, and a Vault server does
+        // not redirect its API. A proxy from the environment is honoured
+        // (as the Vault CLI does) except for the local machine.
         let mut builder = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(60))
             .user_agent(concat!("sourceorrery/", env!("CARGO_PKG_VERSION")))
+            .redirect(reqwest::redirect::Policy::none())
             .https_only(address.starts_with("https://"));
+        if sourceorrery_core::remote::is_loopback_url(address) {
+            builder = builder.no_proxy();
+        }
         if let Some(pem) = ca_pem {
             let cert = reqwest::Certificate::from_pem(pem).map_err(|err| {
                 SecretError::InvalidArgument(format!(
@@ -138,7 +137,22 @@ impl Transport {
         tracing::debug!(path, "vault request");
         let response = request.send().await.map_err(unavailable)?;
         let status = response.status();
+        if status.is_redirection() {
+            return Err(SecretError::ProviderUnavailable {
+                provider: Provider::HashicorpVault.name().to_owned(),
+                reason: format!(
+                    "{path} answered {status}: a redirect is not followed (the token is never \
+                     sent to another address); check the address"
+                ),
+            });
+        }
+        if response.content_length().is_some_and(|len| len > MAX_BODY) {
+            return Err(too_large(path));
+        }
         let body = Zeroizing::new(response.bytes().await.map_err(unavailable)?.to_vec());
+        if body.len() as u64 > MAX_BODY {
+            return Err(too_large(path));
+        }
         let reply = Reply { status, body };
         if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
             return Err(SecretError::ProviderUnavailable {
@@ -170,6 +184,18 @@ impl Transport {
         }
         Err(default_error(path, reply.status, &errors))
     }
+}
+
+/// Most bytes read from a reply: a value is at most a megabyte, and a
+/// listing a few; anything larger is not a KV reply.
+const MAX_BODY: u64 = 8 * 1024 * 1024;
+
+fn too_large(path: &str) -> SecretError {
+    SecretError::Storage(format!(
+        "{} answered {path} with more than {} bytes; not a KV reply",
+        Provider::HashicorpVault.display_name(),
+        MAX_BODY
+    ))
 }
 
 /// The error for a request that could not be sent or answered.

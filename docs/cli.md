@@ -127,9 +127,12 @@ one either side of it (30 seconds each), and never for a step at or
 before the last accepted one.
 
 A refusal is `permission_denied`, prints nothing of the value, and is
-audited under `guard` with what was checked and the outcome. The guard
-is deliberately narrow: `run`, `check`, the `ui` browser (which never
-shows a value) and every SDK are untouched, so an application keeps
+audited under `guard` with what was checked and the outcome. A recovery
+code satisfies the passphrase factor, since it unlocks the vault by
+design. The guard belongs to the local vault file: a reveal from a
+[remote vault](providers/index.md) is governed by the provider's policy.
+The guard is deliberately narrow: `run`, `check`, the `ui` browser (which
+never shows a value) and every SDK are untouched, so an application keeps
 starting with its vault unlocked by the OS keyring while a person at the
 keyboard, or an agent driving the CLI, must present the passphrase and
 the phone to read an API key out. It is not a boundary against code
@@ -148,7 +151,7 @@ Code from the app: 123456
 
 | Command | Description |
 |---------|-------------|
-| `secret set NAME [--stdin \| --from-file FILE] [--confirm] [--allow-empty] [--keep-trailing-newline] [--content-type T] [--tag K=V]... [--not-before T] [--expires T] [--disabled]` | Store a **new version**. Value source: `--from-file`, else stdin when piped (`--stdin` to force), else a hidden prompt. One trailing newline from stdin is stripped. There is no `--value` option. |
+| `secret set NAME [--stdin \| --from-file FILE] [--confirm] [--allow-empty] [--keep-trailing-newline] [--content-type T] [--tag K=V]... [--not-before T] [--expires T] [--disabled]` | Store a **new version**. Value source: `--from-file`, else stdin when piped (`--stdin` to force), else a hidden prompt. One trailing newline from stdin is stripped. There is no `--value` option. Tag keys under `sourceorrery.` are SourceOrrery's own (rotation and restore state) and refused. |
 | `secret get NAME [--version ID] [--reveal] [--raw]` | Metadata (default). `--reveal` prints the value + newline; `--raw` omits the newline. `-o json --reveal` adds `value` (or `value_hex` for non-UTF-8). Without `--version`, the newest *accessible* version is used. `--reveal` is subject to the [reveal guard](#the-reveal-guard). |
 | `secret list [--deleted] [--limit N] [--after NAME]` | Live secrets (newest version each), or soft-deleted ones, in name order. Metadata only. `--limit N` shows one page of up to N and, while names follow, the `--after NAME` that continues it (the last page can be empty when the names left were deleted ones, or live ones under `--deleted`); `-o json` then prints `{"items": [...], "continuation": "NAME"}` instead of the plain array. Each page is one `secret_list` audit event. |
 | `secret versions NAME` | Every version, newest first, with status. |
@@ -293,6 +296,14 @@ exits 0.
 
 ## Project manifest: `init`, `import`, `check`, `run`
 
+Without `--manifest`, the commands look for `sourceorrery.toml` in the
+current directory and its parents, no further than the repository (the
+first directory with a `.git` entry), the home directory, and, on Unix,
+directories and files owned by the home directory's owner: a manifest
+decides which vault a name means and where a remote provider's credential
+is sent, so one planted in `/tmp` or a shared parent is never picked up.
+`--manifest FILE` uses the file it names.
+
 `sourceorrery.toml` is the committed, value-free replacement for `.env`:
 
 ```toml
@@ -435,15 +446,18 @@ not. Paths per agent, the Claude Code plugin and what the skills do:
 ## `backup` and `restore`
 
 ```
-sourceorrery backup --out FILE [--secret NAME]... [--include-deleted] [--force]
+sourceorrery backup --out FILE [--secret NAME]... [--include-deleted] [--force] [--allow-weak]
 sourceorrery restore FILE [--only NAME]... [--overwrite] [--keep-deleted] [--dry-run]
 ```
 
 `backup` writes every live secret of the selected vault, every version with
 its value (disabled and expired ones included), into one file sealed under
-a passphrase of its own, asked twice, or taken from
-`SOURCEORRERY_BACKUP_PASSPHRASE` for scripts; it is never a command-line
-argument. When the vault's [reveal guard](#the-reveal-guard) is on, the
+a passphrase of its own, asked twice and rated like a vault passphrase
+(below "good" is refused unless `--allow-weak`), or taken from
+`SOURCEORRERY_BACKUP_PASSPHRASE` for scripts (warned about when weak); it
+is never a command-line argument. The file is always created new,
+readable by the current user alone, never through a link in its place;
+`--force` removes an existing file first. When the vault's [reveal guard](#the-reveal-guard) is on, the
 vault passphrase and a code are asked for first, as for a reveal.
 `--secret` limits the backup to named secrets, `--include-deleted`
 adds the soft-deleted ones with their deleted state, and an existing file

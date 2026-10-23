@@ -51,7 +51,7 @@ pub struct Cli {
         value_name = "CODE",
         hide_env_values = true
     )]
-    pub code: Option<String>,
+    pub code: Option<crate::context::Code>,
 
     /// With no subcommand, `sourceorrery` prints its banner and a quick start.
     #[command(subcommand)]
@@ -371,7 +371,8 @@ pub enum RotationStep {
 pub struct SecretRotateArgs {
     /// Secret name.
     pub name: String,
-    /// Manifest path (default: discovered upwards from the current directory). The manifest's
+    /// Manifest path (default: found upwards from the current directory, within the
+    /// repository and your home directory). The manifest's
     /// `[rotation.NAME]` table supplies the issue, validate and retire commands and the grace period.
     #[arg(long, value_name = "FILE")]
     pub manifest: Option<PathBuf>,
@@ -723,6 +724,9 @@ pub struct BackupArgs {
     /// Replace an existing file.
     #[arg(long)]
     pub force: bool,
+    /// Accept a typed backup passphrase that rates below "good".
+    #[arg(long)]
+    pub allow_weak: bool,
 }
 
 #[derive(Debug, Args)]
@@ -746,7 +750,8 @@ pub struct RestoreArgs {
 
 #[derive(Debug, Args)]
 pub struct CheckArgs {
-    /// Manifest path (default: discovered upwards from the current directory).
+    /// Manifest path (default: found upwards from the current directory, within the
+    /// repository and your home directory).
     #[arg(long, value_name = "FILE")]
     pub manifest: Option<PathBuf>,
     /// Also read each value and discard it, so the status says whether this
@@ -759,7 +764,8 @@ pub struct CheckArgs {
 
 #[derive(Debug, Args)]
 pub struct RunArgs {
-    /// Manifest path (default: discovered upwards from the current directory).
+    /// Manifest path (default: found upwards from the current directory, within the
+    /// repository and your home directory).
     #[arg(long, value_name = "FILE")]
     pub manifest: Option<PathBuf>,
     /// Command to run, with its arguments. Separate from sourceorrery flags with `--`.

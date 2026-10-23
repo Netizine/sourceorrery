@@ -27,7 +27,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `created_on` | Unix nanoseconds |
 | `recovery_level` | `"recoverable"` or `"purgeable"` (JSON string) |
 | `retention_days` | 7–90 |
-| `audit_head` | `<id>:<hex HMAC>` — the newest keyed audit row; see *Audit chain* |
+| `audit_head` | `<id>:<keyed>:<hex HMAC>` — the newest keyed audit row and the number of keyed rows; see *Audit chain* (a head written by an earlier build has no count, `<id>:<hex HMAC>`, and is replaced at the next keyed write) |
 | `settings_tag` | hex HMAC-SHA256 over the settings record (`schema_version`, `name`, `id`, `created_on`, `recovery_level`, `retention_days`, and `second_factor` and `reveal_guard` when present); verified on every unlock |
 | `second_factor` | present once a second factor is enrolled: JSON `{"nonce", "ciphertext", "enrolled_on", "verified", "last_counter"}`; the TOTP secret sealed with the vault key under the AAD `sourceorrery/v3/second-factor/<id>`, whether one code has been accepted since enrolment, and the last accepted step (a code for it or an earlier step is refused). Covered by `settings_tag` |
 | `reveal_guard` | present when a reveal or export must present something again: JSON `{"passphrase", "second_factor"}`. Covered by `settings_tag`, so a file edit cannot switch it off |
@@ -225,11 +225,19 @@ the chain, so removing or inserting one ahead of a keyed row is detected.
 
 Removing rows from the **end** of the log leaves a valid chain, so the
 newest keyed row is also pinned by `vault_meta.audit_head =
-"<id>:<hex HMAC-SHA256(metadata key, canonical(audit-head, vault id, id, hash))>"`,
-rewritten on every keyed append. Before every keyed append the vault checks
-that the head still names the newest keyed row; if it does not — rows were
-removed after it, or the head record is missing or invalid — it first
-appends an `audit_verify` / `failure` row saying so (for example
+"<id>:<keyed>:<hex HMAC-SHA256(metadata key, canonical(audit-head, vault id, id, hash, "keyed", keyed))>"`,
+where `keyed` is the number of rows flagged `keyed = 1`, rewritten on every
+keyed append. Removing a row from the **middle** leaves the head naming
+the newest row, so two more checks exist: every unlock walks the chain
+from the newest acknowledgement to the end and refuses on the first row
+that does not follow its predecessor or whose hash does not verify, and
+the keyed count under the head's MAC lets every operation notice a keyed
+row removed or demoted since the head was written without walking the
+log. Before every keyed append the vault checks that the head still names
+the newest keyed row and counts what the log holds; if it does not — rows
+were removed after it, a keyed row is missing, or the head record is
+missing or invalid — it first appends an `audit_verify` / `failure` row
+saying so (for example
 `rows removed after event 41 (head was event 44)`), and only then the
 requested row. The evidence is itself part of the chain; removing it is
 another truncation and is detected the same way at the next keyed write.

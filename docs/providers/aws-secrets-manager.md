@@ -11,8 +11,23 @@ default in the CLI, the `sourceorrery` crate, the C ABI and every SDK
 provider = "aws-secrets-manager"
 region = "eu-west-1"
 prefix = "myapp/"                          # optional: every secret name is placed under it
-endpoint_url = "http://localhost:4566"     # optional: a private endpoint or an emulator
+endpoint_url = "http://localhost:4566"     # optional: a private endpoint or an emulator (https://, or http:// for localhost)
 ```
+
+A prefix should end in a separator (`myapp/`): names never start with a
+hyphen, but `myapp` alone would place `myapp` and `myapp-other` under one
+roof.
+
+## What the service's tags decide
+
+A version's `enabled` flag, its time window and content type, and the
+rotation state live in the secret's tags, which Secrets Manager does not
+authenticate: an identity allowed `secretsmanager:TagResource` can
+re-enable a disabled version, clear a window or mark a retired version as
+a validated rotation candidate, and the client cannot tell. Treat
+`TagResource` and `UntagResource` on these secrets as policy
+administration; the local vault's tags and checkpoints have no
+counterpart here ([threat model](../threat-model.md), known gap 14).
 
 ## Credentials
 

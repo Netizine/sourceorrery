@@ -155,19 +155,40 @@ impl Manifest {
         toml::to_string_pretty(self).map_err(|err| SecretError::Manifest(err.to_string()))
     }
 
-    /// Walk up from `start` looking for [`MANIFEST_FILE_NAME`].
+    /// Walk up from `start` looking for [`MANIFEST_FILE_NAME`], within the
+    /// directories the caller can be expected to trust.
+    ///
+    /// A manifest decides which vault a name means and, for a remote vault,
+    /// where the process sends the credentials its environment holds, so
+    /// the walk must not wander into directories other users write. It
+    /// stops after the first directory that holds a `.git` entry (the
+    /// repository the project lives in), after the user's home directory,
+    /// and, on Unix, before any directory or manifest owned by a different
+    /// user than the home directory's owner (`/tmp`, a shared parent). A
+    /// manifest found outside those bounds is ignored as if absent; an
+    /// explicit path (`--manifest`, `OpenOptions::manifest`) is never
+    /// subject to this.
     pub fn discover(start: &Path) -> Option<PathBuf> {
         let mut dir = if start.is_file() {
             start.parent()?
         } else {
             start
         };
+        let home = home_directory();
+        let owner = trusted_owner(home.as_deref(), dir);
         loop {
             let candidate = dir.join(MANIFEST_FILE_NAME);
             if candidate.is_file() {
-                return Some(candidate);
+                return owned_by(&candidate, owner).then_some(candidate);
             }
-            dir = dir.parent()?;
+            if dir.join(".git").exists() || home.as_deref() == Some(dir) {
+                return None;
+            }
+            let parent = dir.parent()?;
+            if !owned_by(parent, owner) {
+                return None;
+            }
+            dir = parent;
         }
     }
 
@@ -217,11 +238,15 @@ impl Manifest {
                 "[project].name must not be empty".to_owned(),
             ));
         }
+        // Field values are never repeated in a diagnostic: a value pasted
+        // where a name belongs may be a secret. Table keys are the user's
+        // own structure and are named.
         validate_vault_name(&self.project.vault)
-            .map_err(|err| SecretError::Manifest(format!("[project].vault: {err}")))?;
+            .map_err(|_| SecretError::Manifest(format!("[project].vault {VAULT_NAME_RULE}")))?;
         for (name, remote) in &self.vaults {
+            // A table key is the user's own structure, so it is named.
             validate_vault_name(name)
-                .map_err(|err| SecretError::Manifest(format!("[vaults.{name}]: {err}")))?;
+                .map_err(|_| SecretError::Manifest(format!("[vaults.{name}] {VAULT_NAME_RULE}")))?;
             remote.validate().map_err(|err| match err {
                 SecretError::Manifest(inner) => {
                     SecretError::Manifest(format!("[vaults.{name}].{inner}"))
@@ -231,27 +256,46 @@ impl Manifest {
         }
         let mut seen_env = BTreeMap::new();
         for (name, requirement) in &self.secrets {
-            validate_secret_name(name)
-                .map_err(|err| SecretError::Manifest(format!("[secrets.{name}]: {err}")))?;
-            if let Some(vault) = &requirement.vault {
-                validate_vault_name(vault).map_err(|err| {
-                    SecretError::Manifest(format!("[secrets.{name}].vault: {err}"))
-                })?;
+            validate_secret_name(name).map_err(|err| {
+                SecretError::Manifest(format!(
+                    "[secrets.{name}] is not a valid secret name: {}",
+                    match err {
+                        SecretError::InvalidName { reason, .. } => reason,
+                        other => other.to_string(),
+                    }
+                ))
+            })?;
+            if requirement
+                .vault
+                .as_deref()
+                .is_some_and(|v| validate_vault_name(v).is_err())
+            {
+                return Err(SecretError::Manifest(format!(
+                    "[secrets.{name}].vault {VAULT_NAME_RULE}"
+                )));
             }
-            if let Some(version) = &requirement.version {
-                validate_version_id(version).map_err(|err| {
-                    SecretError::Manifest(format!("[secrets.{name}].version: {err}"))
-                })?;
+            if requirement
+                .version
+                .as_deref()
+                .is_some_and(|v| validate_version_id(v).is_err())
+            {
+                return Err(SecretError::Manifest(format!(
+                    "[secrets.{name}].version is not a valid version identifier (1-64 letters \
+                     or digits)"
+                )));
             }
             let env = env_name_for(name, requirement);
-            validate_env_name(&env)
-                .map_err(|err| SecretError::Manifest(format!("[secrets.{name}].env: {err}")))?;
+            if let Err(problem) = env_name_problem(&env) {
+                return Err(SecretError::Manifest(format!(
+                    "[secrets.{name}].env {problem}"
+                )));
+            }
             // Windows resolves environment names case-insensitively, so two
             // entries differing only in case would silently overwrite each
             // other there. Portable manifests reject that everywhere.
             if let Some(previous) = seen_env.insert(env.to_ascii_uppercase(), name.clone()) {
                 return Err(SecretError::Manifest(format!(
-                    "secrets '{previous}' and '{name}' both map to environment variable {env} \
+                    "secrets '{previous}' and '{name}' map to the same environment variable \
                      (names are compared case-insensitively for portability)"
                 )));
             }
@@ -276,10 +320,15 @@ impl Manifest {
                     )));
                 }
             }
-            if let Some(grace) = &rotation.retire_after {
-                crate::rotation::parse_grace(grace).map_err(|err| {
-                    SecretError::Manifest(format!("[rotation.{name}].retire_after: {err}"))
-                })?;
+            if rotation
+                .retire_after
+                .as_deref()
+                .is_some_and(|grace| crate::rotation::parse_grace(grace).is_err())
+            {
+                return Err(SecretError::Manifest(format!(
+                    "[rotation.{name}].retire_after is not a grace period (a number and a \
+                     unit: 7d, 12h, 30m)"
+                )));
             }
         }
         Ok(())
@@ -305,6 +354,44 @@ impl Manifest {
             })
             .collect()
     }
+}
+
+/// The user's home directory, as the environment names it.
+fn home_directory() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+/// The user id discovery trusts: the home directory's owner, else the
+/// start directory's. `None` where ownership is not a thing (Windows).
+#[cfg(unix)]
+fn trusted_owner(home: Option<&Path>, start: &Path) -> Option<u32> {
+    use std::os::unix::fs::MetadataExt as _;
+    home.and_then(|h| std::fs::metadata(h).ok())
+        .or_else(|| std::fs::metadata(start).ok())
+        .map(|m| m.uid())
+}
+
+#[cfg(not(unix))]
+fn trusted_owner(_home: Option<&Path>, _start: &Path) -> Option<u32> {
+    None
+}
+
+/// True when `path` belongs to `owner` (or ownership is not checked).
+#[cfg(unix)]
+fn owned_by(path: &Path, owner: Option<u32>) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    match owner {
+        Some(uid) => std::fs::metadata(path).is_ok_and(|m| m.uid() == uid),
+        None => true,
+    }
+}
+
+#[cfg(not(unix))]
+fn owned_by(_path: &Path, _owner: Option<u32>) -> bool {
+    true
 }
 
 /// Default environment variable name for a secret: `UPPER_SNAKE_CASE`.
@@ -407,11 +494,49 @@ fn redact_toml_error(text: &str, err: &toml::de::Error) -> String {
     }
 }
 
-fn validate_env_name(env: &str) -> Result<()> {
-    if env.to_ascii_uppercase().starts_with(RESERVED_ENV_PREFIX) {
-        return Err(SecretError::InvalidArgument(format!(
-            "'{env}' is reserved: names starting with {RESERVED_ENV_PREFIX} belong to SourceOrrery"
-        )));
+/// The rule a vault name in a manifest must meet, for diagnostics that do
+/// not repeat the value.
+const VAULT_NAME_RULE: &str =
+    "is not a valid vault name (1-64 lowercase letters, digits and hyphens, not at the ends)";
+
+/// Variables that change how programs load or run. A manifest is committed
+/// content, so an entry delivering a value under one of these would let a
+/// repository turn `run` into a loader: refused whatever the value.
+const LOADER_ENV_NAMES: &[&str] = &[
+    "PATH",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "LD_AUDIT",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "DYLD_FRAMEWORK_PATH",
+    "NODE_OPTIONS",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "CLASSPATH",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "PYTHONSTARTUP",
+    "BASH_ENV",
+    "ENV",
+    "SHELLOPTS",
+    "PS4",
+    "IFS",
+    "PERL5OPT",
+    "PERL5LIB",
+    "RUBYOPT",
+    "RUBYLIB",
+    "DOTNET_STARTUP_HOOKS",
+    "GIT_EXEC_PATH",
+    "GIT_SSH_COMMAND",
+];
+
+/// Why `env` cannot be a destination, without repeating it.
+fn env_name_problem(env: &str) -> std::result::Result<(), &'static str> {
+    let upper = env.to_ascii_uppercase();
+    if upper.starts_with(RESERVED_ENV_PREFIX) {
+        return Err("is reserved: names starting with SOURCEORRERY_ belong to SourceOrrery");
     }
     let mut chars = env.chars();
     let valid_start = chars
@@ -419,11 +544,24 @@ fn validate_env_name(env: &str) -> Result<()> {
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
     let valid_rest = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !valid_start || !valid_rest {
-        return Err(SecretError::InvalidArgument(format!(
-            "'{env}' is not a valid environment variable name"
-        )));
+        return Err("is not a valid environment variable name");
+    }
+    if LOADER_ENV_NAMES.contains(&upper.as_str())
+        || upper.starts_with("LD_")
+        || upper.starts_with("DYLD_")
+    {
+        return Err(
+            "names a variable that changes how programs load or run (PATH, LD_*, DYLD_*, \
+             NODE_OPTIONS, JAVA_TOOL_OPTIONS and the like); deliver the secret under another \
+             name",
+        );
     }
     Ok(())
+}
+
+fn validate_env_name(env: &str) -> Result<()> {
+    env_name_problem(env)
+        .map_err(|problem| SecretError::InvalidArgument(format!("'{env}' {problem}")))
 }
 
 #[cfg(test)]
@@ -691,6 +829,81 @@ env = "1BAD"
                 "diagnostic lacks a location: {shown}"
             );
         }
+        // Values that parse as TOML but fail validation are not repeated
+        // either: a secret pasted where a name belongs stays out of the
+        // diagnostic.
+        let validated = [
+            format!("{head}[secrets.db]\nversion = \"{CANARY}\"\n"),
+            format!("{head}[secrets.db]\nenv = \"{CANARY}-x\"\n"),
+            format!("{head}[secrets.db]\nenv = \"LD_{CANARY}\"\n"),
+            format!("{head}[secrets.db]\nvault = \"{CANARY}\"\n"),
+            format!("[project]\nname = \"x\"\nvault = \"{CANARY}\"\n\n[secrets.db]\n"),
+            format!("{head}[secrets.db]\n\n[rotation.db]\nretire_after = \"{CANARY}\"\n"),
+        ];
+        for text in validated {
+            let err = Manifest::parse(&text).unwrap_err();
+            assert_eq!(err.code(), "manifest");
+            let shown = err.to_string();
+            assert!(
+                !shown.contains(CANARY),
+                "diagnostic echoed the value: {shown}"
+            );
+        }
+    }
+
+    #[test]
+    fn loader_variables_are_not_destinations() {
+        let head = "[project]\nname = \"x\"\nvault = \"dev\"\n\n";
+        for env in [
+            "PATH",
+            "LD_PRELOAD",
+            "ld_preload",
+            "DYLD_INSERT_LIBRARIES",
+            "NODE_OPTIONS",
+            "JAVA_TOOL_OPTIONS",
+            "LD_SOMETHING_NEW",
+        ] {
+            let text = format!("{head}[secrets.token]\nenv = \"{env}\"\n");
+            let err = Manifest::parse(&text).unwrap_err();
+            assert!(err.to_string().contains("load or run"), "{env}: {err}");
+        }
+        // A default name that lands on one is refused the same way.
+        let text = format!("{head}[secrets.java-tool-options]\n");
+        assert!(Manifest::parse(&text).is_err());
+        let text = format!("{head}[secrets.token]\nenv = \"TOKEN_PATH\"\n");
+        assert!(
+            Manifest::parse(&text).is_ok(),
+            "only exact names and the loader prefixes"
+        );
+    }
+
+    #[test]
+    fn discovery_stops_at_the_repository_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join(MANIFEST_FILE_NAME), "").unwrap();
+        let repo = root.join("repo");
+        let deep = repo.join("src").join("deep");
+        std::fs::create_dir_all(&deep).unwrap();
+        // Above the repository: found while nothing bounds the walk.
+        assert_eq!(
+            Manifest::discover(&deep),
+            Some(root.join(MANIFEST_FILE_NAME))
+        );
+        // A `.git` entry makes the repository the boundary: the manifest
+        // above it is no longer the project's.
+        std::fs::write(repo.join(".git"), "gitdir: elsewhere").unwrap();
+        assert_eq!(Manifest::discover(&deep), None);
+        std::fs::write(repo.join(MANIFEST_FILE_NAME), "").unwrap();
+        assert_eq!(
+            Manifest::discover(&deep),
+            Some(repo.join(MANIFEST_FILE_NAME))
+        );
+        // A file as the start is searched from its directory.
+        assert_eq!(
+            Manifest::discover(&deep.join("main.rs")),
+            Some(repo.join(MANIFEST_FILE_NAME))
+        );
     }
 
     #[test]
@@ -742,7 +955,6 @@ env = "1BAD"
         for (key, name, env) in [
             ("DATABASE_PASSWORD", "database-password", None),
             ("STRIPE_KEY_2", "stripe-key-2", None),
-            ("_PRIVATE", "-private", None),
             ("apiKey", "apikey", Some("apiKey")),
             ("npm_token", "npm-token", Some("npm_token")),
         ] {

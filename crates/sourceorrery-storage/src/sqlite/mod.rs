@@ -57,8 +57,9 @@ use crate::unlock::UnlockProvider;
 use crate::{BACKEND_NAME, SCHEMA_VERSION};
 
 use self::audit::{
-    AuditRow, AuditWriter, Checkpoints, SecretCheckpoints, event_from_row, head_problem,
-    quarantined_message, truncated_message, unacknowledged_truncations, vault_checkpoints,
+    AuditRow, AuditWriter, Checkpoints, SecretCheckpoints, chain_problem, event_from_row,
+    head_problem, quarantined_message, truncated_message, unacknowledged_truncations,
+    vault_checkpoints,
 };
 use self::migrate::migrate;
 use self::protectors::{
@@ -70,8 +71,8 @@ use self::rows::{
     query_secret_names, query_secret_rows, select_version,
 };
 use self::schema::{
-    GuardState, Meta, SCHEMA, crypto, db, nanos, open_connection, opt_nanos, read_meta,
-    recovery_id, value_aad, write_settings_tag,
+    GuardState, Meta, SCHEMA, begin_write, crypto, db, nanos, open_connection, opt_nanos,
+    read_meta, recovery_id, value_aad, write_settings_tag,
 };
 
 /// The passphrase hint a vault file stores, read without unlocking it:
@@ -227,9 +228,13 @@ impl SqliteVault {
         protector: ProtectorSpec,
     ) -> Result<Self> {
         // The reserved file is empty, which SQLite treats as a new database.
-        let conn = open_connection(path)?;
+        let mut conn = open_connection(path)?;
         restrict_permissions(path, 0o600)?;
         conn.execute_batch(SCHEMA).map_err(db)?;
+        // Everything that makes the file a vault lands in one transaction:
+        // a crash leaves an empty database, never a vault without its
+        // protector, its settings tag or its first audit row.
+        let tx = begin_write(&mut conn)?;
 
         let now = timestamp::now();
         let recovery_level_raw = serde_json::to_string(&options.recovery_level)
@@ -255,7 +260,7 @@ impl SqliteVault {
             ("retention_days", meta.retention_days.to_string()),
         ];
         for (key, value) in rows {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)",
                 params![key, value],
             )
@@ -265,8 +270,8 @@ impl SqliteVault {
         let dek = SymmetricKey::generate().map_err(crypto)?;
         let metadata_key = integrity::derive_metadata_key(&dek);
         let actor = Principal::local_user();
-        add_protector(&conn, &meta, &dek, protector, None)?;
-        write_settings_tag(&conn, &metadata_key, &meta)?;
+        add_protector(&tx, &meta, &dek, protector, None)?;
+        write_settings_tag(&tx, &metadata_key, &meta)?;
         AuditWriter {
             meta: &meta,
             key: Some(&metadata_key),
@@ -274,13 +279,14 @@ impl SqliteVault {
             allow_empty_chain: true,
         }
         .record(
-            &conn,
+            &tx,
             AuditOperation::VaultCreate,
             None,
             None,
             AuditOutcome::Success,
             Some(BACKEND_NAME),
         )?;
+        tx.commit().map_err(db)?;
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -570,19 +576,41 @@ impl SqliteVault {
         actor: &Principal,
         allow_quarantined: bool,
     ) -> Result<bool> {
-        let Some(problem) = head_problem(conn, key, &meta.id, false)? else {
-            return Ok(false);
-        };
-        if allow_quarantined {
-            return Ok(true);
-        }
-        AuditWriter {
+        let writer = AuditWriter {
             meta,
             key: Some(key),
             actor,
             allow_empty_chain: false,
+        };
+        let problem = if let Some(problem) = head_problem(conn, key, &meta.id, false)? {
+            problem
+        } else {
+            // The head holds, so a keyed write would record nothing; the
+            // walk is what finds a row removed or replaced inside the log,
+            // and its finding goes on the chain here.
+            let Some(problem) = chain_problem(conn, key, &meta.id)? else {
+                return Ok(false);
+            };
+            if !unacknowledged_truncations(conn, key, &meta.id)?.is_empty() {
+                // Already on record and blocking the vault: the quarantine
+                // check below refuses, without recording the same break
+                // again at every unlock.
+                return Ok(false);
+            }
+            writer.record(
+                conn,
+                AuditOperation::AuditVerify,
+                None,
+                None,
+                AuditOutcome::Failure,
+                Some(&problem),
+            )?;
+            problem
+        };
+        if allow_quarantined {
+            return Ok(true);
         }
-        .record(
+        writer.record(
             conn,
             AuditOperation::VaultOpen,
             None,
@@ -1270,6 +1298,10 @@ impl SecretClient for SqliteVault {
         Ok(())
     }
 
+    /// Events newest first. A row whose operation or outcome no longer
+    /// parses (a tamperer's edit, which the chain walk at unlock also
+    /// records) is left out rather than failing the whole listing, so the
+    /// surviving history can still be reviewed before an acknowledgement.
     fn audit_events(&self, query: AuditQuery) -> Result<Vec<AuditEvent>> {
         let conn = self.lock()?;
         let since = opt_nanos(query.since)?;
@@ -1301,6 +1333,9 @@ impl SecretClient for SqliteVault {
             .map_err(db)?
             .collect::<rusqlite::Result<_>>()
             .map_err(db)?;
-        raw.into_iter().map(event_from_row).collect()
+        Ok(raw
+            .into_iter()
+            .filter_map(|row| event_from_row(row).ok())
+            .collect())
     }
 }

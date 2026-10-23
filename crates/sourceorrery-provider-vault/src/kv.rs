@@ -295,7 +295,15 @@ impl Metadata {
         Ok(DeletedSecret {
             properties: self.properties(vault, name, newest)?,
             deleted_on,
-            scheduled_purge_on: Some(deleted_on + time::Duration::days(i64::from(RETENTION_DAYS))),
+            scheduled_purge_on: Some(
+                deleted_on
+                    .checked_add(time::Duration::days(i64::from(RETENTION_DAYS)))
+                    .ok_or_else(|| {
+                        SecretError::Storage(format!(
+                            "the deletion marker of '{name}' carries a date out of range"
+                        ))
+                    })?,
+            ),
             recovery_id: format!("sourceorrery://{vault}/deletedsecrets/{name}"),
         })
     }

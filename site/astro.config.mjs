@@ -138,6 +138,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Threat model', slug: 'security/threat-model' },
 						{ label: 'Supply chain', slug: 'security/supply-chain' },
+						{ label: 'Security review', slug: 'security/review' },
 					],
 				},
 				{ label: 'Architecture', slug: 'architecture' },

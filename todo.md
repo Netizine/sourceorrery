@@ -1029,6 +1029,15 @@ it is done, the wording in `README.md` and `docs/supply-chain.md` that
 hedges ("not yet audited") is updated by you or on your word, and the box
 is ticked.
 
+*The engineering pass is done and written up in `docs/security-review.md`:
+five read-only review passes over every surface, each finding verified by
+hand; two high findings (the audit chain's interior linkage was not
+enforced at unlock; manifest discovery walked to the filesystem root and
+could redirect a Vault token), five medium, fifteen low, all fixed or
+documented in the same change set, with the claims that held and the
+controls still without a direct test listed for your own pass. The hedge
+wording is untouched: that call stays yours.*
+
 
 ---
 

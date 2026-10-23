@@ -6,6 +6,54 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+The engineering pass of the milestone 4 security review
+(`docs/security-review.md`) found and fixed:
+
+* The audit chain's interior linkage was checked only by `audit --verify`:
+  a row deleted from the middle of the log (the record of a detected
+  truncation, a version's checkpoint) passed the unlock. Every unlock now
+  walks the chain from the newest acknowledgement and quarantines on a
+  break; the head record counts the keyed rows under its MAC, so every
+  operation notices a keyed row removed between two operations. The file
+  format is unchanged; an older head is accepted until the next write.
+* Manifest discovery walked to the filesystem root, so a `sourceorrery.toml`
+  planted in a world-writable or shared parent could point a process's
+  Vault token at another host. Discovery stops at the repository, the home
+  directory and, on Unix, directories owned by someone else. `http://` is
+  accepted for the local machine only; the Vault client follows no
+  redirect and uses no proxy for a loopback address.
+* A passphrase with the shape of a recovery code (twenty-five letters and
+  spaces) was folded before use by the CLI and no longer unlocked. The
+  vault now tries a passphrase as typed first and as a code second, for
+  every caller.
+* The second factor's replay step and the reveal guard were written from a
+  per-handle snapshot, so two processes could accept one code or overwrite
+  each other's guard. Guard writes re-read and verify the stored state in
+  their transaction.
+* Manifest validation errors echoed the offending value; provider error
+  text reached SDK messages unbounded and unescaped; a backup written over
+  an existing file kept its mode and followed a link; `SOURCEORRERY_TOTP`
+  and `SOURCEORRERY_BACKUP_PASSPHRASE` reached `run` children; invisible
+  formatting characters passed the terminal sanitiser; loader variables
+  (`LD_PRELOAD`, `NODE_OPTIONS`, ...) were valid manifest destinations;
+  secret names could start with a hyphen; the backup passphrase was not
+  strength-rated; several buffers holding the enrolment key, a hook's
+  output, a typed passphrase's intermediates or a Vault credential were
+  not zeroising. All fixed.
+
+### Changed
+
+* Secret names may no longer start or end with a hyphen (an imported
+  `_PRIVATE` key is skipped rather than stored as `-private`).
+* A manifest `env` naming `PATH`, an `LD_*` or `DYLD_*` variable,
+  `NODE_OPTIONS`, `JAVA_TOOL_OPTIONS` or another loader or runtime option
+  is a manifest error.
+* `--tag` keys under `sourceorrery.` are refused.
+* A remote provider's `address` or `endpoint_url` must be `https://`, or
+  `http://` to localhost.
+
 ### Added
 
 * A vault passphrase typed at the prompt must rate at least "good" on a

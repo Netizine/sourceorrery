@@ -2,12 +2,17 @@
 
 SourceOrrery is a Rust workspace: an encrypted local secrets vault with an
 cloud-secrets-manager-style lifecycle API and a CLI. Read `docs/architecture.md`
-and `docs/threat-model.md` before changing anything security-relevant.
+and `docs/threat-model.md` before changing anything security-relevant;
+`docs/security-review.md` records what the last review checked, fixed and
+left open.
 
 ## Layout
 
 - `crates/sourceorrery-core` — contracts and semantics only (no crypto, no I/O
-  except manifest loading). `SecretClient` trait, `SecretError` codes,
+  except manifest loading, which stops at the repository, the home
+  directory and, on Unix, another owner's directories). `text::foreign`
+  is how any text a server or service supplies enters a message: bounded,
+  control and invisible characters replaced. `SecretClient` trait, `SecretError` codes,
   policy, audit types, `sourceorrery.toml` manifest, and `rotation`: the
   issue → validate → activate → retire state machine over any client,
   recorded in `sourceorrery.rotation.*` tags; it never runs a program or

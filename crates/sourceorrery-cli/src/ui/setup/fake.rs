@@ -121,10 +121,10 @@ impl Backend for Fake {
         self.enrolled = true;
         self.verified = false;
         Ok(Enrolment {
-            uri: format!(
+            uri: Zeroizing::new(format!(
                 "otpauth://totp/SourceOrrery:development?secret={KEY}&issuer=SourceOrrery"
-            ),
-            key: KEY.to_owned(),
+            )),
+            key: Zeroizing::new(KEY.to_owned()),
         })
     }
 

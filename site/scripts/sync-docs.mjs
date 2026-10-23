@@ -41,6 +41,11 @@ const PAGES = {
 		description:
 			'The three guarantees SourceOrrery keeps separate — at-rest protection, access control and agent isolation — with the adversaries, controls and known gaps of the CLI, the vault and the read-only SDKs.',
 	},
+	'docs/security-review.md': {
+		dest: 'security/review.md',
+		description:
+			'The engineering pass of the milestone 4 security review: every threat-model claim checked against the code, what was found and fixed, what holds, and what is still untested.',
+	},
 	'docs/supply-chain.md': {
 		dest: 'security/supply-chain.md',
 		description:

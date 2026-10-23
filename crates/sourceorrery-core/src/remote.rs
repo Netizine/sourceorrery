@@ -185,8 +185,10 @@ impl RemoteVault {
     }
 }
 
-/// An `http://` or `https://` URL with a host and nothing suspicious: no
-/// user info (a `user:password@host` URL is a credential) and no query.
+/// An `https://` URL (or `http://` to the local machine) with a host and
+/// nothing suspicious: no user info (a `user:password@host` URL is a
+/// credential) and no query. A credential travels with every request, so
+/// clear text is accepted only where it cannot leave the machine.
 fn validate_url(url: &str) -> std::result::Result<(), &'static str> {
     let Some(rest) = ["http://", "https://"]
         .iter()
@@ -204,7 +206,29 @@ fn validate_url(url: &str) -> std::result::Result<(), &'static str> {
     if rest.contains('?') || rest.contains('#') {
         return Err("must not carry a query or fragment");
     }
+    if url.starts_with("http://") && !is_loopback_url(url) {
+        return Err(
+            "must use https:// (http:// is accepted for localhost only: a credential is sent \
+             with every request)",
+        );
+    }
     Ok(())
+}
+
+/// True when `url` addresses the local machine (`localhost`, `127.0.0.0/8`
+/// or `::1`), where clear text cannot leave the host.
+pub fn is_loopback_url(url: &str) -> bool {
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or(url);
+    let authority = rest.split('/').next().unwrap_or_default();
+    let host = if let Some(bracketed) = authority.strip_prefix('[') {
+        bracketed.split(']').next().unwrap_or_default()
+    } else {
+        authority.rsplit_once(':').map_or(authority, |(h, _)| h)
+    };
+    host.eq_ignore_ascii_case("localhost") || host == "::1" || host.starts_with("127.")
 }
 
 /// How a vault named in the manifest is reached.

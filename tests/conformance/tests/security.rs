@@ -506,8 +506,12 @@ fn fresh_vault_chain_is_intact_and_counts_unkeyed_rows() {
     assert_eq!(check.first_broken, None);
 }
 
+/// A row removed from the middle of the log leaves the head naming the
+/// newest row, so the head alone would not notice. The unlock walks the
+/// chain, finds the row after the gap no longer following its
+/// predecessor, records the break and blocks the vault like a truncation.
 #[test]
-fn deleted_middle_audit_row_breaks_the_chain() {
+fn deleted_middle_audit_row_is_detected_at_unlock() {
     let fx = Fixture::new();
     let path = fx.registry.vault_path("dev").unwrap();
     let ids = {
@@ -524,7 +528,11 @@ fn deleted_middle_audit_row_breaks_the_chain() {
         conn.execute("DELETE FROM audit_events WHERE id = ?1", [victim])
             .unwrap();
     }
-    let vault = fx.open_vault("dev");
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    let vault = fx.inspect_vault("dev");
     let check = vault.verify_audit_chain().unwrap();
     assert!(!check.is_intact());
     assert_eq!(
@@ -532,8 +540,144 @@ fn deleted_middle_audit_row_breaks_the_chain() {
         Some(ids[2]),
         "the row after the gap no longer links to its predecessor: {check:?}"
     );
-    assert_eq!(check.truncations, 0);
-    assert!(check.head_valid);
+    assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.unacknowledged, 1, "{check:?}");
+    assert!(check.head_valid, "the detection re-anchored the head");
+    assert_blocked(&vault.get_secret("k2", None).unwrap_err());
+    drop(vault);
+
+    // Acknowledged, the vault serves again. The break stays on record,
+    // and the secret whose checkpoint was removed is refused: no checkpoint
+    // means no row state can be judged, not "take the row as found".
+    fx.acknowledge_truncations("dev");
+    let vault = fx.open_vault("dev");
+    vault.get_secret("k2", None).unwrap();
+    assert_eq!(vault.get_secret("k", None).unwrap_err().code(), "crypto");
+    let check = vault.verify_audit_chain().unwrap();
+    assert_eq!(check.first_broken, Some(ids[2]), "{check:?}");
+    assert_eq!(check.unacknowledged, 0, "{check:?}");
+}
+
+/// Removing the record of a detected truncation does not lift the block:
+/// the row written after it no longer follows its predecessor, and the
+/// head's count of keyed rows is one short.
+#[test]
+fn deleting_the_truncation_record_is_detected_as_another_break() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let ids = {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", "v", SetSecretOptions::default());
+        vault.get_secret("k", None).unwrap();
+        vault.get_secret("k", None).unwrap();
+        event_ids(&vault)
+    };
+    truncate_after(&path, ids[ids.len() - 3]);
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+    let detection = {
+        let vault = fx.inspect_vault("dev");
+        events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Failure)[0].id
+    };
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "DELETE FROM audit_events WHERE id = ?1",
+            [i64::try_from(detection).unwrap()],
+        )
+        .unwrap();
+    }
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string()
+            .contains("removed or altered inside the log")
+            || err.to_string().contains("audit chain broken"),
+        "{err}"
+    );
+    let vault = fx.inspect_vault("dev");
+    let check = vault.verify_audit_chain().unwrap();
+    assert!(check.unacknowledged >= 1, "{check:?}");
+    assert_blocked(&vault.get_secret("k", None).unwrap_err());
+}
+
+/// A version's checkpoint row removed from the middle of the log, with the
+/// version itself: without the walk the previous version would come back as
+/// current without a trace. With it the unlock is refused and the break is
+/// on record. Once the owner has acknowledged it, the surviving history is
+/// what the vault goes by (known gap 6): the older version is served then,
+/// as the record shows.
+#[test]
+fn deleting_a_versions_checkpoint_row_refuses_the_unlock() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let (newest_row, newest_version) = {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", "one", SetSecretOptions::default());
+        let newest = vault
+            .set_secret("k", SecretBytes::from("two"), SetSecretOptions::default())
+            .unwrap()
+            .version;
+        let row = events_of(&vault, AuditOperation::SecretSet, AuditOutcome::Success)[0].id;
+        (row, newest)
+    };
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "DELETE FROM audit_events WHERE id = ?1",
+            [i64::try_from(newest_row).unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM secret_versions WHERE name = 'k' AND version = ?1",
+            [&newest_version],
+        )
+        .unwrap();
+    }
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    fx.acknowledge_truncations("dev");
+    let vault = fx.open_vault("dev");
+    let served = vault.get_secret("k", None).unwrap();
+    assert_ne!(served.properties.version, newest_version);
+    let check = vault.verify_audit_chain().unwrap();
+    assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.unacknowledged, 0, "{check:?}");
+}
+
+/// Rows removed while a handle is open are caught by the next operation:
+/// the head counts the keyed rows, so a keyed row missing from the middle
+/// fails the check every operation starts with.
+#[test]
+fn keyed_rows_removed_while_the_vault_is_open_are_caught_by_the_next_operation() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let vault = fx.create_vault("dev");
+    set_with(&vault, "k", "v", SetSecretOptions::default());
+    vault.get_secret("k", None).unwrap();
+    let victim = events_of(&vault, AuditOperation::SecretGet, AuditOutcome::Success)[0].id;
+    vault.list_properties_of_secrets().unwrap();
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "DELETE FROM audit_events WHERE id = ?1",
+            [i64::try_from(victim).unwrap()],
+        )
+        .unwrap();
+    }
+    let err = vault.get_secret("k", None).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string()
+            .contains("removed or altered inside the log"),
+        "{err}"
+    );
+    assert_blocked(&vault.get_secret("k", None).unwrap_err());
 }
 
 #[test]
@@ -562,9 +706,22 @@ fn edited_audit_row_breaks_the_chain() {
         )
         .unwrap();
     }
-    let vault = fx.open_vault("dev");
+    // The edited row's hash no longer verifies: the unlock finds it, records
+    // it and blocks the vault until the owner has acknowledged it.
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string().contains(&format!("event {denied_id}")),
+        "{err}"
+    );
+    let vault = fx.inspect_vault("dev");
     let check = vault.verify_audit_chain().unwrap();
     assert_eq!(check.first_broken, Some(denied_id), "{check:?}");
+    assert_eq!(check.unacknowledged, 1, "{check:?}");
+    drop(vault);
+    fx.acknowledge_truncations("dev");
+    fx.open_vault("dev");
 }
 
 /// Remove every audit row newer than `keep_up_to`, as an attacker with
@@ -1624,7 +1781,10 @@ fn forged_checkpoint_rows_do_not_count() {
     replay(&path, "secrets", "k");
     replay(&path, "secret_versions", "k");
 
-    // An unkeyed row is forgeable by design, so it is never a checkpoint.
+    // An unkeyed row is forgeable by design, so it is never a checkpoint;
+    // one with a hash that does not verify breaks the chain, which the
+    // unlock finds and records, and once acknowledged it still counts for
+    // nothing.
     let forge = |keyed: i64| {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute(
@@ -1639,6 +1799,13 @@ fn forged_checkpoint_rows_do_not_count() {
         .unwrap();
     };
     forge(0);
+    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+    assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
+    fx.acknowledge_truncations("dev");
     let vault = fx.open_vault("dev");
     assert_eq!(vault.get_secret("k", None).unwrap_err().code(), "crypto");
     drop(vault);
@@ -1648,7 +1815,6 @@ fn forged_checkpoint_rows_do_not_count() {
     // forgery is recorded as a truncation that blocks the vault; once the
     // owner has acknowledged it the row is still not a checkpoint.
     forge(1);
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
     assert_eq!(
         fx.registry.open("dev", &unlock).unwrap_err().code(),
         "crypto"
@@ -1661,7 +1827,7 @@ fn forged_checkpoint_rows_do_not_count() {
     assert!(err.to_string().contains("does not verify"), "{err}");
     let check = vault.verify_audit_chain().unwrap();
     assert!(check.first_broken.is_some(), "{check:?}");
-    assert_eq!(check.truncations, 1, "{check:?}");
+    assert_eq!(check.truncations, 2, "one per forgery: {check:?}");
 }
 
 /// Removing the audit rows that checkpointed a change *and* replaying the

@@ -20,6 +20,8 @@ use sourceorrery_core::{
 };
 use time::Duration;
 
+use zeroize::Zeroizing;
+
 use crate::cli::{RotationStep, SecretRotateArgs};
 use crate::context::{Ctx, Opened, UNLOCK_ENV_VARS};
 use crate::output::{self, Table};
@@ -94,7 +96,7 @@ impl Plan {
         value: Option<&SecretBytes>,
         extra: &[(&str, &str)],
         capture: bool,
-    ) -> anyhow::Result<(ExitStatus, Vec<u8>)> {
+    ) -> anyhow::Result<(ExitStatus, Zeroizing<Vec<u8>>)> {
         let (program, program_args) = command_line
             .split_first()
             .ok_or_else(|| anyhow!("the {step} command of '{}' names no program", self.name))?;
@@ -132,7 +134,8 @@ impl Plan {
             .with_context(|| format!("failed to start the {step} command {program}"))?;
         // `command` holds a copy of the value in its environment.
         drop(command);
-        Ok((output.status, output.stdout))
+        // The captured output may be the new value: zeroised from here on.
+        Ok((output.status, Zeroizing::new(output.stdout)))
     }
 }
 
@@ -239,7 +242,7 @@ fn rotate_now(
                         .to_owned(),
                 ));
             }
-            SecretBytes::new(stdout)
+            SecretBytes::new(std::mem::take(&mut stdout))
         }
         None => prompt::read_value(&ValueSource {
             from_file: args.from_file.as_deref(),

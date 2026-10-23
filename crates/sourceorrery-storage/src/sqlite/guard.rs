@@ -30,11 +30,12 @@ use sourceorrery_crypto::{TotpSecret, aead, kdf};
 use time::OffsetDateTime;
 
 use super::SqliteVault;
-use super::protectors::{read_protectors, try_unwrap};
+use super::protectors::{passphrase_candidates, read_protectors, try_unwrap};
 use super::schema::{
     GuardState, PASSPHRASE_HINT_KEY, REVEAL_GUARD_KEY, SECOND_FACTOR_KEY, crypto, db, delete_meta,
-    from_nanos, nanos, put_meta, write_settings_tag,
+    from_nanos, nanos, put_meta, read_meta, write_settings_tag,
 };
+use crate::integrity;
 use crate::protector::ProtectorKind;
 
 /// What an interactive reveal or export must present again.
@@ -105,6 +106,14 @@ fn storage(reason: &str) -> SecretError {
     SecretError::Storage(reason.to_owned())
 }
 
+fn parse_record(raw: &str) -> Result<SecondFactorRecord> {
+    serde_json::from_str(raw).map_err(|_| storage("corrupt second_factor"))
+}
+
+fn encode<T: Serialize>(value: &T) -> Result<String> {
+    serde_json::to_string(value).map_err(|err| storage(&err.to_string()))
+}
+
 impl SqliteVault {
     fn guard_state(&self) -> Result<GuardState> {
         self.guard
@@ -117,8 +126,98 @@ impl SqliteVault {
         self.guard_state()?
             .second_factor
             .as_deref()
-            .map(|raw| serde_json::from_str(raw).map_err(|_| storage("corrupt second_factor")))
+            .map(parse_record)
             .transpose()
+    }
+
+    /// The guard state as the file holds it right now, under a settings
+    /// tag that verifies: what every change is applied to. Another process
+    /// may have changed it since this handle unlocked the vault, so the
+    /// snapshot taken then is never written back.
+    fn stored_guard_state(&self, conn: &Connection) -> Result<GuardState> {
+        let meta = read_meta(conn)?;
+        let fields = meta.settings_fields()?;
+        if !integrity::verify_settings_tag(
+            &self.metadata_key,
+            &fields,
+            meta.settings_tag.as_deref(),
+        ) {
+            return Err(SecretError::Crypto(
+                "vault settings integrity check failed (the guard state was altered)".to_owned(),
+            ));
+        }
+        Ok(meta.guard)
+    }
+
+    fn write_guard_state(&self, conn: &Connection, state: &GuardState) -> Result<()> {
+        match &state.second_factor {
+            Some(raw) => put_meta(conn, SECOND_FACTOR_KEY, raw)?,
+            None => delete_meta(conn, SECOND_FACTOR_KEY)?,
+        }
+        match &state.reveal_guard {
+            Some(raw) => put_meta(conn, REVEAL_GUARD_KEY, raw)?,
+            None => delete_meta(conn, REVEAL_GUARD_KEY)?,
+        }
+        write_settings_tag(conn, &self.metadata_key, &self.meta.with_guard(state))
+    }
+
+    fn remember(&self, state: GuardState) -> Result<()> {
+        *self
+            .guard
+            .lock()
+            .map_err(|_| storage("guard state poisoned"))? = state;
+        Ok(())
+    }
+
+    /// Apply `change` to the stored guard state, in one transaction that
+    /// passes the checks every operation passes, and record it. A refusal
+    /// from `change` is audited as a failure and nothing is written.
+    fn change_guard(
+        &self,
+        conn: &mut Connection,
+        detail: &str,
+        change: impl FnOnce(&mut GuardState) -> Result<()>,
+    ) -> Result<GuardState> {
+        let tx = self.begin(conn, AuditOperation::Guard)?;
+        let mut state = match self.stored_guard_state(&tx) {
+            Ok(state) => state,
+            Err(err) => return self.fail(tx, AuditOperation::Guard, None, None, err),
+        };
+        if let Err(err) = change(&mut state) {
+            return self.fail(tx, AuditOperation::Guard, None, None, err);
+        }
+        self.write_guard_state(&tx, &state)?;
+        self.audit(
+            &tx,
+            AuditOperation::Guard,
+            None,
+            None,
+            AuditOutcome::Success,
+            Some(detail),
+        )?;
+        tx.commit().map_err(db)?;
+        self.remember(state.clone())?;
+        Ok(state)
+    }
+
+    /// One audited guard outcome, through the same checks every operation
+    /// passes (a blocked vault records nothing).
+    fn record_guard(
+        &self,
+        conn: &mut Connection,
+        outcome: AuditOutcome,
+        detail: &str,
+    ) -> Result<()> {
+        let tx = self.begin(conn, AuditOperation::Guard)?;
+        self.audit(
+            &tx,
+            AuditOperation::Guard,
+            None,
+            None,
+            outcome,
+            Some(detail),
+        )?;
+        tx.commit().map_err(db)
     }
 
     /// What an interactive reveal or export must present again.
@@ -148,64 +247,32 @@ impl SqliteVault {
         self.meta.passphrase_hint.clone()
     }
 
-    /// Write `state` into the file under a fresh settings tag, record the
-    /// change and make it the live state.
-    fn commit_guard(&self, conn: &mut Connection, state: GuardState, detail: &str) -> Result<()> {
-        let tx = self.begin(conn, AuditOperation::Guard)?;
-        match &state.second_factor {
-            Some(raw) => put_meta(&tx, SECOND_FACTOR_KEY, raw)?,
-            None => delete_meta(&tx, SECOND_FACTOR_KEY)?,
-        }
-        match &state.reveal_guard {
-            Some(raw) => put_meta(&tx, REVEAL_GUARD_KEY, raw)?,
-            None => delete_meta(&tx, REVEAL_GUARD_KEY)?,
-        }
-        write_settings_tag(&tx, &self.metadata_key, &self.meta.with_guard(&state))?;
-        self.audit(
-            &tx,
-            AuditOperation::Guard,
-            None,
-            None,
-            AuditOutcome::Success,
-            Some(detail),
-        )?;
-        tx.commit().map_err(db)?;
-        *self
-            .guard
-            .lock()
-            .map_err(|_| storage("guard state poisoned"))? = state;
-        Ok(())
-    }
-
     /// Set what an interactive reveal or export must present again. Asking
     /// for the second factor needs a verified enrolment.
     pub fn set_reveal_guard(&self, guard: RevealGuard) -> Result<RevealGuard> {
         let mut conn = self.lock()?;
-        if guard.second_factor && !self.second_factor()?.is_some_and(|f| f.verified) {
-            let tx = self.begin(&mut conn, AuditOperation::Guard)?;
-            return self.fail(
-                tx,
-                AuditOperation::Guard,
-                None,
-                None,
-                SecretError::InvalidArgument(
+        let detail = format!("reveal guard set: {}", guard.describe());
+        self.change_guard(&mut conn, &detail, |state| {
+            let verified = state
+                .second_factor
+                .as_deref()
+                .map(parse_record)
+                .transpose()?
+                .is_some_and(|record| record.verified);
+            if guard.second_factor && !verified {
+                return Err(SecretError::InvalidArgument(
                     "the guard cannot ask for a second factor before one is enrolled and \
                      verified"
                         .to_owned(),
-                ),
-            );
-        }
-        let mut state = self.guard_state()?;
-        state.reveal_guard = if guard.is_none() {
-            None
-        } else {
-            Some(serde_json::to_string(&guard).map_err(|err| storage(&err.to_string()))?)
-        };
-        self.commit_guard(
-            &mut conn,
-            state,
-            &format!("reveal guard set: {}", guard.describe()),
-        )?;
+                ));
+            }
+            state.reveal_guard = if guard.is_none() {
+                None
+            } else {
+                Some(encode(&guard)?)
+            };
+            Ok(())
+        })?;
         Ok(guard)
     }
 
@@ -217,20 +284,6 @@ impl SqliteVault {
     /// replaced.
     pub fn enrol_second_factor(&self) -> Result<TotpSecret> {
         let mut conn = self.lock()?;
-        if self.second_factor()?.is_some_and(|f| f.verified) {
-            let tx = self.begin(&mut conn, AuditOperation::Guard)?;
-            return self.fail(
-                tx,
-                AuditOperation::Guard,
-                None,
-                None,
-                SecretError::InvalidArgument(
-                    "a second factor is already enrolled and verified; disable it before \
-                     enrolling another"
-                        .to_owned(),
-                ),
-            );
-        }
         let secret = TotpSecret::generate().map_err(crypto)?;
         let sealed = aead::seal(
             &self.dek,
@@ -245,10 +298,24 @@ impl SqliteVault {
             verified: false,
             last_counter: None,
         };
-        let mut state = self.guard_state()?;
-        state.second_factor =
-            Some(serde_json::to_string(&record).map_err(|err| storage(&err.to_string()))?);
-        self.commit_guard(&mut conn, state, "second factor enrolled (unverified)")?;
+        let raw = encode(&record)?;
+        self.change_guard(&mut conn, "second factor enrolled (unverified)", |state| {
+            let verified = state
+                .second_factor
+                .as_deref()
+                .map(parse_record)
+                .transpose()?
+                .is_some_and(|record| record.verified);
+            if verified {
+                return Err(SecretError::InvalidArgument(
+                    "a second factor is already enrolled and verified; disable it before \
+                     enrolling another"
+                        .to_owned(),
+                ));
+            }
+            state.second_factor = Some(raw);
+            Ok(())
+        })?;
         Ok(secret)
     }
 
@@ -258,41 +325,76 @@ impl SqliteVault {
     /// `false`; no enrolment at all is an error.
     pub fn verify_second_factor(&self, code: &str, now: OffsetDateTime) -> Result<bool> {
         let mut conn = self.lock()?;
-        let Some(mut record) = self.second_factor_record()? else {
+        let Some(snapshot) = self.second_factor_record()? else {
             return Err(SecretError::InvalidArgument(
                 "no second factor is enrolled for this vault".to_owned(),
             ));
         };
-        let secret = self.open_second_factor(&record)?;
+        let secret = self.open_second_factor(&snapshot)?;
         let unix = u64::try_from(now.unix_timestamp()).unwrap_or(0);
-        let Some(counter) = secret.verify(code, unix, record.last_counter) else {
-            drop(secret);
-            self.audit(
-                &conn,
-                AuditOperation::Guard,
-                None,
-                None,
+        let accepted = secret.verify(code, unix, snapshot.last_counter);
+        drop(secret);
+        let Some(counter) = accepted else {
+            self.record_guard(
+                &mut conn,
                 AuditOutcome::Denied,
-                Some("second-factor code refused"),
+                "second-factor code refused",
             )?;
             return Ok(false);
         };
-        drop(secret);
+        // The replay guard is judged against the file, not the snapshot:
+        // another process may have accepted this step since this handle
+        // unlocked the vault, and a step is good once.
+        let tx = self.begin(&mut conn, AuditOperation::Guard)?;
+        let mut state = match self.stored_guard_state(&tx) {
+            Ok(state) => state,
+            Err(err) => return self.fail(tx, AuditOperation::Guard, None, None, err),
+        };
+        let stored = state.second_factor.as_deref().map(parse_record).transpose();
+        let mut record = match stored {
+            Ok(Some(record)) if record.ciphertext == snapshot.ciphertext => record,
+            Ok(_) => {
+                return self.fail(
+                    tx,
+                    AuditOperation::Guard,
+                    None,
+                    None,
+                    SecretError::InvalidArgument(
+                        "the second factor changed while the code was checked; try again"
+                            .to_owned(),
+                    ),
+                );
+            }
+            Err(err) => return self.fail(tx, AuditOperation::Guard, None, None, err),
+        };
+        if record.last_counter.is_some_and(|last| counter <= last) {
+            drop(tx);
+            self.record_guard(
+                &mut conn,
+                AuditOutcome::Denied,
+                "second-factor code refused (already used)",
+            )?;
+            return Ok(false);
+        }
         let first = !record.verified;
         record.verified = true;
         record.last_counter = Some(counter);
-        let mut state = self.guard_state()?;
-        state.second_factor =
-            Some(serde_json::to_string(&record).map_err(|err| storage(&err.to_string()))?);
-        self.commit_guard(
-            &mut conn,
-            state,
-            if first {
+        state.second_factor = Some(encode(&record)?);
+        self.write_guard_state(&tx, &state)?;
+        self.audit(
+            &tx,
+            AuditOperation::Guard,
+            None,
+            None,
+            AuditOutcome::Success,
+            Some(if first {
                 "second factor verified"
             } else {
                 "second-factor code accepted"
-            },
+            }),
         )?;
+        tx.commit().map_err(db)?;
+        self.remember(state)?;
         Ok(true)
     }
 
@@ -314,39 +416,53 @@ impl SqliteVault {
     /// asking for it (and keeps asking for the passphrase if it did).
     pub fn disable_second_factor(&self) -> Result<()> {
         let mut conn = self.lock()?;
-        if self.second_factor_record()?.is_none() {
-            return Err(SecretError::InvalidArgument(
-                "no second factor is enrolled for this vault".to_owned(),
-            ));
-        }
-        let mut guard = self.reveal_guard()?;
-        guard.second_factor = false;
-        let mut state = self.guard_state()?;
-        state.second_factor = None;
-        state.reveal_guard = if guard.is_none() {
-            None
-        } else {
-            Some(serde_json::to_string(&guard).map_err(|err| storage(&err.to_string()))?)
-        };
-        self.commit_guard(&mut conn, state, "second factor disabled")
+        self.change_guard(&mut conn, "second factor disabled", |state| {
+            if state.second_factor.is_none() {
+                return Err(SecretError::InvalidArgument(
+                    "no second factor is enrolled for this vault".to_owned(),
+                ));
+            }
+            let mut guard: RevealGuard = state
+                .reveal_guard
+                .as_deref()
+                .map(|raw| serde_json::from_str(raw).map_err(|_| storage("corrupt reveal_guard")))
+                .transpose()?
+                .unwrap_or_default();
+            guard.second_factor = false;
+            state.second_factor = None;
+            state.reveal_guard = if guard.is_none() {
+                None
+            } else {
+                Some(encode(&guard)?)
+            };
+            Ok(())
+        })?;
+        Ok(())
     }
 
     /// True when `passphrase` unlocks this vault through one of its
     /// passphrase protectors (a recovery code is one). No audit row.
     fn passphrase_unlocks(&self, conn: &Connection, passphrase: &SecretBytes) -> Result<bool> {
-        for protector in read_protectors(conn)? {
-            let ProtectorKind::Passphrase { salt, params } = &protector.kind else {
-                continue;
-            };
-            if !params.within_limits() {
-                continue;
-            }
-            let salt = hex::decode(salt).map_err(|_| storage("corrupt salt"))?;
-            let kek = kdf::derive_key(passphrase.expose(), &salt, *params).map_err(crypto)?;
-            if let Ok((dek, _)) = try_unwrap(&self.meta, &protector, &kek)
-                && dek == self.dek
-            {
-                return Ok(true);
+        let protectors = read_protectors(conn)?;
+        for candidate in passphrase_candidates(passphrase) {
+            for protector in &protectors {
+                let ProtectorKind::Passphrase { salt, params } = &protector.kind else {
+                    continue;
+                };
+                if !params.within_limits() {
+                    continue;
+                }
+                let Ok(salt) = hex::decode(salt) else {
+                    continue;
+                };
+                let Ok(kek) = kdf::derive_key(candidate.expose(), &salt, *params) else {
+                    continue;
+                };
+                if let Ok((dek, _)) = try_unwrap(&self.meta, protector, &kek)
+                    && dek == self.dek
+                {
+                    return Ok(true);
+                }
             }
         }
         Ok(false)
@@ -356,23 +472,20 @@ impl SqliteVault {
     /// reopening the vault: what the reveal guard asks for. The outcome is
     /// audited under `guard`.
     pub fn verify_passphrase(&self, passphrase: &SecretBytes) -> Result<bool> {
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
         let ok = !passphrase.is_empty() && self.passphrase_unlocks(&conn, passphrase)?;
-        self.audit(
-            &conn,
-            AuditOperation::Guard,
-            None,
-            None,
+        self.record_guard(
+            &mut conn,
             if ok {
                 AuditOutcome::Success
             } else {
                 AuditOutcome::Denied
             },
-            Some(if ok {
+            if ok {
                 "passphrase verified"
             } else {
                 "incorrect passphrase"
-            }),
+            },
         )?;
         Ok(ok)
     }
@@ -382,9 +495,9 @@ impl SqliteVault {
     /// and never the passphrase itself: a hint that unlocks the vault is
     /// refused.
     pub fn set_passphrase_hint(&self, hint: Option<&str>) -> Result<()> {
-        let conn = self.lock()?;
+        let mut conn = self.lock()?;
+        let hint = hint.map(str::trim);
         if let Some(hint) = hint {
-            let hint = hint.trim();
             if hint.is_empty() {
                 return Err(SecretError::InvalidArgument(
                     "a hint must not be empty; clear it instead".to_owned(),
@@ -400,27 +513,31 @@ impl SqliteVault {
                     "a hint cannot contain control characters".to_owned(),
                 ));
             }
-            if self.passphrase_unlocks(&conn, &SecretBytes::from(hint))? {
-                self.audit(
-                    &conn,
-                    AuditOperation::Guard,
-                    None,
-                    None,
-                    AuditOutcome::Denied,
-                    Some("hint refused: it unlocks the vault"),
-                )?;
-                return Err(SecretError::InvalidArgument(
-                    "that hint is the passphrase itself (or a recovery code); a hint is stored \
-                     in clear in the vault file and must not unlock it"
-                        .to_owned(),
-                ));
+        }
+        // The hint is outside every tag, but writing it is still an
+        // operation: one transaction, the same checks, one audit row.
+        let tx = self.begin(&mut conn, AuditOperation::Guard)?;
+        match hint {
+            Some(hint) => {
+                if self.passphrase_unlocks(&tx, &SecretBytes::from(hint))? {
+                    drop(tx);
+                    self.record_guard(
+                        &mut conn,
+                        AuditOutcome::Denied,
+                        "hint refused: it unlocks the vault",
+                    )?;
+                    return Err(SecretError::InvalidArgument(
+                        "that hint is the passphrase itself (or a recovery code); a hint is \
+                         stored in clear in the vault file and must not unlock it"
+                            .to_owned(),
+                    ));
+                }
+                put_meta(&tx, PASSPHRASE_HINT_KEY, hint)?;
             }
-            put_meta(&conn, PASSPHRASE_HINT_KEY, hint)?;
-        } else {
-            delete_meta(&conn, PASSPHRASE_HINT_KEY)?;
+            None => delete_meta(&tx, PASSPHRASE_HINT_KEY)?,
         }
         self.audit(
-            &conn,
+            &tx,
             AuditOperation::Guard,
             None,
             None,
@@ -430,7 +547,8 @@ impl SqliteVault {
             } else {
                 "passphrase hint cleared"
             }),
-        )
+        )?;
+        tx.commit().map_err(db)
     }
 
     /// A key derived for tests and the recovery-code check: whether a

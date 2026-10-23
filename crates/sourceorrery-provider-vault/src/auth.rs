@@ -82,13 +82,13 @@ pub enum Auth {
 #[derive(Debug, Default, Clone)]
 pub struct Environment {
     /// `VAULT_TOKEN`.
-    pub token: Option<String>,
+    pub token: Option<SecretBytes>,
     /// The user's home directory, where `.vault-token` may be.
     pub home: Option<PathBuf>,
     /// `VAULT_ROLE_ID`.
     pub role_id: Option<String>,
     /// `VAULT_SECRET_ID`.
-    pub secret_id: Option<String>,
+    pub secret_id: Option<SecretBytes>,
     /// `VAULT_AUTH_ROLE`.
     pub auth_role: Option<String>,
     /// `VAULT_AUTH_MOUNT`.
@@ -96,7 +96,7 @@ pub struct Environment {
     /// `VAULT_JWT_FILE`.
     pub jwt_file: Option<PathBuf>,
     /// `VAULT_JWT`.
-    pub jwt: Option<String>,
+    pub jwt: Option<SecretBytes>,
     /// The Kubernetes service account token file to look for.
     pub kubernetes_token_file: PathBuf,
 }
@@ -105,17 +105,18 @@ impl Environment {
     /// The process environment.
     pub fn from_process() -> Self {
         let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+        let secret = |name: &str| var(name).map(SecretBytes::from_string);
         Self {
-            token: var("VAULT_TOKEN"),
+            token: secret("VAULT_TOKEN"),
             home: std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from),
             role_id: var("VAULT_ROLE_ID"),
-            secret_id: var("VAULT_SECRET_ID"),
+            secret_id: secret("VAULT_SECRET_ID"),
             auth_role: var("VAULT_AUTH_ROLE"),
             auth_mount: var("VAULT_AUTH_MOUNT"),
             jwt_file: var("VAULT_JWT_FILE").map(PathBuf::from),
-            jwt: var("VAULT_JWT"),
+            jwt: secret("VAULT_JWT"),
             kubernetes_token_file: PathBuf::from(KUBERNETES_TOKEN_FILE),
         }
     }
@@ -165,7 +166,7 @@ impl Auth {
     /// [`Auth::from_env`] over explicit values.
     pub fn from_environment(env: &Environment) -> Result<Self> {
         if let Some(token) = &env.token {
-            return Ok(Self::Token(Token::new(token.as_str())));
+            return Ok(Self::Token(Token::new(token.clone())));
         }
         if let Some(home) = &env.home
             && let Some(token) = read_credential_file(&home.join(TOKEN_FILE), "the token file")?
@@ -179,13 +180,13 @@ impl Auth {
                     .clone()
                     .unwrap_or_else(|| "approle".to_owned()),
                 role_id: role_id.clone(),
-                secret_id: SecretBytes::from(secret_id.as_str()),
+                secret_id: secret_id.clone(),
             });
         }
         if let Some(role) = &env.auth_role {
             let jwt = match (&env.jwt_file, &env.jwt) {
                 (Some(file), _) => read_credential_file(file, "VAULT_JWT_FILE")?,
-                (None, Some(jwt)) => Some(SecretBytes::from(jwt.as_str())),
+                (None, Some(jwt)) => Some(jwt.clone()),
                 (None, None) => None,
             };
             if let Some(jwt) = jwt {

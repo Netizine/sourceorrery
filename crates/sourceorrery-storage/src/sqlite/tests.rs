@@ -183,7 +183,8 @@ fn listing_cost_does_not_grow_with_the_number_of_secrets() {
         small_deleted, large_deleted,
         "listing deleted secrets ran {large_deleted} statements vs {small_deleted}"
     );
-    assert!(large_live <= 16, "a listing ran {large_live} statements");
+    // The head check counts the keyed rows once per operation now.
+    assert!(large_live <= 20, "a listing ran {large_live} statements");
 }
 
 mod guard {
@@ -265,7 +266,7 @@ mod guard {
         let secret = vault.enrol_second_factor().unwrap();
         let info = vault.second_factor().unwrap().unwrap();
         assert!(!info.verified);
-        assert!(!format!("{secret:?}").contains(&secret.to_base32()));
+        assert!(!format!("{secret:?}").contains(secret.to_base32().as_str()));
         assert!(!vault.verify_second_factor("123456", now).unwrap());
         assert!(
             vault
@@ -348,7 +349,7 @@ mod guard {
             text.contains("reveal guard set: passphrase and second-factor"),
             "{text}"
         );
-        assert!(!text.contains(&secret.to_base32()));
+        assert!(!text.contains(secret.to_base32().as_str()));
         assert!(!text.contains(&code));
         assert!(events.iter().any(|(o, _)| *o == AuditOutcome::Denied));
     }
@@ -445,6 +446,59 @@ mod guard {
                 .filter(|(o, d)| *o == AuditOutcome::Success && d == "passphrase verified")
                 .count(),
             2
+        );
+    }
+
+    /// Two handles on one file: the replay guard is judged against the
+    /// file, so a code one handle accepted is refused by the other, and a
+    /// guard change made through one handle is not undone by the other's
+    /// stale snapshot.
+    #[test]
+    fn a_code_is_accepted_once_across_handles_and_guard_changes_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, first) = fresh(&dir);
+        let second = reopen(&path);
+        let now = timestamp::now();
+        let unix = u64::try_from(now.unix_timestamp()).unwrap();
+        let secret = first.enrol_second_factor().unwrap();
+        let code = secret.code_at(unix);
+        assert!(first.verify_second_factor(&code, now).unwrap());
+        // `second` still holds no enrolment at all in its snapshot.
+        assert_eq!(
+            second.verify_second_factor(&code, now).unwrap_err().code(),
+            "invalid_argument"
+        );
+        // A third handle opened now sees the enrolment, but the code is
+        // spent; a fourth-handle replay of the step before it is refused
+        // too, and the next step is accepted once, by one handle only.
+        let third = reopen(&path);
+        assert!(!third.verify_second_factor(&code, now).unwrap());
+        let next = secret.code_at(unix + 30);
+        let later = now + time::Duration::seconds(30);
+        assert!(first.verify_second_factor(&next, later).unwrap());
+        assert!(
+            !third.verify_second_factor(&next, later).unwrap(),
+            "the other handle's snapshot is stale; the file says the step is spent"
+        );
+
+        // A guard set through `third` survives a change through `first`.
+        let guard = RevealGuard {
+            passphrase: true,
+            second_factor: true,
+        };
+        third.set_reveal_guard(guard).unwrap();
+        first.set_passphrase_hint(Some("kept apart")).unwrap();
+        let after = secret.code_at(unix + 60);
+        assert!(
+            first
+                .verify_second_factor(&after, now + time::Duration::seconds(60))
+                .unwrap()
+        );
+        assert_eq!(reopen(&path).reveal_guard().unwrap(), guard);
+        assert_eq!(
+            first.reveal_guard().unwrap(),
+            guard,
+            "the live state follows the file"
         );
     }
 

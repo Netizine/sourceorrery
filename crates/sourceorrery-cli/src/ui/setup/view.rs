@@ -354,7 +354,7 @@ fn second_factor<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>,
         }
         lines.push(Line::from(vec![
             Span::styled("Cannot scan? Enter this key by hand:  ", theme.muted),
-            Span::styled(format!(" {} ", enrolment.key), theme.code),
+            Span::styled(format!(" {} ", *enrolment.key), theme.code),
         ]));
     }
 }

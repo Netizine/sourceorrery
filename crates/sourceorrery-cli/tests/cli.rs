@@ -617,14 +617,17 @@ fn run_does_not_pass_the_unlock_passphrase_to_the_child() {
     let init = env.run(&["init", "--project-name", "demo"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    // The child reports whether the unlock variable reached it.
+    // The child reports whether any unlock or guard variable reached it.
     let probe: &[&str] = if cfg!(windows) {
         &[
             "run",
             "--",
             "cmd",
             "/C",
-            "if defined SOURCEORRERY_PASSPHRASE (echo LEAK) else (echo CLEAN)",
+            "if defined SOURCEORRERY_PASSPHRASE (echo LEAK) else if defined \
+             SOURCEORRERY_PASSPHRASE_FILE (echo LEAK) else if defined SOURCEORRERY_TOTP \
+             (echo LEAK) else if defined SOURCEORRERY_BACKUP_PASSPHRASE (echo LEAK) else \
+             (echo CLEAN)",
         ]
     } else {
         &[
@@ -632,12 +635,144 @@ fn run_does_not_pass_the_unlock_passphrase_to_the_child() {
             "--",
             "sh",
             "-c",
-            "if [ -n \"$SOURCEORRERY_PASSPHRASE\" ]; then echo LEAK; else echo CLEAN; fi",
+            "if [ -n \"$SOURCEORRERY_PASSPHRASE$SOURCEORRERY_PASSPHRASE_FILE$SOURCEORRERY_TOTP\
+             $SOURCEORRERY_BACKUP_PASSPHRASE\" ]; then echo LEAK; else echo CLEAN; fi",
         ]
     };
-    let out = env.run(probe);
+    let out = env
+        .cmd(probe)
+        .env("SOURCEORRERY_TOTP", "123456")
+        .env("SOURCEORRERY_BACKUP_PASSPHRASE", "backup-pass")
+        .output()
+        .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out).trim(), "CLEAN");
+}
+
+/// A passphrase of exactly twenty-five letters and some spaces has the
+/// shape of a recovery code; it must still unlock as typed, and a real
+/// code must still unlock however it is written.
+#[test]
+fn a_passphrase_shaped_like_a_recovery_code_unlocks_as_typed() {
+    const PHRASE: &str = "correct horse battery staple";
+    let env = Env::new();
+    let create = env
+        .cmd(&["vault", "create", "dev", "--protector", "passphrase"])
+        .env("SOURCEORRERY_PASSPHRASE", PHRASE)
+        .output()
+        .unwrap();
+    assert!(create.status.success(), "{}", stderr(&create));
+    let list = env
+        .cmd(&["secret", "list", "--vault", "dev"])
+        .env("SOURCEORRERY_PASSPHRASE", PHRASE)
+        .output()
+        .unwrap();
+    assert!(list.status.success(), "{}", stderr(&list));
+    let wrong = env
+        .cmd(&["secret", "list", "--vault", "dev"])
+        .env("SOURCEORRERY_PASSPHRASE", "CORRECTHORSEBATTERYSTAPLE")
+        .output()
+        .unwrap();
+    assert!(
+        !wrong.status.success(),
+        "the folded form is not the passphrase"
+    );
+}
+
+/// Tags under SourceOrrery's own prefix record rotation and restore state;
+/// a hand-set one would be taken for theirs.
+#[test]
+fn reserved_tag_keys_are_refused() {
+    let env = Env::new();
+    env.create_vault("dev");
+    let out = env.run_with_stdin(
+        &[
+            "secret",
+            "set",
+            "api-key",
+            "--vault",
+            "dev",
+            "--tag",
+            "sourceorrery.rotation.state=validated",
+        ],
+        "v",
+    );
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("SourceOrrery's own"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        env.ok(&["secret", "list", "--vault", "dev"])
+            .trim()
+            .is_empty()
+            || !env
+                .ok(&["secret", "list", "--vault", "dev"])
+                .contains("api-key")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_backup_never_inherits_another_files_mode_or_follows_a_link() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let env = Env::new();
+    env.create_vault("dev");
+    env.set("dev", "api-key", CANARY);
+    let out = env.project.path().join("dev.sobackup");
+    std::fs::write(&out, b"old").unwrap();
+    std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let backup = |args: &[&str]| {
+        env.cmd(args)
+            .env(
+                "SOURCEORRERY_BACKUP_PASSPHRASE",
+                "orbit-lantern-copper-nine-42",
+            )
+            .output()
+            .unwrap()
+    };
+    let refused = backup(&["backup", "--vault", "dev", "--out", out.to_str().unwrap()]);
+    assert!(!refused.status.success());
+    assert_eq!(
+        std::fs::read(&out).unwrap(),
+        b"old",
+        "nothing is replaced without --force"
+    );
+    let replaced = backup(&[
+        "backup",
+        "--vault",
+        "dev",
+        "--out",
+        out.to_str().unwrap(),
+        "--force",
+    ]);
+    assert!(replaced.status.success(), "{}", stderr(&replaced));
+    let mode = std::fs::metadata(&out).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "the export is the user's alone");
+    assert!(
+        !std::fs::read(&out)
+            .unwrap()
+            .windows(CANARY.len())
+            .any(|w| w == CANARY.as_bytes())
+    );
+
+    // A link in the output's place is removed, never written through.
+    let target = env.project.path().join("elsewhere");
+    std::fs::write(&target, b"untouched").unwrap();
+    let link = env.project.path().join("link.sobackup");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let through = backup(&[
+        "backup",
+        "--vault",
+        "dev",
+        "--out",
+        link.to_str().unwrap(),
+        "--force",
+    ]);
+    assert!(through.status.success(), "{}", stderr(&through));
+    assert_eq!(std::fs::read(&target).unwrap(), b"untouched");
+    assert!(std::fs::symlink_metadata(&link).unwrap().is_file());
 }
 
 #[test]

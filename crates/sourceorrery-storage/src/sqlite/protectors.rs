@@ -73,30 +73,38 @@ pub(super) fn try_passphrases(
             reasons.push("no passphrase supplied".to_owned());
             return Ok(None);
         };
-        for protector in &passphrase_protectors {
-            let ProtectorKind::Passphrase { salt, params } = &protector.kind else {
-                continue;
-            };
-            // Parameters come from the file: a protector asking for more
-            // work than the ceiling is skipped, never run.
-            if !params.within_limits() {
-                reasons.push(format!(
-                    "{}: Argon2 parameters exceed the supported limits",
-                    protector.label
-                ));
-                continue;
-            }
-            let salt = hex::decode(salt).map_err(|_| {
-                SecretError::Storage(format!("corrupt salt on protector {}", protector.id))
-            })?;
-            let kek = kdf::derive_key(passphrase.expose(), &salt, *params).map_err(crypto)?;
-            if let Ok((dek, wrapped_schema)) = try_unwrap(meta, protector, &kek) {
-                let unlocked = Unlocked {
-                    protector_id: protector.id.clone(),
-                    kek,
-                    wrapped_schema,
+        for candidate in passphrase_candidates(&passphrase) {
+            for protector in &passphrase_protectors {
+                let ProtectorKind::Passphrase { salt, params } = &protector.kind else {
+                    continue;
                 };
-                return Ok(Some((dek, unlocked)));
+                // Parameters come from the file: a protector asking for more
+                // work than the ceiling is skipped, never run; so is one
+                // whose salt or parameters are corrupt, so that one damaged
+                // row does not keep the others from unlocking.
+                if !params.within_limits() {
+                    reasons.push(format!(
+                        "{}: Argon2 parameters exceed the supported limits",
+                        protector.label
+                    ));
+                    continue;
+                }
+                let Ok(salt) = hex::decode(salt) else {
+                    reasons.push(format!("{}: corrupt salt", protector.label));
+                    continue;
+                };
+                let Ok(kek) = kdf::derive_key(candidate.expose(), &salt, *params) else {
+                    reasons.push(format!("{}: unusable Argon2 parameters", protector.label));
+                    continue;
+                };
+                if let Ok((dek, wrapped_schema)) = try_unwrap(meta, protector, &kek) {
+                    let unlocked = Unlocked {
+                        protector_id: protector.id.clone(),
+                        kek,
+                        wrapped_schema,
+                    };
+                    return Ok(Some((dek, unlocked)));
+                }
             }
         }
         unkeyed.record(
@@ -110,6 +118,23 @@ pub(super) fn try_passphrases(
         reasons.push(format!("passphrase attempt {attempt} rejected"));
     }
     Ok(None)
+}
+
+/// What a supplied passphrase is tried as: itself first, and, when it
+/// has the shape of a recovery code, the code's normalised form second
+/// (upper case, no separators, look-alike letters folded). The order
+/// matters: a passphrase that happens to look like a code must still
+/// unlock as typed.
+pub(super) fn passphrase_candidates(typed: &SecretBytes) -> Vec<SecretBytes> {
+    let mut candidates = vec![typed.clone()];
+    if let Some(form) = typed
+        .expose_utf8()
+        .and_then(sourceorrery_crypto::recovery_code_form)
+        && form.as_bytes() != typed.expose()
+    {
+        candidates.push(SecretBytes::from_string(form.to_string()));
+    }
+    candidates
 }
 
 /// The OS-keyring account this vault creates for a protector.

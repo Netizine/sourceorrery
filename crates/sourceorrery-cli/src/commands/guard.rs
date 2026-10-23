@@ -90,7 +90,7 @@ fn check_code(ctx: &Ctx, vault: &SqliteVault, action: &str) -> anyhow::Result<()
 
 fn read_code(ctx: &Ctx, prompt_text: &str) -> anyhow::Result<Option<String>> {
     if let Some(code) = &ctx.code {
-        return Ok(Some(code.clone()));
+        return Ok(Some(code.as_str().to_owned()));
     }
     if std::io::stdin().is_terminal() {
         return Ok(Some(prompt::read_line(prompt_text)?));
@@ -127,8 +127,8 @@ fn show_enrolment(vault: &str, secret: &TotpSecret, show_uri: bool) -> anyhow::R
     }
     writeln!(err)?;
     if show_uri {
-        writeln!(err, "  key: {}", secret.to_base32())?;
-        writeln!(err, "  uri: {uri}")?;
+        writeln!(err, "  key: {}", *secret.to_base32())?;
+        writeln!(err, "  uri: {}", *uri)?;
         writeln!(err)?;
     } else {
         writeln!(
@@ -147,10 +147,12 @@ fn enable(ctx: &Ctx, args: &TwoFactorEnableArgs) -> anyhow::Result<()> {
     let name = vault.vault_name().to_owned();
     let secret = vault.enrol_second_factor()?;
     if ctx.json() {
+        // The one place the key is serialised: the JSON the caller asked
+        // for, which is theirs to guard.
         let mut body = serde_json::json!({
             "vault": name,
-            "key": secret.to_base32(),
-            "uri": secret.otpauth_uri("SourceOrrery", &name),
+            "key": secret.to_base32().to_string(),
+            "uri": secret.otpauth_uri("SourceOrrery", &name).to_string(),
             "verified": false,
         });
         if args.no_verify {
