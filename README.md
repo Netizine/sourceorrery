@@ -238,7 +238,7 @@ the registry supports it) and how to check what you installed:
 
 ## Build from source
 
-Requires Git, Python 3 for version stamping, Rust 1.88+ installed with rustup,
+Requires Git, Python 3 for version stamping, Rust 1.91.1+ installed with rustup,
 a C compiler for the
 bundled SQLite (the Visual Studio Build Tools on Windows, the Xcode
 Command Line Tools on macOS, gcc or clang on Linux) and, on Linux,

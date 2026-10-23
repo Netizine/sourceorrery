@@ -8,7 +8,7 @@ Two ways, either is fine:
 
 - **A prebuilt binary** from the GitHub release: no toolchain needed.
   Windows, macOS and Linux (glibc), x64 and arm64.
-- **`cargo install --locked sourceorrery-cli`**: needs Rust 1.88 or newer,
+- **`cargo install --locked sourceorrery-cli`**: needs Rust 1.91.1 or newer,
   a C compiler, and on Linux `pkg-config` and `libdbus-1-dev`.
 
 Every archive is listed in the release's `SHA256SUMS`. Check it before you

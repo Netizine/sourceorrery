@@ -14,7 +14,7 @@ Every build compiles Rust, so every build needs:
 | Tool | Version | Why |
 |------|---------|-----|
 | Git | any recent | to clone the repository |
-| Rust, installed with rustup | 1.88 or newer | the core. `rust-toolchain.toml` selects the stable channel with `rustfmt` and `clippy`; rustup installs it on the first `cargo` command in the checkout |
+| Rust, installed with rustup | 1.91.1 or newer | the core. `rust-toolchain.toml` selects the stable channel with `rustfmt` and `clippy`; rustup installs it on the first `cargo` command in the checkout |
 | A C compiler | | the bundled SQLite is compiled from C: the Visual Studio Build Tools on Windows, the Xcode Command Line Tools on macOS, gcc or clang on Linux |
 | `pkg-config` and the D-Bus headers | Linux only | the Secret Service (the OS credential store); not needed for a build with `--no-default-features` |
 | Bash | | the script that creates the test vault: Git Bash on Windows |

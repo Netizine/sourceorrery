@@ -97,7 +97,7 @@ Service, and give the container two things: the home directory that holds the
 vault file, and the passphrase as a file.
 
 ```dockerfile
-FROM rust:1.88-bookworm AS build
+FROM rust:1.91.1-bookworm AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --release --locked -p sourceorrery-cli --no-default-features

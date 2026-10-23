@@ -183,7 +183,7 @@ its OS thread while it reads the C ABI's per-thread error state.
 
 ## Building from source
 
-You need Git, Rust 1.88 or newer installed with rustup, and a C compiler
+You need Git, Rust 1.91.1 or newer installed with rustup, and a C compiler
 (on Linux also `pkg-config` and `libdbus-1-dev`);
 [Building from source](../building.md#what-you-need) has the commands for
 each platform. For this SDK, also Go 1.24 or newer, with cgo's C compiler
