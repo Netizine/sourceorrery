@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +17,49 @@ BASH = (
 
 
 class NativeCoverageEnvironmentTests(unittest.TestCase):
+    def test_go_search_path_quotes_the_whole_argument_and_preserves_existing_flags(self):
+        coverage_root = REPO / "coverage"
+        coverage_root.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="go-env-", dir=coverage_root) as directory:
+            self.assertEqual(Path(directory).resolve().parent, coverage_root.resolve())
+            root = Path(directory) / "fixture repo"
+            script = root / "scripts/coverage/sdk.sh"
+            script.parent.mkdir(parents=True)
+            shutil.copyfile(REPO / "scripts/coverage/sdk.sh", script)
+            (root / "bindings/go").mkdir(parents=True)
+            stub_dir = root / "bin"
+            stub_dir.mkdir()
+            go = stub_dir / "go"
+            go.write_text('#!/usr/bin/env bash\nprintf "%s" "$CGO_LDFLAGS" > "$COVERAGE_ENV_LOG"\nexit 73\n',
+                          encoding="utf-8", newline="\n")
+            go.chmod(0o755)
+            native = root / "native library"
+            log = root / "environment.log"
+            env = os.environ.copy()
+            env.update({
+                "COVERAGE_STUB_DIR": stub_dir.as_posix(),
+                "COVERAGE_ENV_LOG": log.as_posix(),
+                "CGO_LDFLAGS": '-pthread "-Wl,--as-needed"',
+                "SOURCEORRERY_NATIVE_DIR": native.as_posix(),
+                **{name: "fixture-only" for name in (
+                    "SOURCEORRERY_HOME", "SOURCEORRERY_PASSPHRASE", "SOURCEORRERY_TEST_VAULT",
+                    "SOURCEORRERY_TEST_MANIFEST", "SOURCEORRERY_TEST_OLD_VERSION",
+                )},
+            })
+            result = subprocess.run(
+                [BASH, "--noprofile", "--norc", "-c",
+                 'export PATH="$(cd "$COVERAGE_STUB_DIR" && pwd):$PATH"; source "$@"',
+                 "coverage-go-test", script.as_posix(), "go"],
+                env=env, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 73, result.stdout + result.stderr)
+            # Like Go's cmd/internal/quoted.Split, non-POSIX tokenization only
+            # treats a quote at the start of an argument as an enclosing quote.
+            arguments = shlex.split(log.read_text(), posix=False)
+            arguments = [arg[1:-1] if arg[0] in "\"'" and arg[-1] == arg[0] else arg
+                         for arg in arguments]
+            self.assertEqual(arguments, ["-pthread", "-Wl,--as-needed", "-L" + native.as_posix()])
+
     def test_external_builds_and_reports_share_the_isolated_target_for_every_mode(self):
         coverage_root = REPO / "coverage"
         coverage_root.mkdir(exist_ok=True)

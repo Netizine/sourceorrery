@@ -51,7 +51,8 @@ case "$mode" in
   go)
     : "${SOURCEORRERY_NATIVE_DIR:?Build the C ABI and create the SDK fixture first}"
     export CGO_ENABLED=1
-    export CGO_LDFLAGS="${CGO_LDFLAGS:-} -L\"$SOURCEORRERY_NATIVE_DIR\""
+    # Go only recognizes quoting around a whole argument, not after -L.
+    export CGO_LDFLAGS="${CGO_LDFLAGS:-} \"-L$SOURCEORRERY_NATIVE_DIR\""
     export LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     (
       cd bindings/go
