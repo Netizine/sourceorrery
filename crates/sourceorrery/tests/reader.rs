@@ -253,6 +253,48 @@ fn vault_level_failures_explain_what_to_do() {
     assert_eq!(err.kind(), ErrorKind::InvalidName);
 }
 
+/// SR08 of the 2026-10-25 review: a recovery-key source is read only when
+/// the vault asks for a key and every earlier source is used up, so a
+/// missing or empty later file never fails an open an earlier key
+/// completes; reached, its error still names it.
+#[test]
+fn an_unusable_later_source_never_fails_an_open_an_earlier_one_completes() {
+    let home = Home::new();
+    home.create_vault("dev");
+    let missing = home.path().join("missing.txt");
+    let empty = home.path().join("empty.txt");
+    std::fs::write(&empty, "\n").unwrap();
+    for file in [&missing, &empty] {
+        let first = OpenOptions::new()
+            .home(home.path())
+            .recovery_key(home.key("dev"))
+            .recovery_key_file(file)
+            .environment(false);
+        SecretReader::open_with("dev", &first).unwrap();
+
+        let wrong_first = OpenOptions::new()
+            .home(home.path())
+            .recovery_key(WRONG_KEY)
+            .recovery_key_file(file)
+            .environment(false);
+        let err = SecretReader::open_with("dev", &wrong_first).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Io, "{err}");
+        let name = file.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(err.to_string().contains(&name), "{err}");
+        assert!(err.hint().contains("recovery-key file"), "{err}");
+        assert!(!err.to_string().contains(WRONG_KEY), "{err}");
+    }
+    // A wrong earlier key is followed by the right one in the file.
+    let good = home.path().join("good.txt");
+    std::fs::write(&good, format!("{}\n", home.key("dev"))).unwrap();
+    let later = OpenOptions::new()
+        .home(home.path())
+        .recovery_key(WRONG_KEY)
+        .recovery_key_file(&good)
+        .environment(false);
+    SecretReader::open_with("dev", &later).unwrap();
+}
+
 #[test]
 fn project_load_mirrors_run() {
     let home = Home::new();

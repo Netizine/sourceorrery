@@ -443,6 +443,9 @@ fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
         SecretError::Manifest(_) => "Fix sourceorrery.toml (it declares names and references \
              only; a `value` key is a parse error) and check it with `sourceorrery check`"
             .to_owned(),
+        SecretError::Io(message) if message.contains("recovery-key file") => format!(
+            "The recovery-key file (the recovery_key_file option or {RECOVERY_KEY_FILE_ENV}) was              needed, since no earlier source opened the vault, and it cannot be read or is              empty. Fix the path, or give the key another way: the recovery_key option or              {RECOVERY_KEY_ENV}"
+        ),
         SecretError::Storage(_) | SecretError::Io(_) => format!(
             "Check that the vault file and its directory are readable by this process.{}",
             ctx.home_note()

@@ -149,6 +149,11 @@ is in `docs/security-remediation-validation.md`).
   server's no longer reports an `updated_on` earlier than the version's
   `created_on`.
 
+* Rust client and every SDK: a recovery-key source is read only when the
+  vault asks for a key and the earlier sources are used up, so a missing or
+  empty `SOURCEORRERY_RECOVERY_KEY_FILE` no longer fails an open that this
+  machine's key, the `recovery_key` option or `SOURCEORRERY_RECOVERY_KEY`
+  completes. Needed and unusable, it is `io` with a hint that names it.
 * PHP SDK: a `SecretReader` can no longer be cloned or serialised; a clone
   shared the native handle, and closing either freed the other's. A refused
   clone of a reader or a value owns nothing, whatever PHP does with it.

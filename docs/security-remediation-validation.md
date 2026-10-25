@@ -605,3 +605,28 @@ One commit: the checks and the new write order share the tag plan.
   unpushed local commit is refused (unknown to GitHub). The workflows
   parse. Not run here: the workflows themselves (they publish; only a
   dispatch would run them, which the owner decides).
+
+### B15 — recovery-key sources read only when needed
+
+* **Closes:** SR08.
+* **Changes:** `NonInteractiveUnlock::new` reads nothing; each
+  `recovery_key` call consults the next source in order (the option, then
+  `SOURCEORRERY_RECOVERY_KEY`, then the file), only when the vault asks:
+  a vault this machine's key opens reads none, and the first key that
+  works stops the search. A key equal to one already offered is consulted
+  but not offered again. The report behind a `locked` hint records what was
+  consulted, so a source never reached says "not consulted". A needed file
+  that cannot be read or is empty is `io`, now with a hint that names the
+  recovery-key file. The CLI was already lazy (it tries the environment
+  variable or the file, then prompts); the difference from the SDKs, which
+  try all three and never prompt, is unchanged and documented. Every
+  binding inherits this from the Rust client.
+* **Tests run:** unit 10 (new:
+  `an_unusable_later_file_is_never_read_while_an_earlier_key_is_tried`,
+  laziness and duplicate cases in the existing ones); `reader` 7, new
+  `an_unusable_later_source_never_fails_an_open_an_earlier_one_completes`
+  (a missing and an empty file behind the right key open; behind a wrong
+  key they fail with `io`, named, the key not echoed; a wrong key then the
+  right file opens). It **fails without the fix** ("cannot read
+  recovery-key file …missing.txt" before the right key was tried). clippy
+  clean.

@@ -5,7 +5,7 @@ same five things and nothing more:
 
 | | |
 |---|---|
-| **Open a vault** | by name: this machine's key in the OS credential store first, then the vault's recovery key (given in code, `SOURCEORRERY_RECOVERY_KEY`, or a file, `SOURCEORRERY_RECOVERY_KEY_FILE`); never an interactive prompt and never the vault's view check. `SOURCEORRERY_HOME` says where vaults live. |
+| **Open a vault** | by name: this machine's key in the OS credential store first, then the vault's recovery key (given in code, `SOURCEORRERY_RECOVERY_KEY`, or a file, `SOURCEORRERY_RECOVERY_KEY_FILE`), each source read only if the earlier ones did not open the vault, so a later file that is missing or empty fails only an open that needed it; never an interactive prompt and never the vault's view check. `SOURCEORRERY_HOME` says where vaults live. |
 | **Get a secret** | the newest *accessible* version (enabled, inside its time window) or an explicit version. |
 | **Read properties** | metadata of a version, without policy, so disabled and expired versions can be inspected. |
 | **Resolve a reference** | `sourceorrery://vault/name[/version]`, the form the manifest and the CLI use. |
