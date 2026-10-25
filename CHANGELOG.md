@@ -98,6 +98,33 @@ native library of an earlier release).
   CLI no longer prints the TLS verifier's own report of it at the default
   verbosity.
 
+### Security
+
+Fixes from the security review of 2026-10-25
+(`SECURITY-REVIEW-2026-10-25.md`; what each closes and how it was tested
+is in `docs/security-remediation-validation.md`).
+
+* **Key wraps are authenticated.** The settings record covers every key
+  wrap, so a recovery-key wrap put back after the key was replaced, or any
+  wrap row added or swapped, makes the vault refuse to open. Replacing a
+  recovery key stops that key opening the vault; it does not change the
+  vault key (ADR 0010).
+* **Recovery-key files are private from the start.** `vault create
+  --recovery-key-out` creates the file before the vault, restricted to
+  your account and Windows SYSTEM on Windows (checked after creation; a
+  volume that cannot keep permissions is refused) and mode `0600` on Unix,
+  and syncs it. A key that cannot be delivered, to the file or to stdout,
+  leaves no vault behind.
+* **A blocked vault calls no provider.** Every call at a connection first
+  passes the vault's integrity gate, so a vault whose audit log was cut
+  short sends nothing, also through a client opened earlier.
+* **A change at a connection says when it may have happened.** It is
+  recorded as an attempt (`pending`) before it is sent; a failure other
+  than a refusal, or a change the vault could not record, is the new error
+  code `outcome_unknown` and the audit outcome `unknown`, and `sourceorrery
+  audit` lists the attempts whose result the vault never learned
+  (ADR 0011).
+
 ### Fixed
 
 * HashiCorp Vault: an update made on a machine whose clock trails the Vault

@@ -404,6 +404,7 @@ fn a_secret_a_connection_stores_is_read_at_its_provider() {
             None,
             Ok(()),
             CatalogChange::Add,
+            None,
         )
         .unwrap();
     drop(vault);

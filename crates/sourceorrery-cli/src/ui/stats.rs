@@ -132,12 +132,13 @@ pub fn activity(events: &[AuditEvent], now: OffsetDateTime, days: u16) -> Activi
             day.events += 1;
             out.events += 1;
             match e.outcome {
-                AuditOutcome::Success => {}
+                // An attempt is completed by the event that follows it.
+                AuditOutcome::Success | AuditOutcome::Pending => {}
                 AuditOutcome::Denied => {
                     day.denied += 1;
                     out.denied += 1;
                 }
-                AuditOutcome::Failure => {
+                AuditOutcome::Failure | AuditOutcome::Unknown => {
                     day.failures += 1;
                     out.failures += 1;
                 }

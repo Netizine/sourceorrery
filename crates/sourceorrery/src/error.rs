@@ -73,6 +73,9 @@ pub enum ErrorKind {
     /// `rotation`: a rotation step was asked for in a state that does not
     /// allow it (a CLI workflow; a reader never performs one).
     Rotation,
+    /// `outcome_unknown`: a change sent to a remote provider may or may not
+    /// have been made (a CLI or tooling change; a reader never makes one).
+    OutcomeUnknown,
     /// A code added after this client was written.
     Other,
 }
@@ -102,6 +105,7 @@ impl ErrorKind {
             "unauthenticated" => Self::Unauthenticated,
             "provider_unavailable" => Self::ProviderUnavailable,
             "rotation" => Self::Rotation,
+            "outcome_unknown" => Self::OutcomeUnknown,
             _ => Self::Other,
         }
     }
@@ -313,6 +317,12 @@ fn remote_hint(err: &SecretError, ctx: &Context<'_>) -> Option<String> {
             })
         }
         SecretError::PermissionDenied(_) => ctx.provider.map(permission_hint).map(str::to_owned),
+        SecretError::OutcomeUnknown { .. } => Some(
+            "The provider may have made the change. Look at the secret there before repeating it \
+             (`sourceorrery secret versions <name>` lists its versions); `sourceorrery audit` \
+             lists the changes whose result the vault never learned"
+                .to_owned(),
+        ),
         SecretError::ProviderUnavailable { provider, .. } => {
             let connection = ctx.vault.map_or_else(
                 || "the vault's connection".to_owned(),
@@ -472,6 +482,7 @@ mod tests {
             "unauthenticated",
             "provider_unavailable",
             "rotation",
+            "outcome_unknown",
         ];
         for code in codes {
             assert_ne!(ErrorKind::from_code(code), ErrorKind::Other, "{code}");

@@ -146,6 +146,15 @@ pub enum SecretError {
     /// versions and times only.
     #[error("rotation of '{name}': {reason}")]
     Rotation { name: String, reason: String },
+
+    /// A change was sent to a remote provider and whether the provider made
+    /// it is not known: its answer was lost, it failed in a way that does
+    /// not prove nothing changed, or the provider made it and the vault
+    /// could not record it (ADR 0011). Not transient: check the secret at
+    /// the provider before repeating the change. `at` names the provider or
+    /// the vault's connection; `reason` says what is known, never a value.
+    #[error("the change may have been made at {at}: {reason}")]
+    OutcomeUnknown { at: String, reason: String },
 }
 
 impl SecretError {
@@ -181,6 +190,52 @@ impl SecretError {
             Self::Unauthenticated { .. } => "unauthenticated",
             Self::ProviderUnavailable { .. } => "provider_unavailable",
             Self::Rotation { .. } => "rotation",
+            Self::OutcomeUnknown { .. } => "outcome_unknown",
+        }
+    }
+
+    /// True when this error, answering a change sent to a remote provider,
+    /// shows that the provider did not make it: a refusal given before
+    /// acting (the secret or version is not there or not in that state,
+    /// policy, an invalid argument, missing or refused credentials, an
+    /// operation the service does not offer). Every other error could have
+    /// come after the change was made. An adapter that sends more than one
+    /// request for a change returns one of these only while it has changed
+    /// nothing, and [`SecretError::OutcomeUnknown`] once it may have.
+    pub fn is_refusal(&self) -> bool {
+        matches!(
+            self,
+            Self::NotFound { .. }
+                | Self::VersionNotFound { .. }
+                | Self::Deleted { .. }
+                | Self::DeletedConflict { .. }
+                | Self::NotDeleted { .. }
+                | Self::Disabled { .. }
+                | Self::NotYetValid { .. }
+                | Self::Expired { .. }
+                | Self::InvalidName { .. }
+                | Self::InvalidArgument(_)
+                | Self::PermissionDenied(_)
+                | Self::Unauthenticated { .. }
+                | Self::Unsupported(_)
+                | Self::Rotation { .. }
+        )
+    }
+
+    /// What a change sent to `at` ended in, given that it failed with this
+    /// error: the error itself when it is a refusal
+    /// ([`SecretError::is_refusal`]) or already
+    /// [`SecretError::OutcomeUnknown`], and otherwise
+    /// [`SecretError::OutcomeUnknown`] carrying this error's message.
+    #[must_use]
+    pub fn after_change_sent(self, at: &str) -> Self {
+        if self.is_refusal() || matches!(self, Self::OutcomeUnknown { .. }) {
+            self
+        } else {
+            Self::OutcomeUnknown {
+                at: at.to_owned(),
+                reason: self.to_string(),
+            }
         }
     }
 
@@ -265,11 +320,47 @@ mod tests {
                 name: "a".into(),
                 reason: "r".into(),
             },
+            SecretError::OutcomeUnknown {
+                at: "p".into(),
+                reason: "r".into(),
+            },
         ];
         let mut codes: Vec<_> = errors.iter().map(SecretError::code).collect();
         let total = codes.len();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), total, "error codes must be unique");
+    }
+
+    #[test]
+    fn a_failed_change_is_a_refusal_or_its_outcome_is_unknown() {
+        let refused = SecretError::PermissionDenied("no".into()).after_change_sent("connection c");
+        assert_eq!(refused.code(), "permission_denied");
+        let lost = SecretError::ProviderUnavailable {
+            provider: "hashicorp-vault".into(),
+            reason: "timed out".into(),
+        }
+        .after_change_sent("connection c");
+        assert_eq!(lost.code(), "outcome_unknown");
+        assert_eq!(
+            lost.to_string(),
+            "the change may have been made at connection c: hashicorp-vault is unavailable: \
+             timed out"
+        );
+        assert!(!lost.is_transient(), "a blind retry is the wrong reaction");
+        // Already unknown: kept as the adapter said it.
+        let partial = SecretError::OutcomeUnknown {
+            at: "aws-secrets-manager".into(),
+            reason: "the tags were not written".into(),
+        }
+        .after_change_sent("connection c");
+        assert!(partial.to_string().contains("at aws-secrets-manager:"));
+        for unknown in [
+            SecretError::Storage("bad body".into()),
+            SecretError::Io("reset".into()),
+            SecretError::Crypto("x".into()),
+        ] {
+            assert_eq!(unknown.after_change_sent("c").code(), "outcome_unknown");
+        }
     }
 }

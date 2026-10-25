@@ -228,3 +228,53 @@ land together to build.
 * **Residual, carried into B07:** a vault blocked *between* the preflight
   and the dispatch is caught only when the call is recorded, after the
   provider acted.
+
+### B07 — provider outcomes the vault cannot commit
+
+* **Closes:** SR03's second half: what a dispatched change returns and
+  records when its result is not known, or not recorded.
+* **Design:** [ADR 0011](adr/0011-provider-writes-fail-closed.md), sections
+  1, 2 and 4 (section 3 is B08).
+* **Changes:** core: `SecretError::OutcomeUnknown { at, reason }`, code
+  `outcome_unknown` (appended, not transient); `SecretError::is_refusal`
+  (the codes that show a provider changed nothing) and
+  `after_change_sent` (any other failure of a sent change becomes
+  `outcome_unknown`); `AuditOutcome::Pending` and `Unknown` (appended,
+  with `AuditOutcome::ALL`); `AuditOperation::changes_a_secret`. Storage:
+  `SqliteVault::attempt_at_connection` commits a `pending` event (`at
+  connection <id>: sent`) after the gate; `record_at_connection` takes the
+  `Attempt` it completes (`(attempt <id>)` in the detail) and records
+  `outcome_unknown` as `unknown`; `unresolved_attempts` lists attempts that
+  nothing but an `unknown` completed and that no later successful change of
+  the same secret through the same connection settled (authenticated rows
+  only). `Routed::at`: gate, open the client (a failure there is recorded
+  without an attempt: nothing was sent), record the attempt for a change,
+  call, classify, record; a change the provider made that the vault could
+  not record is `outcome_unknown`, never the vault's error alone. Nothing
+  is retried. The Rust client's `ErrorKind::OutcomeUnknown` with a hint;
+  the CLI shows `pending` plainly and `unknown` as an error (table, `ui`,
+  OTLP severity), and `audit` names the unresolved attempts with what to do.
+* **Decision:** the bindings are not changed. They type the codes a read
+  returns; no SDK and no C ABI function changes a secret (ADR 0005), so none
+  can meet `outcome_unknown`, which reaches them, like `rotation`, as their
+  base error with the code kept. This is how the plan's "all bindings
+  recognize any new public code" is met; a typed error per binding would
+  be code no test can reach.
+* **Tests run:** `routed` 12 (new: `a_refused_change_completes_its_attempt`;
+  `a_lost_answer_is_outcome_unknown_until_a_later_change_settles_it`, a
+  provider that makes the change and loses the answer: one call, never
+  retried, two versions at the provider, `unknown` recorded, the attempt
+  listed until a later successful set; a refused delete does not settle
+  it; a purge with a lost answer is settled by `forget_missing`;
+  `a_change_made_but_not_recorded_is_outcome_unknown`, another process
+  taking the name while the provider creates it;
+  `an_attempt_cut_short_by_a_restart_is_listed_when_the_vault_opens_again`;
+  `attempts_and_unknown_outcomes_never_carry_a_value`; the blocked-vault
+  test also shows no attempt is recorded before a refused dispatch; the
+  catalog test checks every change has its attempt and completion). Core
+  53 (the classification, the outcome labels), the Rust client 16 (every
+  code has a kind), storage 75, provider 7 unit tests (`outcome_unknown`
+  passes both adapters unchanged), CLI 210. The C ABI and conformance build.
+  clippy `-D warnings` clean for core, the client, storage, provider and the
+  CLI.
+* **Not run here:** the language SDK suites (no change reaches them).

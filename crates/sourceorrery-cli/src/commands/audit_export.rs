@@ -358,9 +358,9 @@ mod otlp {
 
     fn severity(outcome: AuditOutcome) -> (u8, &'static str) {
         match outcome {
-            AuditOutcome::Success => (9, "INFO"),
+            AuditOutcome::Success | AuditOutcome::Pending => (9, "INFO"),
             AuditOutcome::Denied => (13, "WARN"),
-            AuditOutcome::Failure => (17, "ERROR"),
+            AuditOutcome::Failure | AuditOutcome::Unknown => (17, "ERROR"),
         }
     }
 

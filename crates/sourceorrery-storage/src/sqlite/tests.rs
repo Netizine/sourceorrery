@@ -1524,6 +1524,7 @@ mod connections {
                 Some("1"),
                 Ok(()),
                 CatalogChange::Add,
+                None,
             )
             .unwrap();
     }
@@ -1639,6 +1640,7 @@ mod connections {
                     None,
                     Ok(()),
                     CatalogChange::Remove,
+                    None,
                 )
                 .unwrap();
             assert_eq!(vault.storage_of(name).unwrap(), None);
@@ -1662,6 +1664,7 @@ mod connections {
                 None,
                 result,
                 change,
+                None,
             )
         };
 
@@ -1718,6 +1721,7 @@ mod connections {
                     None,
                     Ok(()),
                     CatalogChange::Keep,
+                    None,
                 ),
                 "invalid_argument",
             ),
@@ -1729,6 +1733,7 @@ mod connections {
                     None,
                     Ok(()),
                     CatalogChange::Remove,
+                    None,
                 ),
                 "invalid_argument",
             ),
@@ -1860,6 +1865,7 @@ mod catalog_and_projects {
                 Some("1"),
                 Ok(()),
                 CatalogChange::Add,
+                None,
             )
             .unwrap();
         vault
@@ -2177,6 +2183,7 @@ mod catalog_and_projects {
                 Some("1"),
                 Ok(()),
                 CatalogChange::Add,
+                None,
             )
             .unwrap();
         assert_eq!(

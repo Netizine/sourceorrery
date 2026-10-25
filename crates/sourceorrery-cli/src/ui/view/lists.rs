@@ -175,8 +175,9 @@ pub(super) fn event_cells(
 ) -> Row<'static> {
     let outcome = match e.outcome {
         AuditOutcome::Success => Style::new(),
+        AuditOutcome::Pending => theme.muted,
         AuditOutcome::Denied => theme.caution,
-        AuditOutcome::Failure => theme.error.bar,
+        AuditOutcome::Failure | AuditOutcome::Unknown => theme.error.bar,
     };
     let text_or_dash = |text: Option<&str>| {
         Cell::from(text.map_or_else(

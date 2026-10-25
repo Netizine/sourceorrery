@@ -47,7 +47,7 @@ pub use registry::{DestroyReport, VaultRegistry};
 /// Argon2id cost parameters, as `SqliteVault::set_password` takes them.
 pub use sourceorrery_crypto::Argon2Params;
 pub use sqlite::{
-    Acknowledgement, AuthenticatorChange, CatalogChange, CatalogEntry, ConnectionChange,
+    Acknowledgement, Attempt, AuthenticatorChange, CatalogChange, CatalogEntry, ConnectionChange,
     ConnectionInfo, ConnectionTest, CreateVaultOptions, Created, CredentialSource, FREE_FAILURES,
     Imported, MAX_DESCRIPTION_LEN, MAX_HINT_LEN, MAX_PROJECT_NAME_LEN, OpenOptions, PasswordChange,
     ProjectLink, RecoveryKey, SecondFactorInfo, SecretStorage, SettingsChange, SqliteVault,

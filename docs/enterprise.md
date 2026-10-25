@@ -292,6 +292,7 @@ On a local vault the extra read is an audited `secret_get` like any other.
 | `unauthenticated` | no credential found; a token or session the provider refuses; an expired login | the provider's credential sources (`VAULT_TOKEN`, `vault login`, the AWS chain), or storing credentials in the vault's connection |
 | `permission_denied` | the provider's policy denies the call | Vault: the `data` and `metadata` paths to grant with `vault policy write` and `vault read sys/capabilities-self`; AWS: the `secretsmanager:*` actions to allow and `aws sts get-caller-identity` |
 | `provider_unavailable` | the provider cannot be reached or fails internally (transient) | reachability and the address in the vault's connection; retry |
+| `outcome_unknown` | a change was sent and the provider may have made it (its answer was lost, or the vault could not record it) | look at the secret at the provider before repeating the change; `sourceorrery audit` lists such changes ([providers](providers/index.md#when-a-changes-result-is-not-known)) |
 
 The codes are the core's and are append-only; an SDK older than a code
 reports it as its base error with the code preserved

@@ -178,6 +178,7 @@ impl Env {
                 None,
                 Ok(()),
                 sourceorrery_storage::CatalogChange::Add,
+                None,
             )
             .unwrap();
         id

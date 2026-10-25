@@ -44,7 +44,7 @@ mod wraps;
 
 pub use self::catalog::{CatalogEntry, MAX_DESCRIPTION_LEN, validate_description};
 pub use self::connections::{
-    CatalogChange, ConnectionChange, ConnectionInfo, ConnectionTest, CredentialSource,
+    Attempt, CatalogChange, ConnectionChange, ConnectionInfo, ConnectionTest, CredentialSource,
     SecretStorage,
 };
 pub use self::export::Imported;

@@ -116,7 +116,7 @@ The project folders whose manifest `init` wrote from this vault.
 | `actor` | `user:<name>`, `system:sourceorrery`, … |
 | `operation` | `vault_create`, `vault_open`, `protector_add`, `secret_set`, `secret_get`, `secret_list`, `secret_inspect`, `secret_update`, `secret_delete`, `secret_recover`, `secret_purge`, `audit_verify`, `guard`, `vault_change`, `vault_export`, `vault_import`, `connection_test`, `project_link`, `project_unlink` (a call to a provider is recorded by the vault under the operation it was); `protector_remove`, `vault_migrate`, `vault_backup` and `secret_restore` are names an earlier release wrote |
 | `secret_name`, `version` | optional |
-| `outcome` | `success`, `denied`, `failure` |
+| `outcome` | `success`, `denied`, `failure`; `pending` for a change at a connection recorded before it is sent, and `unknown` for one the provider may have made ([ADR 0011](adr/0011-provider-writes-fail-closed.md)) |
 | `detail` | error code or short note; **never a value** |
 | `prev_hash` | `hash` of the previous row (32 zero bytes for the first) |
 | `hash` | `HMAC-SHA256(k, canonical(prev_hash, row))` (see *Audit chain*) |

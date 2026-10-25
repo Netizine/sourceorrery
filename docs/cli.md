@@ -207,9 +207,15 @@ Newest first, with each event's id. `audit` and `audit export` ask the
 
 Older releases also recorded `protector_remove`, `vault_migrate`,
 `vault_backup` and `secret_restore`; they are kept as names, never
-recorded now. Outcomes: `success`, `denied` (policy), `failure`. Detail
-holds the error code or a short note — never a value, a code, a password,
-a credential or the hint.
+recorded now. Outcomes: `success`, `denied` (policy), `failure`,
+`pending` and `unknown`. A change at a connection is recorded as a
+`pending` attempt before it is sent (`at connection <id>: sent`), and the
+event with its result names it (`(attempt <id>)`); `unknown` is a change
+the provider may have made (`outcome_unknown`). After the events, `audit`
+names every attempt whose result the vault never learned and what to do
+([providers](providers/index.md#when-a-changes-result-is-not-known)).
+Detail holds the error code or a short note — never a value, a code, a
+password, a credential or the hint.
 
 `--verify` checks the log's keyed hash chain instead of listing it (see
 [vault-format.md](vault-format.md#audit-chain)) and prints:
