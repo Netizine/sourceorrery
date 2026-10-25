@@ -552,3 +552,56 @@ One commit: the checks and the new write order share the tag plan.
   says so.
 * **Tests run:** the workflows parse (the site's `yaml` package). Not run
   here: an Actions run from a fork (needs GitHub).
+
+### B25 — repository and release controls, observed
+
+* **Nature:** read-only. `gh api` on 2026-10-25; secret names only, no
+  value read; nothing changed.
+* **Observed:** `main` requires the one check `CI`, bound to the GitHub
+  Actions app (id 15368), not strict, no reviews, admins not included,
+  force pushes and deletion refused, no signed commits. No rulesets: tags
+  (`v*`, `bindings/go/v*`) are unprotected. Release immutability off.
+  Actions: every action allowed, SHA pinning not required by the setting
+  (zizmor enforces it in CI), `GITHUB_TOKEN` read-only by default, Actions
+  cannot approve reviews. No environments: the publishing credentials are
+  repository secrets (names recorded in `docs/release.md`) readable by any
+  workflow on any branch. Dependabot secrets: `FONTAWESOME_NPM_AUTH_TOKEN`.
+  Both release workflows are `workflow_dispatch` only and, before B26,
+  published from any branch without checking the commit's CI.
+* **Not observable from GitHub:** which workflow, environment and branch
+  each registry's trusted publisher trusts (PyPI, npm, crates.io, NuGet);
+  recorded as unknown.
+* **Recorded:** `docs/release.md`, "Repository controls, as observed",
+  with the changes they call for (a tag ruleset, a `release` environment
+  holding the credentials with registries bound to it, immutable
+  releases, the branch rule applied to admins and strict), for the owner
+  to review. None is made by the remediation.
+
+### B26 — the exact release commit must have passed CI in full
+
+* **Closes:** REC01 for the first publication and for the retry.
+* **Changes:** `scripts/release/check-release-validation.py`: the commit is
+  on `main`; a completed `ci.yml` run for exactly it, on `main`, from a
+  push or a dispatch, in this repository, concluded `success`; every job of
+  that run concluded `success` (a docs-only run, which skips the build
+  jobs, and a cancelled run are refused; a later complete attempt counts);
+  the commit's `CI` check was reported by the GitHub Actions app; any API
+  failure refuses. `release.yml` preflight and `ReleasePackages.yaml` plan
+  (for the commit the tag names) run it with `actions: read` and
+  `checks: read`; a real run must also be dispatched from `main`, so a
+  branch cannot bring its own gate; a dry run runs the same gate and
+  reports with warnings. `ci.yml` gains `workflow_dispatch`, so a
+  docs-only commit can get a full run (the classifier treats a dispatch as
+  code). `docs/release.md` describes the gate.
+* **Tests run:** `check_release_validation_test.py`, 10 tests with a faked
+  API: a fully validated commit; not on `main` (diverged, behind); a short
+  SHA; runs that are not `main`'s CI (another branch, a pull request
+  event, another workflow file, a failure, another commit, a fork); a
+  skipped, cancelled, failed or unfinished job; jobs that cannot all be
+  read; a later complete attempt; a `CI` check from another app; an API
+  failure at each call; real versus dry-run exit status. **Live**, read-only
+  against GitHub: `main`'s commit 18138d3 is validated (CI run
+  40175798981, 44 jobs, all success, `CI` from github-actions); the
+  unpushed local commit is refused (unknown to GitHub). The workflows
+  parse. Not run here: the workflows themselves (they publish; only a
+  dispatch would run them, which the owner decides).

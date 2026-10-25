@@ -51,8 +51,18 @@ does not require a 0.2.1 release.
    version in every file name and tag.
 
 The workflow refuses a version that is not semver and, outside a dry run,
-a tag that already exists. Published package contents are immutable; code
-changes require a new version. A failed registry upload can instead be
+a tag that already exists. It also refuses a real release that is not
+dispatched from `main`, or whose commit was not validated in full:
+`scripts/release/check-release-validation.py` requires the commit to be on
+`main`, a completed `ci.yml` run for exactly that commit (a push or a
+dispatch on `main`, in this repository) in which every job ran and passed,
+and the commit's `CI` check reported by GitHub Actions. A commit whose
+push was docs-only skipped the build jobs: run CI on it with *Actions → CI
+→ Run workflow* on `main` first. Any failure to read the GitHub API
+refuses. A dry run runs the same gate and reports its verdict as warnings,
+so release changes can be tried from a branch. *Release packages* applies
+the same gate to the commit the tag names. Published package contents are
+immutable; code changes require a new version. A failed registry upload can instead be
 retried for the same version with [Release packages](#publishing-an-existing-release).
 
 ## What one run produces
@@ -375,6 +385,35 @@ once its pull request is merged, usually within a few days.
    License Agreement when its policy bot requests it on the pull request.
    The [0.2.0 submission](https://github.com/microsoft/winget-pkgs/pull/460455)
    is awaiting that acceptance and catalog approval.
+
+## Repository controls, as observed
+
+Observed read-only with `gh api` on 2026-10-25 (no setting was changed;
+secret values are never read, only their names). A release's safety rests on
+these settings as they are, so a protection is claimed here only when it was
+seen; recheck them before a release.
+
+| Control | Observed | What it means for a release |
+|---|---|---|
+| `main` branch rule | required check `CI` only, bound to the GitHub Actions app (id 15368); not strict (an out-of-date branch may merge); no reviews; admins not included; force pushes and deletion refused; no signed commits | a commit on `main` passed `CI`, unless an admin bypassed it |
+| Rulesets | none | **tags are not protected**: anyone with write access can create, move or delete `v*` and `bindings/go/v*`; `release.yml` refuses an existing tag but cannot stop one being moved later |
+| Release immutability | off | a GitHub Release's assets can be replaced after publication |
+| Actions | every action allowed; SHA pinning not required by the repository (zizmor in CI enforces it); default `GITHUB_TOKEN` read-only; Actions cannot approve pull requests | |
+| Environments | **none** | the publishing jobs run with no reviewer, branch or tag restriction, and the registry credentials (`CRATES_BOOTSTRAP_TOKEN`, `MAVEN_*`, `NUGET_USER`, `PACKAGIST_*`, `PACKAGING_TOKEN`, `WINGET_TOKEN`) are repository secrets any workflow on any branch can read |
+| `release.yml`, `ReleasePackages.yaml` | `workflow_dispatch` only; a real release from **any branch**, with no check that its commit passed `CI` | REC01 and REC02 of the 2026-10-25 review (B26, B27) |
+| Dependabot secrets | `FONTAWESOME_NPM_AUTH_TOKEN` only | its pull requests can build the site, nothing else |
+| Registry trust (PyPI, npm, crates.io trusted publishers; NuGet trusted publishing) | **not observable from GitHub**: which workflow, environment and branch each registry trusts is set in each registry's account | unknown until each is checked there |
+
+Changes these observations call for, each for its owner to review and make
+(none is made by the remediation):
+
+* a ruleset protecting `v*` and `bindings/go/v*` from update and deletion,
+  with creation limited to the release workflow;
+* a `release` environment with required reviewers, deployments only from
+  `main`, holding the registry credentials instead of the repository, and
+  the registries' trusted publishers bound to that environment;
+* immutable releases on;
+* the branch rule applied to admins, and strict status checks.
 
 ## Publishing an existing release
 

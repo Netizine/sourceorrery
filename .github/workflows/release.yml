@@ -48,6 +48,11 @@ jobs:
   preflight:
     name: preflight
     runs-on: ubuntu-latest
+    # The release gate reads this commit's CI runs and checks.
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     outputs:
       version: ${{ steps.plan.outputs.version }}
       tag: ${{ steps.plan.outputs.tag }}
@@ -77,6 +82,26 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           if [ "$DRY_RUN" = "true" ]; then echo "publish=false" >> "$GITHUB_OUTPUT"; else echo "publish=true" >> "$GITHUB_OUTPUT"; fi
+      # REC01: a release is built only from a commit on main whose CI ran
+      # every job and passed, as GitHub Actions reported it. A dry run runs
+      # the same gate and reports instead of stopping.
+      - name: The release commit passed CI in full
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA" --warn-only
+          else
+            if [ "$REF" != "refs/heads/main" ]; then
+              echo "::error::a release is dispatched from main, not $REF"; exit 1
+            fi
+            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA"
+          fi
       - name: Require the first-publication credential before building a real release
         if: ${{ inputs.bootstrap_providers && !inputs.dry_run }}
         env:

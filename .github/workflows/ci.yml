@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A full run for a commit whose push was docs-only, so it can be released:
+  # the change classifier treats a dispatch as code, and the release gate
+  # (scripts/release/check-release-validation.py) accepts a dispatched run.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -524,6 +528,7 @@ jobs:
       - run: python3 -m unittest -v scripts/ci/abi_check_test.py
       - run: python3 -m unittest -v scripts/ci/azure_vault_test.py
       - run: python3 -m unittest -v scripts/ci/dependency_audit_test.py
+      - run: python3 -m unittest -v scripts/release/check_release_validation_test.py
 
   # ADR 0007: the library built from this commit must still pass the
   # conformance contract of the latest release: its C runner, compiled

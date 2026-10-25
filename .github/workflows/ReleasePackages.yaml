@@ -95,6 +95,11 @@ jobs:
   plan:
     name: plan
     runs-on: ubuntu-latest
+    # The release gate reads the tagged commit's CI runs and checks.
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
@@ -150,7 +155,29 @@ jobs:
             echo "tag=$TAG"
             echo "version=$version"
             echo "published=$(gh release view "$TAG" --repo "$REPO" --json publishedAt --jq '.publishedAt[:10]')"
+            echo "sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)"
           } >> "$GITHUB_OUTPUT"
+      # REC01: the gate is main's, and the commit the tag names passed CI in
+      # full, as for the first publication. A dry run reports instead.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tagged commit passed CI in full
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.release.outputs.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA" --warn-only
+          else
+            if [ "$REF" != "refs/heads/main" ]; then
+              echo "::error::packages are published from main, not $REF"; exit 1
+            fi
+            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA"
+          fi
       # crates.io and PyPI use trusted publishing with no switch: ticking
       # their boxes is enough, and they fail loudly if not trusted.
       - name: Which registry secrets exist
