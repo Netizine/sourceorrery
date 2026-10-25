@@ -2,10 +2,10 @@
 
 **Review date:** 25 October 2026  
 **Scope:** Ratatui browser, setup and init wizards; the six requested upstream references; existing UI snapshots.  
-**Status:** Recommendations and implementation plan only. No application code, dependencies or remote branches changed.
+**Review status:** Original recommendations and implementation specification. See the implementation record below for delivered code, checks and outstanding acceptance.
 
 > **Implementation ownership:** James’s UI workstream — implemented with Codex.
-> See [UI implementation status](UI-IMPLEMENTATION-STATUS.md) for batch ownership, validation, commits and limitations. The review below is the original implementation specification.
+> See [UI implementation status](UI-IMPLEMENTATION-STATUS.md) for batch ownership, validation, commits and limitations. B01–B15 code is implemented; B02/B08 await physical-terminal acceptance. B16, asynchronous loading and Milestone 3 remain deferred. The review below is the original implementation specification.
 
 ## Recommendation
 

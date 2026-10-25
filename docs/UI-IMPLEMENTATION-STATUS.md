@@ -4,6 +4,10 @@
 
 This record covers UI changes only; Claude owns the concurrent security remediation. No security work is claimed here.
 
+**B01–B15 code is implemented.** B02 and B08 await physical-terminal acceptance; they are not marked Done. The other batches have passed their applicable automated and snapshot checks. Final validation uses one Cargo job at a time. Claude’s security remediation remains outside this ownership record.
+
+Paths under `ui/` below refer to `crates/sourceorrery-cli/src/ui/`.
+
 ## Initial checkout (25 October 2026)
 
 - Branch: `security-remediation`; HEAD: `742f29d98cdce609748e5f2af0ba607364319493`.
@@ -26,7 +30,7 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 
 ### B02
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Done — James’s UI workstream (implemented with Codex).
+- Status: Blocked — physical-terminal acceptance pending; implementation and automated checks complete.
 - Changes and affected files: browser `keys.rs`, setup/init `mod.rs` require fresh Press for review/commit and one-shot transitions; movement/text repeats remain supported. Revalidated initial code; no existing remediation duplicated.
 - Tests and results: UI suite 136 passed, 1 ignored; browser Press/Repeat/Repeat/Release/Press regression and both wizard key gates pass.
 - Commits: `20db4f0`.
@@ -74,7 +78,7 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 
 ### B08
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Done — James’s UI workstream (implemented with Codex).
+- Status: Blocked — physical-terminal acceptance pending; implementation and automated checks complete.
 - Changes and affected files: `menu.rs`, `view/menu.rs`, `app.rs`, `keys.rs`, `session.rs`, `fake.rs`, `view/mod.rs`, `view/secrets.rs`, tests. Flat F2 menu uses typed shortcut actions, cached pure availability, bounded scrolling, disabled reasons and execution revalidation. Footer/empty guidance reuse availability. Overview search explains the proper tabs. Capability evidence for an older version is captured only during explicit detail opening; existing live checks still run when starting/submitting a mutation.
 - Tests and results: UI suite 146 passed, 1 ignored. Menu/key equivalence, fresh Enter, compact/resize/long reasons, read-only/empty states, stale target rejection and zero list/inspect/audit/capability calls during menu navigation pass. Existing blocked/provider and confirmation tests pass.
 - Commits: `ee6bc65`.
@@ -109,41 +113,62 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 - Status: Done — James’s UI workstream (implemented with Codex).
 - Changes and affected files: new `text_input.rs`; `edit.rs`, app/keys/dialog, setup/init wizard/key/view modules and tests, `viewport.rs`, snapshots. Cursor and horizontal window for metadata and explicitly non-secret wizard fields (including manifest path); Left/Right/Home/End/Delete/Backspace use UTF-8/grapheme boundaries. Combining clusters are single editing units. Focus returns on editing/resize. Hidden value/password/recovery/credential buffers retain their owners and append/pop paths.
 - Tests and results: UI suite 160 passed, 1 ignored. Start/middle/suffix edits, CJK/combining deletion, horizontal cursor/resize, wizard path/hint editing, command isolation, hidden-buffer length/redaction/cancel clearing and existing secret-state tests pass. Cursor snapshot fixture added.
-- Commits: B12 cursor commit (hash recorded next update).
+- Commits: `22877be`.
 - Limitations/manual checks: paste support is not introduced; native value prompts unchanged. Live terminal cursor/font behaviour unavailable.
 
 ### B13
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Planned
-- Changes and affected files: pending.
-- Tests and results: not run for this batch.
-- Commits: pending.
-- Limitations/manual checks: live terminal, non-Windows terminal and screen-reader checks have not been performed.
+- Status: Done — James’s UI workstream (implemented with Codex).
+- Changes and affected files: `feedback.rs`, `app.rs`, `ui/mod.rs`, `view/mod.rs`, fake/tests/snapshots. Explicit successful-load time, persistent refresh failures and provider warnings, pre-operation synchronous draw and elapsed-operation feedback. Failed secondary reads still restore inactive-tab identities; failed detail refresh clears the version target. Repeated refresh retains pending lazy-tab selection. Errors remain until acknowledged or superseded.
+- Tests and results: Final targeted UI suite: 172 passed, 1 intentionally ignored snapshot writer. Primary/secondary/detail failure, provider partial-load warning, slow synthetic operation (at least 2ms), exact call-count/no-retry, selection identity and error acknowledgment tests pass. Feedback snapshots visually inspected.
+- Commits: `7564edb`.
+- Limitations/manual checks: synchronous work still blocks input and locking until it returns; the UI explicitly says so. No real-provider timing measurements or live-terminal checks performed. Asynchronous loading remains deferred.
 
 ### B14
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Planned
-- Changes and affected files: pending.
-- Tests and results: not run for this batch.
-- Commits: pending.
-- Limitations/manual checks: live terminal, non-Windows terminal and screen-reader checks have not been performed.
+- Status: Done — James’s UI workstream (implemented with Codex).
+- Changes and affected files: `app.rs`, `menu.rs`, `keys.rs`, `theme.rs`, `ui/mod.rs`, `view/mod.rs`, tests/snapshots. Session-local Dark/Light/Terminal preview; Enter applies, Esc/quit/idle-lock restores the exact prior choice and changed flag. Applied themes reach child setup screens; captured NO_COLOR/indexed capabilities are retained.
+- Tests and results: Final UI suite: 172 passed, 1 ignored. Preview/cancel/immediate Enter/quit/resize/NO_COLOR/indexed capabilities/child-screen palette/idle-lock and zero-read assertions pass. Theme preview snapshots visually inspected in colour and no-colour looks.
+- Commits: `7564edb`.
+- Limitations/manual checks: no persistent theme preference or theme files. Actual terminal palette/font behaviour and screen-reader use remain unverified.
 
 ### B15
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Planned
-- Changes and affected files: pending.
-- Tests and results: not run for this batch.
-- Commits: pending.
-- Limitations/manual checks: live terminal, non-Windows terminal and screen-reader checks have not been performed.
+- Status: Done — James’s UI workstream (implemented with Codex).
+- Changes and affected files: `app.rs`, `ui/mod.rs`, `view/mod.rs`, tests/snapshots. Existing Instant inactivity clock drives bounded one-second polls and a last-30-seconds header warning above transient overlays. Lock drops session ownership and clears pending requests/value workflows, dialogs, menus, inspection, help, selection/viewport state and feedback.
+- Tests and results: Final UI suite: 172 passed, 1 ignored. Deterministic elapsed-clock boundaries and rounding, quiet pre-warning window, transient-state clearing, released session ownership and zero extra reads pass. Warning/preview/compact snapshots inspected. Ticks never reset last-key activity.
+- Commits: `7564edb`.
+- Limitations/manual checks: warning cannot tick during an existing synchronous operation. No live-terminal timeout or screen-reader checks performed.
 
 ### B16
 - Owner: James’s UI workstream — implemented with Codex.
 - Status: Deferred
-- Changes: conditional path picker deferred as requested.
+- Changes and affected files: none; conditional path picker deferred as requested.
 - Tests and results: not run for this batch.
-- Commits: pending.
+- Commits: none (deferred).
 - Limitations/manual checks: live terminal, non-Windows terminal and screen-reader checks have not been performed.
 
 ## Deferred architecture
 
 Asynchronous/paged loading and Milestone 3 remain deferred. No dependencies or upstream source are added.
+
+## Final validation and manual acceptance
+
+- `cargo test -p sourceorrery-cli --locked -j 1 ui:: -- --test-threads=1`: **172 passed, 0 failed, 1 intentionally ignored** snapshot writer.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --workspace --all-targets --locked -j 1 -- -D warnings`: passed.
+- `cargo check -p sourceorrery-cli --no-default-features --features ui --locked -j 1`: passed.
+- `cargo test --workspace --locked -j 1 -- --test-threads=1`: **610 passed, 0 failed, 1 intentionally ignored** across 40 unit/integration/doc-test groups. This final run includes the three follow-up failure/provider regressions.
+- Explicit snapshot writer passed: **384 synthetic screens plus the index**, six looks. Visually inspected ten reconstructed terminal-cell contact sheets covering selected enabled/disabled/expired rows, search matches, menus, filters, cached inspection, focused text, refresh/error feedback, theme preview, idle warning and compact overview/help. Generated output is ignored under `target/ui-snapshots/`; these are TestBackend reconstructions, not native terminal screenshots.
+- All fixtures use fake sources/editors or temporary synthetic vaults with NoStore. No real user vaults or live providers opened. No dependencies or upstream code added.
+- Final UI-only lint adjustments in `app.rs`, `keys.rs`, `session.rs`, `text_input.rs`, setup/init wizard constructors and secret-column/row presentation keep the repository’s Clippy checks passing; no repository-wide formatting was performed.
+- **Required manual terminal acceptance is outstanding for B02 (physical key-repeat/one-write behaviour in Windows Terminal and a non-Windows terminal) and B08 (F2 availability).** Their implementations and automated acceptance checks are complete; status remains Blocked until those manual checks are performed.
+- First-time-user tasks in the plan, a basic terminal screen-reader check, live authenticator scanning and native font/colour/cursor checks have not been performed. No usability/adoption or universal terminal-contrast claim is made.
+
+## Pause and resume history — 25 October 2026
+
+The user paused work because the machine was nearly hanging, then explicitly requested continuation. Codex stopped only its own build process trees during the pause. Interrupted validation had no pass/fail result and is superseded by the completed checks above.
+
+The saved checkpoint was `22877befd5806036b6543ec7cf068160eb969e58`, with an empty index and B13–B15 uncommitted. On resume, every saved UI source hash matched; Claude’s later commits through `14b6f3e` had no UI-file overlap. Security/storage/CI/changelog/security documentation and unrelated artwork/Milestone-3 files were preserved. Validation resumed serially with `CARGO_BUILD_JOBS=1` and one test thread.
+
+The historical resume memory is `C:/Users/JamesMelvin/.codex/memories/sourceorrery-ui-resume.md`. Its adjacent review-only WIP patch is an obsolete checkpoint and must not be applied over the completed implementation.
