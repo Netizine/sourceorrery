@@ -784,3 +784,36 @@ One commit: the checks and the new write order share the tag plan.
   Azure 17; the Vault live suite against the dev server passes. clippy clean.
 * **Not run here:** the Azure live suite (its emulator; CI runs it). No
   allocation trace was taken: the change is reviewed by ownership.
+
+### B27 — retried uploads are of verified files only
+
+* **Closes:** REC02.
+* **Changes:** `scripts/release/verify-release-artifacts.py`: the release's
+  `SHA256SUMS` must carry a build provenance attestation from `release.yml`
+  of this repository, GitHub-hosted runner, for exactly the commit the
+  release gate validated, before it is trusted as the inventory (a checksum
+  file from the same mutable release proves nothing by itself); then the
+  downloaded files must be exactly its files for the job's patterns (none
+  missing, none unexpected, none listed twice), each with the digest
+  `SHA256SUMS` gives and its own attestation. `--dir` omitted checks
+  `SHA256SUMS` alone, for the jobs that use its digests. A release without
+  provenance is refused with its way out (a new version, or a separate
+  review): no bypass. A verification-service failure refuses.
+  `ReleasePackages.yaml`: the plan passes the validated commit to every
+  job; npm, PyPI, NuGet and Maven Central verify their files right after
+  downloading them and before any check or upload; the package managers
+  verify `SHA256SUMS`; crates.io, Maven Central and pkg.go.dev check that
+  the tag still names the validated commit (tags are unprotected, B25);
+  the helper is taken from the workflow's own revision; each job gets
+  `attestations: read`. `docs/release.md` describes it.
+* **Tests run:** `verify_release_artifacts_test.py`, 12 tests with a fake
+  `gh`: the files verify; a pattern takes only its files; changed bytes;
+  a replaced file with a replaced `SHA256SUMS` (no provenance); a file
+  without its own attestation; provenance for another commit; a missing,
+  an unexpected and a twice-listed file; a pattern the release never had;
+  the service failing; a legacy release; checksums alone; the exit status.
+  **Live** against v0.2.0 (read-only; two of its files, 13 KB and 223 KB,
+  downloaded to the scratch directory): verified, with `SHA256SUMS`; one
+  byte appended to a file, refused by its digest; the v0.1.4 commit given
+  instead, refused by the attestation ("expected SourceRepositoryDigest …").
+  The workflow parses; it was not dispatched.

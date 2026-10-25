@@ -529,6 +529,7 @@ jobs:
       - run: python3 -m unittest -v scripts/ci/azure_vault_test.py
       - run: python3 -m unittest -v scripts/ci/dependency_audit_test.py
       - run: python3 -m unittest -v scripts/release/check_release_validation_test.py
+      - run: python3 -m unittest -v scripts/release/verify_release_artifacts_test.py
 
   # ADR 0007: the library built from this commit must still pass the
   # conformance contract of the latest release: its C runner, compiled

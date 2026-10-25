@@ -432,6 +432,20 @@ It builds no new release:
   the release's `SHA256SUMS` with the renderer in the checkout, so a fix to
   the renderer can be applied to an existing release.
 
+Before anything is uploaded, every file is verified against the release
+run's own provenance (`scripts/release/verify-release-artifacts.py`): the
+release's `SHA256SUMS` must carry a build provenance attestation from
+`release.yml` of this repository, on a GitHub-hosted runner, for the commit
+the release gate validated (the tag's), and only then is it the
+inventory; the downloaded files must be exactly its files for that
+registry (none missing, none extra), each with its digest and its own
+attestation. The jobs that build from the tag (crates.io, Maven Central)
+or tag it (pkg.go.dev) check the tag still names that commit, since tags
+are not protected (above). A release without provenance, built before
+attestations, is refused: publish a new version instead, or have its files
+reviewed separately; there is no switch that skips the check. A dry run
+verifies the same way.
+
 Inputs: the tag (empty means the latest release), **dry_run** (on by
 default), one tick box per registry, and **bootstrap_providers** for the
 initial publication of the three provider crates. Every registry's files are
