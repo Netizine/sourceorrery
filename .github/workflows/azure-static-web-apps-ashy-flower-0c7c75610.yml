@@ -25,7 +25,7 @@ jobs:
           lfs: false
       - name: Build And Deploy
         id: builddeploy
-        uses: Azure/static-web-apps-deploy@4d27395796ac319302594769cfe812bd207490b1 # v1
+        uses: Azure/static-web-apps-deploy@1a947af9992250f3bc2e68ad0754c0b0c11566c9 # v1
         env:
           FONTAWESOME_NPM_AUTH_TOKEN: ${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
         with:
@@ -46,7 +46,7 @@ jobs:
     steps:
       - name: Close Pull Request
         id: closepullrequest
-        uses: Azure/static-web-apps-deploy@4d27395796ac319302594769cfe812bd207490b1 # v1
+        uses: Azure/static-web-apps-deploy@1a947af9992250f3bc2e68ad0754c0b0c11566c9 # v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_ASHY_FLOWER_0C7C75610 }}
           action: "close"
