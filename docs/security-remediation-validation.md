@@ -630,3 +630,23 @@ One commit: the checks and the new write order share the tag plan.
   right file opens). It **fails without the fix** ("cannot read
   recovery-key file …missing.txt" before the right key was tried). clippy
   clean.
+
+### B16 — the child of `run` gets only the vault's values for its variables
+
+* **Closes:** SR10.
+* **Changes:** `run` removes every variable the manifest names from the
+  child before it sets those that resolved, so an optional secret that is
+  missing, disabled, outside its window or deleted leaves its variable
+  absent; other variables pass through, and the unlock and view-check
+  variables stay removed. On Windows the standard library matches the names
+  case-insensitively, as the environment does. Rotation hooks receive no
+  manifest variables, so they are unchanged. `docs/cli.md` says so.
+* **Tests run:** `an_unresolved_optional_secret_leaves_its_variable_absent_in_the_child`
+  (Windows: an optional secret the vault lacks and a disabled one, each
+  with a stale parent value, one of them in lower case; a resolved one
+  replaces its parent value; an unrelated variable survives). It **fails
+  without the fix** (the child saw `[pw][stale-parent-value][stale-parent-value][kept]`).
+  The other `run` tests pass (required failure stops the launch, the unlock
+  variables never reach the child, the exit status passes whole).
+* **Not run here:** the Unix spelling of the test (`sh -c`; CI runs it on
+  Linux and macOS).

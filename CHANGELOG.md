@@ -149,6 +149,9 @@ is in `docs/security-remediation-validation.md`).
   server's no longer reports an `updated_on` earlier than the version's
   `created_on`.
 
+* `run`: an optional secret that does not resolve leaves its variable
+  absent in the child. A value of that name in `run`'s own environment
+  used to pass through, where the program could take it for the vault's.
 * Rust client and every SDK: a recovery-key source is read only when the
   vault asks for a key and the earlier sources are used up, so a missing or
   empty `SOURCEORRERY_RECOVERY_KEY_FILE` no longer fails an open that this

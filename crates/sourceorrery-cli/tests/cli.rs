@@ -1166,6 +1166,87 @@ fn an_optional_secret_the_vault_lacks_does_not_block_run() {
     assert!(stderr(&out).contains("not_found"), "{}", stderr(&out));
 }
 
+/// SR10 of the 2026-10-25 review: a variable the manifest names is set in
+/// the child only to the vault's value. An optional secret the vault lacks,
+/// or one that is disabled, leaves the variable absent even when the
+/// parent's environment has one of that name (on Windows in any case);
+/// unrelated variables pass through.
+#[test]
+fn an_unresolved_optional_secret_leaves_its_variable_absent_in_the_child() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.set("development", "database-password", "pw");
+    env.set("development", "feature-flag", "on");
+    let out = env.run(&[
+        "secret",
+        "update",
+        "feature-flag",
+        "--disable",
+        "--vault",
+        "development",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
+         [secrets.database-password]\n\n\
+         [secrets.extra-key]\nrequired = false\n\n\
+         [secrets.feature-flag]\nrequired = false\n",
+    )
+    .unwrap();
+    let probe: &[&str] = if cfg!(windows) {
+        &[
+            "run",
+            "--",
+            "cmd",
+            "/C",
+            "echo [%DATABASE_PASSWORD%][%EXTRA_KEY%][%FEATURE_FLAG%][%UNRELATED%]",
+        ]
+    } else {
+        &[
+            "run",
+            "--",
+            "sh",
+            "-c",
+            "echo \"[$DATABASE_PASSWORD][$EXTRA_KEY][$FEATURE_FLAG][$UNRELATED]\"",
+        ]
+    };
+    let out = env
+        .cmd(probe)
+        .env("DATABASE_PASSWORD", "stale-parent-value")
+        .env(
+            if cfg!(windows) {
+                "extra_key"
+            } else {
+                "EXTRA_KEY"
+            },
+            "stale-parent-value",
+        )
+        .env("FEATURE_FLAG", "stale-parent-value")
+        .env("UNRELATED", "kept")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let seen = stdout(&out);
+    assert!(!seen.contains("stale-parent-value"), "{seen}");
+    // cmd prints an undefined %VAR% as written; sh prints nothing.
+    let absent = |name: &str| {
+        if cfg!(windows) {
+            format!("[%{name}%]")
+        } else {
+            "[]".to_owned()
+        }
+    };
+    assert_eq!(
+        seen.trim(),
+        format!(
+            "[pw]{}{}[kept]",
+            absent("EXTRA_KEY"),
+            absent("FEATURE_FLAG")
+        )
+    );
+}
+
 #[test]
 fn manifest_errors_do_not_echo_rejected_values() {
     const CANARY: &str = "REJECTED_VALUE_CANARY_cli";
