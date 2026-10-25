@@ -32,8 +32,9 @@ not publish packages.
    once. A Git push makes that commit available to Actions; it does not
    start a release.
 2. In GitHub, open *Actions → Release → Run workflow*, enter the version
-   (`X.Y.Z`, no `v`) and leave **dry_run** ticked. Leave **bootstrap_providers**
-   unticked: the current packages have trusted publishers configured.
+   (`X.Y.Z`, no `v`) and leave **dry_run** ticked. Tick **bootstrap_providers**
+   when a crate is published for the first time: in 0.3.0,
+   `sourceorrery-provider-azure` and `sourceorrery-os` (below).
    Wait for green. The
    `release-dry-run-X.Y.Z` artifact holds everything the real run would
    attach, plus `SHA256SUMS` and the release notes; download it and try a
@@ -77,7 +78,7 @@ retried for the same version with [Release packages](#publishing-an-existing-rel
 | `java` | `sourceorrery-X.Y.Z.jar` with the native libraries embedded per platform. |
 | `dotnet` | `SourceOrrery.X.Y.Z.nupkg` with `runtimes/<rid>/native`. |
 | `crates` | `scripts/release/publish-crates.py X.Y.Z` runs Cargo's dry-run verification for every publishable workspace crate in dependency order. |
-| `publish-crates` | in a real release, publishes the workspace crates through OIDC. The optional bootstrap path is not needed for the current packages. Exact versions already published are skipped. All ordinary release and SDK jobs still run. |
+| `publish-crates` | in a real release, publishes the workspace crates through OIDC. With `bootstrap_providers`, the crates in the helper's bootstrap list that crates.io does not have yet go first, with the scoped `CRATES_BOOTSTRAP_TOKEN`. Exact versions already published are skipped. All ordinary release and SDK jobs still run. |
 | `php` | `composer validate --strict` on the root `composer.json` and a Composer install of the version from a local tag (`scripts/ci/php-package-install.sh`); nothing is uploaded, the package Packagist serves is the git tag itself. |
 | `release` | the GitHub Release (or the dry-run artifact) with `SHA256SUMS`, and a build provenance attestation for every file in a real release. |
 | `package-managers` | the Homebrew formula, the Scoop manifest and the three WinGet manifests, rendered from `SHA256SUMS` by `scripts/release/package-managers.py` (artifact `package-managers`); every URL is a release archive and every hash comes from the release. |
@@ -189,9 +190,12 @@ to publish. `rust-lang/crates-io-auth-action` trades the
 job's GitHub identity token for a crates.io token that lives 30 minutes
 and revokes it when the job ends. crates.io grants it only for crates
 whose settings name the workflow, so every crate needs the setting, or the
-publish stops at the first crate without it. All current publishable crates have their trusted-publisher settings,
-including `sourceorrery-provider-azure` and `sourceorrery-os`. Leave
-`bootstrap_providers` off for ordinary releases.
+publish stops at the first crate without it. A crate that crates.io does
+not have yet has no settings: `sourceorrery-provider-azure` and
+`sourceorrery-os` are new in 0.3.0, so the 0.3.0 release runs with
+`bootstrap_providers` (their first publication with
+`CRATES_BOOTSTRAP_TOKEN`), and the steps below follow it for those two.
+Leave `bootstrap_providers` off once every crate has its setting.
 
 1. For each crate, *Settings → Trusted Publishing → Add →
    GitHub*: Repository owner `Netizine`, Repository name `sourceorrery`,
@@ -215,9 +219,9 @@ The helper defaults to dry-run; only `--publish` permits uploads. Registry
 lookups and Cargo packaging still need network access. Existing versions
 are skipped and yanked versions or registry lookup errors stop the run.
 
-The workflow retains an explicit `bootstrap_providers` option for a future
-crate's first publication. It is not required for the current package set.
-Before using it, review the helper's bootstrap allowlist and the temporary
+The workflow's `bootstrap_providers` option is for a crate's first
+publication (in 0.3.0, `sourceorrery-provider-azure` and
+`sourceorrery-os`). Before using it, review the helper's bootstrap allowlist and the temporary
 token scope, then configure that new crate's trusted publisher and revoke
 the token. Do not use bootstrap as the normal release path.
 
@@ -380,8 +384,8 @@ registry, with or without secrets, and uploads nothing.
 
 For a partially completed 0.3.0 release, select `v0.3.0` and the failed
 registries, run a dry run, then dispatch again with **dry_run** unticked.
-For the current package set leave **bootstrap_providers** unticked; its
-trusted publishers are configured. The job uses the release tag's sources and skips
+Tick **bootstrap_providers** only while a crate in the helper's bootstrap
+list is still missing from crates.io. The job uses the release tag's sources and skips
 existing exact versions, so a failed upload does not require a new version. Changed package contents do.
 
 ## What each registry page shows

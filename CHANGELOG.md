@@ -6,7 +6,7 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-The next release is **0.3.0**.
+## [0.3.0] - 2026-10-26
 
 **Breaking: vaults from earlier releases are not read.** A vault file of
 schema 1 to 4 (schema 4: development builds of `main`) is refused with
@@ -739,5 +739,7 @@ package registry.
   the Composer manifest is at the repository root, where Packagist reads
   it. Procedure and per-registry setup: `docs/release.md`.
 
+[0.3.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0
+[0.2.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0
 [0.1.4]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3
