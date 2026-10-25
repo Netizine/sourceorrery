@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 /**
  * SR07 of the 2026-10-25 review: a reader's native handle is never freed
@@ -142,7 +143,11 @@ class GuardedTest {
         assertEquals(1, fake.frees.get());
     }
 
+    // Platform threads: these calls never block, and a virtual thread that
+    // never blocks is never unmounted, so on a runner with two cores the
+    // first two would keep the others from starting at all.
     @Test
+    @Timeout(120)
     void callsRacingCloseEitherFinishOrAreRefused() throws Exception {
         Fake fake = new Fake();
         Guarded<Fake> guarded = guard(fake);
@@ -150,7 +155,7 @@ class GuardedTest {
         AtomicInteger finished = new AtomicInteger();
         AtomicInteger refused = new AtomicInteger();
         CountDownLatch started = new CountDownLatch(8);
-        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService pool = Executors.newFixedThreadPool(8)) {
             for (int t = 0; t < 8; t++) {
                 pool.submit(() -> {
                     started.countDown();

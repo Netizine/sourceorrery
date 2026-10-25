@@ -19,6 +19,7 @@ import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import ai.sourceorrery.internal.Native;
 
@@ -179,11 +180,14 @@ class ReaderTest {
         reader.close();
     }
 
+    // Platform threads, as in GuardedTest: reads in a loop never block, so
+    // virtual threads would not let each other start on a two-core runner.
     @Test
+    @Timeout(120)
     void closeWhileReadsRunWaitsForThem() throws Exception {
         SecretReader reader = openReader();
         java.util.concurrent.CountDownLatch reading = new java.util.concurrent.CountDownLatch(8);
-        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+        try (ExecutorService pool = Executors.newFixedThreadPool(8)) {
             List<Future<Integer>> readers = new java.util.ArrayList<>();
             for (int t = 0; t < 8; t++) {
                 readers.add(pool.submit(() -> {
