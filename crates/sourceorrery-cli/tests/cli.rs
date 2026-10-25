@@ -1301,7 +1301,57 @@ fn run_passes_the_child_exit_status_through_whole() {
     }
 }
 
+/// A build without the provider (`--no-default-features`) says so for a
+/// secret kept there, and still reads the vault file's own secrets.
 #[test]
+#[cfg(not(any(feature = "remote", feature = "provider-vault")))]
+fn a_build_without_the_provider_says_so_and_reads_the_file() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.set("development", "database-password", CANARY);
+    env.store_through(
+        "development",
+        &sourceorrery_core::ConnectionSettings::HashicorpVault {
+            address: "http://127.0.0.1:1".to_owned(),
+            mount: "secret".to_owned(),
+            namespace: None,
+        },
+        "api-key",
+    );
+    let out = env.run(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "development",
+        "-o",
+        "json",
+    ]);
+    assert!(!out.status.success());
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert_eq!(err["error"]["code"], "unsupported", "{err}");
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("which this build of SourceOrrery does not include"),
+        "{err}"
+    );
+    let out = env.run(&[
+        "secret",
+        "get",
+        "database-password",
+        "--vault",
+        "development",
+        "--reveal",
+        "--raw",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), CANARY);
+}
+
+#[test]
+#[cfg(any(feature = "remote", feature = "provider-vault"))]
 fn a_secret_a_connection_stores_is_read_at_its_provider() {
     let env = Env::new();
     env.create_vault("development");
@@ -1522,6 +1572,7 @@ fn secret_set_takes_a_description_for_the_catalog() {
 }
 
 #[test]
+#[cfg(any(feature = "remote", feature = "provider-vault"))]
 fn secret_set_and_import_take_a_storage() {
     let env = Env::new();
     let key = env.key_file("development");
@@ -1916,10 +1967,12 @@ fn rotation_without_hooks_reads_stdin_and_activates_on_demand() {
 
 /// What a fake collector saw per request: the path, the `X-Token` header
 /// and the body.
+#[cfg(feature = "otlp")]
 type CollectedRequests = Vec<(String, Option<String>, serde_json::Value)>;
 
 /// Accept OTLP/HTTP posts on a local port, answering `status`, and record
 /// each request's path, one header and the body it carried.
+#[cfg(feature = "otlp")]
 fn otlp_collector(
     status: u16,
     requests: usize,
@@ -2078,7 +2131,37 @@ fn audit_export_follow_streams_new_events() {
     child.wait().unwrap();
 }
 
+/// A build without the OTLP exporter refuses `--format otlp` and names the
+/// JSON Lines way.
 #[test]
+#[cfg(not(feature = "otlp"))]
+fn a_build_without_otlp_refuses_it_and_names_jsonl() {
+    let env = Env::new();
+    env.create_vault("dev");
+    let out = env
+        .cmd(&[
+            "audit",
+            "export",
+            "--vault",
+            "dev",
+            "--format",
+            "otlp",
+            "--endpoint",
+            "http://127.0.0.1:1",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("no OTLP exporter"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(stderr(&out).contains("--format jsonl"), "{}", stderr(&out));
+}
+
+#[test]
+#[cfg(feature = "otlp")]
 fn audit_export_posts_otlp_log_records() {
     let env = Env::new();
     env.create_vault("dev");

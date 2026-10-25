@@ -1023,3 +1023,37 @@ One commit: the checks and the new write order share the tag plan.
   an unlock: all five back, reads and listings work, the chain intact); it
   **fails without the index** (the plan names no index). Storage, provider,
   conformance and CLI suites; clippy clean for storage and provider.
+
+### B30 — the minimum Rust and the feature combinations, built
+
+* **Closes:** REC09's toolchain and feature part; REC03's maintenance
+  dependency check has nothing to validate (B22 applied no update: the
+  zbus notices wait on an upstream release).
+* **Changes:** CI job `msrv` (in the `CI` gate's `needs`): it reads
+  `rust-version` from the workspace and fails unless both native
+  extensions declare the same; on that toolchain (1.91.1) it runs
+  `cargo test --workspace --locked` and `scripts/ci/feature-matrix.sh`,
+  the bounded list of supported combinations: the headless build of the
+  CLI, the C ABI (and so the client), the adapters and storage, each
+  feature on its own on top of it (`os-keyring`, `ui`, `otlp`, each
+  provider, `remote`), the headless crates' tests, and both native
+  extensions with and without their defaults. `docs/building.md` lists the
+  combinations and the local commands.
+* **Found:** the headless builds' tests assumed the defaults. The client's
+  `a_secret_a_connection_stores_is_read_at_its_provider` expected
+  `provider_unavailable` where a build without the provider correctly says
+  `unsupported` (hint: "does not include a HashiCorp Vault provider"); it
+  now asserts what each build does, attempts and log included. Two CLI
+  tests need a provider and one the OTLP exporter: they are gated on those
+  features, and new headless tests check that a build without the provider
+  says so for a secret kept there while reading the file's own, and that
+  one without OTLP refuses `--format otlp` and names JSON Lines.
+* **Tests run (local, Windows, Rust 1.91.1, `target/msrv`):** every
+  workspace package's tests, one package per command: core 53, crypto 28,
+  storage 78, CLI 175 + 42 + 9 (with the UI session's changes then in the
+  tree), os 5, provider 7 + 12, AWS 11 + 6 + 3, Azure 13 + 5, Vault 9 + 3 +
+  3 + 5 + 4, client 11 + 7 + 1, C ABI 8 + 1 + 6 + 9, conformance 5 + 2 + 13
+  + 43; the feature matrix, all 25 commands. On stable, the same fixed tests
+  pass with and without default features; clippy clean for both.
+* **Not run here:** the matrix on Linux and macOS (CI's `msrv` job runs it
+  on Linux).

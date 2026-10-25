@@ -137,6 +137,21 @@ A build without `os-keyring` needs no D-Bus headers on Linux and suits
 servers and containers, which have no credential store
 ([Headless](https://sourceorrery.ai/guides/headless/)).
 
+The supported combinations are the defaults, the headless build of each
+crate, and each feature on its own on top of it (`provider-vault`,
+`provider-aws`, `provider-azure`, `remote`, `ui`, `otlp`, `os-keyring`);
+the Python and Node extensions build with and without their defaults.
+`scripts/ci/feature-matrix.sh` builds every one of them and runs the
+headless crates' tests; CI's `msrv` job runs it, and the workspace's tests,
+on the minimum Rust, 1.91.1, which every manifest declares as
+`rust-version`. To do the same locally:
+
+```bash
+rustup toolchain install 1.91.1 --profile minimal
+RUSTUP_TOOLCHAIN=1.91.1 cargo test --workspace --locked
+RUSTUP_TOOLCHAIN=1.91.1 bash scripts/ci/feature-matrix.sh
+```
+
 ## Running the tests
 
 The Rust workspace, with the same checks CI runs:

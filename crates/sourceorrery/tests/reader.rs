@@ -451,20 +451,29 @@ fn a_secret_a_connection_stores_is_read_at_its_provider() {
         .unwrap();
     drop(vault);
 
-    // The file's own secret needs no provider; the other goes to it.
+    // The file's own secret needs no provider; the other goes to it. A
+    // build with the provider finds nothing listening; one without it
+    // (`--no-default-features`, scripts/ci/feature-matrix.sh) says so.
+    let with_provider = cfg!(any(feature = "remote", feature = "provider-vault"));
+    let expected = if with_provider {
+        ErrorKind::ProviderUnavailable
+    } else {
+        ErrorKind::Unsupported
+    };
     let reader = SecretReader::open_with("dev", &home.options()).unwrap();
     assert_eq!(
         reader.get("database-password").unwrap().value.expose(),
         b"pw"
     );
     let err = reader.get("api-key").unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::ProviderUnavailable, "{err}");
-    assert!(err.is_transient());
-    assert!(
-        err.hint().contains("the connection of vault 'dev'"),
-        "{}",
-        err.hint()
-    );
+    assert_eq!(err.kind(), expected, "{err}");
+    assert_eq!(err.is_transient(), with_provider, "{err}");
+    let hint = if with_provider {
+        "the connection of vault 'dev'"
+    } else {
+        "does not include a HashiCorp Vault provider"
+    };
+    assert!(err.hint().contains(hint), "{}", err.hint());
     assert!(!err.to_string().contains("hvs.stored"), "{err}");
     drop(reader);
 
@@ -478,7 +487,7 @@ fn a_secret_a_connection_stores_is_read_at_its_provider() {
     )
     .unwrap();
     let err = Project::load(Some(&manifest), &home.options()).unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::ProviderUnavailable, "{err}");
+    assert_eq!(err.kind(), expected, "{err}");
     std::fs::write(
         &manifest,
         "[project]\nname = \"demo\"\nvault = \"dev\"\n\n[secrets.database-password]\n\n\
@@ -500,9 +509,14 @@ fn a_secret_a_connection_stores_is_read_at_its_provider() {
             ..AuditQuery::default()
         })
         .unwrap();
+    let code = if with_provider {
+        "provider_unavailable"
+    } else {
+        "unsupported"
+    };
     assert!(
         failed.iter().all(|event| event.detail.as_deref()
-            == Some(&format!("at connection {connection}: provider_unavailable")[..])),
+            == Some(&format!("at connection {connection}: {code}")[..])),
         "{failed:?}"
     );
     assert_eq!(failed.len(), 3);

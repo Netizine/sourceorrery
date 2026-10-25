@@ -160,6 +160,55 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: bindings/node
 
+  # REC09: the declared minimum Rust is built and tested, not inferred from
+  # dependency metadata: the workspace and both native extensions declare
+  # one `rust-version`, and on that toolchain the workspace's tests pass and
+  # every supported feature combination builds (scripts/ci/feature-matrix.sh,
+  # whose headless builds also run their tests). rust-toolchain.toml selects
+  # stable, so RUSTUP_TOOLCHAIN overrides it.
+  msrv:
+    name: minimum Rust and feature combinations
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The declared minimum, the same in every manifest
+        id: msrv
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import sys, tomllib
+          def declared(path, *keys):
+              with open(path, "rb") as file:
+                  value = tomllib.load(file)
+              for key in keys:
+                  value = value[key]
+              return value
+          version = declared("Cargo.toml", "workspace", "package", "rust-version")
+          for path in ("bindings/python/Cargo.toml", "bindings/node/Cargo.toml"):
+              other = declared(path, "package", "rust-version")
+              if other != version:
+                  sys.exit(f"::error::{path} declares Rust {other}, the workspace {version}")
+          print(f"version={version}")
+          EOF
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            .
+            bindings/python
+            bindings/node
+      - name: The workspace builds and its tests pass on the minimum
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+        run: cargo test --workspace --locked
+      - name: Every supported feature combination, on the minimum
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+        run: bash scripts/ci/feature-matrix.sh
+
   # ---------------------------------------------------------------------
   # SDKs: every binding builds, its tests pass and its example runs against
   # a vault the CLI created in the job (opening with its recovery key,
@@ -868,6 +917,7 @@ jobs:
       - test
       - ffi-header
       - bindings-lint
+      - msrv
       - sdk-rust
       - sdk-python
       - sdk-node
