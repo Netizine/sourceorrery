@@ -536,3 +536,19 @@ One commit: the checks and the new write order share the tag plan.
 * **Not covered:** the transitive Maven and NuGet graphs (direct references
   only; their resolution needs Maven and the .NET SDK, and Dependabot
   follows them); GitHub Actions (pinned by SHA; Dependabot and zizmor).
+
+### B23 — SR13, the owner's disposition
+
+* **Decision (owner):** the licensed Font Awesome Pro kit stays (its custom
+  mark and the duotone set are a paid subscription); the token is a
+  repository secret for Actions and for Dependabot. No public substitute.
+* **Changes:** `docs.yml` checks for the token first: present, the build
+  runs as before; missing on a pull request from a fork, the build is
+  skipped with a notice and a summary line (built after merge); missing
+  anywhere else, the job fails. The Azure Static Web Apps jobs skip fork
+  pull requests (they could never deploy: `pull_request`, not
+  `pull_request_target`, so a fork's code is never given the deployment
+  token). Coverage already skipped forks and Dependabot. `site/README.md`
+  says so.
+* **Tests run:** the workflows parse (the site's `yaml` package). Not run
+  here: an Actions run from a fork (needs GitHub).

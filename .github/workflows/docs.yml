@@ -36,7 +36,33 @@ jobs:
           # Dates on generated pages come from their source files' Git history.
           fetch-depth: 0
 
+      # The site uses the licensed Font Awesome Pro kit (its own icons and
+      # the duotone set), installed from Font Awesome's registry with the
+      # FONTAWESOME_NPM_AUTH_TOKEN secret, which Actions and Dependabot have.
+      # A pull request from a fork gets no secrets: its docs build is skipped
+      # with a notice and runs once the change is merged. Anywhere else a
+      # missing token fails the job (docs/security-remediation-validation.md,
+      # SR13: the owner's decision).
+      - name: Icon registry token
+        id: token
+        env:
+          FONTAWESOME_NPM_AUTH_TOKEN: ${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          if [ -n "$FONTAWESOME_NPM_AUTH_TOKEN" ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          elif [ "$FORK" = true ]; then
+            message="Pull requests from forks get no secrets, so the docs site, which installs the licensed Font Awesome Pro kit, was not built; it is built after merge"
+            echo "::notice title=docs build skipped::$message"
+            echo "$message." >> "$GITHUB_STEP_SUMMARY"
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "::error title=FONTAWESOME_NPM_AUTH_TOKEN is missing::add the Font Awesome registry token as the repository secret FONTAWESOME_NPM_AUTH_TOKEN"
+            exit 1
+          fi
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.token.outputs.available == 'true'
         with:
           node-version: 22
           cache: npm
@@ -44,16 +70,20 @@ jobs:
 
       # No package in the lock file needs an install script on Linux.
       - run: npm ci --ignore-scripts
+        if: steps.token.outputs.available == 'true'
         env:
           FONTAWESOME_NPM_AUTH_TOKEN: ${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
 
       - run: npm test
+        if: steps.token.outputs.available == 'true'
 
       # prebuild syncs docs/ into the content collection and generates the
       # error-code reference; postbuild fails on any broken internal link.
       - run: npm run build
+        if: steps.token.outputs.available == 'true'
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.token.outputs.available == 'true'
         with:
           name: site
           path: site/dist

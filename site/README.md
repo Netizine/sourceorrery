@@ -148,12 +148,14 @@ Design references: [CocoIndex documentation](https://cocoindex.io/docs/getting_s
 
 `.github/workflows/docs.yml` runs the documentation checks. The Azure Static
 Web Apps workflow builds `/site` and deploys `dist/` on pushes to `main`, with
-PR previews. Both installation jobs read the repository Actions secret
-`FONTAWESOME_NPM_AUTH_TOKEN`; configure it before publishing these changes.
-The token is needed only at dependency installation, never in the browser or
-built site. Fork PRs do not receive repository secrets and cannot freshly
-install this private package; use a trusted maintainer build to validate them.
-Do not expose the token to untrusted PR code.
+PR previews. Both installation jobs read the repository secret
+`FONTAWESOME_NPM_AUTH_TOKEN`, which Actions and Dependabot each have; a job
+that lacks it fails. The token is needed only at dependency installation,
+never in the browser or built site. Fork PRs do not receive repository
+secrets and cannot install this licensed package: `docs.yml` skips their
+build with a notice and the preview deployment skips them, and the site is
+built and checked once the change is merged. Do not expose the token to
+untrusted PR code (no `pull_request_target`).
 
 `sourceorrery.ai` is configured under the static web app's Custom domains.
 The `postcss-selector-parser` override remains until Expressive Code's
