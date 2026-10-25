@@ -278,3 +278,38 @@ land together to build.
   clippy `-D warnings` clean for core, the client, storage, provider and the
   CLI.
 * **Not run here:** the language SDK suites (no change reaches them).
+
+### B08 — the publication design
+
+* **Closes:** SR02's design decision, before B10 and B11.
+* **Design:** [ADR 0011](adr/0011-provider-writes-fail-closed.md) section 3:
+  the invariant (a SourceOrrery reader never applies a policy looser than
+  the one a version's writer asked for, at any moment, after any failure);
+  HashiCorp Vault: committed documents plus per-writer intents for a
+  version not yet written, every `custom_metadata` change a merge patch of
+  its own keys, the data written with check-and-set; AWS Secrets Manager:
+  narrow to the meet of the old and new policy, publish, then reach the
+  target in an order that never loosens below it; Azure unchanged. What
+  needs provider IAM, legacy and external entries, metadata-only reads,
+  concurrent writers (Vault: covered; AWS: one writer at a time per secret,
+  since the service has no conditional writes) and lost answers (B07) are
+  each settled there.
+* **Evidence for the design:** the Vault behaviours it relies on were
+  checked against a disposable `hashicorp/vault:2.2.1` dev server (the CI
+  image): metadata can be created before any data and a data write with
+  `cas: 0` then lands as version 1; a stale `cas` is refused with 400
+  "check-and-set parameter did not match the current version"; a merge
+  patch adds and removes (`null`) single keys and needs
+  `application/merge-patch+json`; a patch of missing metadata is 404; a
+  `POST` that sets only `max_versions` creates missing metadata and leaves
+  existing `custom_metadata` alone (an empty `POST` creates nothing);
+  `custom_metadata` allows 64 keys, 128-byte keys and 512-byte values. The
+  AWS tag rules were taken from the Secrets Manager user guide and the
+  general tagging reference (B09).
+* **Contract case:** the lifecycle scenario
+  `a_new_restricted_version_is_never_returned` (a disabled version, then
+  one before its window, written over an enabled one: never returned by
+  name or by version, and every metadata read says why). Conformance 59
+  tests pass (the local vault and both adapters); the live suites run it in
+  B10 and B11. The in-flight half of the invariant is the model test of
+  B10, since the shared suite cannot interrupt a write.

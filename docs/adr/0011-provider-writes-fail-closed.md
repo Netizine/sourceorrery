@@ -75,38 +75,116 @@ not know.
 
 ### 3. Publishing a value never makes a restricted version readable
 
-An adapter publishes a value so that, at every moment and under every
-failure (a refused request, a lost answer, a concurrent reader), the policy
-that applies to any version SourceOrrery returns is at least as
-restrictive as both the policy before and the one asked for. Cleanup after
-a failure is not relied on.
+**The invariant.** At every moment, after any failure (a refused request,
+a lost answer, a process that stops between two requests), and with any
+number of SourceOrrery writers on HashiCorp Vault, the policy a
+SourceOrrery reader applies to a version is at least as restrictive as
+the one its writer asked for: disabled if it asked for disabled, a
+`not_before` no earlier and an `expires_on` no later. Nothing relies on a
+cleanup after a failure; whatever a failure leaves behind only restricts.
+"Reader" means every SourceOrrery read, metadata-only ones included
+(properties, version lists, listings) as well as value reads with or
+without an explicit version.
 
-* **HashiCorp Vault** (policy per version). The adapter reads the
-  metadata (current version `N`), writes the new version's properties for
-  `N+1` into `custom_metadata` (an entry at its default is removed, so an
-  earlier attempt's entry cannot apply to it), and only then writes the
-  data with `options.cas = N`. A concurrent writer makes the data write
-  fail rather than land as another number. Afterwards the adapter reads
-  the metadata back; an entry that another writer changed in between is
-  written again and the call returns `outcome_unknown`. A version that
-  another client writes without an entry is enabled, as before:
-  SourceOrrery's policy binds what SourceOrrery returns, not a client
-  with its own Vault token.
-* **AWS Secrets Manager** (policy per secret). For an existing secret the
-  adapter first narrows the tags to the **meet** of the old and new
-  policy: disabled if either is, the later `not_before`, the earlier
-  `expires_on`. It then sends `PutSecretValue`, and finally writes the new
-  policy and user tags. A failure before the value is sent puts the old
-  tags back when the narrowing is known not to have applied; anything
-  else leaves the secret at the meet, which restricts and never exposes,
-  and returns `outcome_unknown` saying which step failed. A new secret
-  gets its value and tags in one `CreateSecret`.
-* **Azure Key Vault** sets a version's value, attributes and tags in one
-  request: unchanged.
+The policy binds what SourceOrrery returns. A client with its own Vault
+token or AWS credentials reads any version regardless; against those the
+control is the provider's own: a Vault ACL policy on `<mount>/data/*`, an
+IAM policy (or tag-based ABAC) on `secretsmanager:GetSecretValue`.
 
-User tags, content types and their limits are validated before the first
-request (B09 for AWS): nothing is sent for input the provider would
-refuse after publication.
+**HashiCorp Vault** keeps the policy per version in `custom_metadata`.
+
+* *Representation.* A version's **committed** properties are the document
+  `sourceorrery.v<N>`, as before (one an earlier release wrote is a
+  committed one). An **intent** `sourceorrery.v<N>~<nonce>` (16 random hex
+  digits) is what one writer asked for version `N` before `N` existed. A
+  reader applies to version `N` its committed document, or the defaults
+  without one, **restricted by every intent for `N`**: disabled if any is,
+  the latest `not_before`, the earliest `expires_on`; the content type, the
+  tags and `updated_on` come from the committed document, or else from the
+  first intent in key order. A version with neither, written by another
+  client, is enabled with no window, as before. Releases before this one
+  apply committed documents only.
+* *Writes.* Every change to `custom_metadata` is a JSON merge patch of the
+  keys it concerns (`PATCH <mount>/metadata/<name>`, which needs the
+  `patch` capability), so two writers never drop each other's keys. A new
+  secret's metadata is first created by a `POST` that sets only
+  `max_versions: 0` and leaves `custom_metadata` alone. (Verified against
+  Vault 2.2.1: a merge patch with `null` removes a key, a patch of missing
+  metadata is 404, a `POST` without `custom_metadata` keeps it, and a data
+  write whose `cas` is not the current version is refused with 400.)
+* *`set_secret`.* Read the metadata (current version `N`). When the
+  properties asked for are not the defaults, patch an intent for `N+1`.
+  Write the data with `options.cas = N`. Then one patch commits: the
+  committed document for `N+1` (none at the defaults), this writer's intent
+  removed, and every intent for `N+1` that the first read found removed
+  (left by an attempt that stopped; any writer still in flight for `N+1`
+  has lost its check-and-set). With default properties and nothing to
+  remove, the write is the only change, as before.
+* *Failures of `set_secret`.* Refused before the data write, or the data
+  write refused (another writer took `N+1`: Vault's check-and-set answers
+  400): nothing was written; the intent is removed if one was patched, and
+  the refusal is returned (`invalid_argument` for the check-and-set,
+  naming the other writer). The data write's answer lost: the intent stays,
+  which binds `N+1` if the write landed, and the result is
+  `outcome_unknown`. The commit failed: the version exists, held by its
+  intent at least as restrictive as asked, and the result is
+  `outcome_unknown`. A leftover intent restricts the version it names once
+  someone writes it, until a later `set_secret` of that version commits or
+  `update_secret_properties` of it decides.
+* *`update_secret_properties`* is one patch: the version's committed
+  document, and its intents removed; the owner's explicit decision
+  supersedes them.
+* *Delete and recover* are a KV request and a patch of the deletion
+  marker. A failure of the second leaves the secret deleted for
+  SourceOrrery readers (the versions are gone in KV, or the marker stays)
+  and is `outcome_unknown`.
+* *Limits.* Vault's `custom_metadata` limits (64 keys, 512 bytes a value)
+  count an intent too; an intent that does not fit is refused before any
+  data is written.
+
+**AWS Secrets Manager** keeps the policy per secret, in tags that apply to
+every version (`Capability::PerVersionProperties` is not claimed).
+
+* *Policy tags* are `sourceorrery:disabled`, `sourceorrery:not_before` and
+  `sourceorrery:expires_on`; the content type, `updated_on` and user tags
+  are the others. `TagResource` adds or overwrites keys; `UntagResource`
+  removes them.
+* *`set_secret` of an existing secret.* Describe it (the old policy and
+  tags) and validate the request (B09). When the **meet** of the old and
+  new policy (disabled if either is, the later `not_before`, the earlier
+  `expires_on`) is stricter than the old, tag the secret with the meet's
+  policy tags: only additions and overwrites. Then `PutSecretValue`. Then
+  the target, in an order that never loosens below it: remove stale
+  non-policy tags, tag every wanted tag, remove stale policy tags last.
+  The new version is never current under a policy looser than the target,
+  and the old one is never under a policy looser than the meet until the
+  new one is current; afterwards the policy of the secret is the new one,
+  for every version, as the contract for per-secret properties says.
+* *`update_secret_properties`* runs the same three target steps. (They
+  replace an order that removed stale tags first and could loosen the
+  policy for a moment: from disabled to a future `not_before`, the secret
+  was enabled with no window in between.)
+* *Failures.* The narrowing refused: nothing changed, the refusal is
+  returned. Its answer lost: no value was sent, the policy may be narrowed,
+  `outcome_unknown`. `PutSecretValue` refused: the narrowing is undone (old
+  values tagged back, keys the meet added removed) and the refusal
+  returned, or `outcome_unknown` when the undo fails. `PutSecretValue`'s
+  answer lost, or any target step failing: `outcome_unknown`, with the
+  secret held at least as strict as asked. A new secret gets its value and
+  tags in one `CreateSecret`.
+* *Concurrent writers.* Secrets Manager has no conditional write for tags
+  or `PutSecretValue`. Two SourceOrrery writers changing one secret at the
+  same moment can interleave their tag steps, and a version can be under
+  the other writer's policy until the last step lands. The invariant holds
+  on AWS for one writer at a time per secret; a policy that must hold
+  against concurrent writers or other clients belongs in IAM.
+
+**Azure Key Vault** sets a version's value, attributes and tags in one
+request: unchanged, and the invariant holds as it is.
+
+Input a provider would refuse after publication is refused before the
+first request: user tags, content types and the provider's limits (B09 for
+AWS, the existing checks for Azure, Vault's own limits at the intent).
 
 ### 4. Error code `outcome_unknown`
 
@@ -131,19 +209,29 @@ included, as their base error with the code kept. `CONTRACT_VERSION` stays
   the audit row as any outcome is; schema 5 is unreleased, so no format
   change follows.
 * A change at a connection writes two audit events instead of one.
-* An AWS write with a policy change makes up to three requests; the old
+* A Vault write with properties that are not the defaults makes four
+  requests instead of three (read, intent, data, commit), and needs the
+  `patch` capability on `<mount>/metadata/*`; a token without it is
+  refused with `permission_denied` before any data is written.
+* An AWS write with a policy change makes up to five requests; the old
   current version is restricted for the moment between them when the new
   policy is stricter.
-* Two SourceOrrery writers changing one Vault secret at the same moment
-  can still see each other's properties for the short time before the
-  read-back; the read-back turns that into an `outcome_unknown` instead of
-  silence.
+* On AWS, the invariant needs one writer at a time per secret (above).
 
 ## Alternatives considered
 
 * **Swap the two requests** (Vault metadata first, AWS tags first).
   Correct for a stricter new policy, wrong for a looser one (AWS: the old
   version would be loosened early), and silent about lost answers.
+* **Vault: write the committed document for `N+1` before the data,
+  replacing the whole `custom_metadata` map.** Correct for one writer, but
+  a second writer's read-modify-write of the map (a property update of
+  another version, a deletion marker, its own pre-write) can drop the
+  entry, and the version is then enabled when its data lands. Per-writer
+  intents patched key by key cannot be dropped that way.
+* **Vault: treat a version without properties as disabled.** Fails closed
+  without intents, but every version another client writes would become
+  unreadable through SourceOrrery.
 * **Keep the policy inside the Vault data** (one atomic write per
   version). Metadata listings would have to read values, and property
   updates still need `custom_metadata`.
