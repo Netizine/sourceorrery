@@ -7,6 +7,7 @@ use ratatui::widgets::{Cell, Row, Table, TableState};
 use sourceorrery_core::{AuditEvent, DeletedSecret, SecretProperties, timestamp};
 use time::OffsetDateTime;
 
+use super::columns::Columns;
 use super::overview::short_provider;
 use super::{
     Drawn, Ruled, TABLE_CHROME, dash, label, long_time, row, rows, rule, ruled_table, short_time,
@@ -19,22 +20,39 @@ use crate::ui::theme::Theme;
 /// Characters of a version id shown in the list; the id is 32 hex digits.
 const SHORT_VERSION: usize = 8;
 
-/// Widest the name column grows; longer names are cut at the column edge.
-const MAX_NAME_WIDTH: usize = 48;
-
 /// Rows the activity list keeps for itself below the versions.
 const ACTIVITY_ROWS: u16 = 3;
+
+fn secret_columns(width: u16) -> Columns {
+    let indices: &[usize] = match width {
+        140.. => &[0, 1, 2, 3, 4, 5, 6, 7],
+        90.. => &[0, 1, 2, 4, 5, 7],
+        65.. => &[0, 1, 5, 2],
+        48.. => &[0, 1, 5],
+        _ => &[0, 1],
+    };
+    Columns::new(
+        width,
+        indices,
+        &[
+            "NAME",
+            "STATUS",
+            "STORAGE",
+            "VERSION",
+            "UPDATED UTC",
+            "EXPIRES UTC",
+            "PROJECTS",
+            "TAGS",
+        ],
+        &[0, 8, 9, 8, 16, 16, 8, if width >= 110 { 28 } else { 12 }],
+    )
+}
 
 pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Drawn {
     let shown = app.shown_secrets();
     let now = timestamp::now();
     let selected = app.list(Tab::Secrets).table.selected();
-    let name_width = shown
-        .iter()
-        .map(|p| sanitize(&p.name).chars().count())
-        .max()
-        .unwrap_or(0)
-        .clamp(4, MAX_NAME_WIDTH);
+    let columns = secret_columns(area.width);
     let vault = app
         .session
         .as_ref()
@@ -45,8 +63,22 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
             Line::from(""),
             Line::from(format!("No secrets in vault '{vault}'.")),
             Line::from(vec![
-                Span::styled("a", theme.key),
-                Span::styled(" adds one; a script uses  ", theme.muted),
+                Span::styled(
+                    if app.unavailable(crate::ui::app::Action::Add).is_none() {
+                        "a"
+                    } else {
+                        "Read-only: CLI"
+                    },
+                    theme.key,
+                ),
+                Span::styled(
+                    if app.unavailable(crate::ui::app::Action::Add).is_none() {
+                        " adds one; a script uses  "
+                    } else {
+                        " can store secrets:  "
+                    },
+                    theme.muted,
+                ),
                 Span::styled(
                     format!(" sourceorrery secret set <name> --vault {vault} "),
                     theme.code,
@@ -59,26 +91,8 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
     };
     let table = Ruled {
         label: label("Secrets", app, Tab::Secrets, shown.len(), theme),
-        headings: Row::new([
-            "NAME",
-            "STATUS",
-            "STORAGE",
-            "VERSION",
-            "UPDATED UTC",
-            "EXPIRES UTC",
-            "PROJECTS",
-            "TAGS",
-        ]),
-        widths: vec![
-            Constraint::Length(u16::try_from(name_width).unwrap_or(u16::MAX)),
-            Constraint::Length(8),
-            Constraint::Length(9),
-            Constraint::Length(u16::try_from(SHORT_VERSION).unwrap_or(u16::MAX)),
-            Constraint::Length(16),
-            Constraint::Length(16),
-            Constraint::Length(8),
-            Constraint::Fill(1),
-        ],
+        headings: columns.headings(),
+        widths: columns.widths.clone(),
         rows: shown
             .iter()
             .enumerate()
@@ -88,7 +102,15 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
                     .and_then(|s| s.connection_of(&p.name))
                     .map_or("vault", |c| short_provider(c.settings.provider()));
                 let projects = session.map_or(0, |s| s.projects_using(&p.name).len());
-                secret_row(p, storage, projects, now, theme, selected == Some(i))
+                secret_row(
+                    p,
+                    storage,
+                    projects,
+                    now,
+                    theme,
+                    selected == Some(i),
+                    (&columns, &app.list(Tab::Secrets).query),
+                )
             })
             .collect(),
         empty,
@@ -122,16 +144,23 @@ fn secret_row(
     now: OffsetDateTime,
     theme: &Theme,
     selected: bool,
+    presentation: (&Columns, &str),
 ) -> Row<'static> {
+    let (columns, query) = presentation;
     let status = output::status(p, now);
     let muted = |text: String| Span::styled(text, theme.cell(theme.muted, selected));
-    Row::new([
-        Cell::from(sanitize(&p.name).into_owned()),
+    columns.row([
+        Cell::from(super::highlighted(
+            &columns.text(0, &p.name),
+            query,
+            theme,
+            selected,
+        )),
         Cell::from(Span::styled(
             status,
             theme.cell(theme.status(status), selected),
         )),
-        Cell::from(muted(storage.to_owned())),
+        Cell::from(muted(columns.text(2, storage))),
         Cell::from(muted(
             sanitize(&p.version).chars().take(SHORT_VERSION).collect(),
         )),
@@ -145,7 +174,10 @@ fn secret_row(
         } else {
             Span::raw(projects.to_string())
         }),
-        Cell::from(tags(p).map_or_else(|| dash(theme, selected), Span::raw)),
+        Cell::from(tags(p).map_or_else(
+            || Line::from(dash(theme, selected)),
+            |t| super::highlighted(&columns.text(7, &t), query, theme, selected),
+        )),
     ])
 }
 
@@ -218,7 +250,7 @@ pub(super) fn detail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
             frame,
             rows(area, used, room),
             theme,
-            version_table(versions, app.versions.selected(), now, theme),
+            version_table(versions, app.versions.selected(), now, theme, area.width),
             &mut state,
             Some(max_rows),
         );
@@ -374,7 +406,27 @@ fn version_table(
     selected: Option<usize>,
     now: OffsetDateTime,
     theme: &Theme,
+    width: u16,
 ) -> Ruled<'static> {
+    let indices: &[usize] = if width >= 110 {
+        &[0, 1, 2, 3, 4]
+    } else if width >= 65 {
+        &[0, 1, 4]
+    } else {
+        &[0, 1]
+    };
+    let columns = Columns::new(
+        width,
+        indices,
+        &[
+            "VERSION",
+            "STATUS",
+            "CREATED UTC",
+            "NOT BEFORE UTC",
+            "EXPIRES UTC",
+        ],
+        &[0, 8, 16, 16, 16],
+    );
     let rows = versions
         .iter()
         .enumerate()
@@ -391,8 +443,11 @@ fn version_table(
             let time_or_dash = |t: Option<OffsetDateTime>| {
                 Cell::from(t.map_or_else(|| dash(theme, is_selected), |t| Span::raw(short_time(t))))
             };
-            Row::new([
-                Cell::from(Line::from(id)),
+            columns.row([
+                Cell::from(columns.text(
+                    0,
+                    &id.iter().map(|s| s.content.as_ref()).collect::<String>(),
+                )),
                 Cell::from(Span::styled(
                     status,
                     theme.cell(theme.status(status), is_selected),
@@ -408,20 +463,8 @@ fn version_table(
             Span::styled("VERSIONS", theme.label),
             Span::styled(format!("  {}", versions.len()), theme.muted),
         ]),
-        headings: Row::new([
-            "VERSION",
-            "STATUS",
-            "CREATED UTC",
-            "NOT BEFORE UTC",
-            "EXPIRES UTC",
-        ]),
-        widths: vec![
-            Constraint::Length(40),
-            Constraint::Length(8),
-            Constraint::Length(16),
-            Constraint::Length(16),
-            Constraint::Fill(1),
-        ],
+        headings: columns.headings(),
+        widths: columns.widths.clone(),
         rows,
         empty: vec![Line::from("")],
         selectable: true,

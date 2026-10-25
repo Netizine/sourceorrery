@@ -6,9 +6,12 @@
 //! secrets a project declares in `sourceorrery.toml`.
 //!
 //! It deliberately offers **no** way to create, change, delete, recover or
-//! purge a secret and no key, check, connection or audit management: an
-//! application that only reads cannot be tricked into writing.
-//! Administration is the CLI's job.
+//! purge a secret and no key, check, connection or audit management.
+//! Reads still append audit events. Use the separately installed CLI to
+//! create vaults and set secret values:
+//! [CLI installation guide](https://sourceorrery.ai/getting-started/#install).
+//! Installing the SDK does not install the CLI, and applications do not
+//! need a CLI process running alongside them.
 //!
 //! ```no_run
 //! use sourceorrery::SecretReader;

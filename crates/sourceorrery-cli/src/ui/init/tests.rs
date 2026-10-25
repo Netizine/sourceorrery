@@ -559,3 +559,52 @@ fn the_live_backend_opens_stores_and_writes_through_the_vault() {
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0].name, "demo");
 }
+
+#[test]
+fn compact_init_follows_focus_and_scrolls_complete_error_without_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut w = Wizard::new(Fake::one_vault(), start(&dir));
+    w.begin(None).unwrap();
+    w.message = Some(Message::Error(
+        "word heavy error 界e\u{301} ".repeat(90) + "END-ERROR",
+    ));
+    for (width, height) in [(80, 24), (60, 18)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let _ = draw(&mut terminal, &w);
+        w.update(Action::Scroll(crate::ui::app::Action::Bottom));
+        let screen = draw(&mut terminal, &w);
+        assert!(screen.contains("END-ERROR"), "{screen}");
+        assert!(screen.contains("Esc"));
+    }
+    assert!(w.saved.is_none());
+}
+
+#[test]
+fn ordinary_path_cursor_preserves_suffix_and_never_edits_hidden_values() {
+    use crate::ui::text_input::Edit;
+    let dir = tempfile::tempdir().unwrap();
+    let mut w = Wizard::new(Fake::one_vault(), start(&dir));
+    w.begin(None).unwrap();
+    focus(&mut w, Control::ManifestPath);
+    let original = w.manifest_path.clone();
+    w.update(Action::Text(Edit::Home));
+    w.update(Action::Input('X'));
+    assert_eq!(w.manifest_path, format!("X{original}"));
+    w.update(Action::Text(Edit::Home));
+    w.update(Action::Text(Edit::Delete));
+    assert_eq!(w.manifest_path, original);
+    let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+    assert!(draw(&mut terminal, &w).contains('▌'));
+    press(&mut w, Control::Continue);
+    press(&mut w, Control::Continue);
+    press(&mut w, Control::AddSecret);
+    focus(&mut w, Control::Value);
+    type_text(&mut w, VALUE);
+    let len = w.hidden_len(Control::Value);
+    w.update(Action::Text(Edit::Home));
+    w.update(Action::Text(Edit::Delete));
+    assert_eq!(w.hidden_len(Control::Value), len);
+    assert!(!draw(&mut terminal, &w).contains(VALUE));
+    press(&mut w, Control::Cancel);
+    assert_eq!(w.hidden_len(Control::Value), 0);
+}

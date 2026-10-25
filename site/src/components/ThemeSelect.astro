@@ -1,16 +1,41 @@
 ---
-// The native select and theme provider still own persistence and system-theme changes.
-import Default from '@astrojs/starlight/components/ThemeSelect.astro';
+import Select from '@astrojs/starlight/components/Select.astro';
 import FAIcon from './FAIcon.astro';
 ---
 
 <div class="so-theme-picker">
-	<Default />
+	<starlight-theme-select>
+		<Select
+			icon="laptop"
+			label={Astro.locals.t('themeSelect.accessibleLabel')}
+			options={[
+				{ label: Astro.locals.t('themeSelect.dark'), selected: false, value: 'dark' },
+				{ label: Astro.locals.t('themeSelect.light'), selected: false, value: 'light' },
+				{ label: Astro.locals.t('themeSelect.auto'), selected: true, value: 'auto' },
+			]}
+			width="6.25em"
+		/>
+	</starlight-theme-select>
 	<FAIcon name="sun" class="so-theme-picker__icon so-theme-picker__icon--light" />
 	<FAIcon name="moon" class="so-theme-picker__icon so-theme-picker__icon--dark" />
 	<FAIcon name="circle-half-stroke" class="so-theme-picker__icon so-theme-picker__icon--auto" />
 	<FAIcon name="chevron-down" class="so-theme-picker__caret" />
 </div>
+
+<script>
+	const theme = (window as Window & {
+		sourceorreryTheme?: { refresh(): void; set(value: string): void };
+	}).sourceorreryTheme;
+	class ThemeSelect extends HTMLElement {
+		connectedCallback() {
+			theme?.refresh();
+			this.querySelector('select')?.addEventListener('change', (event) => {
+				if (event.currentTarget instanceof HTMLSelectElement) theme?.set(event.currentTarget.value);
+			});
+		}
+	}
+	if (!customElements.get('starlight-theme-select')) customElements.define('starlight-theme-select', ThemeSelect);
+</script>
 
 <style>
 	/* :checked follows the native select's value, including restored preferences.

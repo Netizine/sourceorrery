@@ -266,9 +266,9 @@ pub fn outcome_cell(outcome: AuditOutcome) -> Cell {
     Cell {
         text: outcome.as_str().to_owned(),
         tone: match outcome {
-            AuditOutcome::Success => Tone::Plain,
+            AuditOutcome::Success | AuditOutcome::Pending => Tone::Plain,
             AuditOutcome::Denied => Tone::Warning,
-            AuditOutcome::Failure => Tone::Error,
+            AuditOutcome::Failure | AuditOutcome::Unknown => Tone::Error,
         },
     }
 }

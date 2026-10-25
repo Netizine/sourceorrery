@@ -10,11 +10,12 @@ on:
       - main
 
 jobs:
-  # Dependabot's pull requests run without the repository's secrets, so the
-  # deployment token is empty and the deploy fails before it builds anything;
-  # both jobs skip them (CI reviews those changes, the site is deployed from main).
+  # Dependabot's pull requests and pull requests from forks run without the
+  # deployment token (a fork's code is never given it: this is `pull_request`,
+  # not `pull_request_target`), so both jobs skip them: CI and docs.yml
+  # review those changes, and the site is deployed from main.
   build_and_deploy_job:
-    if: github.actor != 'dependabot[bot]' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed'))
+    if: github.actor != 'dependabot[bot]' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     name: Build and Deploy Job
     steps:
@@ -25,7 +26,7 @@ jobs:
           lfs: false
       - name: Build And Deploy
         id: builddeploy
-        uses: Azure/static-web-apps-deploy@4d27395796ac319302594769cfe812bd207490b1 # v1
+        uses: Azure/static-web-apps-deploy@1a947af9992250f3bc2e68ad0754c0b0c11566c9 # v1
         env:
           FONTAWESOME_NPM_AUTH_TOKEN: ${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
         with:
@@ -40,13 +41,13 @@ jobs:
           ###### End of Repository/Build Configurations ######
 
   close_pull_request_job:
-    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && github.event.action == 'closed'
+    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     name: Close Pull Request Job
     steps:
       - name: Close Pull Request
         id: closepullrequest
-        uses: Azure/static-web-apps-deploy@4d27395796ac319302594769cfe812bd207490b1 # v1
+        uses: Azure/static-web-apps-deploy@1a947af9992250f3bc2e68ad0754c0b0c11566c9 # v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_ASHY_FLOWER_0C7C75610 }}
           action: "close"

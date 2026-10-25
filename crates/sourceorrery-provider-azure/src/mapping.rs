@@ -107,7 +107,9 @@ pub fn decode_value<S: BuildHasher>(
     if !is_base64(tags) {
         return Ok(SecretBytes::new(text.into_bytes()));
     }
-    let bytes = STANDARD.decode(text.as_bytes()).map_err(|_| {
+    // The base64 text is the value too: held so that it is wiped as it drops.
+    let text = SecretBytes::from_string(text);
+    let bytes = STANDARD.decode(text.expose()).map_err(|_| {
         SecretError::Storage("a value marked as base64 does not decode as base64".to_owned())
     });
     drop(text);
@@ -431,5 +433,41 @@ mod tests {
             RecoveryLevel::Purgeable
         );
         assert_eq!(recovery_level(None), RecoveryLevel::Recoverable);
+    }
+
+    /// Bounded fuzz (B31): whatever tags and identifiers Key Vault returns
+    /// (anyone with tag rights can write the tags) are read as properties or
+    /// an error, never a panic, and a value marked as base64 decodes or fails.
+    #[test]
+    fn whatever_key_vault_returns_is_properties_or_an_error_never_a_panic() {
+        let created = OffsetDateTime::from_unix_timestamp_nanos(1_792_814_186_123_456_789).unwrap();
+        let user = BTreeMap::from([("env".to_owned(), "prod".to_owned())]);
+        let seed_tags = tags_for(&user, created, Some(created), true);
+        let mut m = sourceorrery_conformance::fuzz::Mutator::new(0x5EED_A2E0);
+        for _ in 0..5000 {
+            let tags: HashMap<String, String> = seed_tags
+                .iter()
+                .map(|(key, value)| {
+                    let key = if m.below(3) == 0 {
+                        m.mutate(key)
+                    } else {
+                        key.clone()
+                    };
+                    (key, m.mutate(value))
+                })
+                .collect();
+            let id = m.mutate("https://kv.vault.azure.net/secrets/db/0123456789abcdef");
+            let _ = version_of(Some(&id));
+            let _ = name_of(Some(&id));
+            let _ = properties(
+                "v",
+                "db",
+                "abc",
+                Some(&attributes(1_792_814_186, 1_792_814_186)),
+                Some(&m.mutate("text/plain")),
+                Some(&tags),
+            );
+            let _ = decode_value(m.mutate("aGVsbG8="), Some(&tags));
+        }
     }
 }

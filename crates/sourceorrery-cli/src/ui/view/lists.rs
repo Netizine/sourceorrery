@@ -1,12 +1,13 @@
 //! The Deleted, Audit log and Vaults views.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Row};
 use sourceorrery_core::{AuditEvent, AuditOutcome, RecoveryLevel, timestamp};
 
+use super::columns::Columns;
 use super::secrets::{no_match, tags};
 use super::{Drawn, Ruled, dash, label, long_time, ruled_table, short_time};
 use crate::output::sanitize;
@@ -39,12 +40,19 @@ pub(super) fn deleted(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rec
         .map(|s| sanitize(&s.vault.name).into_owned())
         .unwrap_or_default();
     let purgeable = session.is_some_and(|s| s.vault.recovery_level == RecoveryLevel::Purgeable);
-    let name_width = shown
-        .iter()
-        .map(|d| sanitize(&d.properties.name).chars().count())
-        .max()
-        .unwrap_or(0)
-        .clamp(4, 48);
+    let indices: &[usize] = if area.width >= 90 {
+        &[0, 1, 2, 3, 4]
+    } else if area.width >= 65 {
+        &[0, 2, 3]
+    } else {
+        &[0, 3]
+    };
+    let columns = Columns::new(
+        area.width,
+        indices,
+        &["NAME", "DELETED UTC", "PURGE AFTER UTC", "LEFT", "TAGS"],
+        &[0, 16, 16, 8, 16],
+    );
     let empty = if app.total(Tab::Deleted) == Some(0) {
         let text = if purgeable {
             format!(
@@ -67,8 +75,8 @@ pub(super) fn deleted(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rec
             let remaining = d
                 .scheduled_purge_on
                 .map(|at| (at - now).whole_days().max(0));
-            Row::new([
-                Cell::from(sanitize(&p.name).into_owned()),
+            columns.row([
+                Cell::from(columns.text(0, &p.name)),
                 Cell::from(short_time(d.deleted_on)),
                 Cell::from(
                     d.scheduled_purge_on
@@ -80,20 +88,17 @@ pub(super) fn deleted(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rec
                         Span::styled(format!("{days} days"), theme.cell(theme.muted, is_selected))
                     },
                 )),
-                Cell::from(tags(p).map_or_else(|| dash(theme, is_selected), Span::raw)),
+                Cell::from(tags(p).map_or_else(
+                    || dash(theme, is_selected),
+                    |t| Span::raw(columns.text(4, &t)),
+                )),
             ])
         })
         .collect();
     let table = Ruled {
         label: label("Deleted", app, Tab::Deleted, shown.len(), theme),
-        headings: Row::new(["NAME", "DELETED UTC", "PURGE AFTER UTC", "LEFT", "TAGS"]),
-        widths: vec![
-            Constraint::Length(u16::try_from(name_width).unwrap_or(48)),
-            Constraint::Length(16),
-            Constraint::Length(16),
-            Constraint::Length(8),
-            Constraint::Fill(1),
-        ],
+        headings: columns.headings(),
+        widths: columns.widths.clone(),
         rows,
         empty,
         selectable: true,
@@ -104,20 +109,29 @@ pub(super) fn deleted(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rec
 pub(super) fn audit(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Drawn {
     let shown = app.shown_events();
     let selected = app.list(Tab::Audit).table.selected();
-    let fit = |width: usize, min: usize, max: usize| {
-        u16::try_from(width.clamp(min, max)).unwrap_or(u16::MAX)
+    let indices: &[usize] = if area.width >= 110 {
+        &[0, 1, 2, 3, 4, 5, 6]
+    } else if area.width >= 90 {
+        &[1, 2, 3, 4, 5]
+    } else if area.width >= 65 {
+        &[1, 3, 4, 5]
+    } else {
+        &[3, 4, 5]
     };
-    let actor_width = shown
-        .iter()
-        .map(|e| sanitize(&e.actor.to_string()).chars().count())
-        .max()
-        .unwrap_or(0);
-    let secret_width = shown
-        .iter()
-        .filter_map(|e| e.secret_name.as_deref())
-        .map(|n| sanitize(n).chars().count())
-        .max()
-        .unwrap_or(0);
+    let columns = Columns::new(
+        area.width,
+        indices,
+        &[
+            "ID",
+            "TIME UTC",
+            "ACTOR",
+            "OPERATION",
+            "SECRET",
+            "OUTCOME",
+            "DETAIL",
+        ],
+        &[5, 19, 16, 16, 0, 7, 18],
+    );
     let mut title = label("Audit log", app, Tab::Audit, shown.len(), theme);
     if app.total(Tab::Audit) == Some(AUDIT_LIMIT) {
         title.push_span(Span::styled(
@@ -136,28 +150,21 @@ pub(super) fn audit(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
     };
     let table = Ruled {
         label: title,
-        headings: Row::new([
-            "ID",
-            "TIME UTC",
-            "ACTOR",
-            "OPERATION",
-            "SECRET",
-            "OUTCOME",
-            "DETAIL",
-        ]),
-        widths: vec![
-            Constraint::Length(5),
-            Constraint::Length(19),
-            Constraint::Length(fit(actor_width, 5, 24)),
-            Constraint::Length(16),
-            Constraint::Length(fit(secret_width, 6, 32)),
-            Constraint::Length(7),
-            Constraint::Fill(1),
-        ],
+        headings: columns.headings(),
+        widths: columns.widths.clone(),
         rows: shown
             .iter()
             .enumerate()
-            .map(|(i, e)| event_cells(e, theme, selected == Some(i), true))
+            .map(|(i, e)| {
+                columns.row(event_cell_values(
+                    e,
+                    theme,
+                    selected == Some(i),
+                    true,
+                    Some(&columns),
+                    &app.list(Tab::Audit).query,
+                ))
+            })
             .collect(),
         empty,
         selectable: true,
@@ -173,10 +180,22 @@ pub(super) fn event_cells(
     selected: bool,
     full: bool,
 ) -> Row<'static> {
+    Row::new(event_cell_values(e, theme, selected, full, None, ""))
+}
+
+fn event_cell_values(
+    e: &AuditEvent,
+    theme: &Theme,
+    selected: bool,
+    full: bool,
+    columns: Option<&Columns>,
+    query: &str,
+) -> Vec<Cell<'static>> {
     let outcome = match e.outcome {
         AuditOutcome::Success => Style::new(),
+        AuditOutcome::Pending => theme.muted,
         AuditOutcome::Denied => theme.caution,
-        AuditOutcome::Failure => theme.error.bar,
+        AuditOutcome::Failure | AuditOutcome::Unknown => theme.error.bar,
     };
     let text_or_dash = |text: Option<&str>| {
         Cell::from(text.map_or_else(
@@ -192,10 +211,19 @@ pub(super) fn event_cells(
         )));
     }
     cells.push(Cell::from(long_time(e.occurred_on)));
-    cells.push(Cell::from(sanitize(&e.actor.to_string()).into_owned()));
+    let actor = e.actor.to_string();
+    cells.push(Cell::from(super::highlighted(
+        &columns.map_or_else(|| sanitize(&actor).into_owned(), |c| c.text(2, &actor)),
+        query,
+        theme,
+        selected,
+    )));
     cells.push(Cell::from(e.operation.as_str()));
     if full {
-        cells.push(text_or_dash(e.secret_name.as_deref()));
+        cells.push(Cell::from(e.secret_name.as_deref().map_or_else(
+            || dash(theme, selected),
+            |s| Span::raw(columns.map_or_else(|| sanitize(s).into_owned(), |c| c.text(4, s))),
+        )));
     } else {
         let short = e
             .version
@@ -207,20 +235,30 @@ pub(super) fn event_cells(
         e.outcome.as_str(),
         theme.cell(outcome, selected),
     )));
-    cells.push(text_or_dash(e.detail.as_deref()));
-    Row::new(cells)
+    cells.push(Cell::from(e.detail.as_deref().map_or_else(
+        || dash(theme, selected),
+        |s| Span::raw(columns.map_or_else(|| sanitize(s).into_owned(), |c| c.text(6, s))),
+    )));
+    cells
 }
 
 pub(super) fn vaults(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Drawn {
     let shown = app.shown_vaults();
     let selected = app.list(Tab::Vaults).table.selected();
     let open = app.session.as_ref().map(|s| s.vault.name.as_str());
-    let name_width = shown
-        .iter()
-        .map(|v| sanitize(&v.name).chars().count())
-        .max()
-        .unwrap_or(0)
-        .clamp(4, 32);
+    let indices: &[usize] = if area.width >= 90 {
+        &[0, 1, 2, 3, 4]
+    } else if area.width >= 65 {
+        &[0, 1, 2, 4]
+    } else {
+        &[0, 1, 4]
+    };
+    let columns = Columns::new(
+        area.width,
+        indices,
+        &["NAME", "STATE", "SIZE", "MODIFIED UTC", "FILE"],
+        &[20, 5, 9, 16, 0],
+    );
     let empty = if app.vaults.is_empty() {
         vec![
             Line::from(""),
@@ -246,8 +284,13 @@ pub(super) fn vaults(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
             } else {
                 dash(theme, is_selected)
             };
-            Row::new([
-                Cell::from(sanitize(&v.name).into_owned()),
+            columns.row([
+                Cell::from(super::highlighted(
+                    &columns.text(0, &v.name),
+                    &app.list(Tab::Vaults).query,
+                    theme,
+                    is_selected,
+                )),
                 Cell::from(state),
                 Cell::from(
                     v.size
@@ -258,7 +301,7 @@ pub(super) fn vaults(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
                         .map_or_else(|| dash(theme, is_selected), |t| Span::raw(short_time(t))),
                 ),
                 Cell::from(Span::styled(
-                    sanitize(&v.path.display().to_string()).into_owned(),
+                    columns.text(4, &v.path.display().to_string()),
                     theme.cell(theme.muted, is_selected),
                 )),
             ])
@@ -266,14 +309,8 @@ pub(super) fn vaults(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
         .collect();
     let table = Ruled {
         label: label("Vaults", app, Tab::Vaults, shown.len(), theme),
-        headings: Row::new(["NAME", "", "SIZE", "MODIFIED UTC", "FILE"]),
-        widths: vec![
-            Constraint::Length(u16::try_from(name_width).unwrap_or(32)),
-            Constraint::Length(4),
-            Constraint::Length(9),
-            Constraint::Length(16),
-            Constraint::Fill(1),
-        ],
+        headings: columns.headings(),
+        widths: columns.widths.clone(),
         rows,
         empty,
         selectable: true,

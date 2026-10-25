@@ -11,10 +11,10 @@
 //
 // The package only reads: there is no way to create, change or delete a
 // secret, and no key, check, connection or audit management. Vaults are
-// created, and secrets stored, with the sourceorrery command-line tool,
+// created, and secret values set, with the sourceorrery command-line tool,
 // which is installed separately and need not be present where the program
 // runs; see
-// https://sourceorrery.ai/getting-started/ and the Go guide at
+// https://sourceorrery.ai/getting-started/#install and the Go guide at
 // https://sourceorrery.ai/sdks/go/.
 //
 // The package is a cgo binding over the read-only part of the SourceOrrery

@@ -1,5 +1,5 @@
 {
-  "$comment": "Cross-language SDK conformance scenarios. Every SDK runner executes each scenario against the fixture vault from scripts/ci/fixture-vault.sh and tests/conformance/sdk/harness.py compares what it observed with `expect`. Variables: ${vault} ${home} ${recovery_key} ${manifest} ${old_version} come from the SOURCEORRERY_TEST_* / SOURCEORRERY_* environment; scenarios with `requires: remote` read the secrets the fixture keeps at a provider when fixture-vault.sh is given that provider's connection flags, and ${remote_manifest}, and run only with --remote, in the provider CI jobs; `requires: remote-per-version` also needs the provider to keep properties per version (--remote-per-version). Protocol: tests/conformance/sdk/README.md.",
+  "$comment": "Cross-language SDK conformance scenarios. Every SDK runner executes each scenario against the fixture vault from scripts/ci/fixture-vault.sh and tests/conformance/sdk/harness.py compares what it observed with `expect`. Variables: ${vault} ${home} ${recovery_key} ${manifest} ${old_version} come from the SOURCEORRERY_TEST_* / SOURCEORRERY_* environment; scenarios with `requires: remote` read the secrets the fixture keeps at a provider when fixture-vault.sh is given that provider's connection flags, and ${remote_manifest}, and run only with --remote, in the provider CI jobs; `requires: remote-per-version` also needs the provider to keep properties per version (--remote-per-version). `env` sets and `unset` removes variables in the runner's environment for one scenario. Protocol: tests/conformance/sdk/README.md.",
   "scenarios": [
     {
       "id": "open-unknown-vault",
@@ -53,6 +53,39 @@
       "op": "open",
       "args": {},
       "expect": { "outcome": "ok", "descriptor.name": "${vault}" }
+    },
+    {
+      "id": "open-key-file-not-needed",
+      "about": "A recovery-key file that cannot be read is not read when SOURCEORRERY_RECOVERY_KEY opens the vault first: each source is read only if the earlier ones did not open it (SR08).",
+      "op": "open",
+      "args": {},
+      "env": { "SOURCEORRERY_RECOVERY_KEY_FILE": "${home}/no-such-recovery.key" },
+      "expect": { "outcome": "ok", "descriptor.name": "${vault}" }
+    },
+    {
+      "id": "open-option-before-key-file",
+      "about": "The recovery_key option opens the vault before the environment's file is looked at, so a missing file does not fail it (SR08).",
+      "op": "open",
+      "args": { "recovery_key": "${recovery_key}" },
+      "unset": ["SOURCEORRERY_RECOVERY_KEY"],
+      "env": { "SOURCEORRERY_RECOVERY_KEY_FILE": "${home}/no-such-recovery.key" },
+      "expect": { "outcome": "ok", "descriptor.name": "${vault}" }
+    },
+    {
+      "id": "open-key-file-needed-and-missing",
+      "about": "When the file is the only source left and it cannot be read, the open is `io` and the hint names the file's variable; no key is echoed (SR08).",
+      "op": "open",
+      "args": {},
+      "unset": ["SOURCEORRERY_RECOVERY_KEY"],
+      "env": { "SOURCEORRERY_RECOVERY_KEY_FILE": "${home}/no-such-recovery.key" },
+      "expect": {
+        "outcome": "error",
+        "code": "io",
+        "hint_contains": ["SOURCEORRERY_RECOVERY_KEY_FILE", "was needed"],
+        "message_contains": ["no-such-recovery.key"],
+        "hint_excludes": ["${recovery_key}"],
+        "message_excludes": ["${recovery_key}"]
+      }
     },
     {
       "id": "open-vault-under-another-name",

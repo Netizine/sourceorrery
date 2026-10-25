@@ -78,15 +78,44 @@ operations there (each provider page, "Audit trail").
 
 ## Error codes
 
-Two codes exist for providers; both are append-only additions
-([ADR 0007](../adr/0007-versioning-and-compatibility.md)) that older SDKs
-report as their base error type with the code preserved:
+Provider failures use stable codes, preserved by the CLI and SDKs
+([ADR 0007](../adr/0007-versioning-and-compatibility.md)):
 
 | Code | Meaning | Hint says |
 |------|---------|-----------|
 | `unauthenticated` | the provider has no credentials for this process, or they expired | where the provider's own tools take credentials from, or to store them in the vault's connection |
 | `provider_unavailable` | the provider could not be reached or answered with a server error; transient | check reachability and the address in the vault's connection, then retry |
+| `outcome_unknown` | a change was sent and the provider may have made it: its answer was lost, it failed after sending, or it made the change and the vault could not record it ([ADR 0011](../adr/0011-provider-writes-fail-closed.md)); not transient | look at the secret at the provider before repeating the change |
 
 A provider's "forbidden" is the existing `permission_denied`, a missing
 secret `not_found`, and a provider this build does not include
 `unsupported`, as is something its service cannot express.
+
+## When a change's result is not known
+
+A change at a connection (`secret set`, `update`, `delete`, `recover`,
+`purge`) is recorded in the vault's log as an attempt (outcome `pending`)
+before it is sent, and the event that records its result names the
+attempt (`(attempt <id>)`). A refusal (`permission_denied`, `not_found`,
+`invalid_argument` and the like) means the provider changed nothing. Any
+other failure of a sent change is `outcome_unknown`, recorded as
+`unknown`: the change may have been made. So is a change the provider
+made that the vault could not then record (the vault was blocked in
+between, its disk was full, another process took the name). Nothing is
+retried for you.
+
+`sourceorrery audit` names every attempt whose result the vault never
+learned. Look at the secret at its provider, then:
+
+| Change | Repeat it? | Look first with |
+|---|---|---|
+| `secret set` | yes: at worst it adds a second version | `secret versions NAME` |
+| `secret update` | yes: it sets the same properties | `secret get NAME` |
+| `secret delete` | only if the secret is still live | `secret list --deleted` |
+| `secret recover` | only if the secret is still deleted | `secret get NAME` |
+| `secret purge` | only if the provider still has it; if it does not, the vault's `forget_missing` takes it out of the catalog | `secret list --deleted` |
+
+An attempt is settled once a later change of the same secret through the
+same connection succeeds. The attempt stays in the log, as every event
+does: the log records that the vault did not learn the result, never a
+result it does not know.

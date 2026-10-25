@@ -1,11 +1,11 @@
 # sourceorrery.ai
 
-Documentation for the **SourceOrrery 0.2.0** build, using Astro 7 and Starlight.
+Documentation for the **SourceOrrery 0.3.0** build, using Astro 7 and Starlight.
 The public site is deployed separately; local changes do not publish it.
 
 ## Work on the documentation
 
-Use Node **22.19+** (or Node 24 LTS). Set `FONTAWESOME_NPM_AUTH_TOKEN` in your
+Use Node **22.22+** (or Node 24 LTS). Set `FONTAWESOME_NPM_AUTH_TOKEN` in your
 process environment using your secret manager before installing dependencies.
 The checked-in `.npmrc` contains registry scopes and an environment-variable
 placeholder only. Never replace it with a real token or commit credentials.
@@ -20,7 +20,8 @@ npm run dev -- --background
 `npm run build` syncs documentation, produces the static site, indexes search,
 and checks every internal page, asset and fragment link. The focused tests
 cover Git metadata, reading estimates, callouts and external links in Markdown
-and MDX. Manage the background dev server with `npx astro dev status`,
+and MDX, consent and theme preferences when storage is unavailable.
+Manage the background dev server with `npx astro dev status`,
 `npx astro dev logs` and `npx astro dev stop`.
 
 Stop the dev server before building: dev and build share Expressive Code's
@@ -37,8 +38,11 @@ every dev/build. Files listed in the content directory's `.gitignore` are
 generated: edit the original source instead.
 
 The homepage (`index.mdx`), `getting-started.mdx` and `guides/headless.md` are
-hand-written in `src/content/docs/`. Keep instructions and release links on
-0.2.0. The authenticated broker and agent isolation remain future work.
+hand-written in `src/content/docs/`. Their install commands and release
+links, like those of the install pages in `docs/`, name the workspace
+version; `python scripts/release/docs-version.py` stamps it and the
+not-released note, and `--check` (CI) refuses a page that differs. The
+authenticated broker and agent isolation remain future work.
 
 Platform headings between `<!-- tabs: os -->` and `<!-- /tabs -->` in source
 Markdown become Starlight tabs. `syncKey="os"` remembers the selected platform
@@ -75,6 +79,38 @@ themed callouts on the website:
 `NOTE`, `TIP`, `IMPORTANT`, `WARNING` and `CAUTION` are supported. Native
 `:::note`, `:::tip`, `:::caution` and `:::danger` work too. In authored MDX,
 import `src/components/Aside.astro` for the same appearance and local icons.
+
+## Documentation for LLMs and coding agents
+
+The static build includes [`/llms.txt`](https://sourceorrery.ai/llms.txt), a
+concise index following the [llms.txt proposal](https://llmstxt.org/), and
+[`/llms-full.txt`](https://sourceorrery.ai/llms-full.txt), which combines its
+essential references. The index covers setup, the CLI, all twelve agents,
+both skills, every application language, provider mappings and security.
+
+Edit `../docs/llms.txt` for the curated index and `../docs/llms-overview.md`
+for the short product/setup overview. During `npm run sync`,
+`scripts/llms-docs.mjs` generates clean Markdown companions from the same
+pre-MDX text as each mirrored documentation page. For example,
+`/reference/cli/` has `/llms/reference/cli/index.md`. Generated text is
+gitignored under `public/llms/`, alongside `public/llms.txt` and
+`public/llms-full.txt`; edit the original sources. Each sync removes stale
+companions and derives the version and release status from the workspace
+and changelog. Historical ADRs have individual companions but are excluded
+from the curated full text.
+
+Page headers advertise `/llms.txt` with `rel="describedby"`. Mirrored pages
+also advertise their Markdown companion with `rel="alternate"` and
+`type="text/markdown"`. `public/staticwebapp.config.json` supplies explicit
+Markdown/text MIME types on Azure Static Web Apps. These assets need no
+JavaScript, consent choice, account, additional package or separate publish
+step. They are included when the normal site deployment publishes `dist/`.
+
+The Node tests cover formatting, source propagation, version/status,
+portable links, code-fence preservation and stale-file cleanup. The build
+checks same-site Markdown links and HTML fragments as well as HTML links.
+These files help tools retrieve documentation; they do not guarantee
+indexing or model training and do not replace `robots.txt`.
 
 ## Page metadata and links
 
@@ -121,10 +157,21 @@ To refresh the kit after editing it, authenticate through the environment,
 run `npm update @awesome.me/kit-515c69ad68`, review the new revision and run the
 tests/build again. Do not commit `node_modules` or credentials.
 
-The website uses no analytics, tracking cookies or third-party asset requests.
-Theme and platform-tab preferences stay in browser storage. Keep the original
-homepage privacy promise intact. External websites are visited only when the
-reader follows a link.
+The website offers optional Microsoft Clarity analytics to guide documentation
+and feature priorities. `Head.astro` includes the local consent controller;
+it injects project `z20sc8puam` only after explicit permission and only on
+`sourceorrery.ai` / `www.sourceorrery.ai`. No tag, preconnect or cookieless
+collection is requested before permission or after a stored refusal.
+Advertising consent is always denied. GPC and Do Not Track keep analytics off.
+The footer exposes Privacy choices on every page. Revocation saves refusal,
+stops the collector and reloads, removing its listeners; other open tabs
+respond to the storage change. Theme/tab preferences and the analytics choice
+are local browser storage. The CLI and SDKs contain no website analytics.
+
+Before deploying, enable Consent Mode in the Clarity project and review its
+masking and retention settings. Automated browser checks stub the vendor
+script; they never send test visits to the live project. Run `npm test` and
+`npm run build` after changing the consent controller or privacy text.
 
 Native cross-document view transitions provide a short fade in supporting
 browsers and respect reduced-motion preferences. Standard navigation remains
@@ -148,12 +195,14 @@ Design references: [CocoIndex documentation](https://cocoindex.io/docs/getting_s
 
 `.github/workflows/docs.yml` runs the documentation checks. The Azure Static
 Web Apps workflow builds `/site` and deploys `dist/` on pushes to `main`, with
-PR previews. Both installation jobs read the repository Actions secret
-`FONTAWESOME_NPM_AUTH_TOKEN`; configure it before publishing these changes.
-The token is needed only at dependency installation, never in the browser or
-built site. Fork PRs do not receive repository secrets and cannot freshly
-install this private package; use a trusted maintainer build to validate them.
-Do not expose the token to untrusted PR code.
+PR previews. Both installation jobs read the repository secret
+`FONTAWESOME_NPM_AUTH_TOKEN`, which Actions and Dependabot each have; a job
+that lacks it fails. The token is needed only at dependency installation,
+never in the browser or built site. Fork PRs do not receive repository
+secrets and cannot install this licensed package: `docs.yml` skips their
+build with a notice and the preview deployment skips them, and the site is
+built and checked once the change is merged. Do not expose the token to
+untrusted PR code (no `pull_request_target`).
 
 `sourceorrery.ai` is configured under the static web app's Custom domains.
 The `postcss-selector-parser` override remains until Expressive Code's

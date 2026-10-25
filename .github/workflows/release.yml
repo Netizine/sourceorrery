@@ -20,7 +20,7 @@ on:
         type: boolean
         default: true
       bootstrap_providers:
-        description: "First-publish the new providers (publish-crates.py PROVIDERS) during this full release using CRATES_BOOTSTRAP_TOKEN"
+        description: "First-publish the crates not yet on crates.io (publish-crates.py PROVIDERS: new providers, sourceorrery-os) during this full release using CRATES_BOOTSTRAP_TOKEN"
         required: true
         type: boolean
         default: false
@@ -48,6 +48,11 @@ jobs:
   preflight:
     name: preflight
     runs-on: ubuntu-latest
+    # The release gate reads this commit's CI runs and checks.
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     outputs:
       version: ${{ steps.plan.outputs.version }}
       tag: ${{ steps.plan.outputs.tag }}
@@ -77,6 +82,44 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           if [ "$DRY_RUN" = "true" ]; then echo "publish=false" >> "$GITHUB_OUTPUT"; else echo "publish=true" >> "$GITHUB_OUTPUT"; fi
+      # REC01: a release is built only from a commit on main whose CI ran
+      # every job and passed, as GitHub Actions reported it. A dry run runs
+      # the same gate and reports instead of stopping.
+      - name: The release commit passed CI in full
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA" --warn-only
+          else
+            if [ "$REF" != "refs/heads/main" ]; then
+              echo "::error::a release is dispatched from main, not $REF"; exit 1
+            fi
+            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA"
+          fi
+      # SR12: the install pages of a release name it, and only it, and no
+      # longer say it is unreleased (the CHANGELOG heading names it). A dry
+      # run reports instead of stopping.
+      - name: The documentation names this release
+        env:
+          VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if python3 scripts/release/docs-version.py --check --expect "$VERSION"; then
+            exit 0
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::warning title=docs version::the documentation does not name the release $VERSION; a real run stops here"
+          else
+            echo "::error title=docs version::stamp the documentation for $VERSION (docs/release.md, step 1) and commit it"
+            exit 1
+          fi
       - name: Require the first-publication credential before building a real release
         if: ${{ inputs.bootstrap_providers && !inputs.dry_run }}
         env:
@@ -211,6 +254,12 @@ jobs:
   # ---------------------------------------------------------------------
   # Native artefacts: the CLI and the C ABI for the six Tier 1 targets.
   # ---------------------------------------------------------------------
+  # The Linux builds run on Ubuntu 22.04: a binary needs the glibc symbol
+  # versions it was linked against, so this sets the floor of the CLI, the
+  # C ABI and every package that carries it (.NET, Java): glibc 2.34
+  # (Debian 12, Ubuntu 22.04, RHEL 9 and the images built on them). On
+  # ubuntu-latest (24.04) it was 2.39.
+  # docs/architecture.md (Platform matrix) records each floor.
   native:
     name: native (${{ matrix.target }})
     needs: preflight
@@ -219,8 +268,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  rid: linux-x64,   jdir: linux-x86_64,    archive: tar.gz }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, rid: linux-arm64, jdir: linux-aarch64,   archive: tar.gz }
+          - { os: ubuntu-22.04,     target: x86_64-unknown-linux-gnu,  rid: linux-x64,   jdir: linux-x86_64,    archive: tar.gz }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, rid: linux-arm64, jdir: linux-aarch64,   archive: tar.gz }
           - { os: macos-latest,     target: aarch64-apple-darwin,      rid: osx-arm64,   jdir: macos-aarch64,   archive: tar.gz }
           - { os: macos-15-intel,   target: x86_64-apple-darwin,       rid: osx-x64,     jdir: macos-x86_64,    archive: tar.gz }
           - { os: windows-latest,   target: x86_64-pc-windows-msvc,    rid: win-x64,     jdir: windows-x86_64,  archive: zip }
@@ -234,6 +283,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
+      # set-version.py needs Python 3.11 (tomllib); Ubuntu 22.04's is 3.10.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
       - name: Linux build dependencies (Secret Service)
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
@@ -378,8 +431,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          # Ubuntu 22.04 for the glibc floor, as for the native job.
+          - { os: ubuntu-22.04,     target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
           - { os: macos-latest,     target: aarch64-apple-darwin }
           - { os: macos-15-intel,   target: x86_64-apple-darwin }
           - { os: windows-latest,   target: x86_64-pc-windows-msvc }
@@ -403,6 +457,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
+      # set-version.py needs Python 3.11 (tomllib); Ubuntu 22.04's is 3.10.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
       - name: Linux build dependencies (Secret Service)
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config

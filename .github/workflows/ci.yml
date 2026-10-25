@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A full run for a commit whose push was docs-only, so it can be released:
+  # the change classifier treats a dispatch as code, and the release gate
+  # (scripts/release/check-release-validation.py) accepts a dispatched run.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -155,6 +159,55 @@ jobs:
         working-directory: bindings/node
       - run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: bindings/node
+
+  # REC09: the declared minimum Rust is built and tested, not inferred from
+  # dependency metadata: the workspace and both native extensions declare
+  # one `rust-version`, and on that toolchain the workspace's tests pass and
+  # every supported feature combination builds (scripts/ci/feature-matrix.sh,
+  # whose headless builds also run their tests). rust-toolchain.toml selects
+  # stable, so RUSTUP_TOOLCHAIN overrides it.
+  msrv:
+    name: minimum Rust and feature combinations
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The declared minimum, the same in every manifest
+        id: msrv
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import sys, tomllib
+          def declared(path, *keys):
+              with open(path, "rb") as file:
+                  value = tomllib.load(file)
+              for key in keys:
+                  value = value[key]
+              return value
+          version = declared("Cargo.toml", "workspace", "package", "rust-version")
+          for path in ("bindings/python/Cargo.toml", "bindings/node/Cargo.toml"):
+              other = declared(path, "package", "rust-version")
+              if other != version:
+                  sys.exit(f"::error::{path} declares Rust {other}, the workspace {version}")
+          print(f"version={version}")
+          EOF
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            .
+            bindings/python
+            bindings/node
+      - name: The workspace builds and its tests pass on the minimum
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+        run: cargo test --workspace --locked
+      - name: Every supported feature combination, on the minimum
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+        run: bash scripts/ci/feature-matrix.sh
 
   # ---------------------------------------------------------------------
   # SDKs: every binding builds, its tests pass and its example runs against
@@ -358,6 +411,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
+    # A hung test fails the job in minutes, not at the six-hour default.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -464,13 +519,18 @@ jobs:
       - run: cargo doc --workspace --no-deps --locked
 
   audit:
-    name: cargo audit
+    name: dependency audit
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    # cargo-audit itself, as rustsec/audit-check ran it: a vulnerability in
-    # Cargo.lock fails the job, a warning (unmaintained, yanked) is printed.
-    # The action still runs on Node 20.
+    # Every dependency graph (scripts/ci/dependency-audit.py, its inventory
+    # in docs/supply-chain.md): cargo-audit for the three Cargo.lock files,
+    # npm audit for the four package-lock.json files (lock file only: no
+    # install, no private registry), the OSV.dev API for the pinned Python
+    # requirements and the Maven and NuGet references. A vulnerability, a
+    # scanner that fails or a lock file the inventory does not cover fails
+    # the job; a maintenance warning not reviewed there is a warning here
+    # and fails a release (--strict).
     permissions:
       contents: read
     steps:
@@ -478,7 +538,10 @@ jobs:
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-audit@0.22.2
-      - run: cargo audit
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: python3 scripts/ci/dependency-audit.py
 
   # Workflow hygiene: zizmor fails on an unpinned third-party action, on a
   # `run:` step that expands an expression, and on the other high-severity
@@ -515,6 +578,11 @@ jobs:
       - run: python3 -m unittest -v scripts/release/test_publish_crates.py
       - run: python3 -m unittest -v scripts/ci/abi_check_test.py
       - run: python3 -m unittest -v scripts/ci/azure_vault_test.py
+      - run: python3 -m unittest -v scripts/ci/dependency_audit_test.py
+      - run: python3 -m unittest -v scripts/release/check_release_validation_test.py
+      - run: python3 -m unittest -v scripts/release/verify_release_artifacts_test.py
+      - run: python3 -m unittest -v scripts/release/docs_version_test.py
+      - run: python3 -m unittest -v tests/conformance/sdk/harness_test.py
 
   # ADR 0007: the library built from this commit must still pass the
   # conformance contract of the latest release: its C runner, compiled
@@ -659,6 +727,8 @@ jobs:
     env:
       SOURCEORRERY_VAULT_TEST_ADDR: http://127.0.0.1:8200
       VAULT_TOKEN: root
+      # The server always runs here: a live test cannot pass unrun.
+      SOURCEORRERY_LIVE_REQUIRED: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Wait for the dev server
@@ -716,7 +786,7 @@ jobs:
         id: emulator
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
-          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          FORK: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') }}
         run: bash scripts/ci/localstack.sh select aws
       - name: Start LocalStack (lstk returns once it is ready)
         if: steps.emulator.outputs.available == 'true'
@@ -726,7 +796,11 @@ jobs:
       - uses: ./.github/actions/sdk-fixture
       - name: Lifecycle conformance (without per-version properties) and the provider's own tests
         # --show-output prints the warning a test gives for an emulator
-        # divergence (tests/live.rs) as a workflow annotation.
+        # divergence (tests/live.rs) as a workflow annotation, and what the
+        # live tests ran against. With the emulator up they cannot pass
+        # without running.
+        env:
+          SOURCEORRERY_LIVE_REQUIRED: ${{ steps.emulator.outputs.available }}
         run: cargo test --locked -p sourceorrery-provider-aws -- --show-output
       - name: Secrets the vault keeps at the emulator, through the CLI and the SDK harness
         if: steps.emulator.outputs.available == 'true'
@@ -783,7 +857,7 @@ jobs:
         id: emulator
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AZURE_AUTH_TOKEN }}
-          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          FORK: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') }}
         run: bash scripts/ci/localstack.sh select azure
       - name: Start LocalStack for Azure (lstk returns once it is ready)
         if: steps.emulator.outputs.available == 'true'
@@ -792,6 +866,9 @@ jobs:
         run: bash scripts/ci/localstack.sh start azure
       - uses: ./.github/actions/sdk-fixture
       - name: Lifecycle conformance (with per-version properties) and the provider's own tests
+        # With the emulator up the live tests cannot pass without running.
+        env:
+          SOURCEORRERY_LIVE_REQUIRED: ${{ steps.emulator.outputs.available }}
         run: cargo test --locked -p sourceorrery-provider-azure -- --show-output
       - name: Secrets the vault keeps at the emulator, through the CLI and the SDK harness
         if: steps.emulator.outputs.available == 'true'
@@ -842,6 +919,7 @@ jobs:
       - test
       - ffi-header
       - bindings-lint
+      - msrv
       - sdk-rust
       - sdk-python
       - sdk-node

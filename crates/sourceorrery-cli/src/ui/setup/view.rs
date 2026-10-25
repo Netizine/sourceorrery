@@ -12,7 +12,7 @@
 //! on the right, so the controls stay on a small screen.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Margin, Rect};
+use ratatui::layout::{Constraint, Layout, Margin};
 use ratatui::style::Style;
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
@@ -35,7 +35,10 @@ const NOTE: &str = "nothing is saved until the review";
 
 pub fn draw<B: Backend>(frame: &mut Frame<'_>, wizard: &Wizard<B>, theme: &Theme) {
     frame.render_widget(Block::new().style(theme.screen), frame.area());
-    let qr = qr_lines(wizard, theme);
+    let qr = qr_lines(wizard, theme).filter(|qr| {
+        qr.len() + 4 <= usize::from(frame.area().height)
+            && qr.iter().map(Line::width).max().unwrap_or(0) + 34 <= usize::from(frame.area().width)
+    });
     // Beside the QR code the message goes in the right column, so the code
     // keeps every row a 24-line terminal has.
     let message_below = qr.is_none();
@@ -50,7 +53,23 @@ pub fn draw<B: Backend>(frame: &mut Frame<'_>, wizard: &Wizard<B>, theme: &Theme
     ])
     .areas(frame.area());
     frame.render_widget(header_bar(wizard, theme), header);
-    frame.render_widget(rail_line(wizard, theme), rail);
+    let full = rail_line(wizard, theme);
+    let rail_text = if full.width() > usize::from(rail.width) {
+        Line::from(format!(
+            "Step {} of {} — {}",
+            Step::RAIL
+                .iter()
+                .position(|s| *s == wizard.step.rail_step())
+                .unwrap_or(0)
+                + 1,
+            Step::RAIL.len(),
+            wizard.step.title()
+        ))
+        .style(theme.tab)
+    } else {
+        full
+    };
+    frame.render_widget(rail_text, rail);
 
     let mut area = body.inner(Margin::new(2, 0));
     if let Some(qr) = qr {
@@ -63,41 +82,45 @@ pub fn draw<B: Backend>(frame: &mut Frame<'_>, wizard: &Wizard<B>, theme: &Theme
         frame.render_widget(Paragraph::new(qr), left);
         area = right;
     }
-    let (mut lines, focus_line) = body_lines(wizard, theme);
+    let (mut lines, focus_line) = body_lines(wizard, theme, area.width);
     if !message_below && let Some(message) = &wizard.message {
         lines.push(Line::from(""));
         lines.push(callout_line(message, theme));
     }
-    let scroll = scroll_for(&lines, focus_line, area);
+    if let Some(text) = &wizard.message {
+        let text = match text {
+            Message::Info(text) | Message::Error(text) => text,
+        };
+        lines.push(Line::from(format!("Details: {}", sanitize(text))));
+    }
+    let focus = crate::ui::viewport::focus_row(&lines, focus_line, area.width);
+    let lines = crate::ui::viewport::reflow(&lines, area.width);
+    let mut viewport = wizard.viewport.borrow_mut();
+    viewport.fit(lines.len(), usize::from(area.height), focus);
     frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((scroll, 0)),
+        Paragraph::new(lines).scroll((u16::try_from(viewport.offset).unwrap_or(u16::MAX), 0)),
         area,
     );
     if message_below && let Some(text) = &wizard.message {
         frame.render_widget(callout(text, theme), message);
     }
-    frame.render_widget(footer_line(wizard, theme, footer.width), footer);
-}
-
-/// The rows to scroll by so the focused line is on screen: none while it
-/// fits, else enough to bring it to the bottom edge.
-fn scroll_for(lines: &[Line<'_>], focus_line: Option<usize>, area: Rect) -> u16 {
-    let (Some(focus), true) = (focus_line, area.width > 0) else {
-        return 0;
+    let full_footer = footer_line(wizard, theme, footer.width);
+    let footer_text = if full_footer.width() > usize::from(footer.width) {
+        Line::from("Esc back/cancel · Enter next · Tab field · PgUp/Dn scroll").style(theme.bar)
+    } else {
+        full_footer
     };
-    let width = usize::from(area.width);
-    let rows_through: usize = lines
-        .iter()
-        .take(focus + 1)
-        .map(|line| line.width().div_ceil(width).max(1))
-        .sum();
-    let height = usize::from(area.height);
-    u16::try_from(rows_through.saturating_sub(height)).unwrap_or(u16::MAX)
+    let mut footer_text = footer_text;
+    if viewport.total > viewport.page && footer.width >= 60 {
+        footer_text = Line::from(format!(
+            "Esc cancel · Enter next · PgUp/Dn · {}",
+            viewport.position()
+        ))
+        .style(theme.bar);
+    }
+    frame.render_widget(footer_text, footer);
 }
 
-/// The vault's name, once there is one to show.
 fn vault_name<B: Backend>(wizard: &Wizard<B>) -> Option<&str> {
     if let Some(editing) = &wizard.editing {
         return Some(&editing.name);
@@ -233,6 +256,7 @@ fn qr_lines<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Option<Vec<Line<'s
 fn body_lines<B: Backend>(
     wizard: &Wizard<B>,
     theme: &Theme,
+    width: u16,
 ) -> (Vec<Line<'static>>, Option<usize>) {
     let title = match wizard.step {
         Step::Start => "VAULT".to_owned(),
@@ -274,7 +298,7 @@ fn body_lines<B: Backend>(
         if control == focused {
             focus_line = Some(lines.len());
         }
-        lines.push(control_line(wizard, control, theme));
+        lines.push(control_line(wizard, control, theme, width));
         if let Some(extra) = control_extra(wizard, control, theme) {
             lines.extend(extra);
         }
@@ -788,14 +812,19 @@ fn provider_note<B: Backend>(wizard: &Wizard<B>, provider: Provider) -> &'static
     }
 }
 
-fn control_line<B: Backend>(wizard: &Wizard<B>, control: Control, theme: &Theme) -> Line<'static> {
+fn control_line<B: Backend>(
+    wizard: &Wizard<B>,
+    control: Control,
+    theme: &Theme,
+    width: u16,
+) -> Line<'static> {
     let focused = wizard.focused() == control;
     let mut spans = vec![Span::styled(
         if focused { "▌ " } else { "  " },
         theme.marker,
     )];
     if control.is_text() {
-        text_spans(wizard, control, focused, theme, &mut spans);
+        text_spans(wizard, control, focused, theme, &mut spans, width);
     } else if control.is_toggle() {
         match control {
             Control::Form(i, Field::Source) => source_spans(&wizard.forms[i], theme, &mut spans),
@@ -825,9 +854,14 @@ fn control_line<B: Backend>(wizard: &Wizard<B>, control: Control, theme: &Theme)
             }
         }
     }
+    if focused {
+        for span in &mut spans {
+            span.style = theme.cell(span.style, true);
+        }
+    }
     let line = Line::from(spans);
     if focused {
-        line.style(theme.selected)
+        line.style(theme.focused)
     } else {
         line
     }
@@ -856,6 +890,7 @@ fn text_spans<B: Backend>(
     focused: bool,
     theme: &Theme,
     spans: &mut Vec<Span<'static>>,
+    width: u16,
 ) {
     let label = match control {
         Control::Form(i, field) => wizard.forms[i].label(field),
@@ -873,10 +908,23 @@ fn text_spans<B: Backend>(
             Control::Form(i, field) => wizard.forms[i].text(field),
             _ => "",
         };
-        sanitize(shown).into_owned()
+        if focused {
+            let end = crate::ui::text_input::Cursor::end(shown);
+            let cursor = if wizard.cursor_control == Some(control) {
+                &wizard.text_cursor
+            } else {
+                &end
+            };
+            cursor.render(
+                shown,
+                width.saturating_sub(u16::try_from(LABEL_WIDTH + 2).unwrap_or(24)),
+            )
+        } else {
+            sanitize(shown).into_owned()
+        }
     };
     spans.push(Span::raw(text));
-    if focused {
+    if focused && control.is_hidden() {
         spans.push(Span::styled("▌", theme.key));
     }
     match control {

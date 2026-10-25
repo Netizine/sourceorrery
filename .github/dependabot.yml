@@ -8,6 +8,17 @@
 # Node native extensions are their own Cargo roots with their own lock
 # files. Go and Composer have no third-party dependencies to watch.
 version: 2
+
+# The site's Font Awesome Kit (@awesome.me/*) comes from Font Awesome's
+# private registry; Dependabot signs in to it with the Dependabot secret
+# FONTAWESOME_NPM_AUTH_TOKEN (Settings → Secrets and variables → Dependabot),
+# so it can update site/ and its pull requests can build the site.
+registries:
+  fontawesome:
+    type: npm-registry
+    url: https://npm.fontawesome.com
+    token: ${{secrets.FONTAWESOME_NPM_AUTH_TOKEN}}
+
 updates:
   - package-ecosystem: github-actions
     directory: /
@@ -38,6 +49,9 @@ updates:
       - /bindings/node
       - /site
       - /scripts/ci/lstk
+      - /scripts/coverage
+    registries:
+      - fontawesome
     schedule:
       interval: weekly
       day: monday
@@ -47,7 +61,9 @@ updates:
         update-types: ["minor", "patch"]
 
   - package-ecosystem: pip
-    directory: /bindings/python
+    directories:
+      - /bindings/python
+      - /scripts/coverage
     schedule:
       interval: weekly
       day: monday

@@ -1,7 +1,7 @@
 # CLI reference
 
 > [!NOTE]
-> This reference describes the current release. Check your installed
+> This reference describes the 0.3.0 source tree. Check your installed
 > version with `sourceorrery --version`.
 
 ```
@@ -32,6 +32,16 @@ Unicode half blocks in colours chosen to read on dark and light
 backgrounds; when piped it is plain text. `SOURCEORRERY_BANNER=unicode|plain`
 forces a style.
 
+## Project setup options
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [The agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+   works with an existing CLI installation.
+
 ## `setup`: a vault on screens
 
 ```
@@ -50,8 +60,8 @@ filled in, and the name of a vault that exists opens it for changes.
 | Name | The new vault's name, checked as it is typed (letters, digits, hyphens, underscores, up to 64, unique ignoring case). |
 | View check | Whether viewing the vault asks for a password, and an authenticator code on top of it ([below](#the-view-check)). |
 | Password | Typed twice with a strength meter (it must rate "good"), or generated and shown once behind a "written down" tick; an optional hint, refused if it gives the password away. |
-| Authenticator | A QR code beside the key, the code field and the buttons, so it fits 80×24. A code from the app is checked before moving on; three wrong ones make a new key. |
-| Recovery key | Shown once, behind a "written down" tick. When changing a vault it is kept unless a new one is asked for, and the old one then stops working. |
+| Authenticator | A complete QR code when it fits, with the manual enrolment key available on compact screens; the code field and controls remain reachable. A code from the app is checked before moving on; three wrong ones make a new key. |
+| Recovery key | Shown once, behind a "written down" tick. When changing a vault it is kept unless a new one is asked for, and the old one then stops working in this file. A new recovery key is not a new vault key: an old copy of the vault still opens with the old key. After a compromise, rotate the exposed credentials and move to a new vault instead ([threat model](threat-model.md), gap 10). |
 | Storage | The SourceOrrery vault (always) and HashiCorp Vault, AWS Secrets Manager and Azure Key Vault; a provider not built into this binary is shown as unavailable. |
 | Connections | One form per provider ticked: its address, region or URL, and its credentials, either this machine's sign-in (the provider's own environment, CLI login or workload identity) or stored in the vault, sealed. **Test connection** makes one metadata call. |
 | Review | Everything above. **Create vault** or **Save changes** makes it all in one transaction: nothing is written before it, and a part the vault refuses leaves everything as it was. |
@@ -141,7 +151,7 @@ Code from the authenticator app: 123456
 | Command | Description |
 |---------|-------------|
 | `vault create [NAME]` | On a terminal, without the flags below: the [setup screens](#setup-a-vault-on-screens) (`--theme` as for `ui`). |
-| `vault create NAME [--recovery-key-out FILE] [--password-file FILE] [--no-keyring] [--retention-days 7-90] [--purgeable] [connection flags]` | Create the vault at once (scripts, CI, any of these flags, or no terminal). Its recovery key is printed once on stdout, or written to `--recovery-key-out` (a new file readable by you only; an existing file is never written over). `--password-file` sets the view check's password (a weak one is warned about); `--no-keyring` keeps no key for this machine. The connection flags add one connection per provider, the credentials read from files only (below). The vault, its password and its connections are made in one transaction: a part refused creates nothing. `-o json`: `vault`, `this_machine`, `keys` (kind and id of each key that opens it), `view_check`, `connections`, and `recovery_key` or `recovery_key_file`. |
+| `vault create NAME [--recovery-key-out FILE] [--password-file FILE] [--no-keyring] [--retention-days 7-90] [--purgeable] [connection flags]` | Create the vault at once (scripts, CI, any of these flags, or no terminal). Its recovery key is printed once on stdout, or written to `--recovery-key-out`: a new file, created before the vault with permissions only you have (on Windows restricted to your account and Windows SYSTEM, read back and checked; on Unix mode `0600`), and synced to disk; an existing file is never written over, and a volume that cannot keep permissions is refused. A key that cannot be delivered, to the file or to stdout, leaves no vault behind: the create is undone. `--password-file` sets the view check's password (a weak one is warned about); `--no-keyring` keeps no key for this machine. The connection flags add one connection per provider, the credentials read from files only (below). The vault, its password and its connections are made in one transaction: a part refused creates nothing. `-o json`: `vault`, `this_machine`, `keys` (kind and id of each key that opens it), `view_check`, `connections`, and `recovery_key` or `recovery_key_file`. |
 | `vault list` | The vault files in the home directory. It opens none of them. |
 | `vault export [NAME] --out FILE` | A copy of the vault for another machine: a consistent snapshot of the file (settings, connections with their credentials still sealed, the catalog, the values it keeps, project folders and the audit log). This machine's key and the view check stay behind, so the copy opens only with the recovery key; the copy's own log records the export. `--out` must not exist. Not asked the view check: the copy is no more open than the file. |
 | `vault import FILE [--name NAME]` | Bring an exported vault onto this machine: it is opened with its recovery key (the environment, `--recovery-key-file` or the prompt), its name, settings and audit chain are verified, this machine's key is added and it is registered under its name or `--name` (a name that exists, ignoring case, is refused). It comes with no view check; `--password-file` sets one at once, and otherwise the output says how (`vault create NAME` on a terminal). |
@@ -197,8 +207,8 @@ Newest first, with each event's id. `audit` and `audit export` ask the
 |-----------|--------------|
 | `vault_create`, `vault_open` | Creating the vault; each open (a failed one with outcome `failure`, detail `locked`). |
 | `secret_set`, `secret_get`, `secret_list`, `secret_inspect`, `secret_update`, `secret_delete`, `secret_recover`, `secret_purge` | The secret operations; `secret_inspect` is a metadata read (properties, versions, a deleted secret's details). A call to a provider is recorded the same way, by the vault, with the provider's outcome. |
-| `guard` | The view check: an answer passed or refused (`denied`), and each change to it (password set or changed, check cleared, authenticator enrolled and verified or removed). |
-| `protector_add` | The recovery key replaced, or this machine's key added (on `vault import`). |
+| `guard` | The view check: an answer passed or refused (`denied`), each change to it (password set or changed, check cleared, authenticator enrolled and verified or removed), and each change refused (`failure`, the error code only: never the password or hint it was given). |
+| `protector_add` | The recovery key replaced, or this machine's key added. Its event checkpoints the new set of key wraps. |
 | `vault_change` | A connection added, changed or removed, and a change of settings refused as a whole (`failure`). |
 | `connection_test` | A connection tested (`success`, or `failure` with the error code). |
 | `vault_export`, `vault_import` | The vault exported (in the copy's own log) or imported. |
@@ -207,9 +217,15 @@ Newest first, with each event's id. `audit` and `audit export` ask the
 
 Older releases also recorded `protector_remove`, `vault_migrate`,
 `vault_backup` and `secret_restore`; they are kept as names, never
-recorded now. Outcomes: `success`, `denied` (policy), `failure`. Detail
-holds the error code or a short note — never a value, a code, a password,
-a credential or the hint.
+recorded now. Outcomes: `success`, `denied` (policy), `failure`,
+`pending` and `unknown`. A change at a connection is recorded as a
+`pending` attempt before it is sent (`at connection <id>: sent`), and the
+event with its result names it (`(attempt <id>)`); `unknown` is a change
+the provider may have made (`outcome_unknown`). After the events, `audit`
+names every attempt whose result the vault never learned and what to do
+([providers](providers/index.md#when-a-changes-result-is-not-known)).
+Detail holds the error code or a short note — never a value, a code, a
+password, a credential or the hint.
 
 `--verify` checks the log's keyed hash chain instead of listing it (see
 [vault-format.md](vault-format.md#audit-chain)) and prints:
@@ -369,7 +385,7 @@ See [rotation](rotation.md) for what each command receives.
 | `init --integration AGENT[,AGENT...] [--scope project\|user] [--skills-dir DIR]` | Install the SourceOrrery skills for AI coding agents (below). |
 | `import FILE [--dry-run] [--manifest-only] [--only KEY]... [--exclude KEY]... [--overwrite] [--storage STORAGE] [--manifest FILE \| --no-manifest]` | Move a `.env` file into the vault and declare its keys (below). |
 | `check [--manifest FILE] [--access]` | Verify every entry resolves to an accessible version. Reads **metadata only**; writes no `secret_get` audit rows. Fails if a required secret is missing. `--access` also reads each value and discards it, so the status says whether this identity may read the secret and not only inspect it (a provider can allow metadata and deny values); that is an audited read. |
-| `run [--manifest FILE] -- COMMAND [ARGS...]` | Resolve every entry and start `COMMAND` with the values in its environment (plus `SOURCEORRERY_PROJECT`). Missing required secrets abort before the child starts. The child never inherits the recovery-key, password or code variables. `--vault` overrides the manifest's vault. |
+| `run [--manifest FILE] -- COMMAND [ARGS...]` | Resolve every entry and start `COMMAND` with the values in its environment (plus `SOURCEORRERY_PROJECT`). Missing required secrets abort before the child starts. Every variable the manifest names is the vault's to set: an optional secret that does not resolve (missing, disabled, outside its window, deleted) leaves its variable absent in the child, never a value of that name inherited from this environment (on Windows matched in any case). Other variables pass through. The child never inherits the recovery-key, password or code variables. `--vault` overrides the manifest's vault. |
 
 The parent resolves values in memory without printing them, then passes
 them to the child through its environment. Processes with permission to
@@ -526,6 +542,23 @@ browser drops the open vault: its handle goes, and with it the vault key,
 which is zeroised; everything read from it goes too. `Enter` opens it
 again, asking what opening it asks, view check included.
 
+The last 30 seconds show a countdown. Display ticks do not refresh metadata
+or extend the session. Synchronous provider work must return before input
+or locking can resume; the operation message makes that limit explicit.
+
+**Actions and complete details.** `F2` opens a contextual menu with the
+same commands as the keyboard shortcuts. Unavailable actions explain why;
+moving through the menu performs no write or provider read. `i` opens the
+complete cached metadata, and `!` opens a complete message. Both scroll
+without fetching more data and return to the same underlying view.
+
+Tables retain name/status first and hide lower-priority columns on narrow
+screens. An ellipsis marks clipped metadata; use `i` or explicit details
+for the full field. Counts distinguish matching rows from the visible row
+range. Help, project declarations, overview panels and form reviews scroll
+at compact sizes. Non-secret text fields support cursor movement and
+mid-string edits; hidden secret prompts retain their own input handling.
+
 **Changes**, unless `--read-only` is given:
 
 | Key | Change | The vault records |
@@ -571,6 +604,13 @@ Qualifiers narrow by one field; several of one kind mean any of them:
 A qualifier for the other kind of view matches nothing. `Enter` keeps the
 filter; `Esc` clears it.
 
+`f` opens filter categories with counts computed from cached metadata.
+Selecting another facet of the same kind replaces that qualifier; typed
+queries still support same-kind OR alternatives. Matching words are
+highlighted. `s` offers Secrets name/updated/expiry and Audit timestamp
+sorting; missing dates stay last. Sorting and refresh retain the selected
+object by its full identity, or clear selection if it disappears.
+
 | Key | Action |
 |-----|--------|
 | `↑` `↓` / `k` `j` | Move the selection (in details: the versions) |
@@ -580,6 +620,10 @@ filter; `Esc` clears it.
 | `Enter` | Details of the selected secret or project; open the selected vault |
 | `Esc` | Back: close the help, the search box, the details; clear the filter |
 | `/` | Search |
+| `F2` | Contextual Actions and unavailable reasons |
+| `f` / `s` | Cached filters / sorting |
+| `i` / `!` | Complete cached metadata / message details |
+| `t` | Preview Dark, Light or Terminal; Enter applies, Esc restores |
 | `r` | Read the vault again (on Vaults: list the files again) |
 | `v` | Check the audit chain again |
 | `L` | Lock now: drop the vault and wipe its key |
@@ -587,8 +631,10 @@ filter; `Esc` clears it.
 | `?` | Keys and search syntax |
 | `q` / `Ctrl-C` | Quit |
 
-What the vault records: everything is read once, when first shown, and
-kept until `r`.
+What the vault records: metadata is read when first shown and retained
+until explicit refresh or a confirmed change needs a reload. Navigation,
+sorting, filtering, menus, theme changes and cached inspection do not
+introduce vault/provider reads.
 
 | Browser action | Audit events |
 |----------------|--------------|
@@ -599,7 +645,10 @@ kept until `r`.
 | The audit log, verifying the chain, the vault's keys, connections, view check and projects, a project's manifest on disk, the vault list, searching, moving, redrawing, locking | none |
 
 What is shown is a snapshot: a change made from another terminal appears
-after `r`.
+after `r`. The successful-load time remains visible. A failed refresh
+keeps its failure state and last successful time; complete error details
+remain available. Refresh and uncached detail opening display an operation
+message before blocking work; neither promises cancellation while blocked.
 
 | Theme | Env | Look |
 |-------|-----|------|

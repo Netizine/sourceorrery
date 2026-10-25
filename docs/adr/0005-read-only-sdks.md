@@ -28,14 +28,15 @@ paths from the SDKs removes that surface.
 2. **The C ABI gets a read-only handle type.** `so_reader_*` and
    `so_project_*` functions operate on `so_reader` / `so_project`, distinct
    from the write-capable `so_vault`. A binding links only those symbols,
-   so even a bug in a binding cannot reach `so_secret_set`. The full
-   `so_vault_*` surface stays for administrative tooling.
+   and the shipped wrapper offers no mutation method. The full
+   `so_vault_*` surface remains in the native library for tooling, so this
+   API restriction does not isolate hostile code in the same process.
 3. **All logic stays in Rust.** The `sourceorrery` client crate owns the
-   unlock order (OS credential store, explicit passphrase,
-   `SOURCEORRERY_PASSPHRASE`, `SOURCEORRERY_PASSPHRASE_FILE`, never a
-   prompt), the manifest semantics and, for every failure, the *hint*: the
+   unlock order (OS credential store, explicit recovery key,
+   `SOURCEORRERY_RECOVERY_KEY`, `SOURCEORRERY_RECOVERY_KEY_FILE`, never a
+   prompt or the interactive view check), the manifest semantics and, for every failure, the *hint*: the
    actionable sentence that tells the person what to do (which CLI command
-   creates the vault, which passphrase sources were tried, why a version
+   creates the vault, which recovery-key sources were tried, why a version
    was refused by policy, that an integrity failure means comparing with a
    backup). Bindings map the stable code to a typed error and carry code,
    message and hint through unchanged.
@@ -46,9 +47,8 @@ paths from the SDKs removes that surface.
    `encoding/json`) and copies bytes out only through a deliberate
    `expose()`-style call. Once an application copies the bytes, keeping
    them safe is its job; the documentation says so.
-5. **Every SDK is proven in CI** against a vault the CLI creates in the
-   job with a passphrase protector and `SOURCEORRERY_PASSPHRASE` in the
-   environment, on Ubuntu, Windows and macOS: its tests, its example and,
+5. **CI requires every SDK to pass** against a vault the CLI creates in the
+   job with a recovery key and `SOURCEORRERY_KEYRING=off`, on Ubuntu, Windows and macOS: its tests, its example and,
    where the language has one, its type checker.
 
 ## Consequences

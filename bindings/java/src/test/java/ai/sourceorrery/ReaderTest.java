@@ -19,6 +19,7 @@ import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import ai.sourceorrery.internal.Native;
 
@@ -163,6 +164,57 @@ class ReaderTest {
         assertTrue(reader.isClosed());
         assertThrows(IllegalStateException.class, () -> reader.get("database-password"));
         reader.close();
+    }
+
+    @Test
+    void everyCallAfterCloseIsRefused() {
+        SecretReader reader = openReader();
+        assertThrows(SecretNotFoundException.class, () -> reader.get("missing"));
+        assertEquals(LATEST, reader.get("database-password").value().exposeText());
+        reader.close();
+        assertThrows(IllegalStateException.class, () -> reader.get("database-password"));
+        assertThrows(IllegalStateException.class, () -> reader.get("database-password", oldVersion));
+        assertThrows(IllegalStateException.class, () -> reader.properties("database-password"));
+        assertThrows(IllegalStateException.class, () -> reader.resolve("sourceorrery://" + vault + "/database-password"));
+        assertThrows(IllegalStateException.class, reader::descriptor);
+        reader.close();
+    }
+
+    // Platform threads, as in GuardedTest: reads in a loop never block, so
+    // virtual threads would not let each other start on a two-core runner.
+    @Test
+    @Timeout(120)
+    void closeWhileReadsRunWaitsForThem() throws Exception {
+        SecretReader reader = openReader();
+        java.util.concurrent.CountDownLatch reading = new java.util.concurrent.CountDownLatch(8);
+        try (ExecutorService pool = Executors.newFixedThreadPool(8)) {
+            List<Future<Integer>> readers = new java.util.ArrayList<>();
+            for (int t = 0; t < 8; t++) {
+                readers.add(pool.submit(() -> {
+                    int reads = 0;
+                    reading.countDown();
+                    while (true) {
+                        try (Secret secret = reader.get("database-password")) {
+                            if (!LATEST.equals(secret.value().exposeText())) {
+                                return -1;
+                            }
+                            reader.properties("database-password");
+                            reader.descriptor();
+                            reads++;
+                        } catch (IllegalStateException closed) {
+                            return reads;
+                        }
+                    }
+                }));
+            }
+            reading.await();
+            reader.close();
+            for (Future<Integer> result : readers) {
+                // Every call either read the right value or was refused cleanly.
+                assertTrue(result.get() >= 0);
+            }
+        }
+        assertTrue(reader.isClosed());
     }
 
     @Test

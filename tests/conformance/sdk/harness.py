@@ -93,11 +93,30 @@ def substitute(text, values: dict[str, str]):
     return text
 
 
+def scenario_environment(scenario: dict, values: dict[str, str], base: dict[str, str] | None = None) -> dict[str, str]:
+    """The runner's environment: the fixture's, with the scenario's `env`
+    set and its `unset` removed, so a scenario can vary where a key comes
+    from without a runner knowing about it."""
+    environment = dict(os.environ if base is None else base)
+    for name in scenario.get("unset", []):
+        environment.pop(name, None)
+    environment.update(substitute(scenario.get("env", {}), values))
+    return environment
+
+
+def select(scenarios: list[dict], only: list[str], allowed: set) -> tuple[list[dict], list[dict]]:
+    """The scenarios to run, and those skipped because what they require
+    was not asked for (`--only` leaves the rest out without counting them)."""
+    wanted = [s for s in scenarios if not only or s["id"] in only]
+    return [s for s in wanted if s.get("requires") in allowed], [s for s in wanted if s.get("requires") not in allowed]
+
+
 def run_scenario(command: list[str], scenario: dict, values: dict[str, str]) -> tuple[dict[str, str], str]:
     args = [f"{key}={value}" for key, value in substitute(scenario["args"], values).items()]
     completed = subprocess.run(
         [*command, scenario["op"], *args],
         cwd=ROOT,
+        env=scenario_environment(scenario, values),
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -254,9 +273,10 @@ def main() -> int:
         allowed.add("remote")
         if options.remote_per_version:
             allowed.add("remote-per-version")
-    selected = [
-        s for s in scenarios if (not options.only or s["id"] in options.only) and s.get("requires") in allowed
-    ]
+    selected, skipped = select(scenarios, options.only, allowed)
+    for scenario in skipped:
+        flag = "--remote --remote-per-version" if scenario["requires"] == "remote-per-version" else "--remote"
+        print(f"SKIP  {scenario['id']}: requires {scenario['requires']} ({flag})")
     for scenario in selected:
         try:
             observed, stderr = run_scenario(command, scenario, values)
@@ -272,8 +292,24 @@ def main() -> int:
             failures += 1
             print(f"FAIL  {scenario['id']}: cannot run the runner: {err}")
     total = len(selected)
-    print(f"\n{label}: {total - failures}/{total} scenarios passed")
+    print(f"\n{label}: {total - failures}/{total} scenarios passed, {len(skipped)} skipped")
+    unrun = live_required_but_skipped(skipped)
+    if unrun:
+        print(f"{label}: SOURCEORRERY_LIVE_REQUIRED=true, but {len(unrun)} scenarios at a provider were not run")
+        return 1
     return 1 if failures else 0
+
+
+def live_required_but_skipped(skipped: list[dict], environment: dict[str, str] | None = None) -> list[dict]:
+    """Where the live suites must run (SOURCEORRERY_LIVE_REQUIRED=true, as
+    for tests/conformance/src/live.rs: a provider job, a release rehearsal),
+    a scenario at a provider that was skipped is a failure, never coverage.
+    `remote-per-version` alone stays a skip: that the provider keeps
+    properties per secret is the job's statement, not a missing service."""
+    environment = os.environ if environment is None else environment
+    if environment.get("SOURCEORRERY_LIVE_REQUIRED") != "true":
+        return []
+    return [s for s in skipped if s.get("requires") == "remote"]
 
 
 if __name__ == "__main__":

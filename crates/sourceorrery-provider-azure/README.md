@@ -13,6 +13,9 @@ applications read it through
 `provider-azure`, on by default) like any other secret; the manifest never
 names the Key Vault.
 
+Use the CLI to create vaults and set secret values; application SDKs are
+read-only. See the [CLI installation guide](https://sourceorrery.ai/getting-started/#install).
+
 The connection signs in with a service principal it stores, sealed in the
 vault, or else as the first identity the process's environment provides,
 through the official Azure SDK (a service principal's
@@ -24,4 +27,14 @@ Key Vault keeps metadata per version, like the contract, so versions,
 version's time window can be replaced but not removed, values that are not
 UTF-8 are stored as base64, and a version holds at most 12 user tags. The
 mapping and every such difference is documented in
-`docs/providers/azure-key-vault.md` of the repository.
+the [provider guide](https://sourceorrery.ai/providers/azure-key-vault/).
+
+## Project setup options
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [The agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+   works with an existing CLI installation.

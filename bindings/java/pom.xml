@@ -7,11 +7,11 @@
   <groupId>ai.sourceorrery</groupId>
   <artifactId>sourceorrery</artifactId>
   <!-- Overridden by the release workflow: mvn versions:set -DnewVersion=... -->
-  <version>0.2.0</version>
+  <version>0.3.0</version>
   <packaging>jar</packaging>
 
   <name>SourceOrrery</name>
-  <description>Read secrets from SourceOrrery vaults, the encrypted replacement for .env files. Read-only: vaults are created and secrets stored with the sourceorrery CLI (https://sourceorrery.ai/getting-started/). One jar with the native library for Windows, macOS and Linux, x64 and arm64; Java 22+.</description>
+  <description>Read-only SourceOrrery SDK for Java; requires the separate SourceOrrery CLI to create vaults and set secret values. CLI installation: https://sourceorrery.ai/getting-started/#install. One jar with the native library for Windows, macOS and Linux, x64 and arm64; Java 22+.</description>
   <url>https://sourceorrery.ai/sdks/java/</url>
 
   <licenses>

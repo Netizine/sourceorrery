@@ -1,5 +1,12 @@
 //! Non-interactive recovery-key sources, in the CLI's order.
+//!
+//! A source is consulted only when the vault asks for a recovery key and
+//! every earlier source is used up: a vault this machine's key opens reads
+//! none of them, and a key that works stops the search, so an unset, empty
+//! or unreadable later source never fails an open that an earlier one
+//! completes (SR08 of the 2026-10-25 review).
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use sourceorrery_core::{Result as CoreResult, SecretBytes, SecretError};
@@ -36,7 +43,9 @@ impl KeySource {
 pub struct UnlockReport {
     /// Sources that supplied a key, in the order they were tried.
     pub supplied: Vec<KeySource>,
-    /// Sources that were consulted but had nothing (unset, empty, no file).
+    /// Sources that were consulted but had nothing (unset, empty). A source
+    /// in neither list was not consulted: the vault opened, or stopped
+    /// asking, before its turn.
     pub empty: Vec<KeySource>,
     /// Recovery-key file that was configured, if any.
     pub file: Option<PathBuf>,
@@ -71,22 +80,37 @@ impl UnlockReport {
     }
 }
 
-/// Supplies, one per attempt, the recovery keys found in the configured
-/// sources. Never prompts.
+/// Supplies, one per attempt, the recovery keys of the configured sources
+/// in order: the explicit one, then the environment variable, then the
+/// file, each read only when its turn comes. A key equal to one already
+/// offered is not offered again. Never prompts.
 #[derive(Debug)]
 pub(crate) struct NonInteractiveUnlock {
-    candidates: Vec<SecretBytes>,
-    pub(crate) report: UnlockReport,
+    explicit: Option<SecretBytes>,
+    environment: bool,
+    state: RefCell<Sources>,
 }
 
+/// What has been consulted so far.
+#[derive(Debug)]
+struct Sources {
+    /// The next source to consult, as an index into [`ORDER`].
+    next: usize,
+    offered: Vec<SecretBytes>,
+    report: UnlockReport,
+}
+
+const ORDER: [KeySource; 3] = [KeySource::Explicit, KeySource::Environment, KeySource::File];
+
 impl NonInteractiveUnlock {
-    /// Gather recovery keys: the explicit one, then the environment
-    /// variable, then the file. Duplicates are tried once.
-    pub(crate) fn gather(
+    /// The sources to try: `explicit`, `SOURCEORRERY_RECOVERY_KEY` when
+    /// `environment` allows it, then `file` or, when the environment
+    /// allows it, `SOURCEORRERY_RECOVERY_KEY_FILE`. Nothing is read here.
+    pub(crate) fn new(
         explicit: Option<&SecretBytes>,
         file: Option<&Path>,
         environment: bool,
-    ) -> CoreResult<Self> {
+    ) -> Self {
         let file: Option<PathBuf> = match file {
             Some(path) => Some(path.to_path_buf()),
             None if environment => std::env::var_os(RECOVERY_KEY_FILE_ENV)
@@ -94,38 +118,59 @@ impl NonInteractiveUnlock {
                 .map(PathBuf::from),
             None => None,
         };
-        let from_file = match &file {
-            Some(path) => Some(read_key_file(path)?),
-            None => None,
-        };
-        let from_env = if environment { key_from_env() } else { None };
-
-        let mut candidates: Vec<SecretBytes> = Vec::new();
-        let mut report = UnlockReport {
-            file,
+        Self {
+            explicit: explicit.cloned(),
             environment,
-            ..UnlockReport::default()
-        };
-        let mut offer = |source: KeySource, key: Option<SecretBytes>| match key {
-            Some(key) if !key.is_empty() => {
-                report.supplied.push(source);
-                if !candidates.contains(&key) {
-                    candidates.push(key);
-                }
-            }
-            _ => report.empty.push(source),
-        };
-        offer(KeySource::Explicit, explicit.cloned());
-        offer(KeySource::Environment, from_env);
-        offer(KeySource::File, from_file);
-        Ok(Self { candidates, report })
+            state: RefCell::new(Sources {
+                next: 0,
+                offered: Vec::new(),
+                report: UnlockReport {
+                    file,
+                    environment,
+                    ..UnlockReport::default()
+                },
+            }),
+        }
+    }
+
+    /// What was consulted, for a `locked` error's hint.
+    pub(crate) fn report(&self) -> UnlockReport {
+        self.state.borrow().report.clone()
+    }
+
+    /// The key `source` holds now, if any; a file that cannot be read or is
+    /// empty is an error, since it was named.
+    fn read(&self, source: KeySource, file: Option<&Path>) -> CoreResult<Option<SecretBytes>> {
+        Ok(match source {
+            KeySource::Explicit => self.explicit.clone(),
+            KeySource::Environment if self.environment => key_from_env(),
+            KeySource::Environment => None,
+            KeySource::File => match file {
+                Some(path) => Some(read_key_file(path)?),
+                None => None,
+            },
+        })
     }
 }
 
 impl UnlockProvider for NonInteractiveUnlock {
-    fn recovery_key(&self, prompt: &RecoveryKeyPrompt<'_>) -> CoreResult<Option<SecretBytes>> {
-        let index = prompt.attempt.saturating_sub(1) as usize;
-        Ok(self.candidates.get(index).cloned())
+    fn recovery_key(&self, _prompt: &RecoveryKeyPrompt<'_>) -> CoreResult<Option<SecretBytes>> {
+        let mut state = self.state.borrow_mut();
+        while let Some(&source) = ORDER.get(state.next) {
+            state.next += 1;
+            let file = state.report.file.clone();
+            match self.read(source, file.as_deref())? {
+                Some(key) if !key.is_empty() => {
+                    state.report.supplied.push(source);
+                    if !state.offered.contains(&key) {
+                        state.offered.push(key.clone());
+                        return Ok(Some(key));
+                    }
+                }
+                _ => state.report.empty.push(source),
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -172,24 +217,43 @@ mod tests {
     #[test]
     fn the_explicit_key_comes_first_and_duplicates_collapse() {
         let explicit = SecretBytes::from("one");
-        let unlock = NonInteractiveUnlock::gather(Some(&explicit), None, false).unwrap();
-        assert_eq!(unlock.report.supplied, vec![KeySource::Explicit]);
+        let unlock = NonInteractiveUnlock::new(Some(&explicit), None, false);
+        assert_eq!(unlock.report(), UnlockReport::default(), "nothing read yet");
+        assert_eq!(
+            unlock.recovery_key(&prompt(1)).unwrap(),
+            Some(SecretBytes::from("one"))
+        );
+        assert_eq!(unlock.report().supplied, vec![KeySource::Explicit]);
+        assert!(
+            unlock
+                .report()
+                .describe()
+                .contains("SOURCEORRERY_RECOVERY_KEY: not consulted")
+        );
+        assert_eq!(unlock.recovery_key(&prompt(2)).unwrap(), None);
+        let described = unlock.report().describe();
+        assert!(
+            described.contains("recovery_key option: tried"),
+            "{described}"
+        );
+        assert!(
+            described.contains("SOURCEORRERY_RECOVERY_KEY: not set"),
+            "{described}"
+        );
+
+        // The same key from a later source is consulted, not offered twice.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("key");
+        std::fs::write(&file, "one\n").unwrap();
+        let unlock = NonInteractiveUnlock::new(Some(&explicit), Some(&file), false);
         assert_eq!(
             unlock.recovery_key(&prompt(1)).unwrap(),
             Some(SecretBytes::from("one"))
         );
         assert_eq!(unlock.recovery_key(&prompt(2)).unwrap(), None);
-        assert!(
-            unlock
-                .report
-                .describe()
-                .contains("recovery_key option: tried")
-        );
-        assert!(
-            unlock
-                .report
-                .describe()
-                .contains("SOURCEORRERY_RECOVERY_KEY: not set")
+        assert_eq!(
+            unlock.report().supplied,
+            vec![KeySource::Explicit, KeySource::File]
         );
     }
 
@@ -198,28 +262,49 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("key");
         std::fs::write(&file, "from-file\r\n\n").unwrap();
-        let unlock = NonInteractiveUnlock::gather(None, Some(&file), false).unwrap();
+        let unlock = NonInteractiveUnlock::new(None, Some(&file), false);
         assert_eq!(
             unlock.recovery_key(&prompt(1)).unwrap(),
             Some(SecretBytes::from("from-file"))
         );
-        assert_eq!(unlock.report.supplied, vec![KeySource::File]);
-        assert!(unlock.report.describe().contains("key): tried"));
+        assert_eq!(unlock.report().supplied, vec![KeySource::File]);
+        assert!(unlock.report().describe().contains("key): tried"));
 
+        // An empty or missing file is an error, but only once it is reached.
         std::fs::write(&file, "\n").unwrap();
-        let err = NonInteractiveUnlock::gather(None, Some(&file), false).unwrap_err();
-        assert_eq!(err.code(), "io");
-
+        let unlock = NonInteractiveUnlock::new(None, Some(&file), false);
+        assert_eq!(unlock.recovery_key(&prompt(1)).unwrap_err().code(), "io");
         let missing = dir.path().join("missing");
-        let err = NonInteractiveUnlock::gather(None, Some(&missing), false).unwrap_err();
+        let unlock = NonInteractiveUnlock::new(None, Some(&missing), false);
+        assert_eq!(unlock.recovery_key(&prompt(1)).unwrap_err().code(), "io");
+    }
+
+    #[test]
+    fn an_unusable_later_file_is_never_read_while_an_earlier_key_is_tried() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let explicit = SecretBytes::from("right");
+        let unlock = NonInteractiveUnlock::new(Some(&explicit), Some(&missing), false);
+        // The vault takes the first key: the file is never consulted.
+        assert_eq!(
+            unlock.recovery_key(&prompt(1)).unwrap(),
+            Some(explicit.clone())
+        );
+        let described = unlock.report().describe();
+        assert!(described.contains("missing): not consulted"), "{described}");
+        // Were the first key wrong, the vault would ask again: then the
+        // file is read, and its error says which file.
+        let err = unlock.recovery_key(&prompt(2)).unwrap_err();
         assert_eq!(err.code(), "io");
+        assert!(err.to_string().contains("missing"), "{err}");
     }
 
     #[test]
     fn an_empty_explicit_key_is_not_a_candidate() {
         let empty = SecretBytes::from("");
-        let unlock = NonInteractiveUnlock::gather(Some(&empty), None, false).unwrap();
-        assert_eq!(unlock.report.supplied, Vec::new());
+        let unlock = NonInteractiveUnlock::new(Some(&empty), None, false);
         assert_eq!(unlock.recovery_key(&prompt(1)).unwrap(), None);
+        assert_eq!(unlock.report().supplied, Vec::new());
+        assert_eq!(unlock.report().empty.len(), 3);
     }
 }

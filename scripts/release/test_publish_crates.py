@@ -29,13 +29,13 @@ class PublishCratesTests(unittest.TestCase):
 
     def test_workspace_includes_every_publishable_member(self):
         extra = {"id": "future", "name": "future", "version": "0.2.0", "publish": None}
-        self.assertEqual(len(publish.selected_packages(self.metadata(extra), "0.2.0", "workspace")), 7)
+        self.assertEqual(len(publish.selected_packages(self.metadata(extra), "0.2.0", "workspace")), 8)
         self.assertNotIn("tests", publish.selected_packages(self.metadata(), "0.2.0", "workspace"))
 
-    def test_bootstrap_has_core_and_only_the_unpublished_providers(self):
+    def test_optional_bootstrap_is_limited_to_its_explicit_allowlist(self):
         self.assertEqual(publish.selected_packages(self.metadata(), "0.2.0", "bootstrap"),
                          [publish.CORE, *publish.PROVIDERS])
-        self.assertEqual(publish.PROVIDERS, ("sourceorrery-provider-azure",))
+        self.assertEqual(publish.PROVIDERS, ("sourceorrery-provider-azure", "sourceorrery-os"))
         for established in ESTABLISHED:
             self.assertNotIn(established, publish.PROVIDERS)
 
@@ -78,13 +78,15 @@ class PublishCratesTests(unittest.TestCase):
         argv = ["publish-crates.py", "0.2.0", "--group", "bootstrap", "--publish"]
         with patch.object(publish.sys, "argv", argv), \
                 patch.object(publish.subprocess, "check_output", return_value=json.dumps(self.metadata())), \
-                patch.object(publish, "version_exists", side_effect=[True, False]), \
+                patch.object(publish, "version_exists",
+                             side_effect=[True, *([False] * len(publish.PROVIDERS))]), \
                 patch.object(publish.subprocess, "call", return_value=0) as upload, \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(publish.main(), 0)
             command = upload.call_args.args[0]
             self.assertNotIn(publish.CORE, command)
-            self.assertIn(publish.PROVIDERS[0], command)
+            for name in publish.PROVIDERS:
+                self.assertIn(name, command)
 
     def test_registry_failure_prevents_all_uploads(self):
         argv = ["publish-crates.py", "0.2.0", "--group", "bootstrap", "--publish"]

@@ -123,6 +123,9 @@ class Main(unittest.TestCase):
         self.assertIn("file, `sourceorrery.win32-x64-msvc.node`,", readme)
         self.assertIn("| `@sourceorreryai/sdk-linux-arm64-gnu` | Linux arm64 (glibc) |", readme)
         self.assertIn("| `@sourceorreryai/sdk-win32-x64-msvc` | Windows x64 |", readme)
+        self.assertIn("https://sourceorrery.ai/getting-started/#install", readme)
+        self.assertIn("create vaults and set secret values", readme)
+        self.assertNotIn("cargo install", readme)
 
         run(self.npm)
         self.assertEqual(first, files(self.npm))

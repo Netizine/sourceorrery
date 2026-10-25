@@ -113,16 +113,78 @@ fn action(key: KeyEvent) -> Option<Action> {
     if key.kind == KeyEventKind::Release {
         return None;
     }
+    if key.kind == KeyEventKind::Repeat
+        && !matches!(
+            key.code,
+            KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Delete
+                | KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::Backspace
+                | KeyCode::Char(_)
+        )
+    {
+        return None;
+    }
+    if key.kind == KeyEventKind::Repeat && key.code == KeyCode::Char(' ') {
+        return None;
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return (key.code == KeyCode::Char('c')).then_some(Action::Quit);
     }
     Some(match key.code {
+        KeyCode::PageUp => Action::Scroll(crate::ui::app::Action::PageUp),
+        KeyCode::PageDown => Action::Scroll(crate::ui::app::Action::PageDown),
+        KeyCode::Home => Action::Text(crate::ui::text_input::Edit::Home),
+        KeyCode::End => Action::Text(crate::ui::text_input::Edit::End),
         KeyCode::Esc => Action::Back,
         KeyCode::Enter => Action::Enter,
         KeyCode::Tab | KeyCode::Down => Action::Next,
         KeyCode::BackTab | KeyCode::Up => Action::Prev,
+        KeyCode::Left => Action::Text(crate::ui::text_input::Edit::Left),
+        KeyCode::Right => Action::Text(crate::ui::text_input::Edit::Right),
+        KeyCode::Delete => Action::Text(crate::ui::text_input::Edit::Delete),
         KeyCode::Backspace => Action::Erase,
         KeyCode::Char(c) => Action::Input(c),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+    #[test]
+    fn review_and_commit_require_fresh_presses() {
+        for code in [KeyCode::Enter, KeyCode::Char(' '), KeyCode::Esc] {
+            assert!(
+                action(KeyEvent::new_with_kind(
+                    code,
+                    KeyModifiers::NONE,
+                    KeyEventKind::Repeat
+                ))
+                .is_none()
+            );
+            assert!(
+                action(KeyEvent::new_with_kind(
+                    code,
+                    KeyModifiers::NONE,
+                    KeyEventKind::Press
+                ))
+                .is_some()
+            );
+        }
+        assert!(
+            action(KeyEvent::new_with_kind(
+                KeyCode::Down,
+                KeyModifiers::NONE,
+                KeyEventKind::Repeat
+            ))
+            .is_some()
+        );
+    }
 }

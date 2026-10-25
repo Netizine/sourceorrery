@@ -87,6 +87,8 @@ pub(crate) const PROJECT_PATH_DOMAIN: &str = "sourceorrery/v4/project-path";
 
 /// Domain of the vault settings tag.
 pub(crate) const SETTINGS_DOMAIN: &str = "sourceorrery/v2/settings";
+/// Domain of one key-wrap row as the settings record lists it (ADR 0010).
+pub(crate) const KEY_WRAP_DOMAIN: &str = "sourceorrery/v5/key-wrap";
 
 /// `vault_meta` key holding the hex HMAC over the vault-wide settings.
 pub(crate) const SETTINGS_KEY: &str = "settings_tag";
@@ -607,6 +609,30 @@ pub(crate) struct SettingsFields<'a> {
     /// Every `projects` row as `(id, tag)`, ordered by id, appended after
     /// the connections under the same rule: only when there is one.
     pub projects: &'a [(String, Vec<u8>)],
+    /// Every `key_wraps` row as `(id, encoding)`, ordered by id, the
+    /// encoding from [`key_wrap_canonical`]. Always appended, since every
+    /// vault has its recovery wrap: an old wrap row put back, or one added
+    /// or removed, breaks the record (ADR 0010).
+    pub key_wraps: &'a [(String, Vec<u8>)],
+}
+
+/// One `key_wraps` row as the settings record lists it: everything the row
+/// holds, so that no part of it can be swapped for an older copy.
+pub(crate) fn key_wrap_canonical(
+    vault_id: &str,
+    id: &str,
+    kind_json: &str,
+    wrapped_nonce: &[u8],
+    wrapped_key: &[u8],
+    created_on: i64,
+) -> Vec<u8> {
+    Canonical::new(KEY_WRAP_DOMAIN, vault_id)
+        .str(id)
+        .str(kind_json)
+        .bytes(wrapped_nonce)
+        .bytes(wrapped_key)
+        .int(created_on)
+        .finish()
 }
 
 fn settings_canonical(fields: &SettingsFields<'_>) -> Vec<u8> {
@@ -640,6 +666,12 @@ fn settings_canonical(fields: &SettingsFields<'_>) -> Vec<u8> {
                 canonical = canonical.str(id).bytes(tag);
             }
         }
+    }
+    canonical = canonical
+        .str("key_wraps")
+        .int(i64::try_from(fields.key_wraps.len()).unwrap_or(i64::MAX));
+    for (id, row) in fields.key_wraps {
+        canonical = canonical.str(id).bytes(row);
     }
     canonical.finish()
 }
@@ -1010,6 +1042,7 @@ mod tests {
             check_failures: None,
             connections: &[],
             projects: &[],
+            key_wraps: &[],
         };
         let tag = hex::encode(settings_tag(&k, &base));
         let one = [("c1".to_owned(), vec![1u8; MAC_LEN])];
@@ -1041,16 +1074,115 @@ mod tests {
         };
         assert!(!verify_settings_tag(&k, &as_project, Some(&one_tag)));
         assert!(!verify_settings_tag(&k, &as_project, Some(&tag)));
-        // Without connections or projects the record is the one written
-        // before they existed: only the fields above, in that order.
+        // Without connections or projects the record is the fields above,
+        // in that order, then the key wraps, which are always listed.
         let before = Canonical::new(SETTINGS_DOMAIN, "vault")
             .int(4)
             .str("dev")
             .int(1)
             .str("\"recoverable\"")
             .int(90)
+            .str("key_wraps")
+            .int(0)
             .finish();
         assert_eq!(tag, hex::encode(crypto::mac(&k, &before)));
+    }
+
+    #[test]
+    fn the_settings_record_covers_every_part_of_every_key_wrap() {
+        let k = key(1);
+        let row = |id: &str, kind: &str, nonce: &[u8], wrapped: &[u8], created: i64| {
+            (
+                id.to_owned(),
+                key_wrap_canonical("vault", id, kind, nonce, wrapped, created),
+            )
+        };
+        let current = [row(
+            "w1",
+            "{\"recovery\":{\"salt\":\"aa\"}}",
+            &[1; 24],
+            &[2; 48],
+            7,
+        )];
+        let fields = SettingsFields {
+            vault_id: "vault",
+            schema: 5,
+            name: "dev",
+            created_on: 1,
+            recovery_level: "\"recoverable\"",
+            retention_days: 90,
+            password: None,
+            password_hint: None,
+            second_factor: None,
+            check_failures: None,
+            connections: &[],
+            projects: &[],
+            key_wraps: &current,
+        };
+        let tag = hex::encode(settings_tag(&k, &fields));
+        assert!(verify_settings_tag(&k, &fields, Some(&tag)));
+        // Any part of the row changed, the row replaced by another, an
+        // extra row, or no row: the record no longer verifies.
+        let changed = [
+            vec![row(
+                "w2",
+                "{\"recovery\":{\"salt\":\"aa\"}}",
+                &[1; 24],
+                &[2; 48],
+                7,
+            )],
+            vec![row(
+                "w1",
+                "{\"recovery\":{\"salt\":\"bb\"}}",
+                &[1; 24],
+                &[2; 48],
+                7,
+            )],
+            vec![row(
+                "w1",
+                "{\"recovery\":{\"salt\":\"aa\"}}",
+                &[3; 24],
+                &[2; 48],
+                7,
+            )],
+            vec![row(
+                "w1",
+                "{\"recovery\":{\"salt\":\"aa\"}}",
+                &[1; 24],
+                &[4; 48],
+                7,
+            )],
+            vec![row(
+                "w1",
+                "{\"recovery\":{\"salt\":\"aa\"}}",
+                &[1; 24],
+                &[2; 48],
+                8,
+            )],
+            vec![
+                current[0].clone(),
+                row(
+                    "w9",
+                    "{\"recovery\":{\"salt\":\"cc\"}}",
+                    &[5; 24],
+                    &[6; 48],
+                    9,
+                ),
+            ],
+            vec![],
+        ];
+        for wraps in &changed {
+            let altered = SettingsFields {
+                key_wraps: wraps,
+                ..fields
+            };
+            assert!(!verify_settings_tag(&k, &altered, Some(&tag)), "{wraps:?}");
+        }
+        // A row's encoding is bound to its vault.
+        assert_ne!(
+            key_wrap_canonical("vault", "w1", "{}", &[1], &[2], 7),
+            key_wrap_canonical("other", "w1", "{}", &[1], &[2], 7)
+        );
     }
 
     #[test]

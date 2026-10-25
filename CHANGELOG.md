@@ -6,9 +6,14 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
 **Breaking: vaults from earlier releases are not read.** A vault file of
-schema 1, 2 or 3 is refused with `migration_required`, never rewritten:
-recreate it with `sourceorrery setup` and set its secrets again (ADR 0009).
+schema 1 to 4 (schema 4: development builds of `main`) is refused with
+`migration_required`, never rewritten: keep the file for the release that
+wrote it and start a new vault for this release. `docs/upgrading.md`
+describes the supported format and current export/import commands (ADR
+0009, ADR 0010). The format is schema 5; no legacy conversion is provided.
 How a vault opens, what it asks and where it keeps secrets change
 together, so the CLI, the Rust API, the C ABI's open options and every
 SDK's open options change with them (ADR 0007: a minor release;
@@ -95,13 +100,120 @@ native library of an earlier release).
   refused certificate's reason is in the Vault provider's error, and the
   CLI no longer prints the TLS verifier's own report of it at the default
   verbosity.
+* **The terminal UI** adds action menus, filtering and sorting, cached
+  inspection, live theme preview, clearer status and idle warnings, and
+  responsive layouts with scrolling controls. Navigation remains
+  metadata-only; reveal and provider reads remain explicit.
+* **The documentation and website** describe the 0.3.0 key model, provider
+  connections, schema 5 and C ABI 2. The architecture diagram and UI
+  walkthroughs match the implementation. Install guides put Homebrew and
+  WinGet first, with WinGet's pending catalog status and ready alternatives.
+* **Optional website analytics** use Microsoft Clarity only after consent.
+  The privacy banner and footer allow a complete opt-out, honour browser
+  privacy signals and keep advertising consent off. The CLI and SDKs do
+  not include this website integration.
+* The install pages name one version, the workspace's, stamped by
+  `scripts/release/docs-version.py` and checked in CI and by the release
+  workflow; until it is released they say so, and the site header shows it
+  as unreleased. Registry install commands are pinned to it. The provider
+  guides say the vault's own log records every provider call.
+
+### Security
+
+Fixes from the security review of 2026-10-25
+(`SECURITY-REVIEW-2026-10-25.md`; what each closes and how it was tested
+is in `docs/security-remediation-validation.md`).
+
+* **Key wraps are authenticated.** The settings record covers every key
+  wrap, so a recovery-key wrap put back after the key was replaced, or any
+  wrap row added or swapped, makes the vault refuse to open. Replacing a
+  recovery key stops that key opening the vault; it does not change the
+  vault key (ADR 0010).
+* **Recovery-key files are private from the start.** `vault create
+  --recovery-key-out` creates the file before the vault, restricted to
+  your account and Windows SYSTEM on Windows (checked after creation; a
+  volume that cannot keep permissions is refused) and mode `0600` on Unix,
+  and syncs it. A key that cannot be delivered, to the file or to stdout,
+  leaves no vault behind.
+* **A blocked vault calls no provider.** Every call at a connection first
+  passes the vault's integrity gate, so a vault whose audit log was cut
+  short sends nothing, also through a client opened earlier.
+* **A change at a connection says when it may have happened.** It is
+  recorded as an attempt (`pending`) before it is sent; a failure other
+  than a refusal, or a change the vault could not record, is the new error
+  code `outcome_unknown` and the audit outcome `unknown`, and `sourceorrery
+  audit` lists the attempts whose result the vault never learned
+  (ADR 0011).
+* **HashiCorp Vault: a new version is never readable under a looser policy
+  than it was written with.** A disabled or not-yet-valid version was
+  written before its properties, and stayed readable if the second request
+  failed. Its properties now go in first as the writer's intent, the data
+  is written with check-and-set, and one merge patch commits them; every
+  `custom_metadata` change is a merge patch of its own keys, so two writers
+  never drop each other's, and the one that loses a version number is
+  refused and writes nothing. A writing token needs the `patch` capability
+  on `<mount>/metadata/*` (`docs/providers/hashicorp-vault.md`).
+* **AWS Secrets Manager: the same, for one writer at a time.** A new
+  version was made current before its tags; now the tags are first
+  narrowed to the stricter of the old and new policy, then the value is
+  put, then the tags reach the new properties in an order that never
+  loosens below them (an update used to remove stale tags first, which
+  could enable a secret for a moment). Tags, content types and values the
+  service would refuse are refused before any write, `aws:` and
+  `sourceorrery:` keys included, and AWS's own `aws:` tags are no longer
+  taken for user tags and written back.
 
 ### Fixed
 
+* A manifest whose `retire_after` ends in a character longer than one byte
+  (`7é`) made the CLI panic, and each SDK's project load fail with an
+  internal error; it is refused as an invalid grace period. Found by the
+  bounded fuzz tests that now run in CI over the parsers of manifests,
+  references, provider replies and vault files.
+* The Linux packages (the CLI, the C ABI and the .NET and Java packages that
+  carry it, the Node addon) are built on Ubuntu 22.04 and need glibc 2.34
+  (Ubuntu 22.04, Debian 12, RHEL 9, Amazon Linux 2023 and the images built
+  on them); built on 24.04 they needed 2.39. Every platform's minimum is in the architecture's
+  platform matrix.
+* Every operation counted the vault's keyed audit rows with a scan of the
+  whole log, three times, so reads slowed as their own audit rows
+  accumulated (91 ms a read at 100,000 events on a laptop, 22 ms now; a
+  listing 128 ms, 18 now). An index serves the count, each check names the
+  index it reads, and a vault gets the indexes it lacks when it is
+  unlocked. `docs/architecture.md` records what still grows, and why.
+* HashiCorp Vault: a reply is read chunk by chunk and stopped at its 8 MiB
+  cap; one without a declared length used to be buffered whole first.
 * HashiCorp Vault: an update made on a machine whose clock trails the Vault
   server's no longer reports an `updated_on` earlier than the version's
   `created_on`.
 
+* A refused change of the view check (an empty password, a hint that gives
+  it away, work factors past the limits, an authenticator step refused for
+  a corrupt record) is recorded in the audit log like every refused
+  operation, by its code alone.
+* The view check is decided on the vault's current settings: a password
+  or an authenticator another process set after a handle opened the vault
+  is asked for, and the prompts follow.
+* `run`: an optional secret that does not resolve leaves its variable
+  absent in the child. A value of that name in `run`'s own environment
+  used to pass through, where the program could take it for the vault's.
+* Rust client and every SDK: a recovery-key source is read only when the
+  vault asks for a key and the earlier sources are used up, so a missing or
+  empty `SOURCEORRERY_RECOVERY_KEY_FILE` no longer fails an open that this
+  machine's key, the `recovery_key` option or `SOURCEORRERY_RECOVERY_KEY`
+  completes. Needed and unusable, it is `io` with a hint that names it.
+* PHP SDK: a `SecretReader` can no longer be cloned or serialised; a clone
+  shared the native handle, and closing either freed the other's. A refused
+  clone of a reader or a value owns nothing, whatever PHP does with it.
+* .NET SDK: a `SecretValue` disposed inside its own `Use` callback (directly
+  or through its `Secret` or `Project`) freed the bytes the callback's span
+  still pointed at. Disposal now refuses new uses at once and frees the
+  bytes, once, when the last running callback returns; no lock is held
+  while a callback runs.
+* Java SDK: `SecretReader.close()` could free the native reader while a
+  call on another thread was still using it. Every call now holds the
+  reader for its whole native call, and `close()` waits for them; a call
+  after `close()` throws `IllegalStateException`.
 * .NET SDK: `SecretReader.Dispose` waits for a call already running on
   another thread instead of closing the native reader under it, and a
   reader or value that becomes unreachable during a call can no longer be
@@ -627,5 +739,7 @@ package registry.
   the Composer manifest is at the repository root, where Packagist reads
   it. Procedure and per-registry setup: `docs/release.md`.
 
+[0.3.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0
+[0.2.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0
 [0.1.4]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.3

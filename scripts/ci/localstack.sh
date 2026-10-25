@@ -14,8 +14,9 @@
 # for Azure. `select` writes `available=true|false` to $GITHUB_OUTPUT and,
 # when the token is there, the test endpoint (and, for Azure, the emulator's
 # placeholder identity) to $GITHUB_ENV; `stop` clears them again. A pull
-# request from a fork (FORK=true) gets no repository secrets: its emulator
-# tests are skipped with a warning. Any other run without the token fails.
+# request from a fork or from Dependabot (FORK=true) gets no repository
+# secrets: its emulator tests are skipped with a warning. Any other run
+# without the token fails.
 # Every start is fresh: no persistence, no snapshot. The two emulators bind
 # the same ports and cannot run at once.
 set -euo pipefail
@@ -53,7 +54,7 @@ case "$action" in
       printf '%s\n' "${environment[@]}" >> "$GITHUB_ENV"
       echo 'available=true' >> "$GITHUB_OUTPUT"
     elif [[ "${FORK:-false}" == true ]]; then
-      message="$secret is not given to pull requests from forks, so the $emulator emulator tests did not run; they run after merge"
+      message="$secret is not given to pull requests from forks or Dependabot, so the $emulator emulator tests did not run; they run after merge"
       echo "::warning title=$emulator emulator tests skipped::$message"
       echo "$message." >> "$GITHUB_STEP_SUMMARY"
       echo 'available=false' >> "$GITHUB_OUTPUT"
@@ -70,7 +71,12 @@ case "$action" in
     ;;
   stop)
     cd "$repo"
-    "$lstk" "${config[@]}" stop --non-interactive
+    # Nothing to stop when an earlier step failed before installing lstk.
+    if [[ -x "$lstk" ]]; then
+      "$lstk" "${config[@]}" stop --non-interactive
+    else
+      echo "lstk is not installed, so no $emulator emulator was started"
+    fi
     if [[ -n "${GITHUB_ENV:-}" ]]; then
       for entry in "${environment[@]}"; do echo "${entry%%=*}=" >> "$GITHUB_ENV"; done
     fi

@@ -1,13 +1,17 @@
 # AI coding agents
 
 > [!NOTE]
-> This guide targets **0.2.0**. Install that CLI version before using
-> `import` or `init --integration`; `sourceorrery --version` confirms the
-> installed version. See the [release roadmap](roadmap.md#release-020).
+> This guide targets the **0.3.0** setup flow. Use your installed CLI;
+> `sourceorrery --version` confirms its version. Current repository skills
+> can be copied into a project independently of CLI package updates.
 
-SourceOrrery ships two skills that let an AI coding agent install and use
-it, and move a project off `.env` files, while instructing the agent to keep
-secret values out of its context:
+This is **option 2** in the setup guides: install the CLI, install the
+skills for your agent, then ask it to configure the project. You create
+vaults and enter new values privately; the agent handles the manifest,
+application code, launch scripts and checks.
+
+SourceOrrery provides two skills for setup and migration while keeping
+secret values out of the agent's context:
 
 - **`sourceorrery`**: install the CLI, create a vault, store and check
   secrets, start a program with them, read them from code with an
@@ -23,6 +27,16 @@ They are written in the open [Agent Skills](https://agentskills.io) format
 loads only the skill's name and description until a request matches, then
 the instructions, then the reference for the one language it is
 converting.
+
+## Setup choices
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [Current repository skills](#current-repository-skills)
+   work with an existing CLI installation.
 
 ## Installing the skills
 
@@ -51,13 +65,15 @@ sourceorrery init --integration claude
 
 Several at once: `--integration claude,cursor`, or `--integration all`.
 
-- **In an existing project** `sourceorrery.toml` is kept; only the skills
-  are written. In a new one, `init` also writes the starter manifest.
+- **Before a vault exists** the skills can already be installed. With no
+  secret selection, `init --integration` keeps an existing manifest and
+  writes no new one. `--all` or `--secret NAME` also writes or extends the
+  manifest from the selected vault's catalog.
 - **Commit the skill folders** to share them: everyone who clones the
   repository gets them, with their agent.
-- **Upgrading**: run the same command after installing a new CLI. Files
-  SourceOrrery wrote are updated; a skill of the same name that someone
-  else wrote is left alone and reported.
+- **Bundled skills**: running the command again installs the snapshot in
+  your CLI. Files SourceOrrery wrote are updated; a skill of the same name
+  that someone else wrote is left alone and reported.
 - **For every project on this machine**: `--scope user` writes to the
   agent's directory in your home folder instead (`~/.claude/skills`,
   `~/.cursor/skills`, `~/.agents/skills` for Codex and Antigravity,
@@ -83,11 +99,20 @@ and `/sourceorrery:sourceorrery-migrate-env`, and the
 changes. An organisation can allow the marketplace through
 `strictKnownMarketplaces` in its managed settings.
 
-### Without the CLI
+### Current repository skills
 
 [`integrations/`](https://github.com/Netizine/sourceorrery/tree/main/integrations)
-in the repository holds, per agent, exactly the files
-`init --integration` writes, ready to copy into a project.
+in the repository holds the current skill folders for each agent, ready
+to copy into a project. They follow the same layout as `init --integration`
+and can be updated independently of CLI packages. A documentation push
+updates these files; it does not change a previously installed binary's
+bundled snapshot.
+
+Copy the selected agent's two SourceOrrery skill folders, including their
+`references/` and agent metadata, into the corresponding project directory
+in the table above. For Claude Code, include its migration subagent too.
+Review replacements and preserve unrelated or user-authored skills.
+The Claude Code plugin is another way to use the repository's skills.
 
 ## Using them
 

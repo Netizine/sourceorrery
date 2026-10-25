@@ -6,6 +6,11 @@ native-binding technology of its language (ADR 0006). The compatibility
 contract is the SourceOrrery API and `sourceorrery_core::CONTRACT_VERSION`,
 not any binding generator. User guides live in [`docs/sdks/`](../docs/sdks/index.md).
 
+Use the separately installed CLI to create vaults and set secret values:
+[CLI installation guide](https://sourceorrery.ai/getting-started/#install).
+Installing an SDK does not install the CLI. Applications read the vault
+through their SDK without a CLI process running alongside them.
+
 | Language | Directory | Technology | Package |
 |----------|-----------|------------|---------|
 | Rust | `crates/sourceorrery` | the client crate itself, over `sourceorrery-storage` | crates.io `sourceorrery` |
@@ -25,6 +30,16 @@ Each maps `SecretError::code()` to a typed error while preserving the
 code, the message and the **hint**, guards values (zeroised on close,
 `[REDACTED]` when printed, not serialisable by accident), and is proven
 in CI against the vault `scripts/ci/fixture-vault.sh` creates with the CLI.
+
+## Project setup options
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [The agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+   works with an existing CLI installation.
 
 ## The C ABI: `crates/sourceorrery-ffi`
 

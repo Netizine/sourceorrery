@@ -6,10 +6,19 @@ repository.
 
 **You probably want another crate.** To read secrets from an application,
 use [`sourceorrery`](https://crates.io/crates/sourceorrery), the read-only
-client. To create vaults and store secrets, install the CLI:
-`cargo install --locked sourceorrery-cli`
-([`sourceorrery-cli`](https://crates.io/crates/sourceorrery-cli)). This
+client. Use the separately installed CLI to create vaults and set secret
+values: [CLI installation guide](https://sourceorrery.ai/getting-started/#install). This
 crate is an internal building block of both.
+
+## Project setup options
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [The agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+   works with an existing CLI installation.
 
 ## What is in it
 
@@ -24,6 +33,11 @@ zeroised when dropped:
 | Envelope key wrapping | XChaCha20-Poly1305 under a key-encryption key | `chacha20poly1305` |
 | Sub-keys and integrity tags | HKDF-SHA256, HMAC-SHA256 | `hkdf`, `hmac`, `sha2` |
 | Randomness | the OS CSPRNG | `getrandom` |
+
+In 0.3.0, Argon2id verifies the optional view-check password. The vault key
+is wrapped using a key from the OS credential store or a wrapping key
+derived from the recovery key with HKDF. The view-check password does not
+derive the vault encryption key.
 
 How the vault uses them:
 [vault format](https://sourceorrery.ai/reference/vault-format/).

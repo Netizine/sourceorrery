@@ -11,19 +11,43 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
     if key.kind == KeyEventKind::Release {
         return None;
     }
+    if key.kind == KeyEventKind::Repeat
+        && mode == Mode::Dialog
+        && matches!(key.code, KeyCode::Char(' '))
+    {
+        return None;
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return (key.code == KeyCode::Char('c')).then_some(Action::Quit);
     }
-    match mode {
-        Mode::Help => match key.code {
+    let action = match mode {
+        Mode::Inspector => movement(key.code).or(match key.code {
+            KeyCode::Esc => Some(Action::Back),
+            KeyCode::Char('q') => Some(Action::Quit),
+            KeyCode::Char('L') => Some(Action::Lock),
+            _ => None,
+        }),
+        Mode::Menu => movement(key.code).or(match key.code {
+            KeyCode::Esc | KeyCode::F(2) => Some(Action::Back),
+            KeyCode::Enter => Some(Action::Commit),
+            _ => None,
+        }),
+        Mode::Help => movement(key.code).or(match key.code {
             KeyCode::Char('?') => Some(Action::Help),
             KeyCode::Esc | KeyCode::Enter => Some(Action::Back),
             KeyCode::Char('q') => Some(Action::Quit),
             _ => None,
-        },
+        }),
         Mode::Dialog => match key.code {
             KeyCode::Esc => Some(Action::Back),
             KeyCode::Enter => Some(Action::Commit),
+            KeyCode::PageUp => Some(Action::PageUp),
+            KeyCode::PageDown => Some(Action::PageDown),
+            KeyCode::Left => Some(Action::Text(super::text_input::Edit::Left)),
+            KeyCode::Right => Some(Action::Text(super::text_input::Edit::Right)),
+            KeyCode::Delete => Some(Action::Text(super::text_input::Edit::Delete)),
+            KeyCode::Home => Some(Action::Text(super::text_input::Edit::Home)),
+            KeyCode::End => Some(Action::Text(super::text_input::Edit::End)),
             KeyCode::Backspace => Some(Action::Erase),
             KeyCode::Tab | KeyCode::Down => Some(Action::Down),
             KeyCode::BackTab | KeyCode::Up => Some(Action::Up),
@@ -38,7 +62,22 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
             code => movement(code),
         },
         Mode::Normal => movement(key.code).or_else(|| command(key.code)),
-    }
+    };
+    action.filter(|action| {
+        key.kind == KeyEventKind::Press
+            || matches!(
+                action,
+                Action::Up
+                    | Action::Down
+                    | Action::PageUp
+                    | Action::PageDown
+                    | Action::Top
+                    | Action::Bottom
+                    | Action::Input(_)
+                    | Action::Text(_)
+                    | Action::Erase
+            )
+    })
 }
 
 fn movement(code: KeyCode) -> Option<Action> {
@@ -55,6 +94,12 @@ fn movement(code: KeyCode) -> Option<Action> {
 
 fn command(code: KeyCode) -> Option<Action> {
     Some(match code {
+        KeyCode::F(2) => Action::Actions,
+        KeyCode::Char('i') => Action::Inspect,
+        KeyCode::Char('!') => Action::ErrorDetails,
+        KeyCode::Char('f') => Action::Filters,
+        KeyCode::Char('s') => Action::Sort,
+        KeyCode::Char('t') => Action::Theme,
         KeyCode::Char('k') => Action::Up,
         KeyCode::Char('j') => Action::Down,
         KeyCode::Char('g') => Action::Top,
@@ -106,6 +151,70 @@ mod tests {
 
     fn normal(code: KeyCode) -> Option<Action> {
         press(code, Mode::Normal)
+    }
+
+    #[test]
+    fn actions_advertise_the_same_typed_actions_as_shortcuts() {
+        use crate::ui::{app::tests::app_with, fake::Fake, menu::Menu};
+        let fake = Fake::with(&["a"]);
+        let app = app_with(&fake);
+        for item in Menu::actions(&app).items {
+            let code = match item.shortcut {
+                "Enter" => KeyCode::Enter,
+                "Space" => KeyCode::Char(' '),
+                text => KeyCode::Char(text.chars().next().unwrap()),
+            };
+            assert_eq!(normal(code), Some(item.action));
+        }
+        assert_eq!(normal(KeyCode::F(2)), Some(Action::Actions));
+        assert_eq!(
+            action(
+                key(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Repeat),
+                Mode::Menu
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn held_enter_cannot_commit_review() {
+        use crate::ui::{app::tests::app_with, fake::Fake};
+        let fake = Fake::with(&["a"]);
+        let mut app = app_with(&fake);
+        app.update(Action::Show(Tab::Secrets));
+        app.update(Action::Edit);
+        app.update(Action::Down);
+        app.update(Action::Input('x'));
+        for kind in [
+            KeyEventKind::Press,
+            KeyEventKind::Repeat,
+            KeyEventKind::Repeat,
+            KeyEventKind::Release,
+        ] {
+            if let Some(a) = action(key(KeyCode::Enter, KeyModifiers::NONE, kind), app.mode()) {
+                app.update(a);
+            }
+        }
+        assert!(fake.writes.borrow().is_empty());
+        assert_eq!(app.mode(), Mode::Dialog);
+        for kind in [
+            KeyEventKind::Repeat,
+            KeyEventKind::Repeat,
+            KeyEventKind::Release,
+        ] {
+            assert_eq!(
+                action(key(KeyCode::Enter, KeyModifiers::NONE, kind), app.mode()),
+                None
+            );
+        }
+        app.update(
+            action(
+                key(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Press),
+                app.mode(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(fake.writes.borrow().len(), 1);
     }
 
     #[test]

@@ -3,8 +3,8 @@ package ai.sourceorrery;
 import java.lang.foreign.MemorySegment;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
 
+import ai.sourceorrery.internal.Guarded;
 import ai.sourceorrery.internal.Native;
 
 /**
@@ -19,13 +19,18 @@ import ai.sourceorrery.internal.Native;
  *     connect(secret.value().exposeText());
  * }
  * }</pre>
+ *
+ * <p>One reader can be shared by any number of platform or virtual threads.
+ * {@link #close()} waits for the calls already running, then frees the
+ * native reader once; a call made after {@code close()} was called throws
+ * {@link IllegalStateException}.
  */
 public final class SecretReader implements AutoCloseable {
-    private final AtomicReference<MemorySegment> handle;
+    private final Guarded<MemorySegment> handle;
     private final String vaultName;
 
     private SecretReader(MemorySegment handle, String vaultName) {
-        this.handle = new AtomicReference<>(handle);
+        this.handle = new Guarded<>(handle, Native::readerClose, "SecretReader is closed");
         this.vaultName = vaultName;
     }
 
@@ -48,9 +53,9 @@ public final class SecretReader implements AutoCloseable {
         return vaultName;
     }
 
-    /** True once closed. */
+    /** True once {@link #close()} has been called. */
     public boolean isClosed() {
-        return handle.get() == null;
+        return handle.isClosed();
     }
 
     /** The newest accessible version of {@code name}: enabled and inside its time window. */
@@ -66,7 +71,7 @@ public final class SecretReader implements AutoCloseable {
     /** {@link #get(String)} or {@link #get(String, String)} depending on {@code version}. */
     public Secret get(String name, Optional<String> version) {
         Objects.requireNonNull(name, "name");
-        Native.SecretParts parts = Native.readerGet(require(), name, version.orElse(null));
+        Native.SecretParts parts = handle.call(h -> Native.readerGet(h, name, version.orElse(null)));
         return new Secret(SecretProperties.fromJson(parts.propertiesJson()), new SecretValue(parts.value()));
     }
 
@@ -78,40 +83,33 @@ public final class SecretReader implements AutoCloseable {
     /** Metadata of one version; policy is not applied, so disabled and expired versions can be inspected. */
     public SecretProperties properties(String name, Optional<String> version) {
         Objects.requireNonNull(name, "name");
-        return SecretProperties.fromJson(Native.readerProperties(require(), name, version.orElse(null)));
+        return SecretProperties.fromJson(
+                handle.call(h -> Native.readerProperties(h, name, version.orElse(null))));
     }
 
     /** Resolve {@code sourceorrery://vault/name[/version]}; the vault must be this reader's. */
     public Secret resolve(String reference) {
         Objects.requireNonNull(reference, "reference");
-        Native.SecretParts parts = Native.readerResolve(require(), reference);
+        Native.SecretParts parts = handle.call(h -> Native.readerResolve(h, reference));
         return new Secret(SecretProperties.fromJson(parts.propertiesJson()), new SecretValue(parts.value()));
     }
 
     /** Non-sensitive description of the vault. */
     public VaultDescriptor descriptor() {
-        return VaultDescriptor.fromJson(Native.readerDescriptor(require()));
+        return VaultDescriptor.fromJson(handle.call(Native::readerDescriptor));
     }
 
-    /** Release the vault; the key held in memory is zeroised. Idempotent. */
+    /**
+     * Release the vault once the calls already running have returned; the
+     * key held in memory is zeroised. Idempotent.
+     */
     @Override
     public void close() {
-        MemorySegment current = handle.getAndSet(null);
-        if (current != null) {
-            Native.readerClose(current);
-        }
+        handle.close();
     }
 
     @Override
     public String toString() {
         return "SecretReader(vault='" + vaultName + "')";
-    }
-
-    private MemorySegment require() {
-        MemorySegment current = handle.get();
-        if (current == null) {
-            throw new IllegalStateException("SecretReader is closed");
-        }
-        return current;
     }
 }

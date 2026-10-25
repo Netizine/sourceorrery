@@ -19,8 +19,13 @@ rg -n -w --hidden -g '!.git' -g '!.env*' -g '!node_modules' -g '!vendor' \
    -g '!target' -g '!dist' -g '!build' -g '!.venv' -e DATABASE_URL -e STRIPE_KEY
 ```
 
-Without ripgrep: `git grep -n -w -e DATABASE_URL -e STRIPE_KEY` (tracked
-files only). PowerShell:
+Without ripgrep, exclude tracked env files explicitly too:
+
+```bash
+git grep -n -w -e DATABASE_URL -e STRIPE_KEY -- . ':(exclude).env*' ':(exclude)**/.env*'
+```
+
+PowerShell:
 `Get-ChildItem -Recurse -File | Where-Object FullName -notmatch '\\(\.git|node_modules|vendor|target|dist|build|\.venv)\\|\\\.env' | Select-String -Pattern '\bDATABASE_URL\b'`.
 
 ## Search for dynamic and indirect reads

@@ -7,9 +7,10 @@ the matching GitHub release, on the linker path (`CGO_LDFLAGS`) and at run
 time (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH` or `PATH`):
 https://sourceorrery.ai/sdks/go/
 
-Projects built with `CGO_ENABLED=0` (static binaries, `scratch` or
-distroless images) cannot use it: keep `os.Getenv` and start the program
-with `sourceorrery run --`.
+Projects built with `CGO_ENABLED=0` cannot use this SDK. Keep the
+environment interface and provision variables at launch, using
+`sourceorrery run --` on a compatible host or the deployment platform's
+secret store. Do not assume the native CLI runs inside a `scratch` image.
 
 ## One package for every read
 

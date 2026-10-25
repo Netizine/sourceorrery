@@ -178,6 +178,7 @@ impl Env {
                 None,
                 Ok(()),
                 sourceorrery_storage::CatalogChange::Add,
+                None,
             )
             .unwrap();
         id
@@ -814,10 +815,15 @@ fn planted_keyring_accounts_are_shown_escaped() {
             [kind],
         )
         .unwrap();
-    // The vault still opens with its recovery key, and shows nothing of it.
-    let listed = env.ok(&["secret", "list", "--vault", "dev"]);
-    assert!(!listed.contains("planted"), "{listed}");
+    // The key wraps are part of the authenticated settings record (ADR
+    // 0010), so the planted row is refused at open, and named nowhere.
+    let out = env.run(&["secret", "list", "--vault", "dev"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("key wrap"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("planted"), "{}", stderr(&out));
 
+    // `vault destroy` reads the wraps without opening the vault, and shows
+    // the planted account escaped.
     let out = env.run(&["vault", "destroy", "dev", "--yes"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_escaped(&stderr(&out));
@@ -1160,6 +1166,87 @@ fn an_optional_secret_the_vault_lacks_does_not_block_run() {
     assert!(stderr(&out).contains("not_found"), "{}", stderr(&out));
 }
 
+/// SR10 of the 2026-10-25 review: a variable the manifest names is set in
+/// the child only to the vault's value. An optional secret the vault lacks,
+/// or one that is disabled, leaves the variable absent even when the
+/// parent's environment has one of that name (on Windows in any case);
+/// unrelated variables pass through.
+#[test]
+fn an_unresolved_optional_secret_leaves_its_variable_absent_in_the_child() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.set("development", "database-password", "pw");
+    env.set("development", "feature-flag", "on");
+    let out = env.run(&[
+        "secret",
+        "update",
+        "feature-flag",
+        "--disable",
+        "--vault",
+        "development",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
+         [secrets.database-password]\n\n\
+         [secrets.extra-key]\nrequired = false\n\n\
+         [secrets.feature-flag]\nrequired = false\n",
+    )
+    .unwrap();
+    let probe: &[&str] = if cfg!(windows) {
+        &[
+            "run",
+            "--",
+            "cmd",
+            "/C",
+            "echo [%DATABASE_PASSWORD%][%EXTRA_KEY%][%FEATURE_FLAG%][%UNRELATED%]",
+        ]
+    } else {
+        &[
+            "run",
+            "--",
+            "sh",
+            "-c",
+            "echo \"[$DATABASE_PASSWORD][$EXTRA_KEY][$FEATURE_FLAG][$UNRELATED]\"",
+        ]
+    };
+    let out = env
+        .cmd(probe)
+        .env("DATABASE_PASSWORD", "stale-parent-value")
+        .env(
+            if cfg!(windows) {
+                "extra_key"
+            } else {
+                "EXTRA_KEY"
+            },
+            "stale-parent-value",
+        )
+        .env("FEATURE_FLAG", "stale-parent-value")
+        .env("UNRELATED", "kept")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let seen = stdout(&out);
+    assert!(!seen.contains("stale-parent-value"), "{seen}");
+    // cmd prints an undefined %VAR% as written; sh prints nothing.
+    let absent = |name: &str| {
+        if cfg!(windows) {
+            format!("[%{name}%]")
+        } else {
+            "[]".to_owned()
+        }
+    };
+    assert_eq!(
+        seen.trim(),
+        format!(
+            "[pw]{}{}[kept]",
+            absent("EXTRA_KEY"),
+            absent("FEATURE_FLAG")
+        )
+    );
+}
+
 #[test]
 fn manifest_errors_do_not_echo_rejected_values() {
     const CANARY: &str = "REJECTED_VALUE_CANARY_cli";
@@ -1214,7 +1301,57 @@ fn run_passes_the_child_exit_status_through_whole() {
     }
 }
 
+/// A build without the provider (`--no-default-features`) says so for a
+/// secret kept there, and still reads the vault file's own secrets.
 #[test]
+#[cfg(not(any(feature = "remote", feature = "provider-vault")))]
+fn a_build_without_the_provider_says_so_and_reads_the_file() {
+    let env = Env::new();
+    env.create_vault("development");
+    env.set("development", "database-password", CANARY);
+    env.store_through(
+        "development",
+        &sourceorrery_core::ConnectionSettings::HashicorpVault {
+            address: "http://127.0.0.1:1".to_owned(),
+            mount: "secret".to_owned(),
+            namespace: None,
+        },
+        "api-key",
+    );
+    let out = env.run(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "development",
+        "-o",
+        "json",
+    ]);
+    assert!(!out.status.success());
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert_eq!(err["error"]["code"], "unsupported", "{err}");
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("which this build of SourceOrrery does not include"),
+        "{err}"
+    );
+    let out = env.run(&[
+        "secret",
+        "get",
+        "database-password",
+        "--vault",
+        "development",
+        "--reveal",
+        "--raw",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), CANARY);
+}
+
+#[test]
+#[cfg(any(feature = "remote", feature = "provider-vault"))]
 fn a_secret_a_connection_stores_is_read_at_its_provider() {
     let env = Env::new();
     env.create_vault("development");
@@ -1435,6 +1572,7 @@ fn secret_set_takes_a_description_for_the_catalog() {
 }
 
 #[test]
+#[cfg(any(feature = "remote", feature = "provider-vault"))]
 fn secret_set_and_import_take_a_storage() {
     let env = Env::new();
     let key = env.key_file("development");
@@ -1829,10 +1967,12 @@ fn rotation_without_hooks_reads_stdin_and_activates_on_demand() {
 
 /// What a fake collector saw per request: the path, the `X-Token` header
 /// and the body.
+#[cfg(feature = "otlp")]
 type CollectedRequests = Vec<(String, Option<String>, serde_json::Value)>;
 
 /// Accept OTLP/HTTP posts on a local port, answering `status`, and record
 /// each request's path, one header and the body it carried.
+#[cfg(feature = "otlp")]
 fn otlp_collector(
     status: u16,
     requests: usize,
@@ -1991,7 +2131,37 @@ fn audit_export_follow_streams_new_events() {
     child.wait().unwrap();
 }
 
+/// A build without the OTLP exporter refuses `--format otlp` and names the
+/// JSON Lines way.
 #[test]
+#[cfg(not(feature = "otlp"))]
+fn a_build_without_otlp_refuses_it_and_names_jsonl() {
+    let env = Env::new();
+    env.create_vault("dev");
+    let out = env
+        .cmd(&[
+            "audit",
+            "export",
+            "--vault",
+            "dev",
+            "--format",
+            "otlp",
+            "--endpoint",
+            "http://127.0.0.1:1",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("no OTLP exporter"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(stderr(&out).contains("--format jsonl"), "{}", stderr(&out));
+}
+
+#[test]
+#[cfg(feature = "otlp")]
 fn audit_export_posts_otlp_log_records() {
     let env = Env::new();
     env.create_vault("dev");
@@ -2411,4 +2581,63 @@ fn vault_create_sets_the_password_from_a_file_with_the_vault() {
         "{}",
         stderr(&out)
     );
+}
+
+/// SR09 of the 2026-10-25 review: a recovery key that cannot be delivered,
+/// to a file or to stdout, leaves no vault behind that nobody can open.
+#[test]
+fn a_recovery_key_that_cannot_be_delivered_leaves_no_vault() {
+    let env = Env::new();
+    // A key file under a folder that does not exist: nothing is created.
+    let missing = env.keys.path().join("no-such-folder").join("lost.key");
+    let out = env.run(&[
+        "vault",
+        "create",
+        "lost",
+        "--no-keyring",
+        "--recovery-key-out",
+        missing.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("cannot create"), "{}", stderr(&out));
+    assert!(!env.ok(&["vault", "list"]).contains("lost"));
+
+    // The key on stdout, nobody reading it: the vault goes again, in both
+    // the plain and the JSON form.
+    for (name, json) in [("unread", false), ("unread-json", true)] {
+        let mut args = vec!["vault", "create", name, "--no-keyring"];
+        if json {
+            args.extend(["-o", "json"]);
+        }
+        let mut child = env.cmd(&args).spawn().unwrap();
+        drop(child.stdout.take());
+        drop(child.stdin.take());
+        let out = child.wait_with_output().unwrap();
+        assert!(!out.status.success(), "{name}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains("could not be delivered"),
+            "{name}: {}",
+            stderr(&out)
+        );
+        assert!(!env.ok(&["vault", "list"]).contains(name), "{name}");
+    }
+
+    // Delivered to a file: it says exactly what protects it.
+    let key = env.key_file("kept");
+    let out = env.run(&[
+        "vault",
+        "create",
+        "kept",
+        "--no-keyring",
+        "--recovery-key-out",
+        key.to_str().unwrap(),
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let promised = if cfg!(windows) {
+        "restricted to your account and Windows SYSTEM"
+    } else {
+        "readable by you only"
+    };
+    assert!(stderr(&out).contains(promised), "{}", stderr(&out));
+    assert_eq!(env.recovery_key("kept").len(), 29);
 }

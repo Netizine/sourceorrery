@@ -9,16 +9,23 @@
 //!   `application/json`.
 //! * Per-version properties (`enabled`, content type, tags, the time
 //!   window, `updated_on`) live in the secret's `custom_metadata` under one
-//!   key per version, `sourceorrery.v<N>`, as a compact JSON document. A
-//!   version with default properties has no key. KV v2 has no per-version
-//!   metadata of its own, and `custom_metadata` is the one place that can be
-//!   changed without writing a new version.
+//!   key per version, `sourceorrery.v<N>`, as a compact JSON document: the
+//!   version's committed properties. A version with default properties has
+//!   no key. KV v2 has no per-version metadata of its own, and
+//!   `custom_metadata` is the one place that can be changed without writing
+//!   a new version.
+//! * An intent, `sourceorrery.v<N>~<nonce>`, is what one writer asked for
+//!   version `N` before writing it (ADR 0011). Every reader applies a
+//!   version's committed properties restricted by each of its intents
+//!   ([`Metadata::effective_props`]), so a version is never readable under
+//!   a looser policy than its writer asked for, whatever request fails.
 //! * Soft delete is KV's `delete` of every live version plus a
 //!   `sourceorrery.deleted` marker (when, which versions); recovery is
 //!   `undelete` of those versions and removing the marker; purge deletes the
 //!   metadata, and with it every version.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -27,11 +34,15 @@ use sourceorrery_core::{
 };
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use zeroize::{Zeroize, Zeroizing};
 
 /// `custom_metadata` key prefix of a version's properties.
 pub const PROPERTIES_PREFIX: &str = "sourceorrery.v";
 /// `custom_metadata` key of the soft-delete marker.
 pub const DELETED_KEY: &str = "sourceorrery.deleted";
+/// What separates a version's number from a writer's nonce in an intent's
+/// key.
+pub const INTENT_SEPARATOR: char = '~';
 /// Days a deleted secret is reported recoverable for. Informational: Vault
 /// does not purge a deleted secret by itself.
 pub const RETENTION_DAYS: u32 = 90;
@@ -154,6 +165,50 @@ impl VersionProps {
         *self == Self::default()
     }
 
+    /// The properties a new version is asked for: no `updated_on`, since it
+    /// has not been changed since it was written.
+    pub fn asked(
+        enabled: bool,
+        content_type: Option<String>,
+        tags: BTreeMap<String, String>,
+        not_before: Option<OffsetDateTime>,
+        expires_on: Option<OffsetDateTime>,
+    ) -> Self {
+        Self {
+            disabled: !enabled,
+            content_type,
+            tags,
+            not_before: not_before.map(format_time),
+            expires_on: expires_on.map(format_time),
+            updated_on: None,
+        }
+    }
+
+    /// The compact JSON document stored for these properties.
+    pub fn document(&self) -> Result<String> {
+        serde_json::to_string(self).map_err(|err| SecretError::Storage(err.to_string()))
+    }
+
+    /// Restrict the policy to `other`'s as well: disabled if either is, the
+    /// later `not_before`, the earlier `expires_on`. The content type, the
+    /// tags and `updated_on` stay this document's.
+    fn restrict_to(&mut self, other: &Self) -> Result<()> {
+        self.disabled |= other.disabled;
+        self.not_before = pick(
+            self.not_before.as_deref(),
+            other.not_before.as_deref(),
+            "not_before",
+            OffsetDateTime::max,
+        )?;
+        self.expires_on = pick(
+            self.expires_on.as_deref(),
+            other.expires_on.as_deref(),
+            "expires_on",
+            OffsetDateTime::min,
+        )?;
+        Ok(())
+    }
+
     /// The properties `properties` carries beyond what KV knows.
     pub fn from_properties(properties: &SecretProperties, created_on: OffsetDateTime) -> Self {
         Self {
@@ -168,6 +223,24 @@ impl VersionProps {
     }
 }
 
+/// Of two optional stored times, the one `choose` picks; either alone when
+/// the other is absent.
+fn pick(
+    a: Option<&str>,
+    b: Option<&str>,
+    what: &str,
+    choose: fn(OffsetDateTime, OffsetDateTime) -> OffsetDateTime,
+) -> Result<Option<String>> {
+    Ok(match (a, b) {
+        (None, None) => None,
+        (Some(t), None) | (None, Some(t)) => Some(t.to_owned()),
+        (Some(a), Some(b)) => Some(format_time(choose(
+            parse_time(a, what)?,
+            parse_time(b, what)?,
+        ))),
+    })
+}
+
 /// The soft-delete marker.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeletedMarker {
@@ -178,6 +251,20 @@ pub struct DeletedMarker {
 /// The key of version `version`'s properties.
 pub fn properties_key(version: u64) -> String {
     format!("{PROPERTIES_PREFIX}{version}")
+}
+
+/// The key of a writer's intent for version `version`.
+pub fn intent_key(version: u64, nonce: &str) -> String {
+    format!("{PROPERTIES_PREFIX}{version}{INTENT_SEPARATOR}{nonce}")
+}
+
+/// The version an intent's key names, or `None` for any other key.
+fn intent_version(key: &str) -> Option<u64> {
+    let (version, nonce) = key
+        .strip_prefix(PROPERTIES_PREFIX)?
+        .split_once(INTENT_SEPARATOR)?;
+    (!nonce.is_empty()).then_some(())?;
+    version.parse().ok()
 }
 
 /// RFC 3339 with the full precision Vault and this crate use.
@@ -211,21 +298,57 @@ impl Metadata {
         versions
     }
 
-    /// The stored properties of `version`, if any were stored.
+    /// The committed properties of `version`, if any were stored.
     pub fn version_props(&self, version: u64) -> Result<Option<VersionProps>> {
-        let Some(text) = self
-            .custom_metadata
+        let key = properties_key(version);
+        self.custom_metadata
             .as_ref()
-            .and_then(|custom| custom.get(&properties_key(version)))
-        else {
-            return Ok(None);
+            .and_then(|custom| custom.get(&key))
+            .map(|text| parse_props(text, &key))
+            .transpose()
+    }
+
+    /// The intents for `version`, by key in key order.
+    pub fn intents_for(&self, version: u64) -> Result<Vec<(String, VersionProps)>> {
+        self.custom_metadata
+            .iter()
+            .flatten()
+            .filter(|(key, _)| intent_version(key) == Some(version))
+            .map(|(key, text)| Ok((key.clone(), parse_props(text, key)?)))
+            .collect()
+    }
+
+    /// Every key that bears on `version`'s properties: its committed
+    /// document and its intents.
+    pub fn keys_for(&self, version: u64) -> Vec<String> {
+        let committed = properties_key(version);
+        self.custom_metadata
+            .iter()
+            .flatten()
+            .map(|(key, _)| key)
+            .filter(|key| **key == committed || intent_version(key) == Some(version))
+            .cloned()
+            .collect()
+    }
+
+    /// The properties every SourceOrrery reader applies to `version` (ADR
+    /// 0011): its committed document, or the defaults without one,
+    /// restricted by every intent for it. The content type, the tags and
+    /// `updated_on` are the committed document's, or else the first
+    /// intent's.
+    pub fn effective_props(&self, version: u64) -> Result<VersionProps> {
+        let intents = self.intents_for(version)?;
+        let mut props = match self.version_props(version)? {
+            Some(committed) => committed,
+            None => intents
+                .first()
+                .map(|(_, intent)| intent.clone())
+                .unwrap_or_default(),
         };
-        serde_json::from_str(text).map(Some).map_err(|err| {
-            SecretError::Storage(format!(
-                "custom_metadata {} is not a properties document: {err}",
-                properties_key(version)
-            ))
-        })
+        for (_, intent) in &intents {
+            props.restrict_to(intent)?;
+        }
+        Ok(props)
     }
 
     /// The soft-delete marker, when the secret is deleted.
@@ -254,7 +377,7 @@ impl Metadata {
             }
         })?;
         let created_on = parse_time(&meta.created_time, "created_time")?;
-        let props = self.version_props(version)?.unwrap_or_default();
+        let props = self.effective_props(version)?;
         Ok(SecretProperties {
             vault: vault.to_owned(),
             name: name.to_owned(),
@@ -311,7 +434,58 @@ impl Metadata {
     }
 }
 
-/// The KV data object that stores `value`.
+/// A properties document read from `key`.
+fn parse_props(text: &str, key: &str) -> Result<VersionProps> {
+    serde_json::from_str(text).map_err(|err| {
+        SecretError::Storage(format!(
+            "custom_metadata {key} is not a properties document: {err}"
+        ))
+    })
+}
+
+/// Wipe every string in `value`, nested ones included: the copies of a
+/// secret a JSON document held, before it is dropped.
+pub fn wipe(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => text.zeroize(),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(wipe),
+        serde_json::Value::Object(map) => map.values_mut().for_each(wipe),
+        _ => {}
+    }
+}
+
+/// A writer into a buffer that is wiped on drop and, when it grows, moves
+/// into a new buffer and wipes the old: serialised JSON that carries a value
+/// leaves no copy in freed memory.
+struct Wiped(Zeroizing<Vec<u8>>);
+
+impl Write for Wiped {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let needed = self.0.len() + bytes.len();
+        if needed > self.0.capacity() {
+            let capacity = needed.max(self.0.capacity().saturating_mul(2)).max(256);
+            let mut grown = Zeroizing::new(Vec::with_capacity(capacity));
+            grown.extend_from_slice(&self.0);
+            self.0 = grown;
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// `value` serialised as JSON into a wiping buffer.
+pub fn to_wiped_json(value: &serde_json::Value) -> Result<Zeroizing<Vec<u8>>> {
+    let mut out = Wiped(Zeroizing::new(Vec::new()));
+    serde_json::to_writer(&mut out, value).map_err(|err| SecretError::Storage(err.to_string()))?;
+    Ok(out.0)
+}
+
+/// The KV data object that stores `value`. It holds a copy of the value:
+/// the caller [`wipe`]s it once the request is sent.
 pub fn encode_value(value: &SecretBytes) -> serde_json::Value {
     match std::str::from_utf8(value.expose()) {
         Ok(text) if !text.contains('\0') => serde_json::json!({ "value": text }),
@@ -331,22 +505,48 @@ pub fn decode_value(
         return Ok((SecretBytes::new(text.into_bytes()), None));
     }
     if let Some(serde_json::Value::String(text)) = data.remove("value_base64") {
+        let mut text = Zeroizing::new(text);
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(text.as_bytes())
             .map_err(|_| {
                 SecretError::Storage(format!("the value_base64 field of '{name}' is not base64"))
-            })?;
-        return Ok((SecretBytes::new(bytes), None));
+            });
+        text.zeroize();
+        return Ok((SecretBytes::new(bytes?), None));
     }
-    let json = serde_json::to_vec(&serde_json::Value::Object(data)).map_err(|err| {
+    // An object another client wrote is the value whole: serialised into a
+    // wiping buffer, and the parsed fields wiped once copied.
+    let mut object = serde_json::Value::Object(data);
+    let json = to_wiped_json(&object);
+    wipe(&mut object);
+    let mut json = json.map_err(|err| {
         SecretError::Storage(format!("cannot serialise the fields of '{name}': {err}"))
     })?;
-    Ok((SecretBytes::new(json), Some("application/json")))
+    Ok((
+        SecretBytes::new(std::mem::take(&mut *json)),
+        Some("application/json"),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_copies_of_a_value_are_serialised_and_wiped() {
+        let mut document = serde_json::json!({
+            "data": { "value": "s3cret", "list": ["s3cret", { "deep": "s3cret" }] },
+            "options": { "cas": 1 },
+        });
+        let bytes = to_wiped_json(&document).unwrap();
+        assert_eq!(
+            &bytes[..],
+            br#"{"data":{"list":["s3cret",{"deep":"s3cret"}],"value":"s3cret"},"options":{"cas":1}}"#
+        );
+        wipe(&mut document);
+        assert!(!document.to_string().contains("s3cret"), "{document}");
+        assert_eq!(document["options"]["cas"], 1, "numbers stay");
+    }
 
     #[test]
     fn values_round_trip_as_text_base64_or_whole_objects() {
@@ -403,6 +603,91 @@ mod tests {
         assert_eq!(v1.updated_on, v1.created_on);
     }
 
+    fn metadata(custom: &[(&str, &str)]) -> Metadata {
+        let live = VersionMeta {
+            created_time: "2026-10-25T10:00:00Z".to_owned(),
+            ..VersionMeta::default()
+        };
+        Metadata {
+            current_version: 2,
+            custom_metadata: Some(
+                custom
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+            ),
+            versions: BTreeMap::from([("1".to_owned(), live.clone()), ("2".to_owned(), live)]),
+        }
+    }
+
+    #[test]
+    fn intents_restrict_a_version_and_never_loosen_it() {
+        // An intent alone: its properties apply, before anything commits.
+        let meta = metadata(&[(
+            "sourceorrery.v2~aaaa",
+            r#"{"disabled":true,"tags":{"k":"a"}}"#,
+        )]);
+        let v2 = meta.properties("prod", "s", 2).unwrap();
+        assert!(!v2.enabled);
+        assert_eq!(v2.tags["k"], "a");
+        assert!(meta.properties("prod", "s", 1).unwrap().enabled, "only v2");
+
+        // A committed document that is looser does not lift an intent's
+        // restriction; the committed tags stay.
+        let meta = metadata(&[
+            ("sourceorrery.v2", r#"{"tags":{"k":"committed"}}"#),
+            ("sourceorrery.v2~aaaa", r#"{"disabled":true}"#),
+        ]);
+        let v2 = meta.properties("prod", "s", 2).unwrap();
+        assert!(!v2.enabled);
+        assert_eq!(v2.tags["k"], "committed");
+
+        // Two writers' intents: disabled if either is, the later start,
+        // the earlier end.
+        let meta = metadata(&[
+            (
+                "sourceorrery.v2~aaaa",
+                r#"{"not_before":"2026-11-01T00:00:00Z","expires_on":"2027-01-01T00:00:00Z"}"#,
+            ),
+            (
+                "sourceorrery.v2~bbbb",
+                r#"{"not_before":"2026-12-01T00:00:00Z","expires_on":"2026-12-31T00:00:00Z"}"#,
+            ),
+        ]);
+        let v2 = meta.properties("prod", "s", 2).unwrap();
+        assert!(v2.enabled);
+        assert_eq!(
+            v2.not_before,
+            Some(parse_time("2026-12-01T00:00:00Z", "t").unwrap())
+        );
+        assert_eq!(
+            v2.expires_on,
+            Some(parse_time("2026-12-31T00:00:00Z", "t").unwrap())
+        );
+
+        // Keys that are not intents for the version are not taken for one.
+        let meta = metadata(&[
+            ("sourceorrery.v2~", r#"{"disabled":true}"#),
+            ("sourceorrery.v22~aaaa", r#"{"disabled":true}"#),
+            ("other~x", r#"{"disabled":true}"#),
+        ]);
+        assert!(meta.properties("prod", "s", 2).unwrap().enabled);
+        assert_eq!(meta.intents_for(22).unwrap().len(), 1);
+        let meta = metadata(&[
+            ("sourceorrery.v2", "{}"),
+            ("sourceorrery.v2~aaaa", "{}"),
+            ("sourceorrery.v1", "{}"),
+        ]);
+        assert_eq!(
+            meta.keys_for(2),
+            vec![
+                "sourceorrery.v2".to_owned(),
+                "sourceorrery.v2~aaaa".to_owned()
+            ]
+        );
+        assert_eq!(intent_key(7, "00ff"), "sourceorrery.v7~00ff");
+    }
+
     #[test]
     fn metadata_maps_to_properties_and_deleted_secrets() {
         let text = r#"{"data":{"created_time":"2026-10-23T10:00:00.123456789Z","current_version":3,
@@ -432,5 +717,62 @@ mod tests {
         assert_eq!(deleted.recovery_id, "sourceorrery://prod/deletedsecrets/k");
         assert!(deleted.scheduled_purge_on.unwrap() > deleted.deleted_on);
         assert_eq!(properties_key(7), "sourceorrery.v7");
+    }
+
+    /// Bounded fuzz (B31): whatever a server, or whoever can write its
+    /// metadata, sends is read as a value or an error, never a panic: the
+    /// properties documents, intents and deletion marker in
+    /// `custom_metadata`, version times, and a value's JSON.
+    #[test]
+    fn whatever_a_server_sends_is_a_value_or_an_error_never_a_panic() {
+        let document = VersionProps {
+            disabled: true,
+            content_type: Some("text/plain".into()),
+            tags: BTreeMap::from([("team".into(), "payments".into())]),
+            not_before: Some("2026-10-25T12:00:00.000000000Z".into()),
+            expires_on: Some("2027-06-30T00:00:00.000000000Z".into()),
+            updated_on: None,
+        }
+        .document()
+        .unwrap();
+        let marker = r#"{"deleted_on":"2026-10-25T12:00:00Z","versions":[1,2]}"#;
+        let value = r#"{"value":"hello","content_type":"text/plain","encoding":"base64"}"#;
+        let mut m = sourceorrery_conformance::fuzz::Mutator::new(0x9E37_79B9_7F4A_7C15);
+        for _ in 0..5000 {
+            let mut custom = BTreeMap::new();
+            custom.insert(properties_key(1), m.mutate(&document));
+            custom.insert(m.mutate(&intent_key(1, "n0")), m.mutate(&document));
+            custom.insert(m.mutate(&intent_key(2, "n1")), m.mutate(&document));
+            custom.insert(DELETED_KEY.to_owned(), m.mutate(marker));
+            let meta = Metadata {
+                current_version: m.number() % 4,
+                custom_metadata: Some(custom),
+                versions: BTreeMap::from([
+                    (
+                        m.mutate("1"),
+                        VersionMeta {
+                            created_time: m.mutate("2026-10-25T12:00:00.123456Z"),
+                            deletion_time: m.mutate(""),
+                            destroyed: m.below(5) == 0,
+                        },
+                    ),
+                    ("2".to_owned(), VersionMeta::default()),
+                ]),
+            };
+            let _ = meta.live_versions();
+            for version in 0..3 {
+                let _ = meta.version_props(version);
+                let _ = meta.intents_for(version);
+                let _ = meta.effective_props(version);
+                let _ = meta.properties("v", "k", version);
+            }
+            if let Ok(Some(marker)) = meta.deleted_marker() {
+                let _ = meta.deleted_secret("v", "k", &marker);
+            }
+            if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(&m.mutate(value)) {
+                let _ = decode_value(map, "k");
+            }
+            let _ = parse_time(&m.mutate("2026-10-25T12:00:00Z"), "t");
+        }
     }
 }

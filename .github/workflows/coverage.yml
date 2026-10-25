@@ -16,9 +16,13 @@ concurrency:
 jobs:
   coverage:
     name: All-language coverage
-    # The private Font Awesome package and Sonar analysis need repository secrets.
-    # Fork contributions still run the normal CI; analyze after a trusted merge.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Sonar analysis and the LocalStack emulators need repository secrets,
+    # which pull requests from forks and from Dependabot do not get. They
+    # still run the normal CI; coverage runs after a trusted merge.
+    if: >-
+      github.event_name != 'pull_request'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.user.login != 'dependabot[bot]')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     # Match normal CI's disposable provider servers; no cloud account is used.

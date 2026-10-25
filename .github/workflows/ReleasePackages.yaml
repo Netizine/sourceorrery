@@ -95,9 +95,15 @@ jobs:
   plan:
     name: plan
     runs-on: ubuntu-latest
+    # The release gate reads the tagged commit's CI runs and checks.
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.release.outputs.sha }}
       has_npm: ${{ steps.secrets.outputs.has_npm }}
       has_nuget: ${{ steps.secrets.outputs.has_nuget }}
       has_maven: ${{ steps.secrets.outputs.has_maven }}
@@ -150,7 +156,29 @@ jobs:
             echo "tag=$TAG"
             echo "version=$version"
             echo "published=$(gh release view "$TAG" --repo "$REPO" --json publishedAt --jq '.publishedAt[:10]')"
+            echo "sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)"
           } >> "$GITHUB_OUTPUT"
+      # REC01: the gate is main's, and the commit the tag names passed CI in
+      # full, as for the first publication. A dry run reports instead.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tagged commit passed CI in full
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.release.outputs.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA" --warn-only
+          else
+            if [ "$REF" != "refs/heads/main" ]; then
+              echo "::error::packages are published from main, not $REF"; exit 1
+            fi
+            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA"
+          fi
       # crates.io and PyPI use trusted publishing with no switch: ticking
       # their boxes is enough, and they fail loudly if not trusted.
       - name: Which registry secrets exist
@@ -196,6 +224,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      attestations: read
       id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
@@ -213,6 +242,24 @@ jobs:
         run: |
           gh release download "$TAG" --repo "$REPO" --pattern 'sourceorreryai-sdk-*.tgz' --dir dist \
             || { echo "::error::$TAG has no @sourceorreryai npm tarballs; releases before 0.1.2 were packed under the old @sourceorrery scope and cannot be published"; exit 1; }
+      # REC02: the files are verified against the release run's provenance
+      # before anything is uploaded, with the helper of this workflow's own
+      # revision (the selected tag may predate it).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tools
+          sparse-checkout: scripts/release/verify-release-artifacts.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify the files against the release's provenance
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --pattern SHA256SUMS --dir checksums
+          python3 .release-tools/scripts/release/verify-release-artifacts.py --repo "$REPO" --sha "$SHA" \
+            --sums checksums/SHA256SUMS --dir dist --pattern 'sourceorreryai-sdk-*.tgz'
       - name: Check every tarball before publishing any
         run: |
           set -euo pipefail
@@ -264,6 +311,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      attestations: read
       id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
@@ -276,6 +324,24 @@ jobs:
           gh release download "$TAG" --repo "$REPO" --dir dist \
             --pattern "sourceorrery-$VERSION-*.whl" --pattern "sourceorrery-$VERSION.tar.gz"
           ls -la dist
+      # REC02: the files are verified against the release run's provenance
+      # before anything is uploaded, with the helper of this workflow's own
+      # revision (the selected tag may predate it).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tools
+          sparse-checkout: scripts/release/verify-release-artifacts.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify the files against the release's provenance
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --pattern SHA256SUMS --dir checksums
+          python3 .release-tools/scripts/release/verify-release-artifacts.py --repo "$REPO" --sha "$SHA" \
+            --sums checksums/SHA256SUMS --dir dist --pattern "sourceorrery-$VERSION-*.whl" --pattern "sourceorrery-$VERSION.tar.gz"
       - name: Check the distributions
         run: |
           set -euo pipefail
@@ -305,6 +371,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      attestations: read
       id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
@@ -317,6 +384,24 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Download the package
         run: gh release download "$TAG" --repo "$REPO" --pattern "SourceOrrery.$VERSION.nupkg" --dir dist
+      # REC02: the files are verified against the release run's provenance
+      # before anything is uploaded, with the helper of this workflow's own
+      # revision (the selected tag may predate it).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tools
+          sparse-checkout: scripts/release/verify-release-artifacts.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify the files against the release's provenance
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --pattern SHA256SUMS --dir checksums
+          python3 .release-tools/scripts/release/verify-release-artifacts.py --repo "$REPO" --sha "$SHA" \
+            --sums checksums/SHA256SUMS --dir dist --pattern "SourceOrrery.$VERSION.nupkg"
       - name: Check it carries the library and every native runtime
         run: |
           set -euo pipefail
@@ -361,6 +446,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.tag }}
+      - name: The tag still names the commit the release gate validated
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+          TAG_NAME: ${{ needs.plan.outputs.tag }}
+        run: |
+          head="$(git rev-parse HEAD)"
+          if [ "$head" != "$SHA" ]; then
+            echo "::error::$TAG_NAME names $head now, not $SHA, the commit the release gate validated; it was moved"
+            exit 1
+          fi
       # The selected tag may predate this helper. Run the reviewed helper
       # from the immutable workflow revision against the tag's workspace.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -408,6 +503,9 @@ jobs:
     needs: plan
     if: inputs.maven && (inputs.dry_run || needs.plan.outputs.has_maven == 'true')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -432,10 +530,38 @@ jobs:
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
       - name: Stamp the version
         run: python3 ../../scripts/release/set-version.py "$VERSION"
-      - name: Take the native libraries from the release's jar
+      - name: The tag still names the commit the release gate validated
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+          TAG_NAME: ${{ needs.plan.outputs.tag }}
+        run: |
+          head="$(git rev-parse HEAD)"
+          if [ "$head" != "$SHA" ]; then
+            echo "::error::$TAG_NAME names $head now, not $SHA, the commit the release gate validated; it was moved"
+            exit 1
+          fi
+      # REC02: the files are verified against the release run's provenance
+      # before anything is uploaded, with the helper of this workflow's own
+      # revision (the selected tag may predate it).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tools
+          sparse-checkout: scripts/release/verify-release-artifacts.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Download the release's jar and verify it against the release's provenance
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
         run: |
           set -euo pipefail
           gh release download "$TAG" --repo "$REPO" --pattern "sourceorrery-$VERSION.jar" --dir release
+          gh release download "$TAG" --repo "$REPO" --pattern SHA256SUMS --dir checksums
+          python3 ../../.release-tools/scripts/release/verify-release-artifacts.py --repo "$REPO" --sha "$SHA" \
+            --sums checksums/SHA256SUMS --dir release --pattern "sourceorrery-$VERSION.jar"
+      - name: Take the native libraries from the release's jar
+        run: |
+          set -euo pipefail
           jar="release/sourceorrery-$VERSION.jar"
           # Listed by name: unzip wildcards do not reliably reach into the per-platform folders.
           mapfile -t libraries < <(unzip -Z1 "$jar" | grep -E '^ai/sourceorrery/native/[^/]+/[^/]+\.(so|dylib|dll)$')
@@ -535,6 +661,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.tag }}
+      - name: The tag still names the commit the release gate validated
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+          TAG_NAME: ${{ needs.plan.outputs.tag }}
+        run: |
+          head="$(git rev-parse HEAD)"
+          if [ "$head" != "$SHA" ]; then
+            echo "::error::$TAG_NAME names $head now, not $SHA, the commit the release gate validated; it was moved"
+            exit 1
+          fi
       - name: The module tag exists
         run: |
           set -euo pipefail
@@ -567,6 +703,9 @@ jobs:
     needs: plan
     if: inputs.homebrew_scoop || inputs.winget
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -575,8 +714,13 @@ jobs:
       PUBLISHED: ${{ needs.plan.outputs.published }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download the release's SHA256SUMS
-        run: gh release download "$TAG" --repo "$REPO" --dir checksums --pattern SHA256SUMS
+      - name: Download the release's SHA256SUMS and verify its provenance
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --dir checksums --pattern SHA256SUMS
+          python3 scripts/release/verify-release-artifacts.py --repo "$REPO" --sha "$SHA" --sums checksums/SHA256SUMS
       - name: Render and check
         run: |
           set -euo pipefail

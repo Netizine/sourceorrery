@@ -584,7 +584,11 @@ fn entries(dir: &Path) -> Vec<VaultEntry> {
 }
 
 fn draw(app: &mut App, theme: &Theme, height: u16) -> Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(WIDTH, height)).unwrap();
+    draw_at(app, theme, WIDTH, height)
+}
+
+fn draw_at(app: &mut App, theme: &Theme, width: u16, height: u16) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| view::draw(frame, app, theme))
         .unwrap();
@@ -648,7 +652,12 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     let mut out = Vec::new();
     let mut app = App::new(vaults.clone());
     show(&mut app, vault);
-    out.push(("overview", draw(&mut app, theme, 32)));
+    out.push(("overview", draw(&mut app, theme, 40)));
+    out.push(("overview-80", draw_at(&mut app, theme, 80, 24)));
+    let _ = draw_at(&mut app, theme, 60, 18);
+    app.update(Action::Bottom);
+    out.push(("overview-60-end", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Top);
     app.update(Action::Add);
     for c in "github-app-key".chars() {
         app.update(Action::Input(c));
@@ -669,10 +678,56 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     app.update(Action::Show(Tab::Secrets));
     app.update(Action::Down);
     out.push(("secrets", draw(&mut app, theme, 18)));
+    out.push(("secrets-80", draw_at(&mut app, theme, 80, 24)));
+    let selected = app.list(Tab::Secrets).table;
+    for (state, name) in [
+        ("secrets-disabled-80", "legacy-token"),
+        ("secrets-expired-80", "old-cert"),
+    ] {
+        let index = app
+            .shown_secrets()
+            .iter()
+            .position(|p| p.name == name)
+            .expect("fixture row exists");
+        app.list_mut(Tab::Secrets).table.select(Some(index));
+        out.push((state, draw_at(&mut app, theme, 80, 24)));
+    }
+    app.list_mut(Tab::Secrets).table = selected;
+    type_text(&mut app, "webhook");
+    out.push(("search-match-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Back);
+    app.feedback.operation = Some("Refreshing metadata…");
+    out.push(("refreshing-80", draw_at(&mut app, theme, 80, 24)));
+    app.feedback.operation = None;
+    app = app.with_lock_after(Some(std::time::Duration::from_secs(60)));
+    app.idle_tick(std::time::Duration::from_secs(31));
+    out.push(("idle-warning-80", draw_at(&mut app, theme, 80, 24)));
+    app.idle_tick(std::time::Duration::ZERO);
+    app.update(Action::Theme);
+    app.update(Action::Down);
+    out.push(("theme-preview-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Back);
+    out.push(("secrets-60", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Actions);
+    out.push(("actions-60", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Back);
+    app.update(Action::Filters);
+    out.push(("filters-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Back);
+    app.update(Action::Sort);
+    out.push(("sort-60", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Back);
+    app.update(Action::Inspect);
+    out.push(("inspector-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Back);
     app.update(Action::Edit);
     app.update(Action::Down);
     app.update(Action::Down);
     out.push(("edit-form", draw(&mut app, theme, 26)));
+    out.push(("edit-form-60", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Text(super::text_input::Edit::Home));
+    app.update(Action::Input('q'));
+    out.push(("edit-cursor-60", draw_at(&mut app, theme, 60, 18)));
     app.update(Action::Back);
     app.update(Action::Toggle);
     out.push(("confirm-disable", draw(&mut app, theme, 22)));
@@ -700,6 +755,10 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     app.update(Action::Show(Tab::Secrets));
     app.update(Action::Help);
     out.push(("help", draw(&mut app, theme, 46)));
+    out.push(("help-80", draw_at(&mut app, theme, 80, 24)));
+    let _ = draw_at(&mut app, theme, 60, 18);
+    app.update(Action::Bottom);
+    out.push(("help-60-end", draw_at(&mut app, theme, 60, 18)));
     app.update(Action::Help);
     app.update(Action::Refresh);
     disguise(&mut app);
@@ -709,6 +768,7 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
          (head was event 41)"
             .into(),
     ));
+    app.feedback.failed = true;
     out.push(("error", draw(&mut app, theme, 18)));
     app.update(Action::Lock);
     out.push(("locked", draw(&mut app, theme, 14)));

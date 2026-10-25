@@ -19,7 +19,10 @@
 import { access, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { htmlCommentsToMdx } from '../src/lib/mdx-comments.mjs';
 import { walkthroughs } from '../src/lib/walkthroughs.mjs';
+import { releaseVersion } from '../src/lib/release-version.mjs';
+import { buildLlmFiles, writeLlmFiles } from './llms-docs.mjs';
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(siteRoot, '..');
@@ -34,6 +37,10 @@ const BLOB_URL = `${REPO_URL}/blob/main/`;
  * the one derived from the first paragraph.
  */
 const PAGES = {
+	'docs/privacy.md': {
+		dest: 'privacy.md',
+		description: 'Optional website analytics, the complete opt-out, browser preferences and contact details.',
+	},
 	'docs/why-sourceorrery.md': {
 		dest: 'why-sourceorrery.md',
 		description:
@@ -52,7 +59,7 @@ const PAGES = {
 	'docs/security-review.md': {
 		dest: 'security/review.md',
 		description:
-			'The engineering pass of the milestone 4 security review: every threat-model claim checked against the code, what was found and fixed, what holds, and what is still untested.',
+			'Security review status for 0.3.0: the current design, recorded engineering evidence, outstanding platform and release acceptance, and the boundaries that remain.',
 	},
 	'docs/supply-chain.md': {
 		dest: 'security/supply-chain.md',
@@ -63,6 +70,11 @@ const PAGES = {
 		dest: 'guides/first-run.md',
 		description:
 			'The first run: a vault on the setup screens (its recovery key, an optional view check, its storage), its secrets, a project manifest written from the vault, and run.',
+	},
+	'docs/upgrading.md': {
+		dest: 'guides/upgrading.md',
+		description:
+			'Supported vault files in 0.3.0, consistent encrypted exports, verified imports and restore limits. No legacy format conversion or migration layer.',
 	},
 	'docs/ai-agents.md': {
 		dest: 'guides/ai-agents.md',
@@ -82,7 +94,7 @@ const PAGES = {
 	'docs/vault-format.md': {
 		dest: 'reference/vault-format.md',
 		description:
-			'Schema version 3 of the encrypted SQLite vault file: tables, key hierarchy, integrity tags, the audit chain, what is and is not encrypted, and compatibility rules.',
+			'Schema version 5 of the encrypted SQLite vault file: tables, key hierarchy, the authenticated settings and key wraps, integrity tags, the audit chain, what is and is not encrypted, and compatibility rules.',
 	},
 	'docs/roadmap.md': {
 		dest: 'roadmap.md',
@@ -102,17 +114,17 @@ const PAGES = {
 	'docs/providers/hashicorp-vault.md': {
 		dest: 'providers/hashicorp-vault.md',
 		description:
-			'The HashiCorp Vault provider: a KV version 2 mount as a SourceOrrery vault, the credential sources it tries, how names, versions, properties and deletion map onto KV, and what differs from a local vault.',
+			'The HashiCorp Vault provider: a local vault connection to a KV version 2 mount, the credential sources it tries, how names, versions, properties and deletion map onto KV, and what differs from a local vault.',
 	},
 	'docs/providers/aws-secrets-manager.md': {
 		dest: 'providers/aws-secrets-manager.md',
 		description:
-			'The AWS Secrets Manager provider: secrets under a prefix as a SourceOrrery vault, the default credential chain, how versions, tags and deletion map onto the service, and what differs from a local vault.',
+			'The AWS Secrets Manager provider: a local vault connection to secrets under a prefix, the default credential chain, how versions, tags and deletion map onto the service, and what differs from a local vault.',
 	},
 	'docs/providers/azure-key-vault.md': {
 		dest: 'providers/azure-key-vault.md',
 		description:
-			'The Azure Key Vault provider: one key vault as a SourceOrrery vault, the identities it signs in with, how versions, attributes, tags and soft delete map onto Key Vault, and what differs from a local vault.',
+			'The Azure Key Vault provider: a local vault connection to an Azure key vault, the identities it signs in with, how versions, attributes, tags and soft delete map onto Key Vault, and what differs from a local vault.',
 	},
 	'docs/rotation.md': {
 		dest: 'guides/rotation.md',
@@ -208,14 +220,28 @@ async function main() {
 
 	const written = [];
 	const adrs = [];
+	const llmPages = [];
 	for (const [source, page] of Object.entries(PAGES)) {
-		const { dest, adr } = await syncPage(source, page);
+		const { dest, adr, llmPage } = await syncPage(source, page);
 		written.push(dest);
+		llmPages.push(llmPage);
 		if (adr) adrs.push(adr);
 	}
 
-	written.push(await writeDecisionsIndex(adrs));
-	written.push(await writeErrorCodes());
+	for (const dest of [await writeDecisionsIndex(adrs), await writeErrorCodes()]) {
+		written.push(dest);
+		const output = await readFile(path.join(outDir, dest), 'utf8');
+		const title = JSON.parse(output.match(/^title: (.+)$/m)[1]);
+		llmPages.push({ href: destToHref(dest), markdown: `# ${title}\n\n${output.replace(/^---\n[\s\S]*?\n---\n/, '')}` });
+	}
+	const llmFiles = buildLlmFiles({
+		index: await readFile(path.join(repoRoot, 'docs/llms.txt'), 'utf8'),
+		overview: await readFile(path.join(repoRoot, 'docs/llms-overview.md'), 'utf8'),
+		pages: llmPages,
+		release: releaseVersion(repoRoot),
+	});
+	await writeLlmFiles(path.join(siteRoot, 'public'), llmFiles);
+	console.log(`sync-docs: wrote ${llmFiles.size} LLM text files under public/`);
 
 	const ignore = [
 		'# Generated by scripts/sync-docs.mjs from ../docs and the Rust sources.',
@@ -253,7 +279,8 @@ async function syncPage(source, page) {
 	const body = raw.slice(h1.index + h1[0].length).replace(/^\n+/, '');
 
 	const description = page.description ?? deriveDescription(body, page);
-	const { markdown: tabbed, tabs } = convertTabs(rewriteLinks(body, source), source);
+	const linkedBody = rewriteLinks(body, source);
+	const { markdown: tabbed, tabs } = convertTabs(linkedBody, source);
 	const { markdown: rewritten, walkthrough } = convertWalkthroughs(tabbed, source);
 	// A page with platform tabs or a walkthrough needs MDX for its components;
 	// the rest stay Markdown.
@@ -292,13 +319,13 @@ async function syncPage(source, page) {
 		...(tabs ? ["import { Tabs, TabItem } from '@astrojs/starlight/components';"] : []),
 		...(walkthrough ? [`import Walkthrough from '${component}';`] : []),
 		...(mdx ? [''] : []),
-		rewritten.trimEnd(),
+		(mdx ? htmlCommentsToMdx(rewritten) : rewritten).trimEnd(),
 		'',
 	].join('\n');
 
 	await mkdir(path.dirname(destination), { recursive: true });
 	await writeFile(destination, output);
-	return { dest, adr };
+	return { dest, adr, llmPage: { href: destToHref(page.dest), markdown: `# ${title}\n\n${linkedBody}` } };
 }
 
 /**

@@ -1,93 +1,60 @@
 # ADR 0007: Versioning and compatibility
 
-**Status:** accepted · **Date:** 2026-10-22
+**Status:** accepted, amended for 0.3.0 · **Date:** 2026-10-22 · **Amended:** 2026-10-25
 
 ## Context
 
-One release of SourceOrrery is one version number stamped into every
-package: the CLI, the `sourceorrery` client crate, `sourceorrery-core`, the
-C ABI library and each SDK (ADR 0006). Users combine them: an SDK built
-against one release loads the C ABI library of another, a vault file
-written by one release is opened by the next, a script parses the CLI's
-JSON. Until now the repository said that the C ABI version "is bumped only
-for incompatible changes" and nothing else about what a version number
-promises or how a promise is checked.
+One SourceOrrery release uses one version across the CLI, public Rust
+crates, C ABI and language SDKs. An application can accidentally load a
+native library from another release, and a vault can outlive the binary
+that wrote it. Version and format checks must reject combinations whose
+meaning or layout differs.
 
 ## Decision
 
-Releases follow [Semantic Versioning](https://semver.org). Before 1.0 a
-**minor** release (`0.x` → `0.(x+1)`) may change behaviour and remove or
-alter API; a **patch** release (`0.x.y` → `0.x.(y+1)`) may add but never
-breaks. From 1.0 the usual rules apply. One number covers every surface,
-so the release takes the largest bump any surface needs:
+SourceOrrery follows Semantic Versioning. Before 1.0, a minor release may
+change or remove APIs and file formats; patch releases preserve the
+current minor's supported surfaces. There is no cross-minor deprecation
+window or legacy compatibility layer promised before 1.0. Changes must be
+described in the changelog and current documentation.
 
-| Surface | What is covered | Compatible change | Incompatible change |
-|---------|-----------------|-------------------|---------------------|
-| CLI | commands, flags, exit codes, `-o json` output, environment variables | a new command, flag or JSON field | a removed or renamed command or flag, a changed JSON field, a changed exit code |
-| Rust API | the public items of `sourceorrery` and `sourceorrery-core` (the crates SDKs and applications build on) | a new item, a new trait method with a default | anything `cargo semver-checks` reports as needing a bigger bump |
-| C ABI | every declaration in `crates/sourceorrery-ffi/include/sourceorrery.h` | a new function, enum member or constant | a changed or removed function, struct, enum member or constant. **`SO_ABI_VERSION` is bumped** at the same time, and the bindings refuse the library |
-| Contract | the semantics the conformance suite checks, named by `CONTRACT_VERSION` | a new operation or option | a changed outcome, code, message or hint for an existing scenario. **`CONTRACT_VERSION` is bumped** |
-| SDK API | the public API of each binding | a new method or type | a removed or changed method; a changed exception hierarchy |
-| Vault file | `schema_version` and the format in `docs/vault-format.md` | none: a newer schema is written only by `vault migrate` | a new schema, read only after an explicit migration; an older release refuses the file |
-| Error codes and audit operations | `SecretError::code()` strings and `AuditOperation` labels | a new code or label | never: both lists are append-only |
-| Manifest | `sourceorrery.toml` | a new optional key | a removed key or a changed meaning |
+The 0.3.0 baseline is **vault schema 5**, **C ABI 2**, **contract 2**.
+Older vault formats are refused and left unchanged. There is no `vault
+migrate` command or automatic conversion. [Supported files](../upgrading.md)
 
-Rules that follow:
+| Surface | Versioned behaviour |
+|---------|---------------------|
+| CLI | Commands, flags, exit codes, JSON output and environment variables. |
+| Rust API | Public `sourceorrery` and `sourceorrery-core` APIs; `cargo semver-checks` validates the proposed release bump. |
+| C ABI | Header declarations and `SO_ABI_VERSION`. An incompatible change bumps the ABI; bindings reject a different ABI with `abi_mismatch`. |
+| Contract | Shared conformance semantics, identified by `CONTRACT_VERSION`. An incompatible semantic change bumps it. |
+| SDK API | Public methods, option types, values and error mapping in each language. |
+| Vault file | Authenticated `schema_version` and the [format reference](../vault-format.md). Only the supported schema opens; no implicit migration. |
+| Error/audit names | Stable, append-only code and operation labels. Retaining a label does not make a removed command available. |
+| Manifest | Accepted fields and their meanings; unsupported or unknown fields are refused. |
 
-* **Deprecation before removal.** A surface slated for removal is marked
-  deprecated in one minor release (a doc note, a compiler or runtime
-  warning where the language has one) and removed in the next at the
-  earliest.
-* **Bindings check the ABI they load.** Every binding over the C ABI (Go,
-  Java, .NET, PHP, C++) compares `so_abi_version()` with the
-  `SO_ABI_VERSION` it was built against before it opens anything, and
-  refuses a mismatch with its base error type and the code
-  `abi_mismatch`. That code is produced by the bindings, never by the
-  core, and is reserved alongside the core's codes. The Python and Node
-  extensions build the core in, so they cannot mismatch.
-* **Additions never bump the ABI.** A new C function, enum member or
-  constant is a compatible change; existing declarations do not move.
-  Anything else bumps `SO_ABI_VERSION`, in the same commit.
-* **The previous release must keep working.** The C ABI library of the
-  current commit must pass the conformance contract of the latest
-  release (its runner, its harness, its scenarios) unless
-  `SO_ABI_VERSION` was bumped, in which case the old runner must refuse
-  it.
-* **Internal crates make no promise.** `sourceorrery-storage`,
-  `sourceorrery-crypto` and `sourceorrery-ffi`'s Rust API are published
-  because the public crates depend on them; only the surfaces above are
-  versioned.
+## Checks
 
-## How it is checked
-
-* `scripts/ci/abi-check.py` (the `ffi-header` CI job) parses the committed
-  header and the header of the latest `v*` tag and fails when a function,
-  struct, enum member or constant that existed before changed or
-  disappeared while `SO_ABI_VERSION` stayed the same.
-* The `abi-compat` CI job checks out the latest `v*` tag, builds its C
-  conformance runner against its own header, and drives it with its own
-  harness and scenarios against the library built from the current
-  commit. It is skipped when `SO_ABI_VERSION` differs between the two.
-* Each binding has a unit test for the `abi_mismatch` error it would raise.
-* The release workflow runs `cargo semver-checks` on `sourceorrery` and
-  `sourceorrery-core` against the crates.io baseline with the version the
-  maintainer typed, in dry runs too, so a patch release whose Rust API
-  needs a minor bump fails before anything is built.
-* `CONTRACT_VERSION` and `schema_version` are judged by the conformance
-  suite and the migration tests, as before.
+- `scripts/ci/abi-check.py` compares the current header with the release
+  baseline and requires an ABI bump when an existing declaration changes.
+- `abi-compat` runs the earlier contract against the current library only
+  when the ABI matches. A bumped ABI deliberately ends that compatibility.
+- C ABI wrappers check `so_abi_version()` before opening a vault. Python
+  and Node native extensions embed the Rust client instead.
+- The release workflow runs Rust semver checks and the exact-commit CI
+  gate. It does not make a breaking patch acceptable merely because local
+  tests passed.
+- Conformance tests check contract semantics. Storage tests establish that
+  unsupported files are refused without conversion or destructive cleanup.
 
 ## Consequences
 
-* Pre-1.0 users can rely on patch releases: upgrading `0.x.y` to
-  `0.x.(y+1)` in any package never requires a code change, and a mixed
-  deployment (an older SDK with a newer library, or the reverse, within
-  one minor) keeps working.
-* A release that touches the C ABI shows the change in CI before it is
-  cut, and a mismatched library fails fast with one message in every
-  language instead of a crash or a wrong result.
-* The compatibility checks look one release back. A change that would
-  break a release two minors ago is allowed once it has gone through a
-  deprecation; nothing enforces the deprecation window itself except
-  review.
-* `CONTRACT_VERSION` stays `"1"` through the listing additions of this
-  release: new operations are compatible.
+Use packages from the same release. Matching ABI checks protect the
+native call boundary; they do not authenticate a library or establish that
+code is safe. Minor releases can require fresh provisioning or application
+changes, while published versions and release assets remain immutable.
+
+ADR 0009 changes the unlock/check/storage model, and ADR 0010 introduces
+authenticated key-wrap inventory in schema 5. The prior proposal for an
+explicit migration command and a mandatory pre-1.0 deprecation interval
+is superseded by this amendment.

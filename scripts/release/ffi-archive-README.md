@@ -30,10 +30,12 @@ Use the archive from the same release as the SDK package you installed.
 
 ## Before you start: the CLI
 
-The library's read-only functions are what applications use. Vaults are
-created, and secrets stored, with the `sourceorrery` command-line tool,
-which is in the `sourceorrery-<version>-<target>` archive of the same
-release (or `cargo install --locked sourceorrery-cli`):
+### Option 1: Set up with the CLI
+
+The library's read-only functions are what applications use. Use the
+separately installed `sourceorrery` CLI to create vaults and set secret
+values. Follow the
+[CLI installation guide](https://sourceorrery.ai/getting-started/#install), then:
 
 ```bash
 sourceorrery vault create development
@@ -43,6 +45,19 @@ sourceorrery secret set database-password --vault development   # typed at a hid
 The CLI does not have to be installed where your application runs: the
 library opens the vault file itself. Step by step:
 [Getting started](https://sourceorrery.ai/getting-started/).
+
+### Option 2: Set up with an AI coding agent
+
+```bash
+sourceorrery init --integration all
+```
+
+Use your existing coding agent and ask: "Set up SourceOrrery for this
+project without showing secret values." Replace `all` with your agent's
+name to install only its skills. The agent handles the manifest, code and
+launch commands; you create vaults and enter values privately.
+The [agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+also covers updating skills from the repository independently of the CLI.
 
 ## A first program
 

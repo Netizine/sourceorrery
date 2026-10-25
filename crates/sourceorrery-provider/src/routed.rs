@@ -15,6 +15,14 @@
 //! when first needed, with the credentials it stores or else the provider's
 //! ambient chain, and stays open for the client's life.
 //!
+//! A change (set, update, delete, recover, purge) is recorded as an attempt
+//! before it is sent ([`SqliteVault::attempt_at_connection`]), and its
+//! result says whether it may have happened (ADR 0011): a refusal is
+//! returned as the provider gave it; any other failure, and a change the
+//! provider made that the vault could not record, is `outcome_unknown`.
+//! Nothing is retried; [`SqliteVault::unresolved_attempts`] lists the
+//! changes whose result the vault never learned.
+//!
 //! Listings show every storage. While no connection stores a secret they
 //! are the vault's own; otherwise a listing reads the vault and every
 //! connection that stores something, keeps the provider's secrets that the
@@ -37,7 +45,7 @@ use sourceorrery_core::{
     SecretBytes, SecretClient, SecretError, SecretProperties, SetSecretOptions,
     UpdateSecretProperties,
 };
-use sourceorrery_storage::{CatalogChange, SecretStorage, SqliteVault};
+use sourceorrery_storage::{Attempt, CatalogChange, SecretStorage, SqliteVault};
 
 /// A provider's client, as [`Routed`] holds it.
 pub type ConnectionClient = Box<dyn SecretClient + Send + Sync>;
@@ -230,6 +238,19 @@ impl Routed {
 
     /// Make `call` at the connection `id` and record it in the vault as
     /// `record` says, with the version `version_of` finds in the answer.
+    ///
+    /// Every call at a connection passes here, and the vault's own gate
+    /// comes first ([`SqliteVault::preflight_at_connection`]): a vault whose
+    /// log was truncated, whose settings or connection row do not verify,
+    /// or whose catalog does not have the secret there, sends nothing to
+    /// the provider, also through a client opened earlier.
+    ///
+    /// A change is recorded as an attempt before it is sent, and what it
+    /// returns says whether it may have happened (ADR 0011): a refusal as
+    /// the provider gave it, any other failure as `outcome_unknown`
+    /// ([`SecretError::after_change_sent`]), and a change the provider made
+    /// that the vault then could not record as `outcome_unknown` too, never
+    /// as the vault's error alone.
     fn at<T>(
         &self,
         id: &str,
@@ -237,20 +258,70 @@ impl Routed {
         call: impl FnOnce(&dyn SecretClient) -> Result<T>,
         version_of: impl FnOnce(&T) -> Option<&str>,
     ) -> Result<T> {
-        let outcome = self.client(id).and_then(|client| call(&*client));
+        self.vault
+            .preflight_at_connection(id, record.operation, record.name, record.change)?;
+        let client = match self.client(id) {
+            Ok(client) => client,
+            Err(err) => {
+                // Nothing was sent: the connection could not be opened.
+                self.record(id, record, record.version, Err(&err), None)?;
+                return Err(err);
+            }
+        };
+        let attempt = match record.name {
+            Some(name) if record.operation.changes_a_secret() => Some(
+                self.vault
+                    .attempt_at_connection(id, record.operation, name, record.change)?,
+            ),
+            _ => None,
+        };
+        let outcome = match call(&*client) {
+            Err(err) if attempt.is_some() => Err(err.after_change_sent(&at(id))),
+            outcome => outcome,
+        };
         let version = match &outcome {
             Ok(value) => version_of(value).or(record.version).map(str::to_owned),
             Err(_) => record.version.map(str::to_owned),
         };
+        let recorded = self.record(
+            id,
+            record,
+            version.as_deref(),
+            outcome.as_ref().map(drop),
+            attempt,
+        );
+        match (recorded, outcome) {
+            (Ok(()), outcome) => outcome,
+            (Err(err), Ok(_)) if attempt.is_some() => Err(SecretError::OutcomeUnknown {
+                at: at(id),
+                reason: format!(
+                    "the provider answered that it made the change, and this vault could not record it: \
+                     {err}"
+                ),
+            }),
+            (Err(_), Err(unknown @ SecretError::OutcomeUnknown { .. })) => Err(unknown),
+            (Err(err), _) => Err(err),
+        }
+    }
+
+    /// [`SqliteVault::record_at_connection`] for a call `at` makes.
+    fn record(
+        &self,
+        id: &str,
+        record: Record<'_>,
+        version: Option<&str>,
+        result: std::result::Result<(), &SecretError>,
+        attempt: Option<Attempt>,
+    ) -> Result<()> {
         self.vault.record_at_connection(
             id,
             record.operation,
             record.name,
-            version.as_deref(),
-            outcome.as_ref().map(drop),
+            version,
+            result,
             record.change,
-        )?;
-        outcome
+            attempt,
+        )
     }
 
     fn set_at(
@@ -446,8 +517,15 @@ impl Routed {
             None,
             Ok(()),
             CatalogChange::Remove,
+            None,
         )
     }
+}
+
+/// Where a change at the connection `id` may have been made, as
+/// `outcome_unknown` names it.
+fn at(id: &str) -> String {
+    format!("connection {id}")
 }
 
 impl SecretClient for Routed {

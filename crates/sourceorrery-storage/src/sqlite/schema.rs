@@ -35,6 +35,8 @@ pub(super) struct Meta {
     pub(super) connections: Vec<(String, Vec<u8>)>,
     /// Every `projects` row as `(id, tag)`, ordered by id, likewise.
     pub(super) projects: Vec<(String, Vec<u8>)>,
+    /// Every `key_wraps` row as `(id, encoding)` (ADR 0010).
+    pub(super) key_wraps: Vec<(String, Vec<u8>)>,
 }
 
 /// The authenticated settings that can change after creation: the view
@@ -79,6 +81,7 @@ impl Meta {
             check_failures: self.view.check_failures.as_deref(),
             connections: &self.connections,
             projects: &self.projects,
+            key_wraps: &self.key_wraps,
         })
     }
 
@@ -172,6 +175,21 @@ CREATE TABLE IF NOT EXISTS audit_events (
     version_tag BLOB,
     settings_tag BLOB
 );
+";
+
+/// The audit log's indexes, created with the schema and again at every
+/// unlock: they hold no state the format authenticates, so a file missing
+/// one (written before it existed, or with one dropped) is valid and has
+/// them all again before the checks use them. The checks name their index
+/// (`INDEXED BY`), so no plan depends on table statistics; without that,
+/// the planner took `audit_keyed` for queries it does not serve and the
+/// truncation check of every operation scanned every keyed row.
+///
+/// `audit_keyed` serves the chain-head check every append makes: the count
+/// of keyed rows (the head records it, so keyed rows removed from inside the
+/// log are caught) and the newest keyed row, each a scan of the whole log
+/// without it.
+pub(super) const AUDIT_INDEXES: &str = "
 CREATE INDEX IF NOT EXISTS audit_events_by_secret ON audit_events(secret_name, id DESC);
 CREATE INDEX IF NOT EXISTS audit_checkpoints ON audit_events(secret_name, id)
     WHERE state_tag IS NOT NULL OR version_tag IS NOT NULL;
@@ -179,6 +197,7 @@ CREATE INDEX IF NOT EXISTS audit_verifications ON audit_events(id)
     WHERE operation = 'audit_verify';
 CREATE INDEX IF NOT EXISTS audit_settings ON audit_events(id)
     WHERE settings_tag IS NOT NULL;
+CREATE INDEX IF NOT EXISTS audit_keyed ON audit_events(id) WHERE keyed = 1;
 ";
 
 pub(super) fn open_connection(path: &Path) -> Result<Connection> {
@@ -312,7 +331,44 @@ pub(super) fn read_meta(conn: &Connection) -> Result<Meta> {
         },
         connections: read_row_tags(conn, "connections")?,
         projects: read_row_tags(conn, "projects")?,
+        key_wraps: read_wrap_entries(conn, get("id")?)?,
     })
+}
+
+/// Every `key_wraps` row as `(id, encoding)`, ordered by id, as the
+/// settings record lists them.
+pub(super) fn read_wrap_entries(
+    conn: &Connection,
+    vault_id: &str,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    type Row = (String, String, Vec<u8>, Vec<u8>, i64);
+    let rows: Vec<Row> = conn
+        .prepare(
+            "SELECT id, kind_json, wrapped_nonce, wrapped_key, created_on
+             FROM key_wraps ORDER BY id",
+        )
+        .map_err(db)?
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, kind_json, nonce, wrapped, created_on)| {
+            let encoding = integrity::key_wrap_canonical(
+                vault_id, &id, &kind_json, &nonce, &wrapped, created_on,
+            );
+            (id, encoding)
+        })
+        .collect())
 }
 
 /// Every row of `table` (`connections` or `projects`) as `(id, tag)`,
@@ -353,8 +409,8 @@ pub(super) fn delete_meta(conn: &Connection, key: &str) -> Result<()> {
 pub(super) struct SettingsTag(pub(super) [u8; MAC_LEN]);
 
 /// Write (or refresh) the authenticated settings record: `meta`'s fields
-/// with the connections and projects `conn` holds now, so a write inside a
-/// transaction covers the rows that transaction left.
+/// with the connections, projects and key wraps `conn` holds now, so a
+/// write inside a transaction covers the rows that transaction left.
 pub(super) fn write_settings_tag(
     conn: &Connection,
     key: &SymmetricKey,
@@ -362,9 +418,11 @@ pub(super) fn write_settings_tag(
 ) -> Result<SettingsTag> {
     let connections = read_row_tags(conn, "connections")?;
     let projects = read_row_tags(conn, "projects")?;
+    let key_wraps = read_wrap_entries(conn, &meta.id)?;
     let fields = SettingsFields {
         connections: &connections,
         projects: &projects,
+        key_wraps: &key_wraps,
         ..meta.settings_fields()?
     };
     let tag = integrity::settings_tag(key, &fields);

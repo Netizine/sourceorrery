@@ -40,6 +40,7 @@ const CODES: &[&str] = &[
     "vault_mismatch",
     "unauthenticated",
     "provider_unavailable",
+    "outcome_unknown",
 ];
 
 fn error_for(code: &str) -> SecretError {
@@ -89,6 +90,10 @@ fn error_for(code: &str) -> SecretError {
         },
         "provider_unavailable" => SecretError::ProviderUnavailable {
             provider: name,
+            reason: version,
+        },
+        "outcome_unknown" => SecretError::OutcomeUnknown {
+            at: name,
             reason: version,
         },
         other => panic!("no constructor for code {other}"),

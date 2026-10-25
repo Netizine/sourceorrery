@@ -233,11 +233,13 @@ impl SqliteVault {
         let op = AuditOperation::VaultImport;
         let mut conn = self.lock()?;
         let tx = self.begin(&mut conn, op)?;
-        let mut settings = None;
+        let mut meta = self.verified_meta(&tx)?;
         let mut detail = vec![if name == self.meta.name {
             "imported".to_owned()
         } else {
-            settings = Some(self.rename(&tx, name)?);
+            // The record is written again below, with the new set of wraps.
+            let _renamed = self.rename(&tx, name)?;
+            name.clone_into(&mut meta.name);
             format!("imported as '{name}' (exported as '{}')", self.meta.name)
         }];
         let foreign = this_machine_wraps(&tx)?;
@@ -257,6 +259,16 @@ impl SqliteVault {
             None
         };
         let detail = detail.join("; ");
+        // The settings record lists the wraps the import left (ADR 0010).
+        let settings = match write_settings_tag(&tx, &self.metadata_key, &meta) {
+            Ok(tag) => tag,
+            Err(err) => {
+                if let Some(account) = &account {
+                    let _ = store.delete_key(account);
+                }
+                return Err(err);
+            }
+        };
         let entry = Entry {
             operation: op,
             secret_name: None,
@@ -264,7 +276,7 @@ impl SqliteVault {
             outcome: AuditOutcome::Success,
             detail: Some(&detail),
             checkpoints: Checkpoints {
-                settings,
+                settings: Some(settings),
                 ..Checkpoints::default()
             },
         };

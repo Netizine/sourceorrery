@@ -17,12 +17,11 @@ import urllib.request
 from pathlib import Path
 
 CORE = "sourceorrery-core"
-# Provider crates not yet on crates.io. A trusted publisher can only be added
-# to an existing crate, so these go up once with the temporary bootstrap
-# token (release.yml `bootstrap_providers`); every other crate, earlier
-# providers included, publishes through OIDC. Remove a name once its trusted
-# publisher exists.
-PROVIDERS = ("sourceorrery-provider-azure",)
+# Explicit allowlist for the optional first-publication bootstrap path.
+# Current packages, including these two, have trusted publishers configured;
+# ordinary 0.3.0 releases leave bootstrap_providers off and use OIDC for all.
+# Review this inventory before using the exceptional bootstrap option.
+PROVIDERS = ("sourceorrery-provider-azure", "sourceorrery-os")
 GROUPS = {"core": (CORE,), "providers": PROVIDERS, "bootstrap": (CORE, *PROVIDERS)}
 SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?")
 USER_AGENT = "sourceorrery-release (https://github.com/Netizine/sourceorrery)"

@@ -17,6 +17,7 @@
 //! a malformed line is as likely to hold a secret as a good one.
 
 use sourceorrery_core::SecretBytes;
+use zeroize::Zeroizing;
 
 /// One `KEY=value` assignment.
 pub struct Assignment {
@@ -168,37 +169,40 @@ impl Cursor<'_> {
         })
     }
 
+    /// The value between quotes, unescaped. It is built in a wiped buffer
+    /// that grows the wiping way ([`crate::plain::push`]): neither an unclosed
+    /// quote nor a reallocation leaves part of it in freed memory.
     fn quoted(&mut self, quote: u8, line: usize) -> Result<Vec<u8>, ParseError> {
         self.pos += 1;
-        let mut value = Vec::with_capacity(self.bytes.len() - self.pos);
+        let mut value = Zeroizing::new(Vec::new());
         loop {
             let Some(byte) = self.bump() else {
                 return Err(error(line, "a quoted value is never closed"));
             };
             if byte == quote {
-                value.shrink_to_fit();
-                return Ok(value);
+                return Ok(std::mem::take(&mut *value));
             }
-            if byte == b'\\' && quote == b'"' {
-                match self.peek() {
-                    Some(b'n') => value.push(b'\n'),
-                    Some(b'r') => value.push(b'\r'),
-                    Some(b't') => value.push(b'\t'),
-                    Some(b'"') => value.push(b'"'),
-                    Some(b'\\') => value.push(b'\\'),
+            let unescaped = if byte == b'\\' && quote == b'"' {
+                let escaped = match self.peek() {
+                    Some(b'n') => b'\n',
+                    Some(b'r') => b'\r',
+                    Some(b't') => b'\t',
+                    Some(b'"') => b'"',
+                    Some(b'\\') => b'\\',
                     _ => {
-                        value.push(b'\\');
+                        crate::plain::push(&mut value, b"\\");
                         continue;
                     }
-                }
+                };
                 self.pos += 1;
+                escaped
+            } else if byte == b'\r' && self.peek() == Some(b'\n') {
+                // A CRLF file's line break inside a quoted value is one newline.
                 continue;
-            }
-            // A CRLF file's line break inside a quoted value is one newline.
-            if byte == b'\r' && self.peek() == Some(b'\n') {
-                continue;
-            }
-            value.push(byte);
+            } else {
+                byte
+            };
+            crate::plain::push(&mut value, &[unescaped]);
         }
     }
 

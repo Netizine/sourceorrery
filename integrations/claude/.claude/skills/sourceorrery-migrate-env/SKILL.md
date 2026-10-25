@@ -42,7 +42,8 @@ Copy this into your notes and tick it off:
 ### 1. CLI and vault
 
 Run `sourceorrery --version`; if it is missing, install it
-([references/install.md](references/install.md)). Then
+([references/install.md](references/install.md)). Use an existing install
+without requiring a new build. Then
 `sourceorrery vault list`. If there is no `development` vault, ask the
 user to run `sourceorrery setup` in their own terminal and wait: it shows
 the vault's recovery key once, which only they should see.
@@ -145,6 +146,9 @@ steps.
 
 ### 6. Remove the plaintext
 
+- Review the import report first. Resolve failed or skipped keys that the
+  application still needs, then check the manifest and run its tests.
+  A passing check alone does not prove every input entry was imported.
 - Make sure `.gitignore` contains `.env`, `.env.*`, `!.env.example` and
   `*.sorvault`.
 - Ask the user, then delete each imported `.env` file. Keep

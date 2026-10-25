@@ -71,7 +71,15 @@ left open.
   `hint` every error carries. All SDK logic lives here.
 - `crates/sourceorrery-ffi` — the C ABI (cbindgen header checked in CI).
   `so_reader_*` / `so_project_*` are read-only and are what SDKs link;
-  `so_vault_*` is for tooling. The only crate allowed to use `unsafe`.
+  `so_vault_*` is for tooling. One of the two crates allowed `unsafe`.
+- `crates/sourceorrery-os` — `create_private_new(path)`: a new, empty file
+  only its creator can open, for a recovery key about to be written
+  (Windows: `CreateFileW` with an owner-and-SYSTEM-only, protected DACL,
+  read back and checked through the handle; Unix: `O_EXCL`, mode `0600`).
+  The other crate allowed `unsafe` (ADR 0010), over `windows-sys`: one safe
+  function, every `unsafe` block documented, `unsafe_op_in_unsafe_fn` and
+  `undocumented_unsafe_blocks` denied as in `sourceorrery-ffi`. Nothing
+  else goes in it.
 - `crates/sourceorrery-provider` — the adapters between the two shapes of
   the contract (`Blocking<A>`: an `AsyncSecretClient` as a `SecretClient`
   on a Tokio runtime; `AsyncLocal<C>`: the reverse on the blocking pool)
@@ -238,7 +246,9 @@ Docker validates Linux (`rust:1-bookworm` needs `libdbus-1-dev pkg-config`).
 
 ## Conventions
 
-- Rust 2024 edition, `#![forbid(unsafe_code)]` in every crate.
+- Rust 2024 edition, `#![forbid(unsafe_code)]` in every crate except
+  `sourceorrery-ffi` and `sourceorrery-os` (ADR 0010), which deny
+  `unsafe_op_in_unsafe_fn` and undocumented `unsafe` blocks instead.
 - Timestamps: RFC 3339 at the edges, Unix nanoseconds (i64) in SQLite.
 - Secret names: letters, digits, hyphens; max 127 (portable to the managed cloud secrets services).
   Vault names: letters, digits, hyphens, underscores, not starting with a

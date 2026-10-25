@@ -1,7 +1,7 @@
 {
   "name": "sourceorrery-site",
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
     "predev": "npm run sync",
@@ -15,21 +15,21 @@
     "walkthroughs": "node scripts/sync-walkthroughs.mjs",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "node --test scripts/docs-tooling.test.mjs"
+    "test": "node --test scripts/docs-tooling.test.mjs scripts/analytics-consent.test.mjs scripts/theme-preference.test.mjs scripts/llms-docs.test.mjs"
   },
   "dependencies": {
-    "@astrojs/markdown-satteri": "0.4.4",
+    "@astrojs/markdown-satteri": "0.4.5",
     "@astrojs/starlight": "^0.42.6",
     "@awesome.me/kit-515c69ad68": "^1.0.4",
     "@fontsource-variable/google-sans-code": "^5.3.2",
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/source-serif-4": "^5.3.1",
-    "astro": "^7.4.1",
+    "astro": "^7.4.2",
     "sharp": "^0.35.3"
   },
   "private": true,
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.23.4"
   },
   "overrides": {
     "postcss-selector-parser": "^7.1.6"

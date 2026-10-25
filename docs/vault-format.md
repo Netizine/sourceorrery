@@ -1,4 +1,4 @@
-# Vault file format (schema version 4)
+# Vault file format (schema version 5)
 
 A vault is a single SQLite database, `<home>/vaults/<name>.sorvault`, created
 with `PRAGMA foreign_keys = ON`, `PRAGMA secure_delete = ON` and a 5 s busy
@@ -22,7 +22,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 
 | key | value |
 |-----|-------|
-| `schema_version` | `4` |
+| `schema_version` | `5` |
 | `name` | vault name; covered by `settings_tag`. Opening a vault by name refuses a file whose name here is not the one asked for (`vault_mismatch`), so `<name>.sorvault` always holds the vault `<name>` |
 | `id` | 32 hex chars, random; bound into every AAD and every integrity tag |
 | `created_on` | Unix nanoseconds |
@@ -38,7 +38,10 @@ override with `SOURCEORRERY_HOME` or `--home`.
 ### `key_wraps`
 
 The vault key wrapped once for this machine and once under the recovery
-key.
+key. Every row is listed in the settings record, so the set of wraps is
+authenticated and checkpointed with it ([ADR 0010](adr/0010-authenticated-key-wraps-and-private-files.md)):
+an old wrap row put back, or one added, removed or edited, is refused at
+open.
 
 | column | meaning |
 |--------|---------|
@@ -113,7 +116,7 @@ The project folders whose manifest `init` wrote from this vault.
 | `actor` | `user:<name>`, `system:sourceorrery`, … |
 | `operation` | `vault_create`, `vault_open`, `protector_add`, `secret_set`, `secret_get`, `secret_list`, `secret_inspect`, `secret_update`, `secret_delete`, `secret_recover`, `secret_purge`, `audit_verify`, `guard`, `vault_change`, `vault_export`, `vault_import`, `connection_test`, `project_link`, `project_unlink` (a call to a provider is recorded by the vault under the operation it was); `protector_remove`, `vault_migrate`, `vault_backup` and `secret_restore` are names an earlier release wrote |
 | `secret_name`, `version` | optional |
-| `outcome` | `success`, `denied`, `failure` |
+| `outcome` | `success`, `denied`, `failure`; `pending` for a change at a connection recorded before it is sent, and `unknown` for one the provider may have made ([ADR 0011](adr/0011-provider-writes-fail-closed.md)) |
 | `detail` | error code or short note; **never a value** |
 | `prev_hash` | `hash` of the previous row (32 zero bytes for the first) |
 | `hash` | `HMAC-SHA256(k, canonical(prev_hash, row))` (see *Audit chain*) |
@@ -127,9 +130,19 @@ either row checkpoint column is set, so finding a secret's checkpoints does
 not scan its reads. Index `audit_verifications` on `id` covers the
 `audit_verify` rows (truncations and acknowledgements), which every unlock
 and operation consults. Index `audit_settings` on `id` covers the rows that
-carry a settings checkpoint, so the newest is found without a scan.
+carry a settings checkpoint, so the newest is found without a scan. Index
+`audit_keyed` on `id` covers the keyed rows, for the chain-head check every
+append makes (their count and the newest of them); a schema 5 file written
+before it existed gets it when it is next unlocked. No index holds state
+the format authenticates.
 
 ## Key hierarchy
+
+The `v1`, `v2`, `v4` and `v5` segments in cryptographic domain strings
+identify specific encodings, not the application release or the SQLite
+schema number. Schema 5 deliberately retains the value, metadata and
+wrap domains shown here. Its settings record authenticates the schema
+number and the complete key-wrap inventory.
 
 ```
 DEK (32 random bytes) ── XChaCha20-Poly1305 ──► each value, the view check's
@@ -249,10 +262,11 @@ tag the record has afterwards.
 | `vault_create` | the first record |
 | `guard` | the password, its hint or the authenticator set, changed, verified or removed; every answer to the view check that is weighed, right or wrong (`check_failures` counts the wrong ones, an accepted code advances `last_counter`; a refused answer is `denied` and carries the checkpoint all the same) |
 | `vault_change` | a connection added, changed or removed (one event each, also on the setup screens) |
+| `protector_add` | the recovery key replaced (setup screens or `replace_recovery_key`), or this machine's key added: the new set of key wraps |
 | `connection_test` | the last test kept in the connection's row, failed or not |
 | `project_link`, `project_unlink` | a project row added, renamed or removed |
-| `vault_export` | in the copy: the view check left out |
-| `vault_import` | when the copy takes a new name |
+| `vault_export` | in the copy: the view check and this machine's key wrap left out |
+| `vault_import` | always: another machine's key wraps removed and this machine's added, and the new name when the copy takes one |
 | `audit_verify` / `success` (an acknowledgement) | it does not: it records the record as it stands (see below) |
 
 The vault opens only when `vault_meta.settings_tag` equals the `settings_tag`
@@ -289,19 +303,23 @@ from one kind of row, or another vault, never verifies for a different one.
 | project path | `sourceorrery/v4/project-path` | vault id, path (the key is the metadata key; the MAC is the row's `path_mac`) |
 | audit row | `sourceorrery/v4/audit` | vault id, prev_hash, id, occurred_on, actor, operation, secret_name?, version?, outcome, detail?, keyed, state_tag?, version_tag?, settings_tag? |
 | audit head | `sourceorrery/v2/audit-head` | vault id, id, hash |
-| settings | `sourceorrery/v2/settings` | vault id, schema_version, name, created_on, recovery_level, retention_days, then each of `"password"`, `"password_hint"`, `"second_factor"` and `"check_failures"` followed by its stored JSON when present, then `"connections"`, their count and each connection's id and tag in id order when there are any, then `"projects"` the same way |
+| settings | `sourceorrery/v2/settings` | vault id, schema_version, name, created_on, recovery_level, retention_days, then each of `"password"`, `"password_hint"`, `"second_factor"` and `"check_failures"` followed by its stored JSON when present, then `"connections"`, their count and each connection's id and tag in id order when there are any, then `"projects"` the same way, then always `"key_wraps"`, their count and each wrap's id and key-wrap encoding in id order |
+| key wrap | `sourceorrery/v5/key-wrap` | vault id, id, kind_json, wrapped_nonce, wrapped_key, created_on (the whole row; listed inside the settings record, not tagged on its own) |
 
 `?` marks an optional field (`state_tag?`, `version_tag?` and
 `settings_tag?` are optional byte strings); timestamps are their stored
 Unix-nanosecond integers.
 
 The connections and projects are listed in the settings record by id and
-tag, so a row added, removed, or replaced by an older authentic copy of
-itself breaks the settings tag and the vault refuses to open. An older
-authentic copy of the *whole* record (its `vault_meta` keys and its
-connections and projects rows together) verifies by its tag, but it is not
-the record the chain checkpointed last, so it is refused as well (see *The
-settings record*). Only an older copy of the whole file, log included, goes
+tag, and the key wraps by id and their whole content, so a row added,
+removed, or replaced by an older authentic copy of itself breaks the
+settings tag and the vault refuses to open. An older authentic copy of the
+*whole* record (its `vault_meta` keys and its connections, projects and key
+wraps together) verifies by its tag, but it is not the record the chain
+checkpointed last, so it is refused as well (see *The settings record*).
+This is what makes a replaced recovery key stop working in the file; it
+does not change the vault key, which an old key's holder can still use on
+an old copy (ADR 0010). Only an older copy of the whole file, log included, goes
 undetected ([threat model](threat-model.md), *Snapshot rollback*).
 
 ## Audit chain
@@ -389,14 +407,21 @@ acknowledgement) and `head_valid`. The log is intact when `first_broken`
 is null, `truncations` is 0 and `head_valid` is true; an acknowledged
 truncation is still a truncation. The check is read-only.
 
-## Compatibility
+## Supported format
 
 `schema_version` is checked on open. A **newer** schema is refused with a
-clear error. An **older** one (schemas 1–3, written by earlier releases)
-is refused with `migration_required`: those files are not read, and such a
-vault is recreated (`sourceorrery setup`) and its secrets set again. The
-wrapping AAD names the format, so a file whose marker was edited to
-another number cannot be opened as that format either.
+clear error. An **older** one (schemas 1–4: earlier releases, and development
+builds before the key wraps were authenticated) is refused with
+`migration_required`, without the file being changed: those files are not
+read, nothing is written to them or beside them, and `vault export`,
+`vault destroy` and `vault create` refuse them too. The file is kept for
+the release that wrote it. There is no in-place conversion or legacy
+compatibility layer; start with a new vault for this release.
+[Supported files, export and import](upgrading.md) covers the current
+format and portability. Changing the schema marker does not convert the
+file: authenticated settings and key-wrap inventory must also verify.
+The wrap AAD binds the key to its vault and wrap; its `v4` domain remains
+in use in schema 5.
 
 ## Creating a vault
 

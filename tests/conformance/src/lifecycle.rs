@@ -55,6 +55,11 @@ pub static SCENARIOS: &[Scenario] = &[
         needs: &[],
     },
     Scenario {
+        name: "a_new_restricted_version_is_never_returned",
+        run: a_new_restricted_version_is_never_returned,
+        needs: &[],
+    },
+    Scenario {
         name: "a_cleared_expiry_no_longer_applies",
         run: a_cleared_expiry_no_longer_applies,
         needs: &[Capability::ClearableTimeWindow],
@@ -268,6 +273,87 @@ fn time_window_is_enforced_on_retrieval(client: &dyn SecretClient) {
         )
         .unwrap_err();
     assert_eq!(err.code(), "invalid_argument");
+}
+
+/// The value a read of `name` (at `version`) returns, or `None` when it is
+/// refused.
+fn read(client: &dyn SecretClient, name: &str, version: Option<&str>) -> Option<Vec<u8>> {
+    client
+        .get_secret(name, version)
+        .ok()
+        .map(|secret| secret.value.expose().to_vec())
+}
+
+/// A version written disabled, or before its window, over an enabled one is
+/// never what a read returns, by name or by its version, and every
+/// metadata read says why (ADR 0011: the policy is in place by the time the
+/// write returns, and was before the value could be read). With properties
+/// kept per secret the restriction covers the older versions too; the new
+/// value is refused either way.
+fn a_new_restricted_version_is_never_returned(client: &dyn SecretClient) {
+    let now = timestamp::now();
+    set(client, "rotating", "current");
+
+    let disabled = client
+        .set_secret(
+            "rotating",
+            SecretBytes::from("disabled-candidate"),
+            SetSecretOptions {
+                enabled: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(!disabled.enabled);
+    assert_ne!(
+        read(client, "rotating", None).as_deref(),
+        Some(&b"disabled-candidate"[..])
+    );
+    let err = client
+        .get_secret("rotating", Some(&disabled.version))
+        .unwrap_err();
+    assert_eq!(err.code(), "disabled");
+    assert!(
+        !client
+            .get_secret_properties("rotating", Some(&disabled.version))
+            .unwrap()
+            .enabled
+    );
+    let versions = client
+        .list_properties_of_secret_versions("rotating")
+        .unwrap();
+    let listed = versions
+        .iter()
+        .find(|p| p.version == disabled.version)
+        .expect("the new version is listed");
+    assert!(!listed.enabled);
+
+    let not_before = now + Duration::hours(1);
+    let pending = client
+        .set_secret(
+            "rotating",
+            SecretBytes::from("future-candidate"),
+            SetSecretOptions {
+                not_before: Some(not_before),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(pending.not_before.is_some());
+    let newest = read(client, "rotating", None);
+    assert_ne!(newest.as_deref(), Some(&b"future-candidate"[..]));
+    assert_ne!(newest.as_deref(), Some(&b"disabled-candidate"[..]));
+    let err = client
+        .get_secret("rotating", Some(&pending.version))
+        .unwrap_err();
+    assert_eq!(err.code(), "not_yet_valid");
+    let listing = client.list_properties_of_secrets().unwrap();
+    let entry = listing
+        .iter()
+        .find(|p| p.name == "rotating")
+        .expect("listed");
+    assert_eq!(entry.version, pending.version, "the newest version");
+    assert!(entry.not_before.is_some_and(|t| t > now));
 }
 
 fn a_cleared_expiry_no_longer_applies(client: &dyn SecretClient) {

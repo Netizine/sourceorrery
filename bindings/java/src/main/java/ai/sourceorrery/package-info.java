@@ -11,10 +11,10 @@
  *
  * <p>The package only reads: there is no way to create, change or delete a
  * secret, and no key, check, connection or audit management. Vaults are
- * created, and secrets stored, with the {@code sourceorrery} command-line
+ * created, and secret values set, with the {@code sourceorrery} command-line
  * tool, which is installed separately and need not be present where the
  * application runs
- * (<a href="https://sourceorrery.ai/getting-started/">Getting started</a>,
+ * (<a href="https://sourceorrery.ai/getting-started/#install">CLI installation guide</a>,
  * <a href="https://sourceorrery.ai/sdks/java/">the Java guide</a>).
  *
  * <p>The package binds the read-only part

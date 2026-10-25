@@ -39,7 +39,7 @@ exception is `scripts/dev/keyring-smoke.sh` / `.ps1`, run by hand or by the
 own entries only ([Building](docs/building.md#the-os-keyring-path)).
 
 Third-party GitHub Actions are pinned to a commit, with the version as a
-comment (`uses: actions/checkout@<sha> # v4.4.0`). Dependabot moves the
+comment (`uses: actions/checkout@<sha> # v7.0.1`). Dependabot moves the
 pins; to add or bump one by hand, resolve the release tag to its commit
 (`git ls-remote --tags https://github.com/<owner>/<action>`) and keep the
 comment, and give `dtolnay/rust-toolchain` an explicit `toolchain:`. The

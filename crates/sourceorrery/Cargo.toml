@@ -1,6 +1,6 @@
 [package]
 name = "sourceorrery"
-description = "Read-only SourceOrrery client: open a vault, get secrets, resolve references, load a project manifest"
+description = "Read-only SourceOrrery client; requires the separate CLI to create vaults and set secret values"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -11,6 +11,14 @@
 //! whole secret and `update_secret_properties` accepts only the newest
 //! version (`unsupported` otherwise). The mapping is in [`mapping`]; every
 //! difference is documented in `docs/providers/aws-secrets-manager.md`.
+//!
+//! A new version is published so that it is never current under a looser
+//! policy than asked, nor the old one under a looser policy than both
+//! (ADR 0011): the tags are first narrowed to the stricter of the old and
+//! new policy, then the value is put, then the tags reach the target in an
+//! order that never loosens below it ([`mapping::TagPlan`]). Input the
+//! service would refuse is refused before any request; a failure once
+//! something may have changed is `outcome_unknown`.
 
 #![forbid(unsafe_code)]
 
@@ -35,7 +43,15 @@ use sourceorrery_core::{
 };
 use time::OffsetDateTime;
 
-use crate::mapping::{CURRENT, RECOVERY_WINDOW_DAYS, SecretProps, Version};
+use crate::mapping::{CURRENT, RECOVERY_WINDOW_DAYS, SecretProps, TagPlan, Version};
+
+/// The result of a change of which part may have been made (ADR 0011).
+fn unknown(reason: String) -> SecretError {
+    SecretError::OutcomeUnknown {
+        at: Provider::AwsSecretsManager.name().to_owned(),
+        reason,
+    }
+}
 
 /// How a client reaches Secrets Manager: a connection's settings.
 #[derive(Debug, Clone)]
@@ -356,45 +372,129 @@ impl AwsClient {
             .collect()
     }
 
-    /// Replace the secret's tags with `wanted`: tags no longer present are
-    /// removed, the rest written.
-    async fn write_tags(
+    /// Write `tags` to the secret: added, or replacing a value.
+    async fn tag(&self, name: &str, tags: &BTreeMap<String, String>) -> Result<()> {
+        if tags.is_empty() {
+            return Ok(());
+        }
+        self.client
+            .tag_resource()
+            .secret_id(self.secret_id(name))
+            .set_tags(Some(mapping::tags_of(tags)))
+            .send()
+            .await
+            .map_err(|err| map_error(err, name))?;
+        Ok(())
+    }
+
+    /// Remove the tags `keys` from the secret.
+    async fn untag(&self, name: &str, keys: &[String]) -> Result<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        self.client
+            .untag_resource()
+            .secret_id(self.secret_id(name))
+            .set_tag_keys(Some(keys.to_vec()))
+            .send()
+            .await
+            .map_err(|err| map_error(err, name))?;
+        Ok(())
+    }
+
+    /// Run `plan` on the secret's tags, in its order. On failure, the error
+    /// and whether an earlier step had changed something.
+    async fn apply(
         &self,
         name: &str,
-        current: &[aws_sdk_secretsmanager::types::Tag],
-        wanted: &BTreeMap<String, String>,
+        plan: &TagPlan,
+    ) -> std::result::Result<(), (SecretError, bool)> {
+        self.untag(name, &plan.untag_first)
+            .await
+            .map_err(|err| (err, false))?;
+        let changed = !plan.untag_first.is_empty();
+        self.tag(name, &plan.tag)
+            .await
+            .map_err(|err| (err, changed))?;
+        let changed = changed || !plan.tag.is_empty();
+        self.untag(name, &plan.untag_last)
+            .await
+            .map_err(|err| (err, changed))
+    }
+
+    /// Put `value` as a new version of the existing secret `name`
+    /// (`described`) with the properties `props` (ADR 0011): narrow the
+    /// policy to the stricter of the old and new, put the value, then the
+    /// target tags; a refused put undoes the narrowing.
+    async fn put_existing(
+        &self,
+        name: &str,
+        described: &DescribeSecretOutput,
+        previous: &SecretProps,
+        props: &SecretProps,
+        value: SecretBytes,
+        version: &str,
     ) -> Result<()> {
-        let id = self.secret_id(name);
-        let stale: Vec<String> = current
-            .iter()
-            .filter_map(|t| t.key())
-            .filter(|k| !wanted.contains_key(*k))
-            .map(str::to_owned)
+        let current = mapping::tag_map(described.tags());
+        let narrowing: BTreeMap<String, String> = previous
+            .meet(props)
+            .policy_tags()
+            .into_iter()
+            .filter(|(key, value)| current.get(key) != Some(value))
             .collect();
-        if !stale.is_empty() {
-            self.client
-                .untag_resource()
-                .secret_id(&id)
-                .set_tag_keys(Some(stale))
-                .send()
-                .await
-                .map_err(|err| map_error(err, name))?;
+        let mut narrowed = current.clone();
+        narrowed.extend(narrowing.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let plan = TagPlan::to(&narrowed, &props.to_tags());
+        mapping::check_tag_count(TagPlan::default().peak(&narrowed).max(plan.peak(&narrowed)))?;
+
+        self.tag(name, &narrowing).await.map_err(|err| {
+            if err.is_refusal() {
+                err
+            } else {
+                unknown(format!(
+                    "no value was sent; the policy of '{name}' may already be narrowed to the \
+                     stricter of its old and new one: {err}"
+                ))
+            }
+        })?;
+        let mut request = self
+            .client
+            .put_secret_value()
+            .secret_id(self.secret_id(name))
+            .client_request_token(version);
+        request = match std::str::from_utf8(value.expose()) {
+            Ok(text) if !text.contains('\0') => request.secret_string(text),
+            _ => request.secret_binary(Blob::new(value.expose().to_vec())),
+        };
+        drop(value);
+        if let Err(err) = request.send().await.map_err(|err| map_error(err, name)) {
+            if !err.is_refusal() {
+                return Err(unknown(format!(
+                    "the new version of '{name}' may have been published; the secret is held at \
+                     the stricter of its old and new policy: {err}"
+                )));
+            }
+            if !narrowing.is_empty()
+                && let Err((undo, _)) = self.apply(name, &TagPlan::to(&narrowed, &current)).await
+            {
+                return Err(unknown(format!(
+                    "no value was published ({err}), but the policy of '{name}' is still \
+                     narrowed to the stricter of its old and new one: {undo}"
+                )));
+            }
+            return Err(err);
         }
-        if !wanted.is_empty() {
-            self.client
-                .tag_resource()
-                .secret_id(&id)
-                .set_tags(Some(mapping::tags_of(wanted)))
-                .send()
-                .await
-                .map_err(|err| map_error(err, name))?;
-        }
-        Ok(())
+        self.apply(name, &plan).await.map_err(|(err, _)| {
+            unknown(format!(
+                "version {version} of '{name}' was published and the secret is held at least as \
+                 strict as asked, but not all its tags were written: {err}"
+            ))
+        })
     }
 
     /// Read one version's value.
     async fn read_value(&self, name: &str, version: &str) -> Result<SecretBytes> {
-        let output = self
+        let mut output = self
             .client
             .get_secret_value()
             .secret_id(self.secret_id(name))
@@ -410,11 +510,13 @@ impl AwsClient {
                 }
                 other => other,
             })?;
-        if let Some(text) = output.secret_string() {
-            return Ok(SecretBytes::new(text.as_bytes().to_vec()));
+        // Moved out of the SDK's answer, not copied; the SDK's own buffers
+        // (the response body it parsed) are its own.
+        if let Some(text) = output.secret_string.take() {
+            return Ok(SecretBytes::from_string(text));
         }
-        if let Some(blob) = output.secret_binary() {
-            return Ok(SecretBytes::new(blob.as_ref().to_vec()));
+        if let Some(blob) = output.secret_binary.take() {
+            return Ok(SecretBytes::new(blob.into_inner()));
         }
         Err(SecretError::Storage(format!(
             "version {version} of '{name}' holds neither a string nor binary value"
@@ -527,6 +629,9 @@ impl AsyncSecretClient for AwsClient {
     ) -> Result<SecretProperties> {
         validate_secret_name(name)?;
         options.validate()?;
+        mapping::check_user_tags(&options.tags)?;
+        mapping::check_content_type(options.content_type.as_deref())?;
+        mapping::check_value(value.expose())?;
         let existing = self.describe(name).await?;
         if let Some(described) = &existing
             && described.deleted_date().is_some()
@@ -537,10 +642,6 @@ impl AsyncSecretClient for AwsClient {
         }
         let id = self.secret_id(name);
         let version = mapping::new_version_id();
-        let text = std::str::from_utf8(value.expose())
-            .ok()
-            .filter(|t| !t.contains('\0'))
-            .map(str::to_owned);
         // Properties apply to the secret; the newest `set` defines them. User
         // tags are replaced only when the options carry some.
         let previous = existing
@@ -562,36 +663,31 @@ impl AsyncSecretClient for AwsClient {
         };
         let wanted = props.to_tags();
         if let Some(described) = &existing {
-            let mut request = self
-                .client
-                .put_secret_value()
-                .secret_id(&id)
-                .client_request_token(&version);
-            request = match (&text, value.expose()) {
-                (Some(text), _) => request.secret_string(text),
-                (None, bytes) => request.secret_binary(Blob::new(bytes.to_vec())),
-            };
-            request.send().await.map_err(|err| map_error(err, name))?;
-            drop(value);
-            self.write_tags(name, described.tags(), &wanted).await?;
+            self.put_existing(name, described, &previous, &props, value, &version)
+                .await?;
         } else {
+            // One request: the value and its tags arrive together.
+            mapping::check_tag_count(wanted.len())?;
             let mut request = self
                 .client
                 .create_secret()
                 .name(&id)
                 .client_request_token(&version)
                 .set_tags(Some(mapping::tags_of(&wanted)));
-            request = match (&text, value.expose()) {
-                (Some(text), _) => request.secret_string(text),
-                (None, bytes) => request.secret_binary(Blob::new(bytes.to_vec())),
+            request = match std::str::from_utf8(value.expose()) {
+                Ok(text) if !text.contains('\0') => request.secret_string(text),
+                _ => request.secret_binary(Blob::new(value.expose().to_vec())),
             };
-            request.send().await.map_err(|err| map_error(err, name))?;
             drop(value);
+            request.send().await.map_err(|err| map_error(err, name))?;
         }
-        let versions = self.versions(name).await?;
-        let created_on = versions
-            .iter()
-            .find(|v| v.id == version)
+        // The change is made: a creation time that cannot be read now is
+        // this machine's clock, not a failure.
+        let created_on = self
+            .versions(name)
+            .await
+            .ok()
+            .and_then(|versions| versions.into_iter().find(|v| v.id == version))
             .map_or_else(timestamp::now, |v| v.created_on);
         Ok(props.properties(&self.vault_name, name, &version, created_on))
     }
@@ -712,8 +808,21 @@ impl AsyncSecretClient for AwsClient {
         // machine's: an update never reads as earlier than the version.
         properties.updated_on = properties.updated_on.max(current.created_on);
         let next = SecretProps::from_properties(&properties, current.created_on);
-        self.write_tags(name, described.tags(), &next.to_tags())
-            .await?;
+        mapping::check_user_tags(&next.tags)?;
+        mapping::check_content_type(next.content_type.as_deref())?;
+        let tags = mapping::tag_map(described.tags());
+        let plan = TagPlan::to(&tags, &next.to_tags());
+        mapping::check_tag_count(plan.peak(&tags))?;
+        // The plan's order never loosens the policy below where it is going
+        // (ADR 0011); once a step has landed, a failure leaves the tags
+        // part way.
+        self.apply(name, &plan).await.map_err(|(err, changed)| {
+            if changed {
+                unknown(format!("the tags of '{name}' were changed in part: {err}"))
+            } else {
+                err
+            }
+        })?;
         Ok(properties)
     }
 

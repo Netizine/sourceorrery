@@ -73,6 +73,9 @@ pub enum ErrorKind {
     /// `rotation`: a rotation step was asked for in a state that does not
     /// allow it (a CLI workflow; a reader never performs one).
     Rotation,
+    /// `outcome_unknown`: a change sent to a remote provider may or may not
+    /// have been made (a CLI or tooling change; a reader never makes one).
+    OutcomeUnknown,
     /// A code added after this client was written.
     Other,
 }
@@ -102,6 +105,7 @@ impl ErrorKind {
             "unauthenticated" => Self::Unauthenticated,
             "provider_unavailable" => Self::ProviderUnavailable,
             "rotation" => Self::Rotation,
+            "outcome_unknown" => Self::OutcomeUnknown,
             _ => Self::Other,
         }
     }
@@ -313,6 +317,12 @@ fn remote_hint(err: &SecretError, ctx: &Context<'_>) -> Option<String> {
             })
         }
         SecretError::PermissionDenied(_) => ctx.provider.map(permission_hint).map(str::to_owned),
+        SecretError::OutcomeUnknown { .. } => Some(
+            "The provider may have made the change. Look at the secret there before repeating it \
+             (`sourceorrery secret versions <name>` lists its versions); `sourceorrery audit` \
+             lists the changes whose result the vault never learned"
+                .to_owned(),
+        ),
         SecretError::ProviderUnavailable { provider, .. } => {
             let connection = ctx.vault.map_or_else(
                 || "the vault's connection".to_owned(),
@@ -391,8 +401,10 @@ fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
             )
         }
         SecretError::MigrationRequired { name, .. } => format!(
-            "Vault '{name}' was written by an earlier release, which this release cannot read. \
-             Recreate it with `sourceorrery setup` and add its secrets again"
+            "Vault '{name}' was written by an earlier release, which this release cannot read; \
+             its file is left unchanged. Keep the file for that release, recreate the vault \
+             with this release's `sourceorrery setup` and set its secrets from the old file \
+             (the Upgrading guide)"
         ),
         SecretError::NotFound { name } => format!(
             "Store it with `sourceorrery secret set {name}{}` (the value is read from stdin or a \
@@ -433,6 +445,12 @@ fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
         SecretError::Manifest(_) => "Fix sourceorrery.toml (it declares names and references \
              only; a `value` key is a parse error) and check it with `sourceorrery check`"
             .to_owned(),
+        SecretError::Io(message) if message.contains("recovery-key file") => format!(
+            "The recovery-key file (the recovery_key_file option or {RECOVERY_KEY_FILE_ENV}) was \
+             needed, since no earlier source opened the vault, and it cannot be read or is \
+             empty. Fix the path, or give the key another way: the recovery_key option or \
+             {RECOVERY_KEY_ENV}"
+        ),
         SecretError::Storage(_) | SecretError::Io(_) => format!(
             "Check that the vault file and its directory are readable by this process.{}",
             ctx.home_note()
@@ -472,6 +490,7 @@ mod tests {
             "unauthenticated",
             "provider_unavailable",
             "rotation",
+            "outcome_unknown",
         ];
         for code in codes {
             assert_ne!(ErrorKind::from_code(code), ErrorKind::Other, "{code}");
@@ -479,6 +498,61 @@ mod tests {
         assert_eq!(ErrorKind::from_code("something_new"), ErrorKind::Other);
         assert!(ErrorKind::Expired.is_policy());
         assert!(!ErrorKind::Locked.is_policy());
+    }
+
+    /// Hints are written as `\`-continued strings: a lost continuation
+    /// leaves a run of spaces in the sentence (it happened once).
+    #[test]
+    fn every_hint_reads_as_one_sentence_run() {
+        let errors = [
+            SecretError::NotFound { name: "a".into() },
+            SecretError::Disabled {
+                name: "a".into(),
+                version: "b".into(),
+            },
+            SecretError::Locked("x".into()),
+            SecretError::VaultNotFound { name: "a".into() },
+            SecretError::MigrationRequired {
+                name: "a".into(),
+                schema: 3,
+            },
+            SecretError::VaultMismatch {
+                requested: "a".into(),
+                found: "b".into(),
+            },
+            SecretError::Crypto("x".into()),
+            SecretError::Unsupported("x".into()),
+            SecretError::InvalidName {
+                name: "a".into(),
+                reason: "r".into(),
+            },
+            SecretError::InvalidArgument("x".into()),
+            SecretError::Manifest("x".into()),
+            SecretError::Io("cannot read the recovery-key file".into()),
+            SecretError::Io("x".into()),
+            SecretError::Storage("x".into()),
+            SecretError::PermissionDenied("x".into()),
+            SecretError::OutcomeUnknown {
+                at: "p".into(),
+                reason: "r".into(),
+            },
+        ];
+        let context = Context {
+            vault: Some("dev"),
+            home: Some(Path::new("/home/x/so")),
+            unlock: None,
+            provider: None,
+        };
+        for source in &errors {
+            let err = Error::new(source, &context);
+            for text in [err.hint(), err.message()] {
+                assert!(
+                    !text.contains("  ") && !text.contains('\n'),
+                    "{}: {text:?}",
+                    source.code()
+                );
+            }
+        }
     }
 
     #[test]

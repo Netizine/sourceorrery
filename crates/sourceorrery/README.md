@@ -16,9 +16,8 @@ The crate opens a vault the way the `sourceorrery` CLI does, reads the
 newest accessible version of a secret (or an exact version), its
 properties, `sourceorrery://vault/name[/version]` references, and every
 secret a project's `sourceorrery.toml` declares. It cannot create, change,
-delete, recover or purge a secret, or touch the vault's keys, checks,
-connections or audit log:
-an application that only reads cannot be tricked into writing. It is also
+delete, recover or purge a secret, or manage vault keys, checks,
+connections or audit history. Reads still append audit events. It is also
 the core that the Python and JavaScript SDKs are built from.
 
 Documentation: [the Rust guide](https://sourceorrery.ai/sdks/rust/) ·
@@ -27,11 +26,13 @@ Documentation: [the Rust guide](https://sourceorrery.ai/sdks/rust/) ·
 
 ## Before you start: the CLI
 
-This crate only reads. Vaults are created, and secrets stored, with the
-`sourceorrery` command-line tool, which is a separate install:
+### Option 1: Set up with the CLI
+
+This SDK is read-only. Use the separately installed `sourceorrery` CLI to
+create vaults and set secret values. Follow the
+[CLI installation guide](https://sourceorrery.ai/getting-started/#install), then:
 
 ```bash
-cargo install --locked sourceorrery-cli      # or a prebuilt binary from the GitHub release
 sourceorrery setup                           # screens: the vault, its checks, its storage
 sourceorrery secret set database-password --vault development
 ```
@@ -39,6 +40,19 @@ sourceorrery secret set database-password --vault development
 The CLI does not have to be installed where your application runs: this
 crate opens the vault file itself. See
 [Getting started](https://sourceorrery.ai/getting-started/).
+
+### Option 2: Set up with an AI coding agent
+
+```bash
+sourceorrery init --integration all
+```
+
+Use your existing coding agent and ask: "Set up SourceOrrery for this
+project without showing secret values." Replace `all` with your agent's
+name to install only its skills. The agent handles the manifest, code and
+launch commands; you create vaults and enter values privately.
+The [agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+also covers updating skills from the repository independently of the CLI.
 
 ## Install
 

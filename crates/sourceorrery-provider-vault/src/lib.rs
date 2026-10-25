@@ -10,6 +10,13 @@
 //! is in [`kv`]; how a token is found is in [`auth`]. The transport never
 //! logs a body, a value crosses the crate only as `SecretBytes`, and every
 //! message names paths and statuses, never what a response held.
+//!
+//! A new version is published so that it is never readable under a looser
+//! policy than it was written with (ADR 0011): its properties go in first,
+//! as this writer's intent, the data is written with check-and-set, and one
+//! merge patch commits them. Every `custom_metadata` change is a merge patch
+//! of its own keys, so writers never drop each other's. A failure once
+//! something may have changed is `outcome_unknown`.
 
 #![forbid(unsafe_code)]
 
@@ -17,8 +24,8 @@ pub mod auth;
 mod http;
 pub mod kv;
 
-use std::collections::BTreeMap;
 use std::fmt;
+use std::hash::{BuildHasher, Hasher};
 
 use async_trait::async_trait;
 use reqwest::{Method, StatusCode};
@@ -36,8 +43,32 @@ pub use auth::{Auth, Environment, Token};
 use crate::http::{Reply, Transport, default_error};
 use crate::kv::{
     DELETED_KEY, DeletedMarker, ListResponse, Metadata, MetadataResponse, MountResponse,
-    ReadResponse, VersionProps, WriteResponse, properties_key,
+    ReadResponse, VersionProps, WriteResponse, intent_key, properties_key,
 };
+
+/// A change of some `custom_metadata` keys: a value sets one, `null`
+/// removes it.
+type Changes = serde_json::Map<String, serde_json::Value>;
+
+/// 16 hex digits that tell this write's intent from another writer's.
+fn nonce() -> String {
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        time::OffsetDateTime::now_utc()
+            .unix_timestamp_nanos()
+            .cast_unsigned(),
+    );
+    hasher.write_u32(std::process::id());
+    format!("{:016x}", hasher.finish())
+}
+
+/// The result of a change of which part may have been made (ADR 0011).
+fn unknown(reason: String) -> SecretError {
+    SecretError::OutcomeUnknown {
+        at: Provider::HashicorpVault.name().to_owned(),
+        reason,
+    }
+}
 
 /// A Vault server's KV v2 mount, served as a SourceOrrery vault.
 pub struct VaultClient {
@@ -228,17 +259,18 @@ impl VaultClient {
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<Reply> {
+        let merge = method == Method::PATCH;
         let reply = self
             .transport
             .call(method, path, Some(&self.token), body)
             .await?;
         if reply.status == StatusCode::FORBIDDEN {
-            return Err(self.classify_forbidden(path).await);
+            return Err(self.classify_forbidden(path, merge).await);
         }
         Ok(reply)
     }
 
-    async fn classify_forbidden(&self, path: &str) -> SecretError {
+    async fn classify_forbidden(&self, path: &str, merge: bool) -> SecretError {
         let lookup = self
             .transport
             .call(
@@ -254,8 +286,13 @@ impl VaultClient {
                 reason: "the token is invalid or has expired".to_owned(),
             },
             Ok(_) => SecretError::PermissionDenied(format!(
-                "{} refused {path}: the token lacks a capability on it",
-                Provider::HashicorpVault.display_name()
+                "{} refused {path}: the token lacks a capability on it{}",
+                Provider::HashicorpVault.display_name(),
+                if merge {
+                    " (properties are written with `patch`)"
+                } else {
+                    ""
+                }
             )),
             Err(err) => err,
         }
@@ -311,12 +348,102 @@ impl VaultClient {
         Ok(meta)
     }
 
-    /// Replace the custom metadata of `name`.
-    async fn write_custom(&self, name: &str, custom: &BTreeMap<String, String>) -> Result<()> {
+    /// Change the `custom_metadata` keys of `name` that `changes` names,
+    /// and no other: one JSON merge patch, so a key another writer set in
+    /// between survives.
+    async fn patch_custom(&self, name: &str, changes: Changes) -> Result<()> {
         let path = self.path("metadata", name);
-        let body = serde_json::json!({ "custom_metadata": custom });
+        let body = serde_json::json!({ "custom_metadata": changes });
+        self.send_ok(Method::PATCH, &path, Some(&body), name)
+            .await?;
+        Ok(())
+    }
+
+    /// Create the metadata of a secret that has none, so its keys can be
+    /// patched before its first version: a `POST` that sets only
+    /// `max_versions` to the mount's default and leaves `custom_metadata`
+    /// alone, should another writer have created it in between.
+    async fn create_metadata(&self, name: &str) -> Result<()> {
+        let path = self.path("metadata", name);
+        let body = serde_json::json!({ "max_versions": 0 });
         self.send_ok(Method::POST, &path, Some(&body), name).await?;
         Ok(())
+    }
+
+    /// Write `value` as version `current + 1` of `name` with check-and-set,
+    /// `intent` (when there is one) already patched in: the answer, or the
+    /// error [`Self::failed_write`] makes of a failure.
+    async fn write_data(
+        &self,
+        name: &str,
+        value: SecretBytes,
+        current: u64,
+        intent: Option<&str>,
+    ) -> Result<WriteResponse> {
+        let next = current + 1;
+        let path = self.path("data", name);
+        let mut body = serde_json::json!({
+            "data": kv::encode_value(&value),
+            "options": { "cas": current },
+        });
+        drop(value);
+        let err = match self.send(Method::POST, &path, Some(&body)).await {
+            Ok(reply) if reply.status.is_success() => {
+                kv::wipe(&mut body);
+                return reply.json(&path).map_err(|err| {
+                    unknown(format!(
+                        "version {next} of '{name}' was written, but the answer could not be \
+                         read: {err}"
+                    ))
+                });
+            }
+            Ok(reply)
+                if reply.status == StatusCode::BAD_REQUEST
+                    && reply.vault_errors().contains("check-and-set") =>
+            {
+                SecretError::InvalidArgument(format!(
+                    "another writer added version {next} of '{name}' at the same moment; \
+                     nothing was written"
+                ))
+            }
+            Ok(reply) if reply.status == StatusCode::NOT_FOUND => SecretError::NotFound {
+                name: name.to_owned(),
+            },
+            Ok(reply) => default_error(&path, reply.status, &reply.vault_errors()),
+            Err(err) => err,
+        };
+        kv::wipe(&mut body);
+        Err(self.failed_write(name, next, intent, err).await)
+    }
+
+    /// What a data write that failed with `err` returns, its intent removed
+    /// when nothing was written: a refusal as it is (another writer's
+    /// version taking the number as its own `invalid_argument`), anything
+    /// else `outcome_unknown` with the intent left to bind the version.
+    async fn failed_write(
+        &self,
+        name: &str,
+        version: u64,
+        intent: Option<&str>,
+        err: SecretError,
+    ) -> SecretError {
+        if !err.is_refusal() {
+            return unknown(format!(
+                "version {version} of '{name}' may have been written ({err}){}",
+                if intent.is_some() {
+                    "; it is held at least as restricted as asked"
+                } else {
+                    ""
+                }
+            ));
+        }
+        if let Some(key) = intent {
+            // Best effort: a leftover intent only restricts.
+            let mut changes = Changes::new();
+            changes.insert(key.to_owned(), serde_json::Value::Null);
+            let _ = self.patch_custom(name, changes).await;
+        }
+        err
     }
 
     /// Every live version of `name` as properties, newest first.
@@ -442,16 +569,67 @@ impl AsyncSecretClient for VaultClient {
                 name: name.to_owned(),
             });
         }
-        let path = self.path("data", name);
-        let body = serde_json::json!({ "data": kv::encode_value(&value), "options": {} });
-        drop(value);
-        let reply = self.send_ok(Method::POST, &path, Some(&body), name).await?;
-        let written: WriteResponse = reply.json(&path)?;
-        let created_on = kv::parse_time(&written.data.created_time, "created_time")?;
-        let properties = SecretProperties {
+        let current = existing.as_ref().map_or(0, |meta| meta.current_version);
+        let next = current + 1;
+        let props = VersionProps::asked(
+            options.enabled,
+            options.content_type.clone(),
+            options.tags.clone(),
+            options.not_before,
+            options.expires_on,
+        );
+        let document = props.document()?;
+        // What the commit removes: keys for `next` left by an attempt that
+        // stopped (a writer still in flight for it loses its check-and-set).
+        let mut commit = Changes::new();
+        for key in existing.iter().flat_map(|meta| meta.keys_for(next)) {
+            commit.insert(key, serde_json::Value::Null);
+        }
+        // The properties go in first, as this writer's intent for `next`:
+        // whatever fails from here on, the version is never readable under
+        // a looser policy than asked (ADR 0011).
+        let intent = if props.is_default() {
+            None
+        } else {
+            let key = intent_key(next, &nonce());
+            if existing.is_none() {
+                self.create_metadata(name).await?;
+            }
+            let mut changes = Changes::new();
+            changes.insert(key.clone(), serde_json::Value::String(document.clone()));
+            self.patch_custom(name, changes).await?;
+            Some(key)
+        };
+        let written = self
+            .write_data(name, value, current, intent.as_deref())
+            .await?;
+        let version = written.data.version;
+        if let Some(key) = &intent {
+            commit.insert(key.clone(), serde_json::Value::Null);
+        }
+        if !props.is_default() {
+            commit.insert(properties_key(version), serde_json::Value::String(document));
+        }
+        if !commit.is_empty() {
+            self.patch_custom(name, commit).await.map_err(|err| {
+                unknown(format!(
+                    "version {version} of '{name}' was written{}, but its properties were not \
+                     recorded: {err}",
+                    if intent.is_some() {
+                        " and is held at least as restricted as asked"
+                    } else {
+                        ""
+                    }
+                ))
+            })?;
+        }
+        // The change is made: an unreadable creation time is not a failure.
+        let created_on = kv::parse_time(&written.data.created_time, "created_time")
+            .unwrap_or_else(|_| timestamp::now());
+        Ok(SecretProperties {
             vault: self.vault_name.clone(),
             name: name.to_owned(),
-            version: written.data.version.to_string(),
+            version: version.to_string(),
             enabled: options.enabled,
             content_type: options.content_type,
             tags: options.tags,
@@ -460,18 +638,7 @@ impl AsyncSecretClient for VaultClient {
             created_on,
             updated_on: created_on,
             recovery_level: RecoveryLevel::Recoverable,
-        };
-        let props = VersionProps::from_properties(&properties, created_on);
-        if !props.is_default() {
-            let mut custom = existing.map(|m| m.custom()).unwrap_or_default();
-            custom.insert(
-                properties_key(written.data.version),
-                serde_json::to_string(&props)
-                    .map_err(|err| SecretError::Storage(err.to_string()))?,
-            );
-            self.write_custom(name, &custom).await?;
-        }
-        Ok(properties)
+        })
     }
 
     async fn get_secret(&self, name: &str, version: Option<&str>) -> Result<Secret> {
@@ -550,17 +717,21 @@ impl AsyncSecretClient for VaultClient {
                 version: properties.version.clone(),
             })?;
         let props = VersionProps::from_properties(&properties, created_on);
-        let mut custom = meta.custom();
-        if props.is_default() {
-            custom.remove(&properties_key(number));
-        } else {
-            custom.insert(
-                properties_key(number),
-                serde_json::to_string(&props)
-                    .map_err(|err| SecretError::Storage(err.to_string()))?,
-            );
+        // One patch: the version's committed properties, and its intents
+        // gone, since this decision supersedes them.
+        let mut changes = Changes::new();
+        for (key, _) in meta.intents_for(number)? {
+            changes.insert(key, serde_json::Value::Null);
         }
-        self.write_custom(name, &custom).await?;
+        changes.insert(
+            properties_key(number),
+            if props.is_default() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(props.document()?)
+            },
+        );
+        self.patch_custom(name, changes).await?;
         Ok(properties)
     }
 
@@ -573,19 +744,31 @@ impl AsyncSecretClient for VaultClient {
         })?;
         let properties = meta.properties(&self.vault_name, name, newest)?;
         let deleted_on = timestamp::now();
-        let path = self.path("delete", name);
-        let body = serde_json::json!({ "versions": versions });
-        self.send_ok(Method::POST, &path, Some(&body), name).await?;
+        // The marker first: once it is there SourceOrrery treats the secret
+        // as deleted, whether or not KV's delete then lands, and a delete
+        // that stops here can be recovered or purged.
         let marker = DeletedMarker {
             deleted_on: kv::format_time(deleted_on),
-            versions,
+            versions: versions.clone(),
         };
-        let mut custom = meta.custom();
-        custom.insert(
+        let mut changes = Changes::new();
+        changes.insert(
             DELETED_KEY.to_owned(),
-            serde_json::to_string(&marker).map_err(|err| SecretError::Storage(err.to_string()))?,
+            serde_json::Value::String(
+                serde_json::to_string(&marker)
+                    .map_err(|err| SecretError::Storage(err.to_string()))?,
+            ),
         );
-        self.write_custom(name, &custom).await?;
+        self.patch_custom(name, changes).await?;
+        let path = self.path("delete", name);
+        let body = serde_json::json!({ "versions": versions });
+        self.send_ok(Method::POST, &path, Some(&body), name)
+            .await
+            .map_err(|err| {
+                unknown(format!(
+                    "'{name}' is marked deleted, but its versions were not deleted in KV: {err}"
+                ))
+            })?;
         Ok(DeletedSecret {
             properties,
             deleted_on,
@@ -630,12 +813,20 @@ impl AsyncSecretClient for VaultClient {
             .ok_or_else(|| SecretError::NotDeleted {
                 name: name.to_owned(),
             })?;
+        // KV's undelete first: while the marker stays, SourceOrrery still
+        // treats the secret as deleted, and a recovery that stops here can
+        // be asked again.
         let path = self.path("undelete", name);
         let body = serde_json::json!({ "versions": marker.versions });
         self.send_ok(Method::POST, &path, Some(&body), name).await?;
-        let mut custom = meta.custom();
-        custom.remove(DELETED_KEY);
-        self.write_custom(name, &custom).await?;
+        let mut changes = Changes::new();
+        changes.insert(DELETED_KEY.to_owned(), serde_json::Value::Null);
+        self.patch_custom(name, changes).await.map_err(|err| {
+            unknown(format!(
+                "the versions of '{name}' were restored in KV, but it is still marked deleted: \
+                 {err}"
+            ))
+        })?;
         let newest = marker.versions.iter().copied().max().ok_or_else(|| {
             SecretError::Storage(format!("the deletion marker of '{name}' lists no versions"))
         })?;

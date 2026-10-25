@@ -886,7 +886,7 @@ fn a_vault_from_an_earlier_release_is_refused_and_never_migrated() {
         let vault = fx.create_vault("dev");
         set_with(&vault, "k", CANARY, SetSecretOptions::default());
     }
-    for older in ["1", "2", "3"] {
+    for older in ["1", "2", "3", "4"] {
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             conn.execute(
@@ -895,11 +895,19 @@ fn a_vault_from_an_earlier_release_is_refused_and_never_migrated() {
             )
             .unwrap();
         }
+        let before = std::fs::read(&path).unwrap();
         let err = fx.registry.open("dev", &fx.unlock("dev")).unwrap_err();
         assert_eq!(err.code(), "migration_required", "{err}");
-        assert!(err.to_string().contains("recreate the vault"), "{err}");
-        assert!(!err.to_string().contains(CANARY));
-        // Nothing was converted or written: the marker is as it was set.
+        // The way out keeps the file: it is moved aside, never destroyed.
+        let message = err.to_string();
+        assert!(message.contains("has not changed it"), "{err}");
+        assert!(
+            message.contains("moving it out of the vaults folder"),
+            "{err}"
+        );
+        assert!(!message.contains(CANARY));
+        // Nothing was converted or written: the file is byte for byte as it was.
+        assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(schema_marker(&path), older);
     }
 }

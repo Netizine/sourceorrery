@@ -2,11 +2,13 @@
 import Pagination from 'virtual:starlight/components/Pagination';
 import FAIcon from './FAIcon.astro';
 import BrandText from './BrandText.astro';
+import PrivacyBanner from './PrivacyBanner.astro';
 
 const isHome = Astro.locals.starlightRoute.id === '';
 const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
 ---
 
+<PrivacyBanner />
 <footer class:list={['so-page-footer', { 'so-home-footer': isHome }]} data-pagefind-ignore>
 	{isHome ? (
 		<>
@@ -15,12 +17,17 @@ const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
 				<BrandText text={siteTitle} />
 			</a>
 			<p class="so-privacy">
-				<FAIcon name="cookie-bite" class="so-privacy__icon" /> SourceOrrery has no cookie banner because I’m not interested in
-				stalking you around the internet. SourceOrrery takes privacy so seriously that I even refused
-				to build an auto-updater because phoning home once was already one call too many.
+				Built and maintained by <a href="https://www.linkedin.com/in/jmelvin/" target="_blank" rel="noopener noreferrer">James Melvin</a>. Optional analytics help me choose what to improve.
 			</p>
 		</>
 	) : <Pagination />}
+	<nav class="so-footer-links" aria-label="Site information">
+		<a href="/privacy/">Privacy</a>
+		<button type="button" data-privacy-settings aria-controls="so-privacy-banner">Privacy choices</button>
+		<a href="https://github.com/Netizine/sourceorrery" target="_blank" rel="noopener noreferrer">GitHub</a>
+		<a href="https://www.linkedin.com/in/jmelvin/" target="_blank" rel="me noopener noreferrer">James on LinkedIn</a>
+	</nav>
+	<noscript><p class="so-privacy">Optional analytics are off while JavaScript is disabled.</p></noscript>
 </footer>
 
 <style>
@@ -54,7 +61,9 @@ const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
 		color: var(--sl-color-gray-3);
 	}
 
-	.so-privacy :global(.so-privacy__icon) { margin-inline-end: 0.25em; }
+	.so-footer-links { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1.1rem; grid-column: 1 / -1; margin-top: 1rem; font-family: var(--so-font-ui); font-size: 0.8rem; }
+	.so-footer-links button { padding: 0; border: 0; background: transparent; color: var(--sl-color-text-accent); font: inherit; text-decoration: underline; text-underline-offset: 0.2em; cursor: pointer; }
+	.so-footer-links button:focus-visible { outline: 2px solid var(--sl-color-text-accent); outline-offset: 4px; }
 
 	@media (min-width: 48rem) {
 		.so-home-footer { grid-template-columns: auto minmax(0, 1fr); }

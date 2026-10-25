@@ -87,6 +87,9 @@ final class SecretValue implements JsonSerializable
 
     public function __clone()
     {
+        // The copy owns nothing, even if PHP destroys it after this throws:
+        // closing it must not free the original's bytes.
+        $this->bytes = null;
         throw new \LogicException('SecretValue cannot be cloned; call expose() deliberately');
     }
 }

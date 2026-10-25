@@ -37,7 +37,8 @@ use zeroize::Zeroizing;
 
 use super::SqliteVault;
 use super::audit::{
-    Checkpoints, outcome_of, settings_message, settings_problem, unacknowledged_truncations,
+    AT_CONNECTION, Checkpoints, SENT, outcome_of, settings_message, settings_problem,
+    unacknowledged_truncations,
 };
 use super::rows::{SecretRow, query_names_at};
 use super::schema::{
@@ -136,6 +137,15 @@ pub enum CatalogChange {
     Add,
     /// Take the secret's entry out: it was purged at the connection.
     Remove,
+}
+
+/// A change at a connection recorded before it was sent
+/// ([`SqliteVault::attempt_at_connection`]), which the event recording its
+/// result completes ([`SqliteVault::record_at_connection`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Attempt {
+    /// The id of its `pending` audit event.
+    pub event_id: u64,
 }
 
 /// One change to a vault's connections, as [`SqliteVault::change_settings`]
@@ -365,8 +375,8 @@ impl SqliteVault {
             meta.settings_tag.as_deref(),
         ) {
             return Err(SecretError::Crypto(
-                "vault settings integrity check failed (the view check, a connection or a \
-                 project was altered)"
+                "vault settings integrity check failed (the view check, a connection, a \
+                 project or a key wrap was altered)"
                     .to_owned(),
             ));
         }
@@ -816,15 +826,87 @@ impl SqliteVault {
         }))
     }
 
+    /// Check, before anything is sent to the connection `connection`, that
+    /// this vault may act there now (SR03 of the 2026-10-25 review): the
+    /// audit chain's head and no truncation waiting to be acknowledged, the
+    /// settings record and the connection's row as the chain last recorded
+    /// them, and for a secret its catalog row as `change` will need it. It
+    /// is the same gate [`Self::record_at_connection`] applies, without its
+    /// writes: nothing is written when it passes, and a refusal is recorded
+    /// as any refused operation is. No lock is held afterwards, while the
+    /// provider is called, so a change made in between is caught when the
+    /// call is recorded, not here.
+    pub fn preflight_at_connection(
+        &self,
+        connection: &str,
+        operation: AuditOperation,
+        name: Option<&str>,
+        change: CatalogChange,
+    ) -> Result<()> {
+        let mut conn = self.lock()?;
+        let tx = self.begin(&mut conn, operation)?;
+        let tx = match name {
+            Some(name) => self.validated(tx, operation, name)?,
+            None => tx,
+        };
+        match self.catalog_change(&tx, connection, name, false, change) {
+            // Dropped, not committed: the check wrote nothing.
+            Ok(_) => Ok(()),
+            Err(err) => self.fail(tx, operation, name, None, err),
+        }
+    }
+
+    /// Record, before the change `operation` of the secret `name` is sent to
+    /// the connection `connection`, that it is about to be (ADR 0011): after
+    /// the gate of [`Self::preflight_at_connection`], one `pending` event
+    /// (`at connection <id>: sent`), committed before this returns. The
+    /// event that records the result names the attempt
+    /// ([`Self::record_at_connection`]); while none does, the attempt is
+    /// listed by [`Self::unresolved_attempts`].
+    pub fn attempt_at_connection(
+        &self,
+        connection: &str,
+        operation: AuditOperation,
+        name: &str,
+        change: CatalogChange,
+    ) -> Result<Attempt> {
+        let mut conn = self.lock()?;
+        let tx = self.begin(&mut conn, operation)?;
+        let tx = self.validated(tx, operation, name)?;
+        if let Err(err) = self.catalog_change(&tx, connection, Some(name), false, change) {
+            return self.fail(tx, operation, Some(name), None, err);
+        }
+        self.audit(
+            &tx,
+            operation,
+            Some(name),
+            None,
+            AuditOutcome::Pending,
+            Some(&format!("{AT_CONNECTION}{connection}{SENT}")),
+        )?;
+        // The row just appended: this transaction holds the write lock.
+        let id: i64 = tx
+            .query_row("SELECT MAX(id) FROM audit_events", [], |row| row.get(0))
+            .map_err(db)?;
+        tx.commit().map_err(db)?;
+        Ok(Attempt {
+            event_id: u64::try_from(id).unwrap_or_default(),
+        })
+    }
+
     /// Record in this vault what was done at the connection `connection` for
     /// the secret `name` (or, without one, for the connection as a whole,
     /// such as a listing): one audit row for `operation` about `version`,
     /// with the outcome (`at connection <id>`, and the error's code when it
-    /// failed), and the catalog `change` it made, in one transaction. A
-    /// change is made only when `result` is `Ok`, and needs a name. A secret
-    /// that is not catalogued there (for [`CatalogChange::Keep`] and
-    /// [`CatalogChange::Remove`]), or that the vault already has (for
-    /// [`CatalogChange::Add`]), is refused and the refusal is recorded.
+    /// failed; `unknown` for [`SecretError::OutcomeUnknown`]), naming the
+    /// `attempt` it completes, and the catalog `change` it made, in one
+    /// transaction. A change is made only when `result` is `Ok`, and needs a
+    /// name. A secret that is not catalogued there (for
+    /// [`CatalogChange::Keep`] and [`CatalogChange::Remove`]), or that the
+    /// vault already has (for [`CatalogChange::Add`]), is refused and the
+    /// refusal is recorded; the attempt then stays unresolved, since the
+    /// vault did not record what the provider did.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_at_connection(
         &self,
         connection: &str,
@@ -833,6 +915,7 @@ impl SqliteVault {
         version: Option<&str>,
         result: std::result::Result<(), &SecretError>,
         change: CatalogChange,
+        attempt: Option<Attempt>,
     ) -> Result<()> {
         let mut conn = self.lock()?;
         let tx = self.begin(&mut conn, operation)?;
@@ -844,9 +927,12 @@ impl SqliteVault {
             Ok(state) => state,
             Err(err) => return self.fail(tx, operation, name, version, err),
         };
+        let completes = attempt
+            .map(|attempt| format!(" (attempt {})", attempt.event_id))
+            .unwrap_or_default();
         let detail = match result {
-            Ok(()) => format!("at connection {connection}"),
-            Err(err) => format!("at connection {connection}: {}", err.code()),
+            Ok(()) => format!("{AT_CONNECTION}{connection}{completes}"),
+            Err(err) => format!("{AT_CONNECTION}{connection}: {}{completes}", err.code()),
         };
         match (name, result) {
             (Some(name), Ok(())) => self.audit_change(

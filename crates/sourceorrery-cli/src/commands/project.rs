@@ -479,6 +479,14 @@ fn run_inner(ctx: &Ctx, args: &RunArgs) -> anyhow::Result<i32> {
     for var in crate::context::UNLOCK_ENV_VARS {
         command.env_remove(var);
     }
+    // Every variable the manifest names is the vault's to fill: one whose
+    // optional secret did not resolve (missing, disabled, outside its
+    // window, deleted) is absent from the child, never a value inherited
+    // from our environment that passes for the vault's (SR10). On Windows
+    // the names match case-insensitively, as the environment does.
+    for entry in &entries {
+        command.env_remove(&entry.env);
+    }
     for (key, value) in &env {
         let text = value.expose_utf8().ok_or_else(|| {
             anyhow!("secret for {key} is not valid UTF-8 and cannot be an environment variable")

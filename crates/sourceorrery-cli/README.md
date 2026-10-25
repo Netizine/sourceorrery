@@ -18,51 +18,47 @@ Documentation: **<https://sourceorrery.ai>** ·
 
 ## Install
 
-```bash
-cargo install --locked sourceorrery-cli
-```
+Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install)
+for your platform. It covers ready-to-run packages, verified downloads and
+source builds; Rust is not required for a prebuilt installation.
 
-This builds the `sourceorrery` binary. It needs Rust 1.91.1 or newer and a C
-compiler for the bundled SQLite, and on Linux `pkg-config` and
-`libdbus-1-dev` for the Secret Service. `--locked` builds with the
-dependency versions the release was tested with.
-
-Prebuilt binaries for Windows, macOS and Linux (x64 and arm64), with a
-`SHA256SUMS` file, are on the
-[GitHub releases](https://github.com/Netizine/sourceorrery/releases/latest)
-page. If you are reading this inside one of those archives, the
-`sourceorrery` binary next to it is the CLI: put it on your `PATH`
-([per platform](https://sourceorrery.ai/getting-started/#from-the-github-release)).
+If you are reading this inside a CLI release archive, the `sourceorrery`
+binary next to this README is the CLI. The installation guide explains how
+to add it to your `PATH`. Check the installed version with
+`sourceorrery --version`.
 
 ## Quick start
 
+### Option 1: Set up with the CLI
+
+Create or choose a `development` vault on the setup screens, keeping its
+recovery key privately. Then store a value at the hidden prompt and select
+the project's secrets:
+
 ```bash
-# A vault, its key protected by the OS credential store
-sourceorrery vault create development
-
-# A secret, typed at a hidden prompt, piped in or read from a file; never an argument
+sourceorrery setup
 sourceorrery secret set database-password --vault development
-
-# Metadata only; a value is shown only with an explicit --reveal
-sourceorrery secret list --vault development
-
-# Declare what the project needs, check it resolves, run with it
-sourceorrery init
+sourceorrery init development --all
 sourceorrery check
-sourceorrery run -- npm start      # DATABASE_PASSWORD is set in the child only
-
-# Browse vaults, secrets, versions and the audit log
+sourceorrery run -- npm start
 sourceorrery ui
-
-# Already have a .env file? Store every value and declare every key, printing names only
-sourceorrery import .env
-
-# Give an AI coding agent the skills to set up SourceOrrery and migrate the project
-sourceorrery init --integration claude      # or cursor, codex, copilot, gemini, ... all
 ```
 
-The agent skills are compiled into the binary, so nothing is downloaded:
-[AI coding agents](https://sourceorrery.ai/guides/ai-agents/).
+`sourceorrery import .env` can move existing values without displaying
+them; review its report before deleting the original file.
+
+### Option 2: Set up with an AI coding agent
+
+```bash
+sourceorrery init --integration all
+```
+
+Use your existing coding agent and ask: "Set up SourceOrrery for this
+project without showing secret values." Replace `all` with your agent's
+name to install only its skills. The agent handles the manifest, code and
+launch commands; you create vaults and enter values privately.
+The [agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+also covers updating skills from the repository independently of the CLI.
 
 On a server, in a container or in CI, where this machine's key is not
 available, the vault opens with its recovery key from

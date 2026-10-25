@@ -10,7 +10,11 @@
  * ```
  *
  * The package only reads: no set, update, delete, recover or purge, and no
- * key, check, connection or audit management. Administration is the CLI's job.
+ * key, check, connection or audit management. Use the separately installed
+ * CLI to create vaults and set secret values:
+ * https://sourceorrery.ai/getting-started/#install.
+ * Installing this SDK does not install the CLI; applications do not need
+ * a CLI process running alongside them.
  */
 
 /** Options accepted when opening a vault or loading a project. */

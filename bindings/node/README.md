@@ -18,8 +18,8 @@ vault. This package is its read-only JavaScript and TypeScript SDK: it
 opens a vault, reads the newest accessible version of a secret (or an
 exact version), its properties and `sourceorrery://` references, and loads
 every secret a project's `sourceorrery.toml` declares. It cannot create,
-change or delete a secret: an application that only reads cannot be
-tricked into writing.
+change or delete a secret through its public API; reads still append
+audit events.
 
 Documentation: [the JavaScript guide](https://sourceorrery.ai/sdks/javascript/) ·
 [Getting started](https://sourceorrery.ai/getting-started/) ·
@@ -27,13 +27,11 @@ Documentation: [the JavaScript guide](https://sourceorrery.ai/sdks/javascript/) 
 
 ## Before you start: the CLI
 
-This package only reads. Vaults are created, and secrets stored, with the
-`sourceorrery` command-line tool, which npm does not install. Install it
-once on the machine where you manage secrets, from the
-[GitHub release](https://github.com/Netizine/sourceorrery/releases/latest)
-(Windows, macOS and Linux, x64 and arm64) or with
-`cargo install --locked sourceorrery-cli --version 0.2.0`
-([step by step](https://sourceorrery.ai/getting-started/#install)), then:
+### Option 1: Set up with the CLI
+
+This SDK is read-only. Use the separately installed `sourceorrery` CLI to
+create vaults and set secret values. npm does not install the CLI. Follow
+the [CLI installation guide](https://sourceorrery.ai/getting-started/#install), then:
 
 ```bash
 sourceorrery vault create development
@@ -42,6 +40,19 @@ sourceorrery secret set database-password --vault development   # typed at a hid
 
 The CLI does not have to be installed where your application runs: this
 package opens the vault file itself.
+
+### Option 2: Set up with an AI coding agent
+
+```bash
+sourceorrery init --integration all
+```
+
+Use your existing coding agent and ask: "Set up SourceOrrery for this
+project without showing secret values." Replace `all` with your agent's
+name to install only its skills. The agent handles the manifest, code and
+launch commands; you create vaults and enter values privately.
+The [agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+also covers updating skills from the repository independently of the CLI.
 
 ## Install
 
@@ -82,7 +93,7 @@ A secret that one of the vault's connections stores (HashiCorp Vault, AWS
 Secrets Manager or Azure Key Vault) is read at that provider by the same
 calls, with the credentials the connection stores or the ones the
 provider's own tools find in the environment
-([providers](../../docs/providers/)).
+([providers](https://sourceorrery.ai/providers/)).
 
 ## Errors and values
 

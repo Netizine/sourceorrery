@@ -322,6 +322,80 @@ fn listing_cost_does_not_grow_with_the_number_of_secrets() {
     assert!(large_live <= 20, "a listing ran {large_live} statements");
 }
 
+/// The audit log's indexes. The chain-head check every append makes, and
+/// so every operation, counts the keyed rows and finds the newest of them;
+/// without `audit_keyed` each is a scan of the whole log, and a read got
+/// slower as its own audit rows accumulated (B29: 91 ms a read at 100,000
+/// events, against 13 ms at 1,000). With it, and no table statistics, the
+/// planner took it for the truncation, settings and checkpoint checks too,
+/// which it does not serve; so each check names its index. Every index is
+/// created again at unlock when it is missing, and the operations work.
+#[test]
+fn every_check_reads_its_index_not_the_whole_log() {
+    const INDEXES: [&str; 5] = [
+        "audit_events_by_secret",
+        "audit_checkpoints",
+        "audit_verifications",
+        "audit_settings",
+        "audit_keyed",
+    ];
+    fn plan(conn: &rusqlite::Connection, sql: &str) -> Vec<String> {
+        conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+    fn present(conn: &rusqlite::Connection) -> Vec<String> {
+        conn.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'audit_%'")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (path, vault, key) = create(&dir);
+    vault
+        .set_secret("db", SecretBytes::from("v"), SetSecretOptions::default())
+        .unwrap();
+    {
+        let conn = vault.conn.lock().unwrap();
+        for sql in [audit::KEYED_COUNT_SQL, audit::LAST_KEYED_SQL] {
+            let steps = plan(&conn, sql);
+            assert!(
+                steps.iter().any(|step| step.contains("audit_keyed")),
+                "{sql}: {steps:?}"
+            );
+        }
+    }
+    drop(vault);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for index in INDEXES {
+        conn.execute_batch(&format!("DROP INDEX {index}")).unwrap();
+    }
+    assert_eq!(present(&conn), Vec::<String>::new());
+    drop(conn);
+    let vault = reopen(&path, &key);
+    assert_eq!(vault.get_secret("db", None).unwrap().value.expose(), b"v");
+    assert_eq!(vault.list_properties_of_secrets().unwrap().len(), 1);
+    drop(vault);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let mut found = present(&conn);
+    found.sort_unstable();
+    let mut wanted: Vec<String> = INDEXES.iter().map(|&name| name.to_owned()).collect();
+    wanted.sort_unstable();
+    assert_eq!(found, wanted, "every index is created again at unlock");
+    drop(conn);
+    assert!(
+        reopen(&path, &key)
+            .verify_audit_chain()
+            .unwrap()
+            .is_intact()
+    );
+}
+
 mod view_check {
     //! The view check: password, hint, authenticator, the wait after
     //! repeated wrong answers, and the recovery key that passes it.
@@ -429,6 +503,97 @@ mod view_check {
         assert!(!text.contains(PASSWORD));
     }
 
+    /// SR11 of the 2026-10-25 review: a handle opened before another
+    /// process changed the view check asks, and weighs, what the vault asks
+    /// now, not what it asked when the handle opened.
+    #[test]
+    fn a_handle_follows_the_view_check_another_process_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dev.sorvault");
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let created =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), store.clone())
+                .unwrap();
+        let recovery_key = created.recovery_key.as_str().to_owned();
+        let first = created.vault;
+        let other = SqliteVault::open(&path, store.clone(), &NoInteraction).unwrap();
+        let by_recovery_key = reopen(&path, &recovery_key);
+        let now = timestamp::now();
+        assert!(first.view_check().unwrap().is_none());
+
+        // Set elsewhere: asked here, with the hint.
+        other
+            .set_password(
+                &SecretBytes::from(PASSWORD),
+                Some("the long one"),
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        assert_eq!(first.view_check().unwrap().describe(), "password");
+        assert_eq!(
+            first.password_hint().unwrap().as_deref(),
+            Some("the long one")
+        );
+        let err = first.check_view(&answers(None, None), now).unwrap_err();
+        assert_eq!(err.code(), "permission_denied");
+        first
+            .check_view(&answers(Some(PASSWORD), None), now)
+            .unwrap();
+        // The recovery key that opened a handle still passes it (documented).
+        by_recovery_key
+            .check_view(&ViewAnswers::default(), now)
+            .unwrap();
+
+        // Replaced elsewhere: the old password no longer passes here.
+        other
+            .set_password(
+                &SecretBytes::from("another long password"),
+                None,
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        assert!(first.password_hint().unwrap().is_none());
+        let err = first
+            .check_view(&answers(Some(PASSWORD), None), now)
+            .unwrap_err();
+        assert_eq!(err.code(), "permission_denied");
+        first
+            .check_view(&answers(Some("another long password"), None), now)
+            .unwrap();
+
+        // An authenticator enrolled and verified elsewhere is asked for.
+        let unix = u64::try_from(now.unix_timestamp()).unwrap();
+        let secret = other.enrol_authenticator().unwrap();
+        assert!(
+            other
+                .verify_authenticator(&secret.code_at(unix), now)
+                .unwrap()
+        );
+        assert!(first.view_check().unwrap().authenticator);
+        assert!(first.authenticator().unwrap().unwrap().verified);
+        let err = first
+            .check_view(&answers(Some("another long password"), None), now)
+            .unwrap_err();
+        assert!(err.to_string().contains("authenticator"), "{err}");
+        other.remove_authenticator().unwrap();
+        assert!(!first.view_check().unwrap().authenticator);
+        assert!(first.authenticator().unwrap().is_none());
+
+        // Wrong answers counted elsewhere make this handle wait too.
+        for _ in 0..FREE_FAILURES {
+            let _ = other.check_view(&answers(Some("wrong"), None), now);
+        }
+        let err = first
+            .check_view(&answers(Some("another long password"), None), now)
+            .unwrap_err();
+        assert!(err.to_string().contains("try again"), "{err}");
+
+        // Cleared elsewhere: nothing is asked here.
+        other.clear_view_check().unwrap();
+        assert!(first.view_check().unwrap().is_none());
+        first.check_view(&ViewAnswers::default(), now).unwrap();
+    }
+
     #[test]
     fn a_hint_must_not_give_the_password_away() {
         let dir = tempfile::tempdir().unwrap();
@@ -457,6 +622,53 @@ mod view_check {
                 .code(),
             "invalid_argument"
         );
+        // SR14: each refusal is recorded once, by its code alone.
+        let events = guard_events(&vault);
+        assert_eq!(
+            events,
+            vec![(AuditOutcome::Failure, "invalid_argument".to_owned()); 5],
+            "four hints and an empty password"
+        );
+    }
+
+    /// SR14 of the 2026-10-25 review: every attempt to change the view
+    /// check ends in exactly one recorded outcome, and none carries the
+    /// rejected input.
+    #[test]
+    fn every_view_check_change_is_recorded_once_and_never_its_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_path, vault, _key) = create(&dir);
+        let mut too_much = Argon2Params::MAX;
+        too_much.memory_kib += 1;
+        let err = vault
+            .set_password(&SecretBytes::from(PASSWORD), None, too_much)
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_argument");
+        let err = vault.enrol_authenticator().unwrap_err();
+        assert_eq!(err.code(), "invalid_argument", "no password yet");
+        let err = vault
+            .verify_authenticator("123456", timestamp::now())
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_argument", "nothing enrolled");
+        vault
+            .set_password(
+                &SecretBytes::from(PASSWORD),
+                Some("the long one"),
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        let err = vault.remove_authenticator().unwrap_err();
+        assert_eq!(err.code(), "invalid_argument");
+        let events = guard_events(&vault);
+        let mut expected = vec![(AuditOutcome::Failure, "invalid_argument".to_owned())];
+        expected.push((AuditOutcome::Success, "password set".to_owned()));
+        expected.extend(vec![
+            (AuditOutcome::Failure, "invalid_argument".to_owned());
+            3
+        ]);
+        assert_eq!(events, expected, "newest first");
+        let text = format!("{events:?}");
+        assert!(!text.contains(PASSWORD) && !text.contains("the long one"));
     }
 
     #[test]
@@ -1524,6 +1736,7 @@ mod connections {
                 Some("1"),
                 Ok(()),
                 CatalogChange::Add,
+                None,
             )
             .unwrap();
     }
@@ -1639,6 +1852,7 @@ mod connections {
                     None,
                     Ok(()),
                     CatalogChange::Remove,
+                    None,
                 )
                 .unwrap();
             assert_eq!(vault.storage_of(name).unwrap(), None);
@@ -1662,6 +1876,7 @@ mod connections {
                 None,
                 result,
                 change,
+                None,
             )
         };
 
@@ -1718,6 +1933,7 @@ mod connections {
                     None,
                     Ok(()),
                     CatalogChange::Keep,
+                    None,
                 ),
                 "invalid_argument",
             ),
@@ -1729,6 +1945,7 @@ mod connections {
                     None,
                     Ok(()),
                     CatalogChange::Remove,
+                    None,
                 ),
                 "invalid_argument",
             ),
@@ -1860,6 +2077,7 @@ mod catalog_and_projects {
                 Some("1"),
                 Ok(()),
                 CatalogChange::Add,
+                None,
             )
             .unwrap();
         vault
@@ -2177,6 +2395,7 @@ mod catalog_and_projects {
                 Some("1"),
                 Ok(()),
                 CatalogChange::Add,
+                None,
             )
             .unwrap();
         assert_eq!(
@@ -2699,5 +2918,153 @@ mod settings_record {
         drop(blocked);
         let vault = open(&path, &key).unwrap();
         assert_eq!(vault.view_check().unwrap().describe(), "password");
+    }
+
+    /// Put the `key_wraps` rows of the file at `older` back into the file
+    /// at `path`, replacing the ones it has, and nothing else.
+    fn put_back_wraps(path: &Path, older: &Path) {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute(
+            "ATTACH DATABASE ?1 AS older",
+            params![older.to_str().unwrap()],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "DELETE FROM key_wraps;
+             INSERT INTO key_wraps SELECT * FROM older.key_wraps;",
+        )
+        .unwrap();
+    }
+
+    /// SR01 of the 2026-10-25 review: the old recovery wrap put back into
+    /// the current file, with the old key, must not open it or return a
+    /// value written after the replacement (ADR 0010).
+    #[test]
+    fn an_old_recovery_wrap_put_back_does_not_open_the_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault, old_key) = create(&dir);
+        let before = snapshot(&dir, &path, "before");
+        let new_key = vault.replace_recovery_key().unwrap();
+        vault
+            .set_secret(
+                "after",
+                SecretBytes::from("written after the replacement"),
+                SetSecretOptions::default(),
+            )
+            .unwrap();
+        drop(vault);
+
+        // The wrap row alone, the current settings and log untouched.
+        let wrap_only = snapshot(&dir, &path, "wrap-only");
+        put_back_wraps(&wrap_only, &before);
+        let err = open(&wrap_only, &old_key).unwrap_err();
+        assert_eq!(err.code(), "crypto", "{err}");
+        assert!(err.to_string().contains("key wrap"), "{err}");
+
+        // The wrap row and the whole settings record from before.
+        let with_record = snapshot(&dir, &path, "with-record");
+        put_back_wraps(&with_record, &before);
+        put_back(&with_record, &before);
+        assert_replay_refused(
+            &open(&with_record, &old_key).unwrap_err(),
+            "the old wrap with the old record",
+        );
+
+        // The untouched file: the old key is refused, the new one reads.
+        assert_eq!(open(&path, &old_key).unwrap_err().code(), "locked");
+        let vault = open(&path, &new_key).unwrap();
+        assert_eq!(
+            vault.get_secret("after", None).unwrap().value.expose(),
+            b"written after the replacement"
+        );
+    }
+
+    #[test]
+    fn a_wrap_row_added_or_swapped_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault, key) = create(&dir);
+        drop(vault);
+        // A second, authentic copy of the recovery wrap under another id.
+        let added = snapshot(&dir, &path, "added");
+        rusqlite::Connection::open(&added)
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO key_wraps
+                 SELECT 'ffffffffffffffff', kind_json, wrapped_nonce, wrapped_key, created_on
+                 FROM key_wraps",
+            )
+            .unwrap();
+        assert_eq!(open(&added, &key).unwrap_err().code(), "crypto");
+        // The same row with another creation time.
+        let edited = snapshot(&dir, &path, "edited");
+        rusqlite::Connection::open(&edited)
+            .unwrap()
+            .execute_batch("UPDATE key_wraps SET created_on = created_on + 1")
+            .unwrap();
+        assert_eq!(open(&edited, &key).unwrap_err().code(), "crypto");
+        // The untouched file opens.
+        open(&path, &key).unwrap();
+    }
+
+    #[test]
+    fn every_change_to_the_wraps_leaves_a_vault_that_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        // Created with this machine's key and a recovery key.
+        let path = dir.path().join("dev.sorvault");
+        let created =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), store.clone())
+                .unwrap();
+        assert!(created.this_machine);
+        let key = created.recovery_key;
+        drop(created.vault);
+        let vault = SqliteVault::open(&path, store.clone(), &NoInteraction).unwrap();
+        // The recovery key replaced on the setup screens' path.
+        let replacement = RecoveryKey::generate().unwrap();
+        vault
+            .change_settings(&SettingsChange {
+                recovery_key: Some(replacement.clone()),
+                ..SettingsChange::default()
+            })
+            .unwrap();
+        drop(vault);
+        assert_eq!(open(&path, &key).unwrap_err().code(), "locked");
+        let vault = open(&path, replacement.as_str()).unwrap();
+        drop(vault);
+        // Replaced again directly, then this machine's key on a vault
+        // that had none.
+        let other = dir.path().join("other.sorvault");
+        let created =
+            SqliteVault::create(&other, "other", CreateVaultOptions::default(), no_store())
+                .unwrap();
+        let other_key = created.vault.replace_recovery_key().unwrap();
+        drop(created.vault);
+        let vault = SqliteVault::open(
+            &other,
+            store.clone(),
+            &StaticRecoveryKey::new(other_key.as_str()),
+        )
+        .unwrap();
+        vault.add_this_machine_key().unwrap();
+        drop(vault);
+        SqliteVault::open(&other, store, &NoInteraction).unwrap();
+    }
+
+    #[test]
+    fn a_file_of_an_earlier_schema_is_refused_without_being_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault, key) = create(&dir);
+        drop(vault);
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "UPDATE vault_meta SET value = '4' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let err = open(&path, &key).unwrap_err();
+        assert_eq!(err.code(), "migration_required", "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 }

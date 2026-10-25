@@ -124,29 +124,19 @@ impl SecretReader {
             .registry()
             .map_err(|err| Error::new(&err, &Context::default()))?;
         let home = registry.root().to_path_buf();
-        let unlock = NonInteractiveUnlock::gather(
+        // Each source is read only if the vault asks for it (SR08).
+        let unlock = NonInteractiveUnlock::new(
             options.recovery_key.as_ref(),
             options.recovery_key_file.as_deref(),
             options.environment,
-        )
-        .map_err(|err| {
-            Error::new(
-                &err,
-                &Context {
-                    vault: Some(vault),
-                    home: Some(&home),
-                    unlock: None,
-                    provider: None,
-                },
-            )
-        })?;
+        );
         let opened = registry.open(vault, &unlock).map_err(|err| {
             Error::new(
                 &err,
                 &Context {
                     vault: Some(vault),
                     home: Some(&home),
-                    unlock: Some(&unlock.report),
+                    unlock: Some(&unlock.report()),
                     provider: None,
                 },
             )

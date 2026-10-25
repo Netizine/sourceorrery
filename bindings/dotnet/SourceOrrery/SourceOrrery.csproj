@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <PackageId>SourceOrrery</PackageId>
-    <Description>Read secrets from SourceOrrery vaults, the encrypted replacement for .env files. Read-only: vaults are created and secrets stored with the sourceorrery CLI (https://sourceorrery.ai/getting-started/). Native library for Windows, macOS and Linux, x64 and arm64, included.</Description>
+    <Description>Read-only SourceOrrery SDK for .NET; requires the separate SourceOrrery CLI to create vaults and set secret values. CLI installation: https://sourceorrery.ai/getting-started/#install. Native library for Windows, macOS and Linux, x64 and arm64, included.</Description>
     <PackageTags>secrets;vault;keyring;security;dotenv;sourceorrery</PackageTags>
     <PackageProjectUrl>https://sourceorrery.ai/sdks/dotnet/</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>

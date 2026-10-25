@@ -34,6 +34,35 @@ a validated rotation candidate, and the client cannot tell. Treat
 `TagResource` and `UntagResource` on these secrets as policy
 administration; the local vault's tags and checkpoints have no
 counterpart here ([threat model](../threat-model.md), known gap 14).
+SourceOrrery's policy binds what SourceOrrery returns; an identity with
+`secretsmanager:GetSecretValue` reads any version through AWS's own tools,
+so deny it in IAM (or with tag-based conditions) where that matters.
+
+### How a version is published
+
+A new version is never current under a looser policy than it was written
+with, and before it is current the old one is never under a looser policy
+than it had ([ADR 0011](../adr/0011-provider-writes-fail-closed.md)):
+
+1. The secret is described (its tags) and the request is checked:
+   nothing is sent for tags, a content type or a value the service would
+   refuse (below).
+2. When the stricter of the old and new policy (disabled if either is,
+   the later `not_before`, the earlier `expires_on`) is stricter than the
+   old one, the secret is tagged with it.
+3. `PutSecretValue` makes the new version current.
+4. The tags reach the new properties: stale tags that are not policy are
+   removed, every wanted tag is written, and stale policy tags are removed
+   last, so the policy never passes below the new one.
+
+A refused `PutSecretValue` puts the old policy back and returns the
+refusal. A lost answer, or a failure in step 4, is `outcome_unknown`, with
+the secret held at least as strict as asked. `update_secret_properties`
+runs step 4 alone. A new secret gets its value and tags in one
+`CreateSecret`. Secrets Manager has no conditional write, so this holds
+for one writer at a time per secret: two writers changing one secret's
+policy at the same moment can see each other's tags until the last step
+lands.
 
 ## Credentials
 
@@ -58,11 +87,11 @@ too; a policy that denies the call is `permission_denied`.
 | newest version | the version staged `AWSCURRENT` |
 | value | `SecretString` when the bytes are UTF-8 without NUL, `SecretBinary` otherwise. Nothing is wrapped around the value |
 | `enabled`, `content_type`, `not_before`, `expires_on`, `updated_on` | tags `sourceorrery:disabled`, `sourceorrery:content_type`, `sourceorrery:not_before`, `sourceorrery:expires_on`, `sourceorrery:updated_on` on the **secret** |
-| `tags` | every other tag of the secret |
+| `tags` | every other tag of the secret, except AWS's own (`aws:`), which are left alone |
 | `created_on` | the version's `CreatedDate` |
-| `set_secret` | `CreateSecret` the first time, `PutSecretValue` after; the options' properties become the secret's tags (user tags are replaced only when the options carry some) |
+| `set_secret` | `CreateSecret` the first time; after that the tags narrowed to the stricter policy, `PutSecretValue`, then the tags (above). The options' properties become the secret's tags (user tags are replaced only when the options carry some) |
 | `get_secret(name, None)` | `DescribeSecret` and `ListSecretVersionIds`, then the core's policy over the versions, then `GetSecretValue` by version id |
-| `update_secret_properties` | `TagResource` and `UntagResource` on the secret; the newest version only (below) |
+| `update_secret_properties` | `UntagResource` of stale tags that are not policy, `TagResource`, then `UntagResource` of stale policy tags; the newest version only (below) |
 | `delete_secret` | `DeleteSecret` with a 30-day recovery window |
 | `recover_deleted_secret` | `RestoreSecret` |
 | `purge_deleted_secret` | `DeleteSecret` with `ForceDeleteWithoutRecovery` |
@@ -91,10 +120,15 @@ exactly as for a local vault.
   capability and the workflow answers `unsupported` before writing anything
   ([rotation](../rotation.md)). Secrets Manager's own rotation (Lambda
   rotation functions) is the mechanism there.
-* **Tags are bounded.** A secret carries at most 50 tags, keys of at most
-  128 and values of at most 256 characters; the properties above take up to
-  five of them. Secrets Manager rejects a `set` or `update` beyond that
-  with `invalid_argument` and its own message.
+* **Tags are bounded, and checked first.** A secret carries at most 50
+  tags (AWS's own `aws:` tags not counted), keys of 1 to 128 and values of
+  at most 256 characters, made of letters, digits, spaces and
+  `_ . : / = + - @` (AWS's tagging rules); the properties above take up to
+  five of them, and a write counts every tag the secret holds at once while
+  it runs. A key starting with `aws:` or `sourceorrery:` (in any case) is
+  refused, as is a content type with another character (`text/plain;
+  charset=utf-8`), since it is stored as a tag, and a value over 64 KiB.
+  All of this is `invalid_argument` before any request that writes.
 * **Unlabelled versions age out.** A version that is neither `AWSCURRENT`
   nor `AWSPREVIOUS` is deprecated; Secrets Manager keeps up to 100 of them
   and removes the oldest beyond that, after which the version is
@@ -114,16 +148,23 @@ exactly as for a local vault.
   `deleted_on` sentinel above.
 * **Listing costs one request per secret**, after the `ListSecrets` pages.
   The paged methods cut pages out of that listing.
-* **No audit log of SourceOrrery's own.** `audit_events` is `unsupported`;
-  `sourceorrery audit --vault <name>` points at CloudTrail (below) and
-  `audit export` refuses.
+* **Two audit trails.** The vault's own log records every call
+  SourceOrrery makes at the connection, with its outcome and, for a
+  change, the attempt recorded before it was sent
+  ([providers](index.md#when-a-changes-result-is-not-known)):
+  `sourceorrery audit` shows it and `audit export` sends it on, like any
+  local event. The provider's own trail (below) records what it served,
+  including to clients other than SourceOrrery. The provider client itself
+  keeps no log (`audit_events` is `unsupported` on it).
 * **Two writers can race.** Nothing locks a secret between the describe
-  and the write that follows it.
+  and the writes that follow it, and the service has no conditional write:
+  the publication above holds for one writer at a time per secret.
 
 ## Audit trail
 
-AWS CloudTrail holds the trail; SourceOrrery writes no log of its own for a
-provider's secrets, and `sourceorrery audit --vault <name>` prints this pointer.
+AWS CloudTrail holds the provider's trail, beside the vault's own log of
+each call (above); `sourceorrery audit` prints this pointer for every
+connection that stores a secret.
 Secrets Manager's API calls are management events, recorded by default
 with the identity the process authenticated as: a read is
 `GetSecretValue` (preceded by `DescribeSecret` and `ListSecretVersionIds`
@@ -152,7 +193,9 @@ a collector, gives the same records continuously; route them where
 | the default chain finds no credentials; the service rejects them | `unauthenticated` |
 | the policy denies the call (`AccessDeniedException`) | `permission_denied` |
 | the service cannot be reached, times out, throttles or fails internally | `provider_unavailable` (transient) |
+| a tag, content type or value the service would refuse (checked before any write) | `invalid_argument` |
 | `InvalidRequestException`, `InvalidParameterException`, `LimitExceededException` and other rejections | `invalid_argument` with the service's message |
+| a write's answer was lost, or the value was published and its tags were not all written | `outcome_unknown` ([providers](index.md#when-a-changes-result-is-not-known)) |
 | a version that does not exist, or that was removed | `version_not_found` |
 
 No error message repeats a value: the SDK's messages carry the service's

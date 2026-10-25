@@ -125,6 +125,8 @@ pub struct Verification {
 /// What a secret's details show beyond its list row.
 #[derive(Debug, Default)]
 pub struct Detail {
+    /// Capability evidence captured during this explicit detail load.
+    pub capabilities: Option<&'static [Capability]>,
     /// Every version, newest first. `None` for a deleted secret: its
     /// versions cannot be listed until it is recovered.
     pub versions: Option<Vec<SecretProperties>>,
@@ -211,6 +213,15 @@ impl Session {
     /// a new secret is created.
     pub fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]> {
         self.source.capabilities_of(name)
+    }
+
+    pub fn cached_capabilities(&self, name: &str) -> &'static [Capability] {
+        self.detail(name)
+            .and_then(|d| d.capabilities)
+            .unwrap_or_else(|| {
+                self.connection_of(name)
+                    .map_or(Capability::ALL, |c| c.settings.provider().capabilities())
+            })
     }
 
     /// The connection that stores `name`, when one does.
@@ -343,8 +354,15 @@ impl Session {
             limit: Some(ACTIVITY_LIMIT),
             ..AuditQuery::default()
         })?;
-        self.details
-            .insert(name.to_owned(), Detail { versions, activity });
+        let capabilities = Some(self.source.capabilities_of(name)?);
+        self.details.insert(
+            name.to_owned(),
+            Detail {
+                capabilities,
+                versions,
+                activity,
+            },
+        );
         Ok(())
     }
 }

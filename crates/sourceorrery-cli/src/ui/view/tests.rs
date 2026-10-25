@@ -54,9 +54,16 @@ fn draws_the_vault_its_views_and_its_secrets() {
     assert!(screen.contains("SECRETS  2"), "{screen}");
     assert!(screen.contains("▌ api-key"), "{screen}");
     assert!(screen.contains("database-password"), "{screen}");
-    assert!(screen.contains("01234567 "), "short version: {screen}");
+    app.update(Action::Open);
+    assert!(
+        render(&mut app, 120, 24).contains("01234567"),
+        "full version reachable in details"
+    );
     assert!(screen.contains("Enter details"), "{screen}");
-    assert!(screen.contains(REASSURANCE.trim_end()), "{screen}");
+    assert!(
+        render(&mut app, 160, 24).contains(REASSURANCE.trim_end()),
+        "reassurance fits after the action hints at wide sizes"
+    );
 }
 
 #[test]
@@ -167,7 +174,10 @@ fn the_vault_list_marks_the_open_vault() {
     let (_, mut app) = app(&["a"]);
     app.update(Action::Show(Tab::Vaults));
     let screen = render(&mut app, 120, 14);
-    assert!(screen.contains("▌ development  open"), "{screen}");
+    assert!(
+        screen.contains("▌ development") && screen.contains("open"),
+        "{screen}"
+    );
     assert!(screen.contains("staging"), "{screen}");
     assert!(screen.contains("64 KiB"), "{screen}");
     assert!(screen.contains("Enter open"), "{screen}");
@@ -223,7 +233,9 @@ fn messages_are_callouts() {
 fn the_help_lists_the_keys_and_what_is_recorded() {
     let (_, mut app) = app(&["a"]);
     app.update(Action::Help);
-    let screen = render(&mut app, 110, 46);
+    let mut screen = render(&mut app, 110, 46);
+    app.update(Action::Bottom);
+    screen.push_str(&render(&mut app, 110, 46));
     assert!(screen.contains("KEYS"), "{screen}");
     assert!(screen.contains("on the setup screens"), "{screen}");
     assert!(screen.contains("switch view"), "{screen}");
@@ -276,7 +288,7 @@ fn the_overview_shows_status_expiry_chain_activity_and_keys() {
     let fake = Fake::with(&["api-key", "database-password"]);
     fake.deleted_names.borrow_mut().push("old");
     let mut app = app_with(&fake);
-    let screen = render(&mut app, 130, 30);
+    let screen = render(&mut app, 130, 42);
     assert!(screen.contains("1 Overview"), "{screen}");
     assert!(screen.contains("SECRETS  2 live · 1 deleted"), "{screen}");
     assert!(screen.contains("enabled     2  █"), "{screen}");
@@ -438,5 +450,575 @@ fn change_keys_show_only_where_changes_are_possible() {
     assert!(
         screen.contains("None: this browser is read-only"),
         "{screen}"
+    );
+}
+
+#[test]
+fn help_is_scrollable_at_ordinary_and_compact_sizes_without_reads() {
+    let (fake, mut app) = app(&["a"]);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    app.update(Action::Help);
+    for (w, h) in [(80, 24), (60, 18)] {
+        app.update(Action::Top);
+        let first = render(&mut app, w, h);
+        assert!(first.contains("CURRENT VIEW"), "{first}");
+        assert!(first.contains("Esc close"), "{first}");
+        let mut seen = first;
+        for _ in 0..10 {
+            app.update(Action::PageDown);
+            seen.push_str(&render(&mut app, w, h));
+        }
+        assert!(seen.contains("WHAT THE VAULT RECORDS"), "{seen}");
+        assert!(seen.contains("SEARCH"));
+        app.update(Action::Bottom);
+        assert!(render(&mut app, w, h).contains("Esc close"));
+    }
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
+    app.update(Action::Back);
+    assert!(!app.help);
+}
+
+#[test]
+fn fifty_project_declarations_are_reachable_without_reads() {
+    use crate::ui::session::{Project, ProjectStatus};
+    let (fake, mut app) = app(&["a"]);
+    let project = Project {
+        link: sourceorrery_storage::ProjectLink {
+            id: "project-id".into(),
+            name: "fixture".into(),
+            path: "/synthetic/界/e\u{301}".into(),
+            linked_on: sourceorrery_core::timestamp::now(),
+        },
+        status: ProjectStatus::Found {
+            vault: "development".into(),
+            secrets: (0..50).map(|i| format!("declared-{i:02}")).collect(),
+        },
+    };
+    app.session.as_mut().unwrap().projects.push(project);
+    app.update(Action::Show(Tab::Projects));
+    app.update(Action::Open);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    let mut seen = String::new();
+    for _ in 0..50 {
+        seen.push_str(&render(&mut app, 80, 24));
+        app.update(Action::Down);
+    }
+    for i in 0..50 {
+        assert!(seen.contains(&format!("declared-{i:02}")));
+    }
+    assert!(seen.contains("of 50"));
+    app.update(Action::Top);
+    app.update(Action::PageDown);
+    assert!(app.declarations.selected().unwrap() > 0);
+    app.update(Action::Back);
+    assert_eq!(app.selected_project().unwrap().link.id, "project-id");
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
+}
+
+#[test]
+fn bounded_forms_and_reviews_keep_controls_and_long_targets_reachable() {
+    let (fake, mut app) = app(&["a"]);
+    app.update(Action::Edit);
+    if let Some(Dialog::Form(form)) = app.dialog.as_mut() {
+        form.fields[2].value = "env=word heavy metadata 界e\u{301}, ".repeat(30);
+        form.focus = form.fields.len() - 1;
+        form.error =
+            Some("Check the expiry: word heavy validation detail ".repeat(25) + "END-ERROR");
+    }
+    for (w, h) in [(80, 24), (60, 18)] {
+        let screen = render(&mut app, w, h);
+        assert!(screen.contains("expires"), "{screen}");
+        assert!(screen.contains("Esc cancel"), "{screen}");
+        app.update(Action::Bottom);
+        let screen = render(&mut app, w, h);
+        assert!(screen.contains("END-ERROR"), "{screen}");
+        assert!(screen.contains("Enter review"));
+    }
+    assert!(fake.writes.borrow().is_empty());
+    app.update(Action::Back);
+    app.update(Action::Toggle);
+    if let Some(Dialog::Confirm(c)) = app.dialog.as_mut() {
+        c.lines = vec!["Full confirmation target ".repeat(60) + "END-TARGET"];
+    }
+    render(&mut app, 60, 18);
+    app.update(Action::Bottom);
+    let screen = render(&mut app, 60, 18);
+    assert!(screen.contains("END-TARGET"), "{screen}");
+    assert!(screen.contains("Enter confirm"));
+    app.update(Action::Back);
+    assert!(fake.writes.borrow().is_empty());
+}
+
+#[test]
+fn responsive_width_matrix_keeps_names_status_and_metadata_overflow_without_reads() {
+    let (fake, mut app) = app(&["selected-secret-with-a-long-name", "second"]);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    app.session.as_mut().unwrap().secrets[0]
+        .tags
+        .insert("long".into(), "界e\u{301}".repeat(80));
+    for width in [60, 80, 100, 120, 160] {
+        let screen = render(&mut app, width, 24);
+        assert!(
+            screen.contains("NAME") && screen.contains("STATUS"),
+            "{screen}"
+        );
+        assert!(screen.contains("enabled"), "{screen}");
+        assert!(
+            screen.contains("selected") || screen.contains("…"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("help") || screen.contains("keys"),
+            "{screen}"
+        );
+    }
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
+}
+
+#[test]
+fn compact_overview_reaches_every_section_and_resize_keeps_active_tab_and_state() {
+    let fake = Fake::with(&["a"]);
+    let mut app = app_with(&fake).with_read_only(true);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    let mut seen = String::new();
+    for _ in 0..12 {
+        seen.push_str(&render(&mut app, 80, 24));
+        app.update(Action::PageDown);
+    }
+    for title in [
+        "AUDIT CHAIN",
+        "EXPIRY",
+        "SECRETS",
+        "VAULT",
+        "VIEW CHECK",
+        "STORAGE",
+        "PROJECTS",
+        "ACTIVITY",
+    ] {
+        assert!(seen.to_uppercase().contains(title), "{title}: {seen}");
+    }
+    for width in [60, 80, 100, 120, 160] {
+        for tab in Tab::ALL {
+            app.update(Action::Show(tab));
+            let screen = render(&mut app, width, 18);
+            assert!(
+                screen.contains(tab.title().split_whitespace().next().unwrap()),
+                "{screen}"
+            );
+            assert!(screen.contains("read-only"), "{screen}");
+            assert!(screen.contains("help") || screen.contains("keys"));
+        }
+    }
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
+}
+
+#[test]
+fn actions_menu_is_bounded_pure_and_revalidates_before_execution() {
+    let (fake, mut app) = app(&["a"]);
+    app.update(Action::Open);
+    app.update(Action::Down);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+        fake.capability_reads.get(),
+    );
+    app.update(Action::Actions);
+    for (w, h) in [(80, 24), (60, 18), (120, 40)] {
+        for a in [
+            Action::Top,
+            Action::Down,
+            Action::PageDown,
+            Action::Bottom,
+            Action::PageUp,
+        ] {
+            app.update(a);
+            let screen = render(&mut app, w, h);
+            assert!(screen.contains("Esc back"), "{screen}");
+        }
+    }
+    assert!(fake.writes.borrow().is_empty());
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get(),
+            fake.capability_reads.get()
+        ),
+        reads
+    );
+    // Availability is checked again after the menu was constructed.
+    let edit = app
+        .menu
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .position(|i| i.action == Action::Edit)
+        .unwrap();
+    app.menu.as_mut().unwrap().state.select(Some(edit));
+    app.session.as_mut().unwrap().secrets.clear();
+    app.versions.select(None);
+    app.update(Action::Commit);
+    assert!(app.dialog.is_none());
+    assert!(app.menu.is_some());
+    app.update(Action::Back);
+    assert_eq!(app.detail.as_deref(), Some("a"));
+}
+
+#[test]
+fn read_only_menu_discloses_reasons_and_overview_does_not_open_empty_search() {
+    let fake = Fake::with(&[]);
+    let mut app = app_with(&fake).with_read_only(true);
+    app.update(Action::Search);
+    assert!(!app.editing);
+    app.update(Action::Show(Tab::Secrets));
+    assert!(!render(&mut app, 80, 24).contains("a adds one"));
+    app.update(Action::Actions);
+    let menu = app.menu.as_ref().unwrap();
+    assert!(
+        menu.items
+            .iter()
+            .filter(|i| matches!(i.action, Action::Edit | Action::Add | Action::Delete))
+            .all(|i| i.reason.as_ref().is_some_and(|s| s.contains("read-only")))
+    );
+    app.update(Action::Down);
+    app.update(Action::Commit);
+    assert!(fake.writes.borrow().is_empty());
+    assert!(app.dialog.is_none());
+}
+
+#[test]
+fn cached_inspection_reads_complete_metadata_and_restores_exact_state() {
+    use crate::ui::session::{Project, ProjectStatus};
+    let (fake, mut app) = app(&["a", "b"]);
+    app.session.as_mut().unwrap().secrets[0]
+        .tags
+        .insert("note".into(), "界e\u{301} ".repeat(90) + "\u{1b}END-TAG");
+    app.apply_query("status:enabled".into());
+    render(&mut app, 80, 24);
+    let before = (
+        app.list(Tab::Secrets).query.clone(),
+        app.list(Tab::Secrets).table,
+        app.detail.clone(),
+    );
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+        fake.capability_reads.get(),
+    );
+    app.update(Action::Inspect);
+    let mut seen = String::new();
+    for _ in 0..30 {
+        seen.push_str(&render(&mut app, 60, 18));
+        app.update(Action::PageDown);
+    }
+    assert!(seen.contains("END-TAG"), "{seen}");
+    assert!(!seen.contains('\u{1b}'));
+    assert!(seen.contains(r"\u{1b}"));
+    app.update(Action::Back);
+    assert_eq!(
+        (
+            app.list(Tab::Secrets).query.clone(),
+            app.list(Tab::Secrets).table,
+            app.detail.clone()
+        ),
+        before
+    );
+    // Long project paths and errors have the same cached inspection route.
+    app.session.as_mut().unwrap().projects.push(Project {
+        link: sourceorrery_storage::ProjectLink {
+            id: "p".into(),
+            name: "project".into(),
+            path: std::path::PathBuf::from("/界/e\u{301}/".repeat(60) + "END-PATH"),
+            linked_on: sourceorrery_core::timestamp::now(),
+        },
+        status: ProjectStatus::Unreadable("safe manifest error".into()),
+    });
+    app.update(Action::Show(Tab::Projects));
+    app.update(Action::Inspect);
+    render(&mut app, 80, 24);
+    app.update(Action::Bottom);
+    assert!(render(&mut app, 80, 24).contains("END-PATH"));
+    app.update(Action::Back);
+    app.message = Some(Message::Error(
+        "safe provider failure ".repeat(90) + "END-ERROR",
+    ));
+    assert!(render(&mut app, 80, 24).contains("! details"));
+    app.update(Action::ErrorDetails);
+    render(&mut app, 80, 24);
+    app.update(Action::Bottom);
+    assert!(render(&mut app, 80, 24).contains("END-ERROR"));
+    app.update(Action::Back);
+    app.update(Action::Show(Tab::Vaults));
+    app.vaults[0].path = std::path::PathBuf::from("/synthetic/".repeat(60) + "END-VAULT");
+    app.update(Action::Inspect);
+    render(&mut app, 60, 18);
+    app.update(Action::Bottom);
+    let screen = render(&mut app, 60, 18);
+    assert!(
+        screen
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '│')
+            .collect::<String>()
+            .contains("END-VAULT"),
+        "{screen}"
+    );
+    app.update(Action::Back);
+    app.update(Action::Show(Tab::Audit));
+    app.update(Action::Inspect);
+    assert!(
+        app.inspection
+            .as_ref()
+            .unwrap()
+            .lines
+            .iter()
+            .any(|s| s.starts_with("Actor:"))
+    );
+    app.update(Action::Back);
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get(),
+            fake.capability_reads.get()
+        ),
+        reads
+    );
+}
+
+#[test]
+fn highlighted_spans_reconstruct_sanitised_metadata_in_every_selection_style() {
+    use crate::cli::UiTheme;
+    let raw = "İstanbul 界e\u{301}\u{1b}b";
+    for choice in [UiTheme::Dark, UiTheme::Light, UiTheme::Terminal] {
+        for color in [true, false] {
+            for selected in [true, false] {
+                let theme = Theme::new(choice, color, true);
+                let line = highlighted(raw, "i b", &theme, selected);
+                assert_eq!(
+                    line.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>(),
+                    output::sanitize(raw)
+                );
+                for span in line.spans.iter().filter(|s| {
+                    s.style
+                        .add_modifier
+                        .contains(ratatui::style::Modifier::UNDERLINED)
+                }) {
+                    if selected && theme.selected.fg.is_some() {
+                        assert_eq!(span.style.fg, theme.selected.fg);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_and_tiny_render_areas_are_safe_and_cancel_still_works() {
+    let (_, mut app) = app(&["a"]);
+    for (w, h) in [(0, 0), (1, 1), (20, 6)] {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        for tab in Tab::ALL {
+            app.update(Action::Show(tab));
+            terminal
+                .draw(|frame| draw(frame, &mut app, &Theme::plain()))
+                .unwrap();
+        }
+        for action in [Action::Help, Action::Actions, Action::Inspect] {
+            app.update(action);
+            terminal
+                .draw(|frame| draw(frame, &mut app, &Theme::plain()))
+                .unwrap();
+            app.update(Action::Back);
+        }
+    }
+}
+
+#[test]
+fn long_unicode_audit_actor_and_detail_are_fully_cached_and_inspectable() {
+    let fake = Rc::new(Fake {
+        audit_actor: Some(sourceorrery_core::Principal::new(
+            sourceorrery_core::PrincipalKind::Workload,
+            "界e\u{301}".repeat(120) + "END-ACTOR",
+        )),
+        audit_detail: Some("safe cached detail ".repeat(80) + "END-DETAIL"),
+        ..Fake::default()
+    });
+    let mut app = app_with(&fake);
+    app.update(Action::Show(Tab::Audit));
+    assert!(render(&mut app, 160, 24).contains('…'));
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    app.update(Action::Inspect);
+    let mut seen = String::new();
+    for _ in 0..30 {
+        seen.push_str(&render(&mut app, 80, 24));
+        app.update(Action::PageDown);
+    }
+    let seen = seen
+        .chars()
+        .filter(|c| !c.is_whitespace() && !matches!(c, '│' | '┌' | '┐' | '└' | '┘' | '─'))
+        .collect::<String>();
+    assert!(seen.contains("END-ACTOR") && seen.contains("END-DETAIL"));
+    app.update(Action::Back);
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
+}
+
+#[test]
+fn focused_long_metadata_keeps_cursor_visible_after_horizontal_edit_and_resize() {
+    use crate::ui::text_input::{Cursor, Edit};
+    let (fake, mut app) = app(&["a"]);
+    app.update(Action::Edit);
+    if let Some(Dialog::Form(f)) = app.dialog.as_mut() {
+        f.focus = 2;
+        f.fields[2].value = "env=界e\u{301}".repeat(40);
+        f.fields[2].cursor = Cursor::end(&f.fields[2].value);
+    }
+    for (w, h) in [(80, 24), (60, 18)] {
+        let screen = render(&mut app, w, h);
+        assert!(screen.contains('▌') && screen.contains("Esc cancel"));
+    }
+    app.update(Action::Text(Edit::Home));
+    app.update(Action::Input('q'));
+    if let Some(Dialog::Form(f)) = &app.dialog {
+        assert!(f.fields[2].value.starts_with("qenv="));
+        assert!(f.fields[2].value.ends_with("e\u{301}"));
+    }
+    assert!(!app.should_quit());
+    assert!(fake.writes.borrow().is_empty());
+}
+
+#[test]
+fn synchronous_feedback_is_drawn_before_one_slow_explicit_refresh() {
+    use std::time::{Duration, Instant};
+    let (fake, mut app) = app(&["a"]);
+    let lists = fake.lists.get();
+    let at = app.feedback.at;
+    fake.list_delay.set(Duration::from_millis(2));
+    app.feedback.operation = app.operation_for(Action::Refresh);
+    let screen = render(&mut app, 80, 24);
+    assert!(screen.contains("Refreshing metadata") && screen.contains("synchronous"));
+    assert!(!screen.contains("Esc cancel"));
+    assert_eq!(fake.lists.get(), lists);
+    let started = Instant::now();
+    app.update(Action::Refresh);
+    app.feedback.elapsed = Some(started.elapsed());
+    app.feedback.operation = None;
+    assert_eq!(fake.lists.get(), lists + 1);
+    assert!(app.feedback.elapsed.unwrap() >= Duration::from_millis(2));
+    assert!(app.feedback.at >= at);
+    assert!(render(&mut app, 80, 24).contains("Snapshot from"));
+    let at = app.feedback.at;
+    fake.fail.set(true);
+    app.update(Action::Refresh);
+    assert_eq!(app.feedback.at, at);
+    assert!(render(&mut app, 80, 24).contains("Refresh failed"));
+}
+
+#[test]
+fn theme_preview_repaints_locally_respects_no_color_and_keeps_idle_warning_visible() {
+    use crate::cli::UiTheme;
+    use std::time::Duration;
+    let (fake, mut app) = app(&["a"]);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    app = app.with_lock_after(Some(Duration::from_secs(60)));
+    app.update(Action::Theme);
+    app.update(Action::Down);
+    for color in [true, false] {
+        let base = Theme::new(UiTheme::Dark, color, false);
+        let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app, &base)).unwrap();
+        let buffer = terminal.backend().buffer();
+        if color {
+            assert_eq!(
+                buffer[(0, 0)].bg,
+                base.choosing(UiTheme::Light).screen.bg.unwrap()
+            );
+        } else {
+            assert!(
+                buffer
+                    .content()
+                    .iter()
+                    .all(|c| c.fg == ratatui::style::Color::Reset
+                        && c.bg == ratatui::style::Color::Reset)
+            );
+        }
+    }
+    app.idle_tick(Duration::from_secs(31));
+    assert!(render(&mut app, 80, 24).contains("Locks in 29s"));
+    app.update(Action::Back);
+    assert!(!app.theme_changed);
+    app.idle_tick(Duration::ZERO);
+    assert!(!render(&mut app, 80, 24).contains("Locks in"));
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
     );
 }

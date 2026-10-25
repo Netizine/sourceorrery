@@ -58,7 +58,43 @@ pub fn run(ctx: &Ctx, args: &AuditArgs) -> anyhow::Result<()> {
     } else {
         print_events(&events)?;
     }
+    note_unresolved(&vault)?;
     note_provider_trails(&vault)
+}
+
+/// The changes at a connection whose result the vault never learned (ADR
+/// 0011), and what to do about them.
+fn note_unresolved(vault: &SqliteVault) -> anyhow::Result<()> {
+    let unresolved = vault.unresolved_attempts()?;
+    if unresolved.is_empty() {
+        return Ok(());
+    }
+    let described = unresolved
+        .iter()
+        .map(|e| {
+            format!(
+                "event {}: {} of '{}' {}",
+                e.id,
+                e.operation,
+                output::sanitize(e.secret_name.as_deref().unwrap_or("-")),
+                output::sanitize(
+                    e.detail
+                        .as_deref()
+                        .unwrap_or_default()
+                        .trim_end_matches(": sent")
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    output::note(&format!(
+        "{} change(s) at a connection never got a result ({described}): the provider may have \
+         made them. Look at each secret there (`sourceorrery secret versions <name>`, \
+         `sourceorrery secret list --deleted`), then repeat or undo the change; the next change \
+         of the secret through that connection that succeeds settles it",
+        unresolved.len()
+    ));
+    Ok(())
 }
 
 /// Where a connection's provider keeps its own audit trail and the query

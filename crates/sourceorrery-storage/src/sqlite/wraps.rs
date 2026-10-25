@@ -11,7 +11,10 @@ use sourceorrery_crypto::{Ciphertext, SymmetricKey, envelope, random};
 use zeroize::Zeroizing;
 
 use super::audit::AuditWriter;
-use super::schema::{Meta, crypto, db, from_nanos, nanos, open_connection, read_meta};
+use super::schema::{
+    Meta, SettingsTag, crypto, db, from_nanos, nanos, open_connection, read_meta,
+    write_settings_tag,
+};
 use super::{MAX_UNLOCK_ATTEMPTS, SqliteVault};
 use crate::keystore::{self, CredentialStore};
 use crate::unlock::{RecoveryKeyPrompt, UnlockProvider};
@@ -369,8 +372,16 @@ impl SqliteVault {
     }
 
     /// Make `key` the vault's recovery key, inside the caller's write
-    /// transaction: the old one stops working.
-    pub(super) fn install_recovery_key(&self, conn: &Connection, key: &RecoveryKey) -> Result<()> {
+    /// transaction: the old one stops working, in this file, even if its
+    /// wrap row is put back (ADR 0010). Returns the tag of the settings
+    /// record, which lists the new set of wraps; the caller's audit event
+    /// must carry it.
+    pub(super) fn install_recovery_key(
+        &self,
+        conn: &Connection,
+        key: &RecoveryKey,
+    ) -> Result<SettingsTag> {
+        let meta = self.verified_meta(conn)?;
         let old: Vec<String> = read_wraps(conn)?
             .into_iter()
             .filter(|w| matches!(w.kind, WrapKind::Recovery { .. }))
@@ -381,31 +392,27 @@ impl SqliteVault {
                 .map_err(db)?;
         }
         recovery_wrap_for(conn, &self.meta, &self.dek, key)?;
-        Ok(())
+        write_settings_tag(conn, &self.metadata_key, &meta)
     }
 
     /// Replace the recovery key: a new one is generated and installed and
     /// the old one stops working, in one transaction. The new key is
-    /// returned to be shown once. Audited as `protector_add`.
+    /// returned to be shown once. Audited as `protector_add`, with the new
+    /// set of wraps checkpointed. The vault key itself does not change:
+    /// whoever holds the old key and an old copy of the file can still
+    /// read that copy (ADR 0010).
     pub fn replace_recovery_key(&self) -> Result<Zeroizing<String>> {
         let op = AuditOperation::ProtectorAdd;
         let mut conn = self.lock()?;
         let tx = self.begin(&mut conn, op)?;
-        let key = match RecoveryKey::generate()
-            .and_then(|key| self.install_recovery_key(&tx, &key).map(|()| key))
+        let (key, tag) = match RecoveryKey::generate()
+            .and_then(|key| self.install_recovery_key(&tx, &key).map(|tag| (key, tag)))
         {
-            Ok(key) => key,
+            Ok(installed) => installed,
             Err(err) => return self.fail(tx, op, None, None, err),
         };
         let code = key.into_text();
-        self.audit(
-            &tx,
-            op,
-            None,
-            None,
-            AuditOutcome::Success,
-            Some("recovery key replaced"),
-        )?;
+        self.audit_settings(&tx, op, AuditOutcome::Success, "recovery key replaced", tag)?;
         tx.commit().map_err(db)?;
         Ok(code)
     }
@@ -431,17 +438,29 @@ impl SqliteVault {
                 ),
             );
         }
-        let info = match new_this_machine_wrap(&tx, &self.meta, &self.dek, self.store.as_ref()) {
-            Ok(info) => info,
+        let added = self.verified_meta(&tx).and_then(|meta| {
+            let info = new_this_machine_wrap(&tx, &self.meta, &self.dek, self.store.as_ref())?;
+            match write_settings_tag(&tx, &self.metadata_key, &meta) {
+                Ok(tag) => Ok((info, tag)),
+                Err(err) => {
+                    // The key just stored is no use without its row.
+                    let _ = self
+                        .store
+                        .delete_key(&keyring_account(&self.meta.id, &info.id));
+                    Err(err)
+                }
+            }
+        });
+        let (info, tag) = match added {
+            Ok(added) => added,
             Err(err) => return self.fail(tx, op, None, None, err),
         };
-        self.audit(
+        self.audit_settings(
             &tx,
             op,
-            None,
-            None,
             AuditOutcome::Success,
-            Some("this machine's key added"),
+            "this machine's key added",
+            tag,
         )?;
         tx.commit().map_err(db)?;
         Ok(info)

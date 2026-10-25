@@ -116,7 +116,10 @@ pub fn parse_grace(text: &str) -> Result<Duration> {
              as 7d, 12h or 30m"
         ))
     };
-    let (digits, unit) = text.split_at(text.len().checked_sub(1).ok_or_else(invalid)?);
+    // The unit is the last character, which need not be one byte: the text
+    // comes from a manifest anyone with the repository can write.
+    let unit = text.chars().next_back().ok_or_else(invalid)?;
+    let digits = &text[..text.len() - unit.len_utf8()];
     let amount: i64 = digits.parse().map_err(|_| invalid())?;
     if amount <= 0 {
         return Err(SecretError::InvalidArgument(format!(
@@ -124,9 +127,9 @@ pub fn parse_grace(text: &str) -> Result<Duration> {
         )));
     }
     match unit {
-        "d" => Ok(Duration::days(amount)),
-        "h" => Ok(Duration::hours(amount)),
-        "m" => Ok(Duration::minutes(amount)),
+        'd' => Ok(Duration::days(amount)),
+        'h' => Ok(Duration::hours(amount)),
+        'm' => Ok(Duration::minutes(amount)),
         _ => Err(invalid()),
     }
 }
@@ -581,7 +584,21 @@ mod tests {
         assert_eq!(parse_grace("7d").unwrap(), Duration::days(7));
         assert_eq!(parse_grace("12h").unwrap(), Duration::hours(12));
         assert_eq!(parse_grace("30m").unwrap(), Duration::minutes(30));
-        for bad in ["", "d", "7", "7w", "-1d", "0h", "1.5d", "7 d"] {
+        // A unit that is not one byte is refused, not split inside (found
+        // by the bounded fuzz test, B31: it panicked).
+        for bad in [
+            "",
+            "d",
+            "7",
+            "7w",
+            "-1d",
+            "0h",
+            "1.5d",
+            "7 d",
+            "7é",
+            "é",
+            "7\u{FFFD}",
+        ] {
             let err = parse_grace(bad).unwrap_err();
             assert_eq!(err.code(), "invalid_argument", "{bad}");
         }

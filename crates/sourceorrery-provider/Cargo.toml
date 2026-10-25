@@ -36,6 +36,8 @@ tokio = { workspace = true, features = ["rt"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 time.workspace = true
 tempfile.workspace = true
+# To cut a vault's audit log short in the routing tests.
+rusqlite = { version = "0.40", features = ["bundled"] }
 # Test-only back edge: Cargo strips path-only dev dependencies on publish.
 sourceorrery-conformance = { path = "../../tests/conformance" }
 

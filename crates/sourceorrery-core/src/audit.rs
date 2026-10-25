@@ -86,6 +86,21 @@ pub enum AuditOperation {
 }
 
 impl AuditOperation {
+    /// True for the operations that change a secret, which at a connection
+    /// are recorded as an attempt before they are sent (ADR 0011).
+    pub fn changes_a_secret(self) -> bool {
+        matches!(
+            self,
+            Self::SecretSet
+                | Self::SecretUpdate
+                | Self::SecretDelete
+                | Self::SecretRecover
+                | Self::SecretPurge
+        )
+    }
+}
+
+impl AuditOperation {
     /// Stable `snake_case` label, identical to the serde form.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -171,6 +186,14 @@ pub enum AuditOutcome {
     Denied,
     /// The operation failed for another reason (not found, storage error).
     Failure,
+    /// A change about to be sent to a remote provider (ADR 0011): recorded
+    /// before it is sent, with `at connection <id>: sent`. The event that
+    /// completes it names it, `(attempt <id>)`; one that nothing completes
+    /// is an attempt whose result the vault never learned.
+    Pending,
+    /// A change sent to a remote provider whose result is not known: the
+    /// provider may or may not have made it (`outcome_unknown`).
+    Unknown,
 }
 
 impl AuditOutcome {
@@ -180,20 +203,30 @@ impl AuditOutcome {
             Self::Success => "success",
             Self::Denied => "denied",
             Self::Failure => "failure",
+            Self::Pending => "pending",
+            Self::Unknown => "unknown",
         }
     }
+
+    /// Every outcome, for documentation and exhaustive tests.
+    pub const ALL: [AuditOutcome; 5] = [
+        Self::Success,
+        Self::Denied,
+        Self::Failure,
+        Self::Pending,
+        Self::Unknown,
+    ];
 }
 
 impl FromStr for AuditOutcome {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "success" => Ok(Self::Success),
-            "denied" => Ok(Self::Denied),
-            "failure" => Ok(Self::Failure),
-            other => Err(format!("unknown audit outcome '{other}'")),
-        }
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|outcome| outcome.as_str() == s)
+            .ok_or_else(|| format!("unknown audit outcome '{s}'"))
     }
 }
 
@@ -256,11 +289,9 @@ mod tests {
 
     #[test]
     fn outcome_round_trips() {
-        for outcome in [
-            AuditOutcome::Success,
-            AuditOutcome::Denied,
-            AuditOutcome::Failure,
-        ] {
+        for outcome in AuditOutcome::ALL {
+            let json = serde_json::to_string(&outcome).unwrap();
+            assert_eq!(json, format!("\"{}\"", outcome.as_str()));
             assert_eq!(outcome.as_str().parse::<AuditOutcome>().unwrap(), outcome);
         }
     }

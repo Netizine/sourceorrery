@@ -106,15 +106,88 @@ pub(super) fn event_from_row(row: AuditRow) -> Result<AuditEvent> {
 }
 
 /// How an operation that ended in `err` is recorded: `denied` when policy
-/// refused it, `failure` otherwise.
+/// refused it, `unknown` when a provider may have made the change anyway,
+/// `failure` otherwise.
 pub(super) fn outcome_of(err: &SecretError) -> AuditOutcome {
     match err {
         SecretError::Disabled { .. }
         | SecretError::NotYetValid { .. }
         | SecretError::Expired { .. }
         | SecretError::PermissionDenied(_) => AuditOutcome::Denied,
+        SecretError::OutcomeUnknown { .. } => AuditOutcome::Unknown,
         _ => AuditOutcome::Failure,
     }
+}
+
+/// Detail prefix of every event about a call at a connection.
+pub(super) const AT_CONNECTION: &str = "at connection ";
+
+/// Detail suffix of the `pending` event recorded before a change is sent.
+pub(super) const SENT: &str = ": sent";
+
+/// The attempt an event about a call at a connection completes, from its
+/// detail's `(attempt <id>)`.
+fn completed_attempt(detail: &str) -> Option<i64> {
+    let (_, id) = detail.strip_suffix(')')?.rsplit_once(" (attempt ")?;
+    id.parse().ok()
+}
+
+/// Attempts at a connection whose result the vault never learned, oldest
+/// first (ADR 0011): keyed `pending` events that nothing completed, or that
+/// only an `unknown` completed, and after which no change of the same secret
+/// through the same connection succeeded. Only rows whose chain hash
+/// verifies count, as for [`unacknowledged_truncations`].
+pub(super) fn unresolved_attempts(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+) -> Result<Vec<ChainRow>> {
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events NOT INDEXED
+             WHERE keyed = 1 AND detail LIKE '{AT_CONNECTION}%'
+             ORDER BY id"
+        ))
+        .map_err(db)?;
+    let rows: Vec<ChainRow> = stmt
+        .query_map([], chain_row)
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)?;
+    let mut open: Vec<(ChainRow, String)> = Vec::new();
+    for row in rows {
+        if !row.authentic(key, vault_id) {
+            continue;
+        }
+        let (_, _, _, operation, name, _, outcome, detail) = &row.row;
+        let Some(at) = detail
+            .as_deref()
+            .and_then(|detail| detail.strip_prefix(AT_CONNECTION))
+        else {
+            continue;
+        };
+        if outcome == AuditOutcome::Pending.as_str() {
+            if let Some(connection) = at.strip_suffix(SENT) {
+                let connection = connection.to_owned();
+                open.push((row, connection));
+            }
+            continue;
+        }
+        if outcome != AuditOutcome::Unknown.as_str()
+            && let Some(attempt) = completed_attempt(at)
+        {
+            open.retain(|(pending, _)| pending.id() != attempt);
+        }
+        let settles = outcome == AuditOutcome::Success.as_str()
+            && operation
+                .parse::<AuditOperation>()
+                .is_ok_and(|op| op.changes_a_secret() || op == AuditOperation::VaultChange);
+        if settles && name.is_some() {
+            let connection = at.split([':', ' ']).next().unwrap_or_default();
+            open.retain(|(pending, at)| !(at == connection && pending.row.4 == *name));
+        }
+    }
+    Ok(open.into_iter().map(|(row, _)| row).collect())
 }
 
 /// The checkpoints an event carries (see `integrity`): the rows a success
@@ -317,13 +390,16 @@ pub(super) fn write_head(
 }
 
 /// Rows flagged as written with the metadata key.
+/// The two statements of the chain-head check every append makes; the
+/// partial index `audit_keyed` answers both (see `schema::AUDIT_INDEXES`).
+pub(super) const KEYED_COUNT_SQL: &str =
+    "SELECT COUNT(*) FROM audit_events INDEXED BY audit_keyed WHERE keyed = 1";
+pub(super) const LAST_KEYED_SQL: &str = "SELECT id, hash FROM audit_events INDEXED BY audit_keyed
+     WHERE keyed = 1 ORDER BY id DESC LIMIT 1";
+
 pub(super) fn keyed_count(conn: &Connection) -> Result<u64> {
     let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM audit_events WHERE keyed = 1",
-            [],
-            |row| row.get(0),
-        )
+        .query_row(KEYED_COUNT_SQL, [], |row| row.get(0))
         .map_err(db)?;
     Ok(u64::try_from(count).unwrap_or_default())
 }
@@ -347,7 +423,7 @@ pub(super) fn chain_problem(
     // The newest authentic acknowledgement, if any: the walk starts after it.
     let mut acks = conn
         .prepare(&format!(
-            "SELECT {CHAIN_COLUMNS} FROM audit_events
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_verifications
              WHERE operation = '{}' AND outcome = '{}' AND keyed = 1
              ORDER BY id DESC",
             AuditOperation::AuditVerify.as_str(),
@@ -403,16 +479,12 @@ pub(super) fn read_head(conn: &Connection) -> Result<Option<String>> {
 
 /// `(id, hash)` of the newest row written with the metadata key.
 pub(super) fn last_keyed_row(conn: &Connection) -> Result<Option<(i64, Vec<u8>)>> {
-    conn.query_row(
-        "SELECT id, hash FROM audit_events WHERE keyed = 1 ORDER BY id DESC LIMIT 1",
-        [],
-        |row| {
-            Ok((
-                row.get(0)?,
-                row.get::<_, Option<Vec<u8>>>(1)?.unwrap_or_default(),
-            ))
-        },
-    )
+    conn.query_row(LAST_KEYED_SQL, [], |row| {
+        Ok((
+            row.get(0)?,
+            row.get::<_, Option<Vec<u8>>>(1)?.unwrap_or_default(),
+        ))
+    })
     .optional()
     .map_err(db)
 }
@@ -486,7 +558,7 @@ pub(super) fn unacknowledged_truncations(
     // applies; it is a fixed label, not input.
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {CHAIN_COLUMNS} FROM audit_events
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_verifications
              WHERE operation = '{}' AND keyed = 1
              ORDER BY id",
             AuditOperation::AuditVerify.as_str()
@@ -570,7 +642,7 @@ pub(super) fn settings_problem(
     let newest = conn
         .query_row(
             &format!(
-                "SELECT {CHAIN_COLUMNS} FROM audit_events
+                "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_settings
                  WHERE settings_tag IS NOT NULL AND keyed = 1
                  ORDER BY id DESC LIMIT 1"
             ),
@@ -662,7 +734,7 @@ fn read_checkpoints(
 ) -> Result<Vec<ChainRow>> {
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {CHAIN_COLUMNS} FROM audit_events
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_checkpoints
              WHERE secret_name = ?1 AND keyed = 1
                AND (state_tag IS NOT NULL OR version_tag IS NOT NULL)
              ORDER BY id"
@@ -752,7 +824,7 @@ pub(super) fn vault_checkpoints(
 ) -> Result<BTreeMap<String, SecretCheckpoints>> {
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {CHAIN_COLUMNS} FROM audit_events
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_checkpoints
              WHERE secret_name IS NOT NULL AND keyed = 1
                AND (state_tag IS NOT NULL OR version_tag IS NOT NULL)
              ORDER BY id"
@@ -832,6 +904,23 @@ impl SqliteVault {
     pub fn unacknowledged_truncations(&self) -> Result<Vec<AuditEvent>> {
         let conn = self.lock()?;
         unacknowledged_truncations(&conn, &self.metadata_key, &self.meta.id)?
+            .into_iter()
+            .map(|row| event_from_row(row.row))
+            .collect()
+    }
+
+    /// The changes at this vault's connections whose result it never
+    /// learned, oldest first: each the `pending` event recorded before the
+    /// change was sent (ADR 0011), which nothing completed (the process
+    /// stopped, or could not record the answer) or which ended `unknown`
+    /// (the provider's answer was lost). One stays listed until a later
+    /// change of the same secret through the same connection succeeds:
+    /// check the secret at the provider, then repeat or undo the change
+    /// there. Read-only, and not audited: it reads the log, as
+    /// [`SqliteVault::unacknowledged_truncations`] does.
+    pub fn unresolved_attempts(&self) -> Result<Vec<AuditEvent>> {
+        let conn = self.lock()?;
+        unresolved_attempts(&conn, &self.metadata_key, &self.meta.id)?
             .into_iter()
             .map(|row| event_from_row(row.row))
             .collect()

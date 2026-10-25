@@ -8,14 +8,17 @@
 //! sidebar uses for the current page, messages drawn as callouts, and a
 //! footer bar.
 
+mod columns;
 mod dialog;
+mod inspection;
 mod lists;
+mod menu;
 mod overview;
 mod projects;
 mod secrets;
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Flex, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::Style;
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
@@ -47,9 +50,11 @@ struct Drawn {
 }
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
+    let resolved = app.resolved_theme(theme);
+    let theme = &resolved;
     frame.render_widget(Block::new().style(theme.screen), frame.area());
     let message_height = u16::from(app.message.is_some());
-    let [header, tabs, _, body, message, footer] = Layout::vertical([
+    let [header, tabs, freshness, body, message, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -58,12 +63,48 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
         Constraint::Length(1),
     ])
     .areas(frame.area());
-    frame.render_widget(header_bar(app, theme), header);
-    frame.render_widget(tab_bar(app, theme), tabs);
+    frame.render_widget(
+        header_bar(
+            app,
+            theme,
+            header
+                .width
+                .saturating_sub(if app.idle_warning.is_some() { 15 } else { 0 }),
+        ),
+        header,
+    );
+    frame.render_widget(tab_bar(app, theme, tabs.width), tabs);
+    if app.session.is_some() {
+        frame.render_widget(
+            Paragraph::new(app.feedback.label()).style(
+                if app.feedback.failed || app.feedback.partial {
+                    theme.caution
+                } else {
+                    theme.muted
+                },
+            ),
+            freshness,
+        );
+    }
+    if let Some(seconds) = app.idle_warning {
+        let width = header.width.min(15);
+        let area = Rect {
+            x: header.right().saturating_sub(width),
+            width,
+            ..header
+        };
+        frame.render_widget(
+            Paragraph::new(format!("Locks in {seconds}s")).style(theme.caution),
+            area,
+        );
+    }
 
     let drawn = draw_body(frame, app, theme, body.inner(Margin::new(2, 0)));
     if let Some(drawn) = drawn {
-        if app.detail.is_some() {
+        if app.detail.is_some() && app.tab == Tab::Projects {
+            app.declarations = drawn.table;
+            app.declaration_page = drawn.page;
+        } else if app.detail.is_some() {
             app.versions = drawn.table;
         } else {
             app.list_mut(app.tab).table = drawn.table;
@@ -73,10 +114,25 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
 
     if let Some(text) = &app.message {
         frame.render_widget(callout(text, theme), message);
+        let route = Rect {
+            x: message.right().saturating_sub(10),
+            width: message.width.min(10),
+            ..message
+        };
+        frame.render_widget(Paragraph::new(" ! details").style(theme.key), route);
     }
     draw_footer(frame, app, theme, footer);
+    if app.feedback.operation.is_some() {
+        return;
+    }
     if let Some(open) = &app.dialog {
-        dialog::draw(frame, open, theme);
+        dialog::draw(frame, open, theme, &mut app.dialog_view);
+    }
+    if let Some(inspection) = &mut app.inspection {
+        inspection::draw(frame, inspection, theme);
+    }
+    if let Some(menu) = &mut app.menu {
+        menu::draw(frame, menu, theme);
     }
     if app.help {
         draw_help(frame, app, theme);
@@ -98,17 +154,20 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Opt
             } else {
                 0
             };
-            overview::draw(frame, session, theme, rows(area, used, area.height));
+            overview::draw(
+                frame,
+                session,
+                theme,
+                rows(area, used, area.height),
+                &app.overview_view,
+            );
             None
         }
         Tab::Secrets | Tab::Projects | Tab::Deleted if session.is_blocked() => {
             draw_blocked(frame, session, theme, area);
             None
         }
-        Tab::Projects if app.detail.is_some() => {
-            projects::detail(frame, app, theme, area);
-            None
-        }
+        Tab::Projects if app.detail.is_some() => projects::detail(frame, app, theme, area),
         Tab::Projects => Some(projects::list(frame, app, theme, area)),
         Tab::Secrets | Tab::Deleted if app.detail.is_some() => {
             secrets::detail(frame, app, theme, area)
@@ -182,7 +241,40 @@ fn closed_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
     }
 }
 
-fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
+fn header_bar(app: &App, theme: &Theme, width: u16) -> Paragraph<'static> {
+    if width < 110 {
+        let (name, state) = match &app.session {
+            Some(s) => (
+                s.vault.name.as_str(),
+                if s.is_blocked() {
+                    "BLOCKED"
+                } else if app.is_read_only() {
+                    "read-only"
+                } else {
+                    ""
+                },
+            ),
+            None => app
+                .locked
+                .as_ref()
+                .map_or(("—", "closed"), |l| (l.vault.as_str(), "locked")),
+        };
+        let remaining = width.saturating_sub(u16::try_from(26 + state.len()).unwrap_or(u16::MAX));
+        let name = crate::ui::viewport::clip(&output::sanitize(name), remaining);
+        return Paragraph::new(Line::from(vec![
+            Span::styled(" SourceOrrery  vault ", theme.title),
+            Span::styled(name, theme.vault),
+            Span::styled(
+                if state.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {state}")
+                },
+                theme.key,
+            ),
+        ]))
+        .style(theme.bar);
+    }
     let mut spans = vec![Span::styled(" SourceOrrery ", theme.title)];
     match &app.session {
         Some(session) => {
@@ -192,7 +284,7 @@ fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
                 output::sanitize(&vault.name).into_owned(),
                 theme.vault,
             ));
-            if !session.is_blocked() {
+            if !session.is_blocked() && width >= 110 {
                 let check = match (
                     session.view.check.password,
                     session.view.check.authenticator,
@@ -205,6 +297,9 @@ fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
                     format!("  ·  {check}  ·  storage: {}", storages(session)),
                     theme.muted,
                 ));
+            }
+            if session.is_blocked() {
+                spans.push(Span::styled(" · BLOCKED", theme.error.title));
             }
             if app.is_read_only() {
                 spans.push(Span::styled("  ·  read-only", theme.muted));
@@ -247,7 +342,17 @@ fn deletion(session: &Session) -> String {
     }
 }
 
-fn tab_bar(app: &App, theme: &Theme) -> Line<'static> {
+fn tab_bar(app: &App, theme: &Theme, width: u16) -> Line<'static> {
+    let labels = [
+        "Overview", "Secrets", "Projects", "Deleted", "Audit", "Vaults",
+    ];
+    if width < 72 {
+        let index = Tab::ALL.iter().position(|t| *t == app.tab).unwrap_or(0) + 1;
+        return Line::from(vec![
+            Span::styled(format!(" {index} {} ", app.tab.title()), theme.tab),
+            Span::styled(" Tab ← → views", theme.muted),
+        ]);
+    }
     let mut spans = vec![Span::raw(" ")];
     for (i, tab) in Tab::ALL.into_iter().enumerate() {
         let style = if tab == app.tab {
@@ -256,11 +361,16 @@ fn tab_bar(app: &App, theme: &Theme) -> Line<'static> {
             Style::new()
         };
         spans.push(Span::styled(format!("{} ", i + 1), theme.muted));
-        spans.push(Span::styled(tab.title(), style));
-        if let Some(total) = app.total(tab) {
+        spans.push(Span::styled(
+            if width < 110 { labels[i] } else { tab.title() },
+            style,
+        ));
+        if width >= 110
+            && let Some(total) = app.total(tab)
+        {
             spans.push(Span::styled(format!(" {total}"), theme.muted));
         }
-        spans.push(Span::raw("   "));
+        spans.push(Span::raw(if width < 110 { "  " } else { "   " }));
     }
     Line::from(spans)
 }
@@ -316,6 +426,21 @@ fn ruled_table(
     // The headings' bottom margin carries the thin rule.
     rule(frame, area, 3, theme.header_rule);
     rule(frame, area, 4 + shown, theme.rule);
+    if count > shown {
+        let first = state.offset().min(usize::from(count));
+        let range = format!(
+            " {}–{} of {} ",
+            first + 1,
+            (first + usize::from(shown)).min(usize::from(count)),
+            count
+        );
+        frame.render_widget(
+            Paragraph::new(range)
+                .alignment(Alignment::Right)
+                .style(theme.muted),
+            row(area, 4 + shown),
+        );
+    }
     (TABLE_CHROME + shown, shown)
 }
 
@@ -333,13 +458,41 @@ fn label(title: &str, app: &App, tab: Tab, shown: usize, theme: &Theme) -> Line<
         Span::styled(title.to_uppercase(), theme.label),
         Span::styled(count, theme.muted),
     ];
+    if list.sort != super::sort::Sort::Default {
+        spans.push(Span::styled(
+            format!(" · {}", list.sort.title()),
+            theme.muted,
+        ));
+    }
     if filtered {
         spans.push(Span::styled("    / ", theme.key));
-        spans.push(Span::raw(output::sanitize(&list.query).into_owned()));
+        spans.push(Span::styled(
+            output::sanitize(&list.query).into_owned(),
+            theme.search_match,
+        ));
         if app.editing {
             spans.push(Span::styled("▌", theme.key));
         }
     }
+    Line::from(spans)
+}
+
+pub(super) fn highlighted(text: &str, query: &str, theme: &Theme, selected: bool) -> Line<'static> {
+    let text = output::sanitize(text);
+    let ranges = super::search::Query::parse(query).ranges(&text);
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    for range in ranges {
+        spans.push(Span::raw(text[pos..range.start].to_owned()));
+        spans.push(Span::styled(
+            text[range.clone()].to_owned(),
+            theme.cell(theme.search_match, selected).add_modifier(
+                ratatui::style::Modifier::BOLD | ratatui::style::Modifier::UNDERLINED,
+            ),
+        ));
+        pos = range.end;
+    }
+    spans.push(Span::raw(text[pos..].to_owned()));
     Line::from(spans)
 }
 
@@ -407,7 +560,7 @@ fn callout(message: &Message, theme: &Theme) -> Paragraph<'static> {
     let line = Line::from(vec![
         Span::styled(" ▌", style.bar),
         Span::styled(format!(" {title} "), style.title),
-        Span::raw(format!(" {}", output::sanitize(text))),
+        Span::raw(format!(" {} · ! details", output::sanitize(text))),
     ]);
     Paragraph::new(line).style(style.panel)
 }
@@ -568,8 +721,63 @@ fn view_hints(app: &App, changes: bool) -> &'static [(&'static str, &'static str
 }
 
 fn draw_footer(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    if app.feedback.operation.is_some() {
+        frame.render_widget(
+            Paragraph::new("Working synchronously; commands resume after completion.")
+                .style(theme.bar),
+            area,
+        );
+        return;
+    }
+    let all = hints(app);
+    let mut pairs = all.to_vec();
+    let normal = app.mode() == crate::ui::app::Mode::Normal;
+    if normal {
+        pairs.retain(|(key, _)| {
+            use crate::ui::app::Action;
+            let action = match *key {
+                "e" => Some(Action::Edit),
+                "d" => Some(Action::Delete),
+                "space" => Some(Action::Toggle),
+                "u" => Some(Action::Recover),
+                "x" => Some(Action::Unlink),
+                "a" => Some(Action::Add),
+                "c" => Some(Action::ChangeVault),
+                "Enter" => Some(Action::Open),
+                _ => None,
+            };
+            action.is_none_or(|a| app.unavailable(a).is_none())
+        });
+        pairs.insert(0, ("F2", "Actions"));
+        pairs.retain(|(key, _)| !matches!(*key, "?" | "q" | "Esc"));
+        pairs.push(("?", "help"));
+        pairs.push((
+            if app.detail.is_some() { "Esc" } else { "q" },
+            if app.detail.is_some() { "back" } else { "quit" },
+        ));
+    }
+    let essential: usize = if normal {
+        pairs.len().saturating_sub(2)
+    } else {
+        pairs.len()
+    };
+    let tail = if normal { &pairs[essential..] } else { &[] };
+    let tail_width: usize = tail
+        .iter()
+        .map(|(k, v)| k.chars().count() + v.chars().count() + 4)
+        .sum();
     let mut spans = vec![Span::raw(" ")];
-    for (keys, what) in hints(app) {
+    let mut used = 1;
+    for (keys, what) in &pairs[..essential] {
+        let needed = Line::from(format!("{keys} {what}   ")).width();
+        if used + needed + tail_width > usize::from(area.width) {
+            continue;
+        }
+        spans.push(Span::styled(*keys, theme.key));
+        spans.push(Span::raw(format!(" {what}   ")));
+        used += needed;
+    }
+    for (keys, what) in tail {
         spans.push(Span::styled(*keys, theme.key));
         spans.push(Span::raw(format!(" {what}   ")));
     }
@@ -591,7 +799,13 @@ fn draw_footer(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     );
 }
 
-const HELP_KEYS: [(&str, &str); 13] = [
+const HELP_KEYS: [(&str, &str); 19] = [
+    ("F2", "Actions: availability and reasons"),
+    ("f", "filters using cached metadata"),
+    ("s", "typed sort; keeps object selection"),
+    ("i", "inspect full cached metadata; no reads"),
+    ("!", "complete message details"),
+    ("t", "theme preview; Enter applies, Esc restores"),
     ("↑ ↓  k j", "move"),
     ("PgUp PgDn", "move a screenful"),
     ("g G  Home End", "first, last"),
@@ -619,16 +833,26 @@ const HELP_CHANGES: [(&str, &str); 9] = [
     ("n  (Vaults)", "a new vault on the setup screens"),
 ];
 
-fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
+fn draw_help(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
     let mut lines: Vec<Line<'_>> = HELP_KEYS
         .iter()
-        .map(|(keys, what)| {
-            Line::from(vec![
-                Span::styled(format!("{keys:<23}"), theme.key),
-                Span::raw(*what),
-            ])
+        .flat_map(|(keys, what)| {
+            if frame.area().width <= 60 {
+                vec![
+                    Line::from(Span::styled(*keys, theme.key)),
+                    Line::from(*what),
+                ]
+            } else {
+                vec![Line::from(vec![
+                    Span::styled(format!("{keys:<23}"), theme.key),
+                    Span::raw(*what),
+                ])]
+            }
         })
         .collect();
+    lines.push(Line::from(
+        "Text fields: Left/Right, Home/End, Delete, Backspace; PgUp/PgDn scrolls.",
+    ));
     lines.push(Line::from(Span::styled("CHANGES", theme.label)));
     if app.is_read_only() {
         lines.push(Line::from("None: this browser is read-only (--read-only)."));
@@ -673,20 +897,36 @@ fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     lines.push(Line::from(
         "and a project's manifest on disk read nothing of the vault.",
     ));
-    let height = u16::try_from(lines.len()).unwrap_or(0) + 4;
-    let [area] = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .areas(frame.area());
-    let [area] = Layout::horizontal([Constraint::Length(70)])
-        .flex(Flex::Center)
-        .areas(area);
+    lines.insert(0, Line::from(format!("CURRENT VIEW — {}", app.tab.title())));
+    for (key, description) in view_hints(
+        app,
+        !app.is_read_only() && app.session.as_ref().is_some_and(|s| !s.is_blocked()),
+    ) {
+        lines.insert(1, Line::from(format!("{key}  {description}")));
+    }
+    let area = frame.area().inner(Margin::new(1, 1));
     let block = Block::bordered()
         .border_style(theme.rule)
         .title(Span::styled(" KEYS ", theme.label))
-        .padding(Padding::new(2, 2, 1, 1))
         .style(theme.panel);
+    let inner = block.inner(area);
+    let content = rows(inner, 0, inner.height.saturating_sub(1));
+    let lines = crate::ui::viewport::reflow(&lines, content.width);
+    app.help_view
+        .fit(lines.len(), usize::from(content.height), None);
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(lines).scroll((u16::try_from(app.help_view.offset).unwrap_or(u16::MAX), 0)),
+        content,
+    );
+    frame.render_widget(
+        Line::from(format!(
+            "Esc close · ↑↓ PgUp/PgDn Home/End · {}",
+            app.help_view.position()
+        )),
+        rows(inner, inner.height.saturating_sub(1), 1),
+    );
 }
 
 /// Row `offset` of `area`, or nothing when it is outside.
@@ -729,7 +969,7 @@ fn long_time(ts: OffsetDateTime) -> String {
 
 /// `-` in the muted style, for a missing value.
 fn dash(theme: &Theme, selected: bool) -> Span<'static> {
-    Span::styled("-", theme.cell(theme.muted, selected))
+    Span::styled("-", theme.cell(theme.disabled_action, selected))
 }
 
 #[cfg(test)]

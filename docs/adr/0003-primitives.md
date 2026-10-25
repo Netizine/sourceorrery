@@ -2,6 +2,8 @@
 
 **Status:** accepted · **Date:** 2026-10-20
 
+> **0.3.0 clarification:** For 0.3.0, Argon2id hashes the view-check password; it does not derive the vault encryption key. The recovery key uses HKDF-SHA256 and the key-wrap inventory is authenticated (ADR 0009/0010). The original passphrase rationale below is historical.
+
 ## Context
 
 Values are written by many short-lived CLI processes with no shared counter
