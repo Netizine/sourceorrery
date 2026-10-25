@@ -86,6 +86,11 @@ resolved). `${vault}`, `${home}`, `${recovery_key}`, `${manifest}`,
 substituted from the fixture environment and `${version}` from the
 observation.
 
+Beside `args`, a scenario may give `env` (variables set) and `unset`
+(variables removed) for the runner's environment, so that where a key
+comes from varies with no change to any runner: the recovery-key source
+order is checked that way in every language.
+
 ## Adding a scenario
 
 Add it to `scenarios.json` with an `about` line, run every runner you have
@@ -109,4 +114,10 @@ environment, and run the Rust and C runners. A scenario with `"requires":
 "remote-per-version"` also needs the provider to keep properties per
 version (HashiCorp Vault and Azure Key Vault do, AWS Secrets Manager does
 not) and runs only with `--remote-per-version` as well.
+
+A scenario that is not run is listed as `SKIP` with what it requires, and
+counted in the summary. With `SOURCEORRERY_LIVE_REQUIRED=true` (the
+`provider-vault` job, a release rehearsal), a skipped `remote` scenario
+fails the run: a job that must read a provider cannot pass without having
+read it.
 

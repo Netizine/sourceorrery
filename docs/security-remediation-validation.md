@@ -893,3 +893,61 @@ One commit: the checks and the new write order share the tag plan.
   said 3).
 * **Not run here:** the install commands themselves (0.3.0 is not
   published; B32), and the remote route for AWS and Azure.
+
+### B28 — the failure matrix
+
+* **Closes:** REC04 as a matrix: every SR item has named regressions with
+  evidence, or the verification that is still owed (B31/B32), below.
+* **Matrix.** "Local" means run on this Windows machine in this ledger's
+  batches; "CI" means only the hosted jobs run it (nothing was pushed, so
+  they have not run on this branch yet).
+
+  | Item | Area | Regression (where) | Evidence |
+  |---|---|---|---|
+  | SR01 | persisted state | `an_old_recovery_wrap_put_back_does_not_open_the_vault`, `a_wrap_row_added_or_swapped_is_refused`, `the_settings_record_covers_every_part_of_every_key_wrap`, `every_change_to_the_wraps_leaves_a_vault_that_opens` (storage) | local; fails without the fix (B03) |
+  | SR02 | provider partial outcomes | Vault and AWS `tests/publication.rs` models (every request refused, failed or answer lost; two writers interleaved); lifecycle `a_new_restricted_version_is_never_returned` (every backend) | local, models fail without the fix; live Vault 2.2.1 and LocalStack AWS local; Azure emulator CI |
+  | SR03 | provider calls while quarantined | `a_blocked_vault_sends_nothing_to_its_providers` (routed) | local; 13 provider calls without the fix |
+  | SR03 / REC08 | outcomes, restart, retry | `a_lost_answer_is_outcome_unknown_until_a_later_change_settles_it` (never retried), `a_change_made_but_not_recorded_is_outcome_unknown`, `an_attempt_cut_short_by_a_restart_is_listed_when_the_vault_opens_again`, `a_refused_change_completes_its_attempt` (routed) | local |
+  | SR04 | file permissions | `a_new_file_admits_only_its_owner_and_system`, `a_folder_that_grants_users_read_grants_them_nothing_on_the_file`, `a_failed_check_removes_the_empty_file`, `the_check_accepts_exactly_owner_and_system` (`sourceorrery-os`) | local (Windows); Unix branch in the Linux container (B12); a second account opening the file: B31 |
+  | SR05 | SDK ownership | PHP `tests/run.php` clone and serialise cases | Linux container, PHP 8.2 (B12) |
+  | SR06 | SDK ownership | `SecretValueLifetimeTests` (7) | local, .NET 10; four fail and one deadlocks without the fix |
+  | SR07 | SDK ownership, concurrency | `GuardedTest` (5), `closeWhileReadsRunWaitsForThem`, `everyCallAfterCloseIsRefused` | local, JDK 27 |
+  | SR08 | source selection | `an_unusable_later_source_never_fails_an_open_an_earlier_one_completes` (reader); SDK scenarios `open-key-file-not-needed`, `open-option-before-key-file`, `open-key-file-needed-and-missing` (new here) | local: Rust, Python, .NET and Java runners; Node, Go, C, C++ and PHP: CI |
+  | SR09 | output failure, boundaries | `a_recovery_key_that_cannot_be_delivered_leaves_no_vault` (CLI: missing folder, stdout closed, plain and JSON) | local |
+  | SR10 | child environment | `an_unresolved_optional_secret_leaves_its_variable_absent_in_the_child` | local (Windows spelling); Unix spelling CI |
+  | SR11 | persisted state, two handles | `a_handle_follows_the_view_check_another_process_changes` | local |
+  | SR12 | documentation | `docs_version_test.py`; the 0.2.0 transition checks (B24) | local; install commands of the stamped candidate: B32 |
+  | SR13 | fork builds | the docs workflow's token step | needs a fork pull request (owner's disposition, B23) |
+  | SR14 | refused changes audited | `every_view_check_change_is_recorded_once_and_never_its_input`, `a_hint_must_not_give_the_password_away` | local |
+  | REC05 | bounded replies | `tests/transport.rs` (4) | local |
+  | REC06 | AWS input | `user_tags_content_types_and_values_are_checked_before_any_request`, `invalid_input_sends_nothing_that_writes` | local |
+  | REC07 | plaintext copies | `json_copies_of_a_value_are_serialised_and_wiped`, `cli::plain` tests | local (ownership review, no allocation trace) |
+  | all | sensitive output | `attempts_and_unknown_outcomes_never_carry_a_value`; the conformance canaries; every SDK scenario's `*_excludes` | local |
+
+* **Added here.** The SDK harness takes `env` and `unset` per scenario, so
+  the recovery-key source order is held to the same contract in all nine
+  languages with no runner change; it lists every scenario it does not run
+  as `SKIP` with what it needs and counts them; and with
+  `SOURCEORRERY_LIVE_REQUIRED=true` (as the live Rust suites already read
+  it) a skipped provider scenario fails the run, so a job meant to read a
+  provider cannot pass without reading it (per-version scenarios stay a
+  skip: that is the provider's capability). `harness_test.py`, 5 tests,
+  joins CI's script tests.
+* **Found and fixed.** B15's new SDK hint had lost its line continuations
+  (runs of 13 spaces mid-sentence in every language's hint):
+  `every_hint_reads_as_one_sentence_run` now checks each hint and message,
+  and fails on the damaged string. B21's `bytes` dependency was missing from
+  the Python and Node extensions' lock files, which CI's `--locked` build
+  of the wheel would have refused; both locks are updated (offline, one
+  dependency edge) and `cargo metadata --locked` passes in all three roots.
+* **Tests run:** harness against the fixture vault from
+  `scripts/ci/fixture-vault.sh` with this branch's release CLI and C ABI:
+  Rust, Python (a 0.3.0 wheel built with `maturin --locked`), .NET and Java
+  29/29 with 6 provider scenarios skipped; against a Vault 2.2.1 dev server
+  with the connection in the vault and `SOURCEORRERY_LIVE_REQUIRED=true`,
+  all four 35/35 with none skipped; with the variable set and no
+  `--remote`, the run fails. Client crate 11, clippy clean.
+* **Owed (blocks sign-off, B31/B32):** the Node, Go, C, C++ and PHP runners
+  on this branch (CI; no C compiler here); the Azure live suite; macOS and
+  Linux runs of everything marked local; a second Windows account against
+  SR04's files.

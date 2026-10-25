@@ -446,7 +446,10 @@ fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
              only; a `value` key is a parse error) and check it with `sourceorrery check`"
             .to_owned(),
         SecretError::Io(message) if message.contains("recovery-key file") => format!(
-            "The recovery-key file (the recovery_key_file option or {RECOVERY_KEY_FILE_ENV}) was              needed, since no earlier source opened the vault, and it cannot be read or is              empty. Fix the path, or give the key another way: the recovery_key option or              {RECOVERY_KEY_ENV}"
+            "The recovery-key file (the recovery_key_file option or {RECOVERY_KEY_FILE_ENV}) was \
+             needed, since no earlier source opened the vault, and it cannot be read or is \
+             empty. Fix the path, or give the key another way: the recovery_key option or \
+             {RECOVERY_KEY_ENV}"
         ),
         SecretError::Storage(_) | SecretError::Io(_) => format!(
             "Check that the vault file and its directory are readable by this process.{}",
@@ -495,6 +498,61 @@ mod tests {
         assert_eq!(ErrorKind::from_code("something_new"), ErrorKind::Other);
         assert!(ErrorKind::Expired.is_policy());
         assert!(!ErrorKind::Locked.is_policy());
+    }
+
+    /// Hints are written as `\`-continued strings: a lost continuation
+    /// leaves a run of spaces in the sentence (it happened once).
+    #[test]
+    fn every_hint_reads_as_one_sentence_run() {
+        let errors = [
+            SecretError::NotFound { name: "a".into() },
+            SecretError::Disabled {
+                name: "a".into(),
+                version: "b".into(),
+            },
+            SecretError::Locked("x".into()),
+            SecretError::VaultNotFound { name: "a".into() },
+            SecretError::MigrationRequired {
+                name: "a".into(),
+                schema: 3,
+            },
+            SecretError::VaultMismatch {
+                requested: "a".into(),
+                found: "b".into(),
+            },
+            SecretError::Crypto("x".into()),
+            SecretError::Unsupported("x".into()),
+            SecretError::InvalidName {
+                name: "a".into(),
+                reason: "r".into(),
+            },
+            SecretError::InvalidArgument("x".into()),
+            SecretError::Manifest("x".into()),
+            SecretError::Io("cannot read the recovery-key file".into()),
+            SecretError::Io("x".into()),
+            SecretError::Storage("x".into()),
+            SecretError::PermissionDenied("x".into()),
+            SecretError::OutcomeUnknown {
+                at: "p".into(),
+                reason: "r".into(),
+            },
+        ];
+        let context = Context {
+            vault: Some("dev"),
+            home: Some(Path::new("/home/x/so")),
+            unlock: None,
+            provider: None,
+        };
+        for source in &errors {
+            let err = Error::new(source, &context);
+            for text in [err.hint(), err.message()] {
+                assert!(
+                    !text.contains("  ") && !text.contains('\n'),
+                    "{}: {text:?}",
+                    source.code()
+                );
+            }
+        }
     }
 
     #[test]
