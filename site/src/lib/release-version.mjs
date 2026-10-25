@@ -9,8 +9,14 @@ import path from 'node:path';
  */
 export function releaseVersion(repositoryRoot) {
 	const cargo = readFileSync(path.join(repositoryRoot, 'Cargo.toml'), 'utf8');
-	const section = cargo.match(/^\[workspace\.package\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m);
-	const version = section?.[1].match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+	// The `version` key of the [workspace.package] table, up to the next table.
+	const lines = cargo.split(/\r?\n/);
+	const start = lines.findIndex((line) => line.trim() === '[workspace.package]');
+	let version;
+	for (const line of start < 0 ? [] : lines.slice(start + 1)) {
+		if (line.startsWith('[')) break;
+		version ??= line.match(/^version\s*=\s*"([^"]+)"/)?.[1];
+	}
 	if (!version) throw new Error('Cargo.toml: no [workspace.package] version');
 	const changelog = readFileSync(path.join(repositoryRoot, 'CHANGELOG.md'), 'utf8');
 	const released = changelog

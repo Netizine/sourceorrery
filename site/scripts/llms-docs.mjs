@@ -6,13 +6,20 @@ import { llmsPath } from '../src/lib/llms-path.mjs';
 
 export const SITE = 'https://sourceorrery.ai';
 
+/** The lines of `text`, each with its newline; a last line without one is kept. */
+function linesOf(text) {
+	const lines = text.split('\n').map((line, i, all) => (i < all.length - 1 ? `${line}\n` : line));
+	if (lines.at(-1) === '') lines.pop();
+	return lines;
+}
+
 /** Apply a prose transform while preserving backtick/tilde code fences verbatim. */
 export function transformProse(markdown, transform) {
 	const output = [];
 	let prose = [];
 	let fence;
 	const flush = () => { output.push(transform(prose.join(''))); prose = []; };
-	for (const line of markdown.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+	for (const line of linesOf(markdown)) {
 		const opening = line.match(/^ {0,3}(`{3,}|~{3,})/);
 		if (fence) {
 			output.push(line);
@@ -33,7 +40,7 @@ export function cleanMarkdown(markdown, canonical) {
 		const absolute = (href) => href.startsWith('/') || href.startsWith('#')
 			? new URL(href, canonical).href : href;
 		return prose.replace(/<!--[\s\S]*?-->/g, '')
-			.replace(/(!?\[[^\]\n]*\]\()([^\s)]+)(\))/g, (_, before, href, after) => `${before}${absolute(href)}${after}`)
+			.replace(/(!?\[[^[\]\n]*\]\()([^\s)]+)(\))/g, (_, before, href, after) => `${before}${absolute(href)}${after}`)
 			.replace(/^(\[[^\]\n]+\]:\s*)(\S+)/gm, (_, before, href) => `${before}${absolute(href)}`);
 	}).trim() + '\n';
 }
@@ -42,7 +49,7 @@ export function cleanMarkdown(markdown, canonical) {
 export function markdownLinks(markdown) {
 	const links = [];
 	transformProse(markdown, (prose) => {
-		for (const match of prose.matchAll(/(?<!!)\[[^\]\n]+\]\(([^\s)]+)\)/g)) links.push(match[1]);
+		for (const match of prose.matchAll(/(?<!!)\[[^[\]\n]+\]\(([^\s)]+)\)/g)) links.push(match[1]);
 		return prose;
 	});
 	return links;
