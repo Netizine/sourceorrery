@@ -700,3 +700,25 @@ One commit: the checks and the new write order share the tag plan.
   four events instead of five). Storage 77 tests; clippy clean.
 * **Not run here:** an audit-storage failure (no fault injection for
   SQLite writes; the error is returned by the same `?` as any write).
+
+### B19 — Vault replies bounded while they are read
+
+* **Closes:** REC05.
+* **Changes:** `http::read_body` reads a reply chunk by chunk: a declared
+  length over the 8 MiB cap is refused before anything is read; a body
+  without a declared length, or past it, is stopped as soon as the next
+  chunk would pass the cap (checked addition); the buffer is zeroised, and
+  when it grows the old buffer is zeroised as it drops, so at most the cap
+  plus one chunk is held. reqwest's decompression features are off, so the
+  cap applies to the bytes as sent. Timeouts (10 s connect, 60 s overall)
+  and error texts are unchanged. The guide's error table says so.
+* **Tests run:** `tests/transport.rs`, 4 tests against a raw loopback
+  server: a declared length over the cap; an endless chunked body (512 MiB
+  offered: the server could hand over less than 16 x the cap before the
+  client hung up); exactly the cap (read whole, then a parse error) and the
+  cap plus one byte (refused); a body cut off part way (`provider_unavailable`,
+  nothing of it echoed). Against the old `bytes()` reading the endless case
+  **fails** (all 536,870,912 bytes were read before the refusal). The
+  crate's 22 tests pass; clippy clean.
+* **Not run here:** a slow body against the 60-second timeout (too long for
+  a unit test; the timeout is reqwest's own).

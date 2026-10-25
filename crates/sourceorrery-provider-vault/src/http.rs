@@ -160,13 +160,7 @@ impl Transport {
                 ),
             });
         }
-        if response.content_length().is_some_and(|len| len > MAX_BODY) {
-            return Err(too_large(path));
-        }
-        let body = Zeroizing::new(response.bytes().await.map_err(unavailable)?.to_vec());
-        if body.len() as u64 > MAX_BODY {
-            return Err(too_large(path));
-        }
+        let body = read_body(response, path).await?;
         let reply = Reply { status, body };
         if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
             return Err(SecretError::ProviderUnavailable {
@@ -201,8 +195,46 @@ impl Transport {
 }
 
 /// Most bytes read from a reply: a value is at most a megabyte, and a
-/// listing a few; anything larger is not a KV reply.
-const MAX_BODY: u64 = 8 * 1024 * 1024;
+/// listing a few; anything larger is not a KV reply. The transport asks for
+/// no compression (reqwest's decompression features are off), so these are
+/// the bytes as sent.
+pub(crate) const MAX_BODY: u64 = 8 * 1024 * 1024;
+
+/// The body of `response`, read chunk by chunk and stopped as soon as it
+/// would pass [`MAX_BODY`] (REC05 of the 2026-10-25 review): a declared
+/// length over the cap is refused before anything is read, and a body
+/// without one, or longer than it declared, is cut off at the cap instead
+/// of being buffered whole. The buffer is zeroised on drop, and when it
+/// grows the old one is zeroised too, so at most the cap plus one chunk is
+/// held, never a stray copy. The chunks reqwest hands over are its own
+/// buffers and are not wiped (the threat model's memory limits).
+async fn read_body(mut response: reqwest::Response, path: &str) -> Result<Zeroizing<Vec<u8>>> {
+    let declared = response.content_length();
+    if declared.is_some_and(|len| len > MAX_BODY) {
+        return Err(too_large(path));
+    }
+    let initial = usize::try_from(declared.unwrap_or(0)).unwrap_or(0);
+    let mut body = Zeroizing::new(Vec::with_capacity(initial));
+    while let Some(chunk) = response.chunk().await.map_err(unavailable)? {
+        let total = body
+            .len()
+            .checked_add(chunk.len())
+            .filter(|total| *total as u64 <= MAX_BODY)
+            .ok_or_else(|| too_large(path))?;
+        if total > body.capacity() {
+            // Grow by copying into a new buffer, so the old one is zeroised
+            // as it drops rather than freed with the bytes in it.
+            let capacity = total
+                .max(body.capacity().saturating_mul(2))
+                .min(usize::try_from(MAX_BODY).unwrap_or(usize::MAX));
+            let mut grown = Zeroizing::new(Vec::with_capacity(capacity));
+            grown.extend_from_slice(&body);
+            body = grown;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
 
 fn too_large(path: &str) -> SecretError {
     SecretError::Storage(format!(

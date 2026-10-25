@@ -145,6 +145,8 @@ is in `docs/security-remediation-validation.md`).
 
 ### Fixed
 
+* HashiCorp Vault: a reply is read chunk by chunk and stopped at its 8 MiB
+  cap; one without a declared length used to be buffered whole first.
 * HashiCorp Vault: an update made on a machine whose clock trails the Vault
   server's no longer reports an `updated_on` earlier than the version's
   `created_on`.

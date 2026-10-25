@@ -193,7 +193,8 @@ export` from the local vaults, and the two trails meet there
 |-----------|------|
 | no credential in the environment; a token the server refuses | `unauthenticated` |
 | the token lacks a capability on the path | `permission_denied` |
-| the server cannot be reached, times out, or answers 5xx or 429 | `provider_unavailable` (transient) |
+| the server cannot be reached, times out, or answers 5xx or 429; a reply cut off part way | `provider_unavailable` (transient) |
+| a reply over 8 MiB, declared or not (read chunk by chunk and stopped there, never buffered whole) | `storage` |
 | the mount is not a KV version 2 engine | `invalid_argument` at open |
 | no such mount | `vault_not_found` at open |
 | Vault rejects a write (a `custom_metadata` limit, a bad body) | `invalid_argument` with Vault's diagnostic |
