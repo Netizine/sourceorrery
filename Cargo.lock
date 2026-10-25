@@ -3358,6 +3358,7 @@ name = "sourceorrery-provider"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "rusqlite",
  "sourceorrery-conformance",
  "sourceorrery-core",
  "sourceorrery-provider-aws",

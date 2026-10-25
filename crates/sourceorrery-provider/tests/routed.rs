@@ -345,3 +345,203 @@ fn a_connection_that_cannot_be_opened_is_recorded_and_catalogues_nothing() {
         .unwrap_err();
     assert_eq!(err.code(), "invalid_argument");
 }
+
+/// A provider client that counts every call it is given, so a test can
+/// tell whether anything was sent.
+struct Counting {
+    inner: SqliteVault,
+    calls: Arc<AtomicUsize>,
+}
+
+impl Counting {
+    fn hit(&self) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl SecretClient for Counting {
+    fn vault_name(&self) -> &str {
+        self.inner.vault_name()
+    }
+    fn set_secret(
+        &self,
+        name: &str,
+        value: SecretBytes,
+        options: SetSecretOptions,
+    ) -> sourceorrery_core::Result<sourceorrery_core::SecretProperties> {
+        self.hit();
+        self.inner.set_secret(name, value, options)
+    }
+    fn get_secret(
+        &self,
+        name: &str,
+        version: Option<&str>,
+    ) -> sourceorrery_core::Result<sourceorrery_core::Secret> {
+        self.hit();
+        self.inner.get_secret(name, version)
+    }
+    fn get_secret_properties(
+        &self,
+        name: &str,
+        version: Option<&str>,
+    ) -> sourceorrery_core::Result<sourceorrery_core::SecretProperties> {
+        self.hit();
+        self.inner.get_secret_properties(name, version)
+    }
+    fn list_properties_of_secrets(
+        &self,
+    ) -> sourceorrery_core::Result<Vec<sourceorrery_core::SecretProperties>> {
+        self.hit();
+        self.inner.list_properties_of_secrets()
+    }
+    fn list_properties_of_secret_versions(
+        &self,
+        name: &str,
+    ) -> sourceorrery_core::Result<Vec<sourceorrery_core::SecretProperties>> {
+        self.hit();
+        self.inner.list_properties_of_secret_versions(name)
+    }
+    fn update_secret_properties(
+        &self,
+        name: &str,
+        version: Option<&str>,
+        update: sourceorrery_core::UpdateSecretProperties,
+    ) -> sourceorrery_core::Result<sourceorrery_core::SecretProperties> {
+        self.hit();
+        self.inner.update_secret_properties(name, version, update)
+    }
+    fn delete_secret(
+        &self,
+        name: &str,
+    ) -> sourceorrery_core::Result<sourceorrery_core::DeletedSecret> {
+        self.hit();
+        self.inner.delete_secret(name)
+    }
+    fn get_deleted_secret(
+        &self,
+        name: &str,
+    ) -> sourceorrery_core::Result<sourceorrery_core::DeletedSecret> {
+        self.hit();
+        self.inner.get_deleted_secret(name)
+    }
+    fn list_deleted_secrets(
+        &self,
+    ) -> sourceorrery_core::Result<Vec<sourceorrery_core::DeletedSecret>> {
+        self.hit();
+        self.inner.list_deleted_secrets()
+    }
+    fn recover_deleted_secret(
+        &self,
+        name: &str,
+    ) -> sourceorrery_core::Result<sourceorrery_core::SecretProperties> {
+        self.hit();
+        self.inner.recover_deleted_secret(name)
+    }
+    fn purge_deleted_secret(&self, name: &str) -> sourceorrery_core::Result<()> {
+        self.hit();
+        self.inner.purge_deleted_secret(name)
+    }
+    fn audit_events(
+        &self,
+        query: AuditQuery,
+    ) -> sourceorrery_core::Result<Vec<sourceorrery_core::audit::AuditEvent>> {
+        self.hit();
+        self.inner.audit_events(query)
+    }
+}
+
+/// SR03 of the 2026-10-25 review: a vault whose audit log was cut short
+/// sends nothing to a provider, through a client opened before the cut as
+/// through a new one, and every refusal is the vault's own `crypto`.
+#[test]
+fn a_blocked_vault_sends_nothing_to_its_providers() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, vault, _) = create(dir.path(), "dev.sorvault");
+    let (provider_path, provider, provider_key) = create(dir.path(), "provider.sorvault");
+    drop(provider);
+    let connection = vault.add_connection(&vault_settings(), None).unwrap().id;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&calls);
+    let opener_key = provider_key.clone();
+    let routed = Routed::with_opener(vault, move |_, _, _| {
+        let client: ConnectionClient = Box::new(Counting {
+            inner: open(&provider_path, &opener_key),
+            calls: Arc::clone(&counter),
+        });
+        Ok(client)
+    })
+    .storing_new_in(SecretStorage::Connection(connection))
+    .unwrap();
+    // Two secrets at the provider, one of them deleted; the client is open.
+    set(&routed, "kept", "a value");
+    set(&routed, "gone", "another");
+    routed.delete_secret("gone").unwrap();
+    routed.get_secret("kept", None).unwrap();
+    let before = calls.load(Ordering::SeqCst);
+
+    // The newest audit row removed: the log is cut short.
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "DELETE FROM audit_events WHERE id = (SELECT MAX(id) FROM audit_events)",
+            [],
+        )
+        .unwrap();
+    let refused: Vec<(&str, SecretError)> = vec![
+        ("get", routed.get_secret("kept", None).unwrap_err()),
+        (
+            "properties",
+            routed.get_secret_properties("kept", None).unwrap_err(),
+        ),
+        (
+            "versions",
+            routed
+                .list_properties_of_secret_versions("kept")
+                .unwrap_err(),
+        ),
+        (
+            "set",
+            routed
+                .set_secret(
+                    "kept",
+                    SecretBytes::from("new"),
+                    SetSecretOptions::default(),
+                )
+                .unwrap_err(),
+        ),
+        (
+            "update",
+            routed
+                .update_secret_properties(
+                    "kept",
+                    None,
+                    sourceorrery_core::UpdateSecretProperties::default(),
+                )
+                .unwrap_err(),
+        ),
+        ("delete", routed.delete_secret("kept").unwrap_err()),
+        ("deleted", routed.get_deleted_secret("gone").unwrap_err()),
+        (
+            "recover",
+            routed.recover_deleted_secret("gone").unwrap_err(),
+        ),
+        ("purge", routed.purge_deleted_secret("gone").unwrap_err()),
+        ("list", routed.list_properties_of_secrets().unwrap_err()),
+        ("list deleted", routed.list_deleted_secrets().unwrap_err()),
+    ];
+    for (what, err) in &refused {
+        assert_eq!(err.code(), "crypto", "{what}: {err}");
+    }
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        before,
+        "a call reached the provider"
+    );
+    // The provider was not changed: the secret is there, the other still deleted.
+    let provider = open(&dir.path().join("provider.sorvault"), &provider_key);
+    assert_eq!(
+        provider.get_secret("kept", None).unwrap().value.expose(),
+        b"a value"
+    );
+    assert!(provider.get_deleted_secret("gone").is_ok());
+}

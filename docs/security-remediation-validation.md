@@ -205,3 +205,26 @@ land together to build.
   machine: CI builds it on Linux and macOS), a real second account opening
   the file, a FAT volume, write and flush failures (no fault injection for
   the disk; the code path is the same `?` as the open failure). B31.
+
+### B06 — the vault's gate before every provider dispatch
+
+* **Closes:** SR03's dispatch half (B07 covers what a dispatched call's
+  outcome is when it cannot be recorded).
+* **Changes:** `SqliteVault::preflight_at_connection`: the gate
+  `record_at_connection` applies (chain head, no truncation waiting, the
+  verified settings record and connection row, the secret's catalog row
+  for the change), without its writes; a refusal is recorded. `Routed::at`,
+  the one path to every provider call (reads, listings, writes, recovery,
+  purge, `missing`, `forget_missing`), calls it before opening or using a
+  client, cached or not. No lock is held during the provider call; a change
+  made in between is caught when the call is recorded.
+* **Tests run:** `a_blocked_vault_sends_nothing_to_its_providers` (the
+  review's reproduction: warm client, newest audit row removed, then get,
+  properties, versions, set, update, delete, deleted, recover, purge, list,
+  list deleted): every call refused with `crypto` and the counting provider
+  called **zero** times; the provider's secret and deleted secret
+  unchanged. Without the preflight the test fails (13 provider calls
+  against 4). Provider crate 14 tests, storage 75; clippy clean for both.
+* **Residual, carried into B07:** a vault blocked *between* the preflight
+  and the dispatch is caught only when the call is recorded, after the
+  provider acted.

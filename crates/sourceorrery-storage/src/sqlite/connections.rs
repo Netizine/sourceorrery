@@ -816,6 +816,36 @@ impl SqliteVault {
         }))
     }
 
+    /// Check, before anything is sent to the connection `connection`, that
+    /// this vault may act there now (SR03 of the 2026-10-25 review): the
+    /// audit chain's head and no truncation waiting to be acknowledged, the
+    /// settings record and the connection's row as the chain last recorded
+    /// them, and for a secret its catalog row as `change` will need it. It
+    /// is the same gate [`Self::record_at_connection`] applies, without its
+    /// writes: nothing is written when it passes, and a refusal is recorded
+    /// as any refused operation is. No lock is held afterwards, while the
+    /// provider is called, so a change made in between is caught when the
+    /// call is recorded, not here.
+    pub fn preflight_at_connection(
+        &self,
+        connection: &str,
+        operation: AuditOperation,
+        name: Option<&str>,
+        change: CatalogChange,
+    ) -> Result<()> {
+        let mut conn = self.lock()?;
+        let tx = self.begin(&mut conn, operation)?;
+        let tx = match name {
+            Some(name) => self.validated(tx, operation, name)?,
+            None => tx,
+        };
+        match self.catalog_change(&tx, connection, name, false, change) {
+            // Dropped, not committed: the check wrote nothing.
+            Ok(_) => Ok(()),
+            Err(err) => self.fail(tx, operation, name, None, err),
+        }
+    }
+
     /// Record in this vault what was done at the connection `connection` for
     /// the secret `name` (or, without one, for the connection as a whole,
     /// such as a listing): one audit row for `operation` about `version`,

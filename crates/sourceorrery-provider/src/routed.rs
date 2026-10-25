@@ -230,6 +230,12 @@ impl Routed {
 
     /// Make `call` at the connection `id` and record it in the vault as
     /// `record` says, with the version `version_of` finds in the answer.
+    ///
+    /// Every call at a connection passes here, and the vault's own gate
+    /// comes first ([`SqliteVault::preflight_at_connection`]): a vault whose
+    /// log was truncated, whose settings or connection row do not verify,
+    /// or whose catalog does not have the secret there, sends nothing to
+    /// the provider, also through a client opened earlier.
     fn at<T>(
         &self,
         id: &str,
@@ -237,6 +243,8 @@ impl Routed {
         call: impl FnOnce(&dyn SecretClient) -> Result<T>,
         version_of: impl FnOnce(&T) -> Option<&str>,
     ) -> Result<T> {
+        self.vault
+            .preflight_at_connection(id, record.operation, record.name, record.change)?;
         let outcome = self.client(id).and_then(|client| call(&*client));
         let version = match &outcome {
             Ok(value) => version_of(value).or(record.version).map(str::to_owned),
