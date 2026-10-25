@@ -237,11 +237,15 @@ treated as secrets. Users are told not to put sensitive information in them.
 13. **A secret kept at a provider: its policy is the provider's metadata.** On HashiCorp
     Vault the `enabled` flag, the time window, the deletion marker and the
     rotation state live in `custom_metadata`; on AWS Secrets Manager in
-    tags. Whoever may write that metadata (`update` on
+    tags. Whoever may write that metadata (`update` or `patch` on
     `<mount>/metadata/<name>`; `secretsmanager:TagResource`) administers
     the policy, and nothing in the client can tell a planted flag from a
     set one: the local vault's tags and checkpoints have no counterpart
-    there. Grant metadata write capability as policy administration
+    there. What SourceOrrery itself writes is published fail-closed: a
+    new version is never readable through it under a looser policy than
+    it was written with, whichever request fails
+    ([ADR 0011](adr/0011-provider-writes-fail-closed.md); on AWS, with one
+    writer at a time per secret). Grant metadata write capability as policy administration
     ([enterprise](enterprise.md), [security review](security-review.md),
     finding 6). On Azure Key Vault the flag and window
     are each version's own attributes, and the version order and rotation

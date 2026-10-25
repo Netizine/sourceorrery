@@ -313,3 +313,50 @@ land together to build.
   tests pass (the local vault and both adapters); the live suites run it in
   B10 and B11. The in-flight half of the invariant is the model test of
   B10, since the shared suite cannot interrupt a write.
+
+### B10 — fail-closed publication on HashiCorp Vault
+
+* **Closes:** SR02 for HashiCorp Vault.
+* **Changes:** `kv`: intents `sourceorrery.v<N>~<nonce>`;
+  `Metadata::effective_props` (the committed document, or the defaults,
+  restricted by every intent: disabled if any is, the latest `not_before`,
+  the earliest `expires_on`), used by every read, metadata-only ones
+  included; `intents_for`, `keys_for`. `set_secret`: read, intent patched
+  in when a property is not the default (a new secret's metadata created
+  with a `POST` of `max_versions` only), data written with
+  `options.cas = N`, one commit patch (the committed document, this
+  writer's intent and any leftover for the version removed); a
+  check-and-set refusal is `invalid_argument` "another writer added
+  version …" with the intent removed; a lost data answer or a failed
+  commit is `outcome_unknown`. `update_secret_properties` is one merge
+  patch that also removes the version's intents. Delete patches the marker
+  in first; recover asks KV's undelete first; a failure of the second
+  step is `outcome_unknown` and leaves the secret deleted and recoverable.
+  The transport sends `PATCH` as `application/merge-patch+json`; a 403 on a
+  patch says properties are written with `patch`. The guide lists the
+  capabilities a writing token needs.
+* **Tests run:** `tests/publication.rs`, a model of KV v2 with the behaviours
+  checked against Vault 2.2.1 (B08) that snapshots the metadata after
+  every request it applies: `a_disabled_version_is_never_readable_whichever_request_fails`
+  (each of the intent, data and commit requests refused, failed, or applied
+  with its answer lost: version 2 is never enabled in any snapshot, never
+  readable by name or version, and the writer gets a refusal only when
+  nothing was written and `outcome_unknown` when it was);
+  `a_write_commits_its_properties_and_removes_its_intent` (the request
+  sequence; refused at the intent, nothing written; the `patch` message);
+  `a_leftover_intent_only_restricts_until_the_version_is_committed`;
+  `two_writers_never_lift_each_others_restrictions` (two writers'
+  requests forced into an interleaving: A's disabled version 2 is never
+  enabled, B is refused and writes nothing, only the committed document
+  stays); `a_delete_or_recover_cut_short_leaves_the_secret_deleted`. All
+  five **fail without the fix** (the adapter's sources set aside, the same
+  tests: "Refuse at PATCH metadata #1: version 2 enabled after POST data",
+  the review's reproduction). `kv` unit test
+  `intents_restrict_a_version_and_never_loosen_it`. The crate's 18 tests
+  pass; clippy `-D warnings` clean. **Live:** the lifecycle suite, the new
+  scenario included, directly and through `Routed` (B07's attempts
+  included), passes against a disposable `hashicorp/vault:2.2.1` dev
+  server; afterwards the 62 mounts it made hold 110 `custom_metadata` keys
+  and no leftover intent.
+* **Not run here:** a Vault policy without `patch` against the live server
+  (the model covers the refusal); Vault Enterprise namespaces.

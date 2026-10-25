@@ -111,9 +111,10 @@ impl Transport {
         &self.base
     }
 
-    /// One call to `/v1/<path>`. `body` is sent as JSON. A network failure
-    /// or a 5xx is `provider_unavailable`; every other status is returned
-    /// for the caller to interpret, with the body.
+    /// One call to `/v1/<path>`. `body` is sent as JSON, as a JSON merge
+    /// patch for `PATCH`. A network failure or a 5xx is
+    /// `provider_unavailable`; every other status is returned for the
+    /// caller to interpret, with the body.
     pub async fn call(
         &self,
         method: Method,
@@ -122,6 +123,7 @@ impl Transport {
         body: Option<&serde_json::Value>,
     ) -> Result<Reply> {
         let url = format!("{}/v1/{path}", self.base);
+        let merge = method == Method::PATCH;
         let mut request = self
             .http
             .request(method, &url)
@@ -133,7 +135,18 @@ impl Transport {
             request = request.header("X-Vault-Token", token.expose());
         }
         if let Some(body) = body {
-            request = request.json(body);
+            request = if merge {
+                let bytes = serde_json::to_vec(body)
+                    .map_err(|err| SecretError::Storage(err.to_string()))?;
+                request
+                    .header(
+                        reqwest::header::CONTENT_TYPE,
+                        "application/merge-patch+json",
+                    )
+                    .body(bytes)
+            } else {
+                request.json(body)
+            };
         }
         tracing::debug!(path, "vault request");
         let response = request.send().await.map_err(unavailable)?;

@@ -124,6 +124,15 @@ is in `docs/security-remediation-validation.md`).
   code `outcome_unknown` and the audit outcome `unknown`, and `sourceorrery
   audit` lists the attempts whose result the vault never learned
   (ADR 0011).
+* **HashiCorp Vault: a new version is never readable under a looser policy
+  than it was written with.** A disabled or not-yet-valid version was
+  written before its properties, and stayed readable if the second request
+  failed. Its properties now go in first as the writer's intent, the data
+  is written with check-and-set, and one merge patch commits them; every
+  `custom_metadata` change is a merge patch of its own keys, so two writers
+  never drop each other's, and the one that loses a version number is
+  refused and writes nothing. A writing token needs the `patch` capability
+  on `<mount>/metadata/*` (`docs/providers/hashicorp-vault.md`).
 
 ### Fixed
 

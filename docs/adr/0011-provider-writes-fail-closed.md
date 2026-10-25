@@ -134,10 +134,11 @@ IAM policy (or tag-based ABAC) on `secretsmanager:GetSecretValue`.
 * *`update_secret_properties`* is one patch: the version's committed
   document, and its intents removed; the owner's explicit decision
   supersedes them.
-* *Delete and recover* are a KV request and a patch of the deletion
-  marker. A failure of the second leaves the secret deleted for
-  SourceOrrery readers (the versions are gone in KV, or the marker stays)
-  and is `outcome_unknown`.
+* *Delete* patches the deletion marker in first, then asks KV's delete;
+  *recover* asks KV's undelete first, then patches the marker away. A
+  failure of the second step leaves the marker, so SourceOrrery still
+  treats the secret as deleted and it can be recovered or purged; the
+  result is `outcome_unknown`.
 * *Limits.* Vault's `custom_metadata` limits (64 keys, 512 bytes a value)
   count an intent too; an intent that does not fit is refused before any
   data is written.

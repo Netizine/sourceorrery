@@ -34,15 +34,56 @@ honours it, except for a loopback address.
 SourceOrrery keeps a version's `enabled` flag, its time window, its
 content type and tags, the deletion marker and the rotation state in the
 secret's `custom_metadata`. Vault authenticates nothing there: whoever may
-`update` `<mount>/metadata/<name>` can re-enable a disabled version, clear
-a window, undelete a secret or mark an old version as a validated rotation
-candidate, and the client cannot tell. Grant `update` on the `metadata`
-path as you would grant policy administration, and keep it off the
-identities that only read (`read` on `data` and `metadata`). Two writers
-without `cas_required` on the mount can also overwrite each other's
-metadata ("can race" above). The local vault's tags and checkpoints have
-no counterpart here; see the [threat model](../threat-model.md), known
-gap 14.
+`update` or `patch` `<mount>/metadata/<name>` can re-enable a disabled
+version, clear a window, undelete a secret or mark an old version as a
+validated rotation candidate, and the client cannot tell. Grant those on
+the `metadata` path as you would grant policy administration, and keep
+them off the identities that only read (`read` on `data` and `metadata`).
+SourceOrrery's policy binds what SourceOrrery returns; a client with its
+own token reads any version its Vault policy allows. The local vault's
+tags and checkpoints have no counterpart here; see the
+[threat model](../threat-model.md), known gap 14.
+
+A token that writes needs, on the mount's paths:
+
+| Path | Capabilities |
+|------|--------------|
+| `<mount>/data/*` | `create`, `update`, `read` |
+| `<mount>/metadata/*` | `create`, `update`, `patch`, `read`, `list`, `delete` |
+| `<mount>/delete/*`, `<mount>/undelete/*` | `update` |
+
+Without `patch`, a write whose properties are not the defaults, an update,
+a delete and a recovery are refused with `permission_denied` before
+anything changes; the message says that properties are written with
+`patch`.
+
+### How a version is published
+
+A new version is never readable through SourceOrrery under a looser
+policy than it was written with, whichever request fails and with any
+number of SourceOrrery writers ([ADR 0011](../adr/0011-provider-writes-fail-closed.md)):
+
+1. The metadata is read: the current version `N`.
+2. When the properties asked for are not the defaults, this writer's
+   **intent** for `N+1` is patched in: `sourceorrery.v<N+1>~<nonce>`, the
+   same document a committed version has. (A new secret's metadata is
+   created first, with a `POST` that sets only `max_versions: 0`.)
+3. The data is written with `options.cas = N`: if another writer took
+   `N+1` in between, nothing is written and the write is refused with
+   `invalid_argument` ("another writer added version …"); the intent is
+   removed.
+4. One merge patch commits: `sourceorrery.v<N+1>` written (none at the
+   defaults), the intent removed, and any intent for `N+1` an earlier
+   attempt left removed.
+
+A reader applies to a version its committed document restricted by every
+intent for it: disabled if any is, the latest `not_before`, the earliest
+`expires_on`. So between steps 3 and 4, and if step 4 never happens, the
+version is held at least as restricted as asked. A lost answer in step 3
+or a failed step 4 is `outcome_unknown`. Every change to `custom_metadata`
+is a merge patch of its own keys, so writers never drop each other's.
+Releases before 0.3.0 read committed documents only, and do not honour an
+intent.
 
 ## Credentials
 
@@ -72,13 +113,13 @@ the server refuses is `unauthenticated` too (the provider asks
 | secret `name` | path `<mount>/data/<name>`, directly under the mount (no folders) |
 | version id | the KV version number, as a decimal string (`"1"`, `"2"`) |
 | value | the `value` field of the KV data (`value_base64` when the bytes are not UTF-8). A secret written by other tools, with other fields, is read whole as the JSON object with content type `application/json` |
-| `enabled`, `content_type`, `tags`, `not_before`, `expires_on`, `updated_on` | one `custom_metadata` key per version, `sourceorrery.v<N>`, holding a compact JSON document; a version with default properties has none. KV v2 has no per-version metadata of its own, and `custom_metadata` is the one thing that can change without a new version |
+| `enabled`, `content_type`, `tags`, `not_before`, `expires_on`, `updated_on` | one `custom_metadata` key per version, `sourceorrery.v<N>`, holding a compact JSON document; a version with default properties has none. While a version is being written, a writer's intent `sourceorrery.v<N>~<nonce>` restricts it (above). KV v2 has no per-version metadata of its own, and `custom_metadata` is the one thing that can change without a new version |
 | `created_on` | the version's `created_time` |
-| `set_secret` | `POST data/<name>` (a new version), then the properties into `custom_metadata` when any is not the default |
+| `set_secret` | metadata read; the intent patched in when a property is not the default; `POST data/<name>` with check-and-set (a new version); one patch that commits the properties (above) |
 | `get_secret(name, None)` | metadata, then the core's policy picks the newest accessible live version, then `GET data/<name>?version=N` |
-| `update_secret_properties` | metadata read-modify-write of the version's `sourceorrery.v<N>` key; never a new version |
-| `delete_secret` | `POST delete/<name>` for every live version, plus a `sourceorrery.deleted` marker (`deleted_on`, the versions) in `custom_metadata` |
-| `recover_deleted_secret` | `POST undelete/<name>` for the marker's versions, marker removed |
+| `update_secret_properties` | one merge patch of the version's `sourceorrery.v<N>` key, its intents removed; never a new version |
+| `delete_secret` | a `sourceorrery.deleted` marker (`deleted_on`, the versions) patched into `custom_metadata`, then `POST delete/<name>` for every live version |
+| `recover_deleted_secret` | `POST undelete/<name>` for the marker's versions, then the marker patched away; either cut short leaves the secret deleted for SourceOrrery (`outcome_unknown`), and it can be recovered or purged |
 | `purge_deleted_secret` | `DELETE metadata/<name>`: every version and the metadata go |
 | `list_*` | `LIST metadata/` then the metadata of each name (folders and names that are not secret names are skipped) |
 | `audit_events` | `unsupported`: the Vault server's audit devices hold the trail |
@@ -96,9 +137,11 @@ as for a local vault.
   `version_not_found`. The provider never changes mount configuration. The
   conformance job configures its mounts with a higher limit.
 * **Properties have a size limit.** `custom_metadata` allows 64 keys of at
-  most 128 bytes with values of at most 512 bytes by default. A version's
-  properties document (tags included) that exceeds it is refused by Vault,
-  which the provider reports as `invalid_argument` with Vault's message.
+  most 128 bytes with values of at most 512 bytes. A version's properties
+  document (tags included) that exceeds it is refused by Vault, which the
+  provider reports as `invalid_argument` with Vault's message, at the
+  intent, before any data is written. An intent takes one key while a
+  version is being written.
 * **Soft delete is a marker.** A version deleted with `vault kv delete`
   outside SourceOrrery is simply not live: it is skipped in listings and
   `version_not_found` when asked for. A secret is *deleted* in the
@@ -112,8 +155,9 @@ as for a local vault.
 * **No audit log of SourceOrrery's own.** `audit_events` is `unsupported`;
   `sourceorrery audit --vault <name>` points at the server's audit devices
   (below) and `audit export` refuses.
-* **Two writers can race.** Nothing locks a secret between the metadata
-  read and the write that follows it; Vault's own check-and-set is not used.
+* **Two writers are told apart.** A data write uses Vault's
+  check-and-set, so two writers never write the same version number; the
+  one that loses is refused with `invalid_argument` and writes nothing.
 
 `sourceorrery secret rotate` works against a Vault-backed vault like
 against a local one: the candidate, its state and the grace period are
@@ -153,6 +197,8 @@ export` from the local vaults, and the two trails meet there
 | the mount is not a KV version 2 engine | `invalid_argument` at open |
 | no such mount | `vault_not_found` at open |
 | Vault rejects a write (a `custom_metadata` limit, a bad body) | `invalid_argument` with Vault's diagnostic |
+| another writer wrote the same version number first (check-and-set) | `invalid_argument`; nothing was written |
+| a write's answer was lost, or it was written and its properties could not be committed; a delete or recovery cut short | `outcome_unknown` ([providers](index.md#when-a-changes-result-is-not-known)) |
 
 No error message repeats a response body; Vault's own `errors` strings
 (`permission denied`, a limit that was hit) are the only server text that
@@ -160,9 +206,12 @@ appears, and they never hold a value.
 
 ## Testing
 
-`cargo test -p sourceorrery-provider-vault` runs the mapping tests and
+`cargo test -p sourceorrery-provider-vault` runs the mapping tests,
 recorded-response tests of the status mapping against an in-process HTTP
-server. With `SOURCEORRERY_VAULT_TEST_ADDR` (and `VAULT_TOKEN`) naming a
+server, and the publication tests (`tests/publication.rs`): a model of KV
+v2 that fails, or applies and loses the answer to, each request of a
+write, and interleaves two writers, checking after every request it
+applies that no version is readable under a looser policy than asked. With `SOURCEORRERY_VAULT_TEST_ADDR` (and `VAULT_TOKEN`) naming a
 server, the `live` test runs the whole lifecycle conformance suite through
 the `Blocking` adapter, one fresh KV v2 mount per scenario:
 

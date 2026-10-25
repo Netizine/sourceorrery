@@ -28,7 +28,7 @@ zeroize.workspace = true
 sourceorrery-provider = { path = "../sourceorrery-provider" }
 sourceorrery-conformance = { path = "../../tests/conformance" }
 sourceorrery-storage = { path = "../sourceorrery-storage", default-features = false }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "sync"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 tempfile.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 

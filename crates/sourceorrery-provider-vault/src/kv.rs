@@ -9,10 +9,16 @@
 //!   `application/json`.
 //! * Per-version properties (`enabled`, content type, tags, the time
 //!   window, `updated_on`) live in the secret's `custom_metadata` under one
-//!   key per version, `sourceorrery.v<N>`, as a compact JSON document. A
-//!   version with default properties has no key. KV v2 has no per-version
-//!   metadata of its own, and `custom_metadata` is the one place that can be
-//!   changed without writing a new version.
+//!   key per version, `sourceorrery.v<N>`, as a compact JSON document: the
+//!   version's committed properties. A version with default properties has
+//!   no key. KV v2 has no per-version metadata of its own, and
+//!   `custom_metadata` is the one place that can be changed without writing
+//!   a new version.
+//! * An intent, `sourceorrery.v<N>~<nonce>`, is what one writer asked for
+//!   version `N` before writing it (ADR 0011). Every reader applies a
+//!   version's committed properties restricted by each of its intents
+//!   ([`Metadata::effective_props`]), so a version is never readable under
+//!   a looser policy than its writer asked for, whatever request fails.
 //! * Soft delete is KV's `delete` of every live version plus a
 //!   `sourceorrery.deleted` marker (when, which versions); recovery is
 //!   `undelete` of those versions and removing the marker; purge deletes the
@@ -32,6 +38,9 @@ use time::format_description::well_known::Rfc3339;
 pub const PROPERTIES_PREFIX: &str = "sourceorrery.v";
 /// `custom_metadata` key of the soft-delete marker.
 pub const DELETED_KEY: &str = "sourceorrery.deleted";
+/// What separates a version's number from a writer's nonce in an intent's
+/// key.
+pub const INTENT_SEPARATOR: char = '~';
 /// Days a deleted secret is reported recoverable for. Informational: Vault
 /// does not purge a deleted secret by itself.
 pub const RETENTION_DAYS: u32 = 90;
@@ -154,6 +163,50 @@ impl VersionProps {
         *self == Self::default()
     }
 
+    /// The properties a new version is asked for: no `updated_on`, since it
+    /// has not been changed since it was written.
+    pub fn asked(
+        enabled: bool,
+        content_type: Option<String>,
+        tags: BTreeMap<String, String>,
+        not_before: Option<OffsetDateTime>,
+        expires_on: Option<OffsetDateTime>,
+    ) -> Self {
+        Self {
+            disabled: !enabled,
+            content_type,
+            tags,
+            not_before: not_before.map(format_time),
+            expires_on: expires_on.map(format_time),
+            updated_on: None,
+        }
+    }
+
+    /// The compact JSON document stored for these properties.
+    pub fn document(&self) -> Result<String> {
+        serde_json::to_string(self).map_err(|err| SecretError::Storage(err.to_string()))
+    }
+
+    /// Restrict the policy to `other`'s as well: disabled if either is, the
+    /// later `not_before`, the earlier `expires_on`. The content type, the
+    /// tags and `updated_on` stay this document's.
+    fn restrict_to(&mut self, other: &Self) -> Result<()> {
+        self.disabled |= other.disabled;
+        self.not_before = pick(
+            self.not_before.as_deref(),
+            other.not_before.as_deref(),
+            "not_before",
+            OffsetDateTime::max,
+        )?;
+        self.expires_on = pick(
+            self.expires_on.as_deref(),
+            other.expires_on.as_deref(),
+            "expires_on",
+            OffsetDateTime::min,
+        )?;
+        Ok(())
+    }
+
     /// The properties `properties` carries beyond what KV knows.
     pub fn from_properties(properties: &SecretProperties, created_on: OffsetDateTime) -> Self {
         Self {
@@ -168,6 +221,24 @@ impl VersionProps {
     }
 }
 
+/// Of two optional stored times, the one `choose` picks; either alone when
+/// the other is absent.
+fn pick(
+    a: Option<&str>,
+    b: Option<&str>,
+    what: &str,
+    choose: fn(OffsetDateTime, OffsetDateTime) -> OffsetDateTime,
+) -> Result<Option<String>> {
+    Ok(match (a, b) {
+        (None, None) => None,
+        (Some(t), None) | (None, Some(t)) => Some(t.to_owned()),
+        (Some(a), Some(b)) => Some(format_time(choose(
+            parse_time(a, what)?,
+            parse_time(b, what)?,
+        ))),
+    })
+}
+
 /// The soft-delete marker.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeletedMarker {
@@ -178,6 +249,20 @@ pub struct DeletedMarker {
 /// The key of version `version`'s properties.
 pub fn properties_key(version: u64) -> String {
     format!("{PROPERTIES_PREFIX}{version}")
+}
+
+/// The key of a writer's intent for version `version`.
+pub fn intent_key(version: u64, nonce: &str) -> String {
+    format!("{PROPERTIES_PREFIX}{version}{INTENT_SEPARATOR}{nonce}")
+}
+
+/// The version an intent's key names, or `None` for any other key.
+fn intent_version(key: &str) -> Option<u64> {
+    let (version, nonce) = key
+        .strip_prefix(PROPERTIES_PREFIX)?
+        .split_once(INTENT_SEPARATOR)?;
+    (!nonce.is_empty()).then_some(())?;
+    version.parse().ok()
 }
 
 /// RFC 3339 with the full precision Vault and this crate use.
@@ -211,21 +296,57 @@ impl Metadata {
         versions
     }
 
-    /// The stored properties of `version`, if any were stored.
+    /// The committed properties of `version`, if any were stored.
     pub fn version_props(&self, version: u64) -> Result<Option<VersionProps>> {
-        let Some(text) = self
-            .custom_metadata
+        let key = properties_key(version);
+        self.custom_metadata
             .as_ref()
-            .and_then(|custom| custom.get(&properties_key(version)))
-        else {
-            return Ok(None);
+            .and_then(|custom| custom.get(&key))
+            .map(|text| parse_props(text, &key))
+            .transpose()
+    }
+
+    /// The intents for `version`, by key in key order.
+    pub fn intents_for(&self, version: u64) -> Result<Vec<(String, VersionProps)>> {
+        self.custom_metadata
+            .iter()
+            .flatten()
+            .filter(|(key, _)| intent_version(key) == Some(version))
+            .map(|(key, text)| Ok((key.clone(), parse_props(text, key)?)))
+            .collect()
+    }
+
+    /// Every key that bears on `version`'s properties: its committed
+    /// document and its intents.
+    pub fn keys_for(&self, version: u64) -> Vec<String> {
+        let committed = properties_key(version);
+        self.custom_metadata
+            .iter()
+            .flatten()
+            .map(|(key, _)| key)
+            .filter(|key| **key == committed || intent_version(key) == Some(version))
+            .cloned()
+            .collect()
+    }
+
+    /// The properties every SourceOrrery reader applies to `version` (ADR
+    /// 0011): its committed document, or the defaults without one,
+    /// restricted by every intent for it. The content type, the tags and
+    /// `updated_on` are the committed document's, or else the first
+    /// intent's.
+    pub fn effective_props(&self, version: u64) -> Result<VersionProps> {
+        let intents = self.intents_for(version)?;
+        let mut props = match self.version_props(version)? {
+            Some(committed) => committed,
+            None => intents
+                .first()
+                .map(|(_, intent)| intent.clone())
+                .unwrap_or_default(),
         };
-        serde_json::from_str(text).map(Some).map_err(|err| {
-            SecretError::Storage(format!(
-                "custom_metadata {} is not a properties document: {err}",
-                properties_key(version)
-            ))
-        })
+        for (_, intent) in &intents {
+            props.restrict_to(intent)?;
+        }
+        Ok(props)
     }
 
     /// The soft-delete marker, when the secret is deleted.
@@ -254,7 +375,7 @@ impl Metadata {
             }
         })?;
         let created_on = parse_time(&meta.created_time, "created_time")?;
-        let props = self.version_props(version)?.unwrap_or_default();
+        let props = self.effective_props(version)?;
         Ok(SecretProperties {
             vault: vault.to_owned(),
             name: name.to_owned(),
@@ -309,6 +430,15 @@ impl Metadata {
             recovery_id: format!("sourceorrery://{vault}/deletedsecrets/{name}"),
         })
     }
+}
+
+/// A properties document read from `key`.
+fn parse_props(text: &str, key: &str) -> Result<VersionProps> {
+    serde_json::from_str(text).map_err(|err| {
+        SecretError::Storage(format!(
+            "custom_metadata {key} is not a properties document: {err}"
+        ))
+    })
 }
 
 /// The KV data object that stores `value`.
@@ -401,6 +531,91 @@ mod tests {
         let v1 = meta.data.properties("prod", "k", 1).unwrap();
         assert_eq!(v1.content_type.as_deref(), Some("text/plain"));
         assert_eq!(v1.updated_on, v1.created_on);
+    }
+
+    fn metadata(custom: &[(&str, &str)]) -> Metadata {
+        let live = VersionMeta {
+            created_time: "2026-10-25T10:00:00Z".to_owned(),
+            ..VersionMeta::default()
+        };
+        Metadata {
+            current_version: 2,
+            custom_metadata: Some(
+                custom
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+            ),
+            versions: BTreeMap::from([("1".to_owned(), live.clone()), ("2".to_owned(), live)]),
+        }
+    }
+
+    #[test]
+    fn intents_restrict_a_version_and_never_loosen_it() {
+        // An intent alone: its properties apply, before anything commits.
+        let meta = metadata(&[(
+            "sourceorrery.v2~aaaa",
+            r#"{"disabled":true,"tags":{"k":"a"}}"#,
+        )]);
+        let v2 = meta.properties("prod", "s", 2).unwrap();
+        assert!(!v2.enabled);
+        assert_eq!(v2.tags["k"], "a");
+        assert!(meta.properties("prod", "s", 1).unwrap().enabled, "only v2");
+
+        // A committed document that is looser does not lift an intent's
+        // restriction; the committed tags stay.
+        let meta = metadata(&[
+            ("sourceorrery.v2", r#"{"tags":{"k":"committed"}}"#),
+            ("sourceorrery.v2~aaaa", r#"{"disabled":true}"#),
+        ]);
+        let v2 = meta.properties("prod", "s", 2).unwrap();
+        assert!(!v2.enabled);
+        assert_eq!(v2.tags["k"], "committed");
+
+        // Two writers' intents: disabled if either is, the later start,
+        // the earlier end.
+        let meta = metadata(&[
+            (
+                "sourceorrery.v2~aaaa",
+                r#"{"not_before":"2026-11-01T00:00:00Z","expires_on":"2027-01-01T00:00:00Z"}"#,
+            ),
+            (
+                "sourceorrery.v2~bbbb",
+                r#"{"not_before":"2026-12-01T00:00:00Z","expires_on":"2026-12-31T00:00:00Z"}"#,
+            ),
+        ]);
+        let v2 = meta.properties("prod", "s", 2).unwrap();
+        assert!(v2.enabled);
+        assert_eq!(
+            v2.not_before,
+            Some(parse_time("2026-12-01T00:00:00Z", "t").unwrap())
+        );
+        assert_eq!(
+            v2.expires_on,
+            Some(parse_time("2026-12-31T00:00:00Z", "t").unwrap())
+        );
+
+        // Keys that are not intents for the version are not taken for one.
+        let meta = metadata(&[
+            ("sourceorrery.v2~", r#"{"disabled":true}"#),
+            ("sourceorrery.v22~aaaa", r#"{"disabled":true}"#),
+            ("other~x", r#"{"disabled":true}"#),
+        ]);
+        assert!(meta.properties("prod", "s", 2).unwrap().enabled);
+        assert_eq!(meta.intents_for(22).unwrap().len(), 1);
+        let meta = metadata(&[
+            ("sourceorrery.v2", "{}"),
+            ("sourceorrery.v2~aaaa", "{}"),
+            ("sourceorrery.v1", "{}"),
+        ]);
+        assert_eq!(
+            meta.keys_for(2),
+            vec![
+                "sourceorrery.v2".to_owned(),
+                "sourceorrery.v2~aaaa".to_owned()
+            ]
+        );
+        assert_eq!(intent_key(7, "00ff"), "sourceorrery.v7~00ff");
     }
 
     #[test]
