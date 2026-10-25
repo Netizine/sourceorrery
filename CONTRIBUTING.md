@@ -30,8 +30,10 @@ cargo test --workspace
 CI runs the same on Ubuntu, Windows and macOS, plus a build with
 `--no-default-features` (no OS keyring) for headless servers.
 
-Tests must not touch the real OS credential store: use passphrase
-protectors with `Argon2Params::TESTING` (see `tests/conformance`). The one
+Tests must not touch the real OS credential store: open vaults with their
+recovery keys (`NoStore`, `--no-keyring`, `SOURCEORRERY_KEYRING=off`) or an
+in-memory `MemoryStore`, and set view-check passwords with
+`Argon2Params::TESTING` (see `tests/conformance`). The one
 exception is `scripts/dev/keyring-smoke.sh` / `.ps1`, run by hand or by the
 `keyring` CI job against a temporary store, which creates and removes its
 own entries only ([Building](docs/building.md#the-os-keyring-path)).

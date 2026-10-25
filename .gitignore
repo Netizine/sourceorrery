@@ -11,6 +11,11 @@
 /.sonarqube/
 /.scannerwork/
 
+# lstk's runtime files (log, auth lock) next to its committed config
+/.lstk/*
+!/.lstk/config.toml
+!/.lstk/azure.toml
+
 # Python test/coverage tooling
 __pycache__/
 .pytest_cache/

@@ -43,48 +43,40 @@ const _: () = assert_send_sync::<so_project>();
 /// ```json
 /// {
 ///   "home": "/path/to/sourceorrery-home",
-///   "passphrase_file": "/run/secrets/vault-passphrase",
-///   "environment": true,
-///   "manifest": "/path/to/sourceorrery.toml"
+///   "recovery_key_file": "/run/secrets/vault-recovery-key",
+///   "environment": true
 /// }
 /// ```
 ///
-/// `home` replaces `SOURCEORRERY_HOME`; `passphrase_file` replaces
-/// `SOURCEORRERY_PASSPHRASE_FILE`; `environment` (default `true`) says
-/// whether `SOURCEORRERY_PASSPHRASE` and `SOURCEORRERY_PASSPHRASE_FILE` are
-/// consulted at all; `manifest` is the `sourceorrery.toml` whose
-/// `[vaults.<name>]` tables say which vaults are remote and where (default:
-/// the nearest manifest above the current directory; `so_project_load`
-/// always uses the manifest it loads). The passphrase itself never travels
-/// in JSON: it is the separate raw-bytes argument.
+/// `home` replaces `SOURCEORRERY_HOME`; `recovery_key_file` replaces
+/// `SOURCEORRERY_RECOVERY_KEY_FILE`; `environment` (default `true`) says
+/// whether `SOURCEORRERY_RECOVERY_KEY` and `SOURCEORRERY_RECOVERY_KEY_FILE`
+/// are consulted at all. The recovery key itself never travels in JSON: it
+/// is the separate raw-bytes argument.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReaderOptions {
     /// SourceOrrery home directory.
     #[serde(default)]
     pub home: Option<String>,
-    /// File holding the passphrase.
+    /// File holding the vault's recovery key.
     #[serde(default)]
-    pub passphrase_file: Option<String>,
-    /// Consult the `SOURCEORRERY_PASSPHRASE*` variables.
+    pub recovery_key_file: Option<String>,
+    /// Consult the `SOURCEORRERY_RECOVERY_KEY*` variables.
     #[serde(default)]
     pub environment: Option<bool>,
-    /// The manifest that declares remote vaults.
-    #[serde(default)]
-    pub manifest: Option<String>,
 }
 
 impl ReaderOptions {
-    fn into_open_options(self, passphrase: Option<&[u8]>) -> OpenOptions {
+    fn into_open_options(self, recovery_key: Option<&[u8]>) -> OpenOptions {
         OpenOptions {
             home: self.home.filter(|h| !h.is_empty()).map(PathBuf::from),
-            passphrase: passphrase.map(|p| SecretBytes::new(p.to_vec())),
-            passphrase_file: self
-                .passphrase_file
+            recovery_key: recovery_key.map(|k| SecretBytes::new(k.to_vec())),
+            recovery_key_file: self
+                .recovery_key_file
                 .filter(|f| !f.is_empty())
                 .map(PathBuf::from),
             environment: self.environment.unwrap_or(true),
-            manifest: self.manifest.filter(|m| !m.is_empty()).map(PathBuf::from),
         }
     }
 }
@@ -163,13 +155,14 @@ fn publish_secret(
 /// Open a vault for reading, the way the CLI does.
 ///
 /// `name` is the vault name. `options_json` (nullable) is a
-/// [`ReaderOptions`] document. A vault the manifest declares as remote
-/// (`[vaults.<name>]`) is opened at its provider with the credentials the
-/// provider's own environment supplies. Otherwise the vault file is
-/// unlocked in this order: the OS credential store, then `passphrase` if
-/// non-null, then `SOURCEORRERY_PASSPHRASE`, then the passphrase file from
-/// the options or `SOURCEORRERY_PASSPHRASE_FILE`. There is no prompt. A
-/// vault in an older on-disk format is refused with `migration_required`.
+/// [`ReaderOptions`] document. The vault file is opened in this order: this
+/// machine's key in the OS credential store, then the recovery key from
+/// `recovery_key` if non-null, `SOURCEORRERY_RECOVERY_KEY`, then the file
+/// from the options or `SOURCEORRERY_RECOVERY_KEY_FILE`. There is no
+/// prompt, and the vault's view check is never asked. A secret one of the
+/// vault's connections stores is read at that provider, with the
+/// credentials the connection stores or the provider's own chain. A vault
+/// written by an earlier release is refused with `migration_required`.
 ///
 /// On success `*out_handle` holds the handle; on failure it is `NULL` and
 /// `so_last_error_hint()` says what to do.
@@ -178,7 +171,7 @@ fn publish_secret(
 ///
 /// Every `(pointer, length)` pair must be `NULL` or readable for that many
 /// bytes for the duration of the call, and `out_handle` must be valid for
-/// writes. The caller's `passphrase` buffer is copied and should be
+/// writes. The caller's `recovery_key` buffer is copied and should be
 /// zeroised by the caller afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn so_reader_open(
@@ -186,22 +179,22 @@ pub unsafe extern "C" fn so_reader_open(
     name_len: usize,
     options_json: *const u8,
     options_json_len: usize,
-    passphrase: *const u8,
-    passphrase_len: usize,
+    recovery_key: *const u8,
+    recovery_key_len: usize,
     out_handle: *mut *mut so_reader,
 ) -> so_status {
     guard(|| -> sourceorrery::Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_handle, ptr::null_mut(), "out_handle") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
-        let (name, options, passphrase) = unsafe {
+        let (name, options, recovery_key) = unsafe {
             (
                 string(name, name_len, "name")?,
                 opt_json::<ReaderOptions>(options_json, options_json_len, "options_json")?,
-                opt_bytes(passphrase, passphrase_len, "passphrase")?,
+                opt_bytes(recovery_key, recovery_key_len, "recovery_key")?,
             )
         };
-        let reader = SecretReader::open_with(name, &options.into_open_options(passphrase))?;
+        let reader = SecretReader::open_with(name, &options.into_open_options(recovery_key))?;
         *out = Box::into_raw(Box::new(so_reader { inner: reader }));
         Ok(())
     })
@@ -376,7 +369,7 @@ pub unsafe extern "C" fn so_reader_resolve(
 ///
 /// `manifest_path` (nullable) is the manifest file; `NULL` finds the nearest
 /// `sourceorrery.toml` above the current directory. `options_json` and
-/// `passphrase` are as for [`so_reader_open`] and apply to every vault the
+/// `recovery_key` are as for [`so_reader_open`] and apply to every vault the
 /// manifest names. A required secret that cannot be read fails the whole
 /// call with that secret's error; an optional one that is missing, refused
 /// by policy or whose vault does not exist is left out.
@@ -390,23 +383,26 @@ pub unsafe extern "C" fn so_project_load(
     manifest_path_len: usize,
     options_json: *const u8,
     options_json_len: usize,
-    passphrase: *const u8,
-    passphrase_len: usize,
+    recovery_key: *const u8,
+    recovery_key_len: usize,
     out_handle: *mut *mut so_project,
 ) -> so_status {
     guard(|| -> sourceorrery::Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_handle, ptr::null_mut(), "out_handle") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
-        let (manifest, options, passphrase) = unsafe {
+        let (manifest, options, recovery_key) = unsafe {
             (
                 opt_string(manifest_path, manifest_path_len, "manifest_path")?,
                 opt_json::<ReaderOptions>(options_json, options_json_len, "options_json")?,
-                opt_bytes(passphrase, passphrase_len, "passphrase")?,
+                opt_bytes(recovery_key, recovery_key_len, "recovery_key")?,
             )
         };
         let manifest = manifest.filter(|m| !m.is_empty()).map(PathBuf::from);
-        let project = Project::load(manifest.as_deref(), &options.into_open_options(passphrase))?;
+        let project = Project::load(
+            manifest.as_deref(),
+            &options.into_open_options(recovery_key),
+        )?;
         *out = Box::into_raw(Box::new(so_project { inner: project }));
         Ok(())
     })

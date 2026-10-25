@@ -64,38 +64,44 @@ cargo install --locked sourceorrery-cli
 ```
 
 `--locked` builds with the dependency versions the release was tested
-with. On a server that will only ever use passphrases, add
-`--no-default-features` to leave out the OS credential store (and the
-`libdbus-1-dev` requirement).
+with. On a server without an OS credential store, `--no-default-features
+--features remote` leaves the store out (and the `libdbus-1-dev`
+requirement): vaults there open with their recovery key.
 
 ## After installing
 
+The user creates a vault in their own terminal:
+
 ```bash
-sourceorrery vault create development
+sourceorrery setup
 ```
 
-The vault key goes into the OS credential store (Windows Credential
-Manager, macOS Keychain, Secret Service on Linux) and nothing has to be
-typed. The CLI never makes network requests: installing is the only
-download.
+Its key goes into the OS credential store (Windows Credential Manager,
+macOS Keychain, Secret Service on Linux), so this machine opens it without
+asking, and the screens show its recovery key once, for the user to keep:
+never ask to see it. The CLI makes no network request of its own; a vault
+that keeps secrets at a provider (HashiCorp Vault, AWS, Azure) talks to
+that provider.
 
 ## Headless
 
 Containers, CI runners, WSL and servers without a desktop session have no
-credential store. There the vault is protected by a passphrase, which the
-user chooses and types; never invent one or write it into the repository.
+credential store. There a vault opens with its **recovery key**, which the
+user keeps; never ask for it, invent one or write it into the repository.
 
-- A new vault: the user runs
-  `sourceorrery vault create ci --protector passphrase`.
-- An existing vault that should also open headless: on a machine that can
-  already unlock it, the user runs
-  `sourceorrery vault protector add --kind passphrase --vault development`.
-- Unlocking: point `SOURCEORRERY_PASSPHRASE_FILE` (or `--passphrase-file`)
-  at a file that holds the passphrase and that only that user can read,
+- A new vault for CI: the user runs
+  `sourceorrery vault create ci --recovery-key-out <file>` and puts that
+  file in the CI system's secret store.
+- An existing vault on another machine: the user runs
+  `sourceorrery vault export --out <file>` where it lives and copies the
+  file there (it opens with the recovery key only), or points
+  `SOURCEORRERY_HOME` at a shared directory (WSL reading the Windows home).
+- Opening: point `SOURCEORRERY_RECOVERY_KEY_FILE` (or `--recovery-key-file`)
+  at a file that holds the recovery key and that only that user can read,
   for example a Docker or Kubernetes secret at `/run/secrets/...` or a
   file a CI job writes from its own secret store into a temporary
-  directory. `SOURCEORRERY_PASSPHRASE` works too but is visible to process
-  inspection.
+  directory. `SOURCEORRERY_RECOVERY_KEY` works too but is visible to
+  process inspection.
 - `SOURCEORRERY_HOME` says where the vault files live, for example a
   mounted volume. Vault files (`*.sorvault`) are never committed.
 

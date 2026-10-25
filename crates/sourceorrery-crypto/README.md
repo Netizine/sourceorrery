@@ -20,7 +20,7 @@ zeroised when dropped:
 | Purpose | Primitive | Crate |
 |---------|-----------|-------|
 | Value and key encryption, with additional authenticated data | XChaCha20-Poly1305, random 24-byte nonce | `chacha20poly1305` |
-| Passphrase to key | Argon2id, caller-owned working memory that is zeroised; parameters read from a vault are capped | `argon2` |
+| Password to key | Argon2id, caller-owned working memory that is zeroised; parameters read from a vault are capped | `argon2` |
 | Envelope key wrapping | XChaCha20-Poly1305 under a key-encryption key | `chacha20poly1305` |
 | Sub-keys and integrity tags | HKDF-SHA256, HMAC-SHA256 | `hkdf`, `hmac`, `sha2` |
 | Randomness | the OS CSPRNG | `getrandom` |

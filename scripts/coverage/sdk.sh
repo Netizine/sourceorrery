@@ -10,7 +10,7 @@ python_command="${SOURCEORRERY_COVERAGE_PYTHON:-python}"
 mode="${1:-}"
 case "$mode" in
   python|node|go|php)
-    for name in SOURCEORRERY_HOME SOURCEORRERY_PASSPHRASE SOURCEORRERY_TEST_VAULT SOURCEORRERY_TEST_MANIFEST SOURCEORRERY_TEST_OLD_VERSION; do
+    for name in SOURCEORRERY_HOME SOURCEORRERY_RECOVERY_KEY SOURCEORRERY_TEST_VAULT SOURCEORRERY_TEST_MANIFEST SOURCEORRERY_TEST_OLD_VERSION; do
       if [[ -z "${!name:-}" ]]; then
         echo "coverage: $name is missing; run scripts/ci/fixture-vault.sh first" >&2
         exit 2
@@ -41,11 +41,14 @@ case "$mode" in
         --reporter=lcovonly --reporter=text-summary --reports-dir coverage/node --temp-directory coverage/node/tmp \
         node --test bindings/node/__test__/*.test.mjs
     else
-      node "$c8" --all --src site/plugins --src site/src/lib --src site/scripts \
-        --include 'site/plugins/**/*.mjs' --include 'site/src/lib/**/*.mjs' --include 'site/scripts/**/*.mjs' \
-        --exclude '**/*.test.mjs' --reporter=lcovonly --reporter=text-summary \
-        --reports-dir coverage/site --temp-directory coverage/site/tmp \
-        node --test site/scripts/*.test.mjs
+      site_options=(--all --src site/plugins --src site/src/lib --src site/scripts
+        --include 'site/plugins/**/*.mjs' --include 'site/src/lib/**/*.mjs' --include 'site/scripts/**/*.mjs'
+        --exclude '**/*.test.mjs' --reporter=lcovonly --reporter=text-summary
+        --reports-dir coverage/site --temp-directory coverage/site/tmp)
+      node "$c8" "${site_options[@]}" node --test site/scripts/*.test.mjs
+      # The existing build checks sync, Astro plugins and rendered local links.
+      # Preserve the unit-test execution data when adding this integration run.
+      ASTRO_TELEMETRY_DISABLED=1 node "$c8" "${site_options[@]}" --clean=false npm --prefix site run build
     fi
     ;;
   go)
@@ -66,6 +69,7 @@ case "$mode" in
     : "${SOURCEORRERY_NATIVE_DIR:?Build the C ABI and create the SDK fixture first}"
     XDEBUG_MODE=coverage php -d ffi.enable=1 -d opcache.enable_cli=0 \
       -d auto_prepend_file="$repo/scripts/coverage/php-prepend.php" bindings/php/tests/run.php
-    "$python_command" scripts/coverage/php-report.py coverage/php.json coverage/php.xml
+    "$python_command" -m coverage run --append --rcfile=scripts/coverage/tooling.coveragerc \
+      scripts/coverage/php-report.py coverage/php.json coverage/php.xml
     ;;
 esac

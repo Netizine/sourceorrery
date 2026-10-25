@@ -96,6 +96,21 @@ class Rendering(unittest.TestCase):
                 self.assertIn(f"PackageVersion: {VERSION}", self.files[name])
                 self.assertIn(f"ManifestVersion: {pm.WINGET_MANIFEST_VERSION}", self.files[name])
 
+    def test_winget_manifest_set_uses_the_recommended_1_12_schema(self) -> None:
+        kinds = {
+            "Netizine.SourceOrrery.yaml": "version",
+            "Netizine.SourceOrrery.installer.yaml": "installer",
+            "Netizine.SourceOrrery.locale.en-US.yaml": "defaultLocale",
+        }
+        for file, kind in kinds.items():
+            with self.subTest(kind=kind):
+                manifest = self.files[f"winget/manifests/n/Netizine/SourceOrrery/{VERSION}/{file}"]
+                self.assertTrue(manifest.startswith(
+                    f"# yaml-language-server: $schema=https://aka.ms/winget-manifest.{kind}.1.12.0.schema.json\n"
+                ))
+                self.assertIn(f"ManifestType: {kind}\n", manifest)
+                self.assertIn("ManifestVersion: 1.12.0\n", manifest)
+
     def test_missing_archive_is_an_error(self) -> None:
         sums = dict(self.sums)
         del sums[pm.cli_archive(VERSION, "aarch64-pc-windows-msvc")]

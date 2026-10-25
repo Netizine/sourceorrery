@@ -358,28 +358,22 @@ struct Secret {
     std::string name() const { return json_string_field(properties_json, "name").value_or(""); }
 };
 
-/// How to find and unlock a vault. Defaults reproduce the CLI.
+/// How to find and unlock a vault. Defaults reproduce the CLI. A secret one
+/// of the vault's connections stores is read at that provider.
 struct OpenOptions {
     /// Directory holding the `vaults/` folder; nullopt honours SOURCEORRERY_HOME.
     std::optional<std::string> home;
-    /// A passphrase tried before the environment sources.
-    std::optional<std::string> passphrase;
-    /// A file holding the passphrase; replaces SOURCEORRERY_PASSPHRASE_FILE.
-    std::optional<std::string> passphrase_file;
-    /// Consult SOURCEORRERY_PASSPHRASE and SOURCEORRERY_PASSPHRASE_FILE.
+    /// A recovery key tried before the environment sources.
+    std::optional<std::string> recovery_key;
+    /// A file holding the recovery key; replaces SOURCEORRERY_RECOVERY_KEY_FILE.
+    std::optional<std::string> recovery_key_file;
+    /// Consult SOURCEORRERY_RECOVERY_KEY and SOURCEORRERY_RECOVERY_KEY_FILE.
     bool environment = true;
-    /// The sourceorrery.toml whose `[vaults.<name>]` tables say which vaults
-    /// are remote and where; nullopt uses the nearest one above the current
-    /// directory. A vault with a table is opened at its provider instead of
-    /// as a local file. Credentials come from the provider's own
-    /// environment, never from the manifest.
-    std::optional<std::string> manifest;
 
     std::string to_json() const {
         std::string json = "{";
         if (home) json += "\"home\":" + detail::json_escape(*home) + ",";
-        if (passphrase_file) json += "\"passphrase_file\":" + detail::json_escape(*passphrase_file) + ",";
-        if (manifest) json += "\"manifest\":" + detail::json_escape(*manifest) + ",";
+        if (recovery_key_file) json += "\"recovery_key_file\":" + detail::json_escape(*recovery_key_file) + ",";
         json += std::string("\"environment\":") + (environment ? "true" : "false") + "}";
         return json;
     }
@@ -389,14 +383,14 @@ struct OpenOptions {
 /// threads at once. Closing it zeroises the vault key held in memory.
 class Reader {
 public:
-    /// Open `vault`: OS credential store, then options.passphrase, then
-    /// SOURCEORRERY_PASSPHRASE, then the passphrase file. Never prompts.
+    /// Open `vault`: OS credential store, then options.recovery_key, then
+    /// SOURCEORRERY_RECOVERY_KEY, then the recovery-key file. Never prompts.
     static Reader open(std::string_view vault, const OpenOptions& options = {}) {
         detail::require_abi();
         const std::string json = options.to_json();
         so_reader* handle = nullptr;
         detail::check(so_reader_open(detail::ptr(vault), vault.size(), detail::ptr(json), json.size(),
-                                     detail::opt_ptr(options.passphrase), detail::opt_len(options.passphrase),
+                                     detail::opt_ptr(options.recovery_key), detail::opt_len(options.recovery_key),
                                      &handle));
         return Reader(handle, std::string(vault));
     }
@@ -490,8 +484,8 @@ public:
         const std::string json = options.to_json();
         so_project* handle = nullptr;
         detail::check(so_project_load(detail::opt_ptr(manifest), detail::opt_len(manifest), detail::ptr(json),
-                                      json.size(), detail::opt_ptr(options.passphrase),
-                                      detail::opt_len(options.passphrase), &handle));
+                                      json.size(), detail::opt_ptr(options.recovery_key),
+                                      detail::opt_len(options.recovery_key), &handle));
         Project project;
         detail::Buffer info;
         if (so_project_info(handle, info.slot()) != SO_STATUS_OK) {

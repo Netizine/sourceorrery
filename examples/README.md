@@ -7,9 +7,9 @@
 Try it:
 
 ```bash
-export SOURCEORRERY_HOME=$(mktemp -d) SOURCEORRERY_PASSPHRASE=example-only
-sourceorrery vault create development --protector passphrase
-sourceorrery vault create shared-tooling --protector passphrase
+export SOURCEORRERY_HOME=$(mktemp -d)
+sourceorrery vault create development      # prints its recovery key, once
+sourceorrery vault create shared-tooling
 echo "pg-password" | sourceorrery secret set database-password --vault development
 echo "hmac-key"    | sourceorrery secret set signing-key --vault shared-tooling
 

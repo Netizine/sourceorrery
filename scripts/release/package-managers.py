@@ -15,8 +15,8 @@ Every URL points at the GitHub Release and every hash comes from its
 release archive. The release workflow runs this after the release exists;
 ``scripts/release/package_managers_test.py`` checks the output.
 
-    python3 scripts/release/package-managers.py --version 0.1.4 \\
-        --sha256sums SHA256SUMS --out dist/package-managers
+    python3 scripts/release/package-managers.py --version 0.2.0 \\
+        --sha256sums SHA256SUMS --release-date 2026-10-23 --out dist/package-managers
 
 ``--sha256sums`` and ``--out`` must lie under the working directory.
 """
@@ -36,7 +36,7 @@ DESCRIPTION = (
     "Encrypted local secrets vault with a cloud-secrets-manager-style lifecycle API"
 )
 WINGET_ID = "Netizine.SourceOrrery"
-WINGET_MANIFEST_VERSION = "1.10.0"
+WINGET_MANIFEST_VERSION = "1.12.0"
 
 
 def under_working_directory(path: Path, what: str) -> Path:

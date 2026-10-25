@@ -126,12 +126,15 @@ example rotating credentials that were once committed.
 - The skills forbid opening `.env` files, `secret get --reveal`, printing
   environment variables and writing values into code, tests or commits,
   and make the agent ask before deleting files, importing production
-  values, creating passphrase-protected vaults or rewriting history.
+  values or rewriting history. Making a vault, its recovery key and its
+  view check are yours: the skills tell the agent to ask you to run
+  `sourceorrery setup`, and never to read a recovery key or a password.
 
 > [!WARNING]
 > Skills are instructions, not an access-control boundary. An agent running
-> as your user can use the same OS credential store or a passphrase
-> available to it. Isolating agents from secrets needs the authenticated
+> as your user can use the same OS credential store, or a recovery key
+> available to it. The view check asks before a value is revealed, and
+> `run` does not ask it. Isolating agents from secrets needs the authenticated
 > broker and OS isolation on the [roadmap](roadmap.md). The workflow avoids
 > exposing values during a cooperative migration; it cannot enforce an
 > agent's compliance. See the [threat model](threat-model.md).

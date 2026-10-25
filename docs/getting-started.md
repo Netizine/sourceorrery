@@ -1,156 +1,136 @@
 # First run: from a vault to `run`
 
-The first thing to do with SourceOrrery is six steps long: a vault, a first
-secret, a way back in if the passphrase is lost, a second factor, the rule
-for showing a value, and the manifest that replaces `.env`. The CLI walks
-through them on the terminal:
+The first run is four steps: a vault, its secrets, a project's manifest,
+and the command that starts your program with the secrets in its
+environment instead of a `.env` file. The vault is set up on screens:
 
 ```bash
 sourceorrery setup
 ```
 
-Every step is also one or two ordinary commands, listed below and printed
-by `sourceorrery setup --guide` (or by `setup` itself when there is no
-terminal, as in a script or a pipe), so nothing the wizard does is special
-to it: each step can be redone, undone or scripted later.
+Every screen has a command-line equivalent, so a script or CI does the same
+without a terminal (`sourceorrery setup --guide` prints it).
 
 > [!NOTE]
 > Nothing typed as a secret on these screens is echoed or kept by them: a
-> passphrase or value is drawn as dots while it is typed, lives in a buffer
-> that is wiped afterwards, and goes to the vault and nowhere else. Two
-> things are shown, once, behind a "written down" tick box: a passphrase
-> the wizard generated (you have to know it) and the recovery codes.
+> password, a key or a value is drawn as dots while it is typed, lives in a
+> buffer that is wiped afterwards, and goes to the vault and nowhere else.
+> Three things are shown, once, by design: a password the screens
+> generated, the authenticator key (with its QR code) until the app has
+> proved it has it, and the recovery key, behind a "written down" tick.
 
-## 1. Vault
+## 1. A vault
 
-A vault is one encrypted file in your home directory. Its passphrase
-derives the key, so it has to be strong, and it cannot be recovered; the
-wizard rates what you type as you type it and accepts "good" or better
-(the estimate counts common passwords, dictionary-style words with the
-usual substitutions, repeats, sequences, years and short length against
-it). Or let it generate one: twenty characters from the OS random source,
-about 125 bits, shown once.
+A vault is one encrypted file in your home directory. It holds your
+secrets, or the catalog of the ones a provider keeps for it, and the record
+of everything done with them. Its key is kept twice:
 
-Where the OS credential store is available (Windows Credential Manager,
-macOS Keychain, Secret Service on Linux) the wizard also stores a second
-key there, ticked by default, so day-to-day use on this machine does not
-prompt; the passphrase stays the way in everywhere else (WSL, Docker, CI,
-another machine). A vault that exists already is used as it is.
+* **This machine's key**, in the OS credential store (Windows Credential
+  Manager, macOS Keychain, Secret Service on Linux). This machine opens the
+  vault without asking.
+* **The recovery key**, shown once when the vault is made. It opens the
+  vault anywhere else: WSL, a container, CI, another machine, an exported
+  copy. Write it down and keep it apart from this machine; nothing else
+  recovers the vault when this machine's key is gone.
+
+`setup` walks through the rest on screens, and nothing is written until
+its review confirms:
+
+* **The view check** (optional): a password, and a code from an
+  authenticator app on top of it, asked before anyone *views* the vault or
+  reveals a value (`ui`, `secret list`, `secret get`, `audit`). It is a
+  check, not encryption: `run`, `check`, `init` and your applications
+  never ask it, so programs start without a prompt while a key read out at
+  the keyboard, by you or by an agent, asks for more. A password must rate
+  "good" on the strength meter, or the screens generate one; the
+  authenticator is enrolled from a QR code and kept only once a code from
+  the app has matched.
+* **Storage**: where the vault keeps secrets. The vault file always, and
+  HashiCorp Vault, AWS Secrets Manager or Azure Key Vault through a
+  connection the vault holds, signing in the way the provider's own tools
+  do on this machine or with credentials stored in the vault, sealed.
+  **Test connection** makes one metadata call before anything is saved.
+
+<!-- walkthrough: setup -->
+
+Without a terminal, one command does the same (the authenticator is
+enrolled on the screens only):
 
 ```bash
-sourceorrery vault create development --protector passphrase
-sourceorrery vault passphrase generate                                  # if you want one made
-sourceorrery vault protector add --kind os-keyring --vault development  # optional
+sourceorrery vault create development --recovery-key-out development.recovery-key \
+  --password-file password.txt
 ```
 
-## 2. First secret
+## 2. Its secrets
 
-The first secret is a database password, under the name `database-password`
-(`--secret NAME` for another). A database password cannot be weak, so the
-same meter applies to a typed value, or the wizard generates a 24-character
-one and stores it without ever showing it. Read it later with
-`sourceorrery secret get database-password --reveal`, which the guard below
-can protect, or hand it to your program with `sourceorrery run`.
+Add secrets in the browser (`a`: the name, where it is kept, then the value
+at a hidden prompt), or from a script, one at a time. A value is never a
+command-line argument:
 
 ```bash
+sourceorrery ui
 sourceorrery secret set database-password --vault development          # a hidden prompt
-sourceorrery vault passphrase generate --length 24 | sourceorrery secret set database-password --vault development
+printf '%s' "$KEY" | sourceorrery secret set stripe-api-key --vault development --stdin \
+  --storage aws-secrets-manager --description "Card payments"
 ```
 
-## 3. Recovery
+An existing `.env` file moves in whole with `sourceorrery import .env`.
 
-Nothing can recover a lost passphrase. What can be done is to have other
-ways in, made now: the wizard issues five **recovery codes**, each a
-25-character code that unlocks the vault once typed at the passphrase
-prompt (or supplied through `SOURCEORRERY_PASSPHRASE`; case, hyphens and
-the look-alike letters do not matter). Together they are a second
-passphrase, so write them down and keep them apart from this machine; the
-wizard does not go on until you tick that you have. Running the command
-again replaces the whole set.
+<!-- walkthrough: browser -->
 
-An optional **hint** is shown at the passphrase prompt. It is stored in
-clear in the vault file and nothing authenticates it, so it is a reminder
-for you and never the passphrase in disguise (one that itself unlocks the
-vault is refused).
+## 3. A project
+
+The manifest, `sourceorrery.toml`, declares which secrets a project uses
+and which vault holds them. It never holds a value, so it is safe to
+commit. In the project's folder:
 
 ```bash
-sourceorrery vault recovery codes --vault development
-sourceorrery vault passphrase hint "the usual phrase, with the year" --vault development
+sourceorrery init
 ```
 
-With the passphrase lost and a code in hand, unlock with the code and set a
-new passphrase:
+On a terminal, `init` shows the vault's secrets as a list to tick (with
+**All**), loops over any new ones the project needs (stored in the vault as
+they are added), and writes the manifest after a review; the vault records
+the folder, which the `ui` shows under Projects. An existing manifest is
+added to, in place. Without a terminal, `init --all` or `init --secret
+NAME` picks secrets by name.
+
+<!-- walkthrough: init -->
+
+## 4. Run
 
 ```bash
-sourceorrery vault passphrase set --vault development     # the code at the "current" prompt
-```
-
-## 4. Second factor
-
-An authenticator app (any that speaks TOTP: the time-based codes of
-RFC 6238, six digits every thirty seconds) can be asked for a code before a
-value is shown or the vault exported. The wizard draws the enrolment as a
-QR code to scan, offers the key for typing where the camera cannot read
-the terminal, and keeps the enrolment only once a code from the app has
-matched, so a mis-scan cannot lock you out. The key is sealed inside the
-vault with the vault's own key: it travels with the file, never through a
-server, and a code is accepted once.
-
-```bash
-sourceorrery vault 2fa enable --vault development
-sourceorrery vault 2fa status --vault development
-```
-
-## 5. Reveal guard
-
-Unlocking the vault lets your program read its secrets. The **reveal guard**
-is a second check for the moments a person asks to *see* one: with it on,
-`secret get --reveal`, `backup` and every change to how the vault unlocks
-ask for the vault passphrase again, a code from the app, or both, even when
-the OS keyring unlocked the vault. It never applies to `run`, `check`, the
-`ui` browser (which shows no value) or the SDKs, so an application keeps
-starting without a prompt while an API key read out at the keyboard, by you
-or by an agent driving the CLI, asks for the passphrase and the phone.
-
-The wizard offers "the passphrase and a code" once a second factor is
-verified, "the passphrase", or nothing. Scripts satisfy the guard with
-`SOURCEORRERY_PASSPHRASE` and `--code` / `SOURCEORRERY_TOTP`; a code is never
-read from a pipe, so a script without one is refused rather than hung.
-
-```bash
-sourceorrery vault guard --reveal passphrase,second-factor --vault development
-sourceorrery secret get database-password --vault development --reveal
-Passphrase of vault 'development' to reveal a secret:
-Code from the app: 123456
-```
-
-## 6. Project
-
-The manifest, `sourceorrery.toml`, declares which secrets your project
-needs and which vault holds them; it never holds a value, so it is safe to
-commit. The wizard writes it (an existing one is kept), checks every
-secret it declares against the vault, and shows the command that starts
-your program with the secret in its environment.
-
-```bash
-sourceorrery init --vault-name development
 sourceorrery check
 sourceorrery run -- npm start      # DATABASE_PASSWORD is set in the child only
 ```
 
-## Afterwards
+`check` reads metadata only; `run` resolves every secret, wherever it is
+kept, and starts your program with them in its environment.
 
-The last screen names what was set up and the commands to go on with:
+## Elsewhere: WSL, containers, CI
+
+Where this machine's key is not available, give the vault its recovery
+key from a file or the environment:
+
+```bash
+export SOURCEORRERY_HOME=/mnt/c/Users/me/AppData/Local/sourceorrery   # the same vaults, from WSL
+export SOURCEORRERY_RECOVERY_KEY_FILE=/run/secrets/development.recovery-key
+sourceorrery run -- ./deploy.sh
+```
+
+To move a vault to another machine, `vault export` writes a copy that
+opens with its recovery key only, and `vault import` brings it in there.
+
+## Afterwards
 
 | To | Run |
 |----|-----|
-| start your program | `sourceorrery run -- <your command>` |
-| see a value (the guard asks for what you chose) | `sourceorrery secret get database-password --vault development --reveal` |
-| add a secret, browse the vault, check before a deploy | `sourceorrery secret set NAME --vault development`, `sourceorrery ui`, `sourceorrery check` |
-| run headless (WSL, Docker, CI) | `SOURCEORRERY_PASSPHRASE_FILE=/run/secrets/vault sourceorrery run -- <command>` |
-| change the passphrase, the hint, the codes, the second factor or the guard | `sourceorrery vault passphrase set`, `vault passphrase hint`, `vault recovery codes`, `vault 2fa`, `vault guard` |
-| see all of it at once | `sourceorrery vault info --vault development` |
+| browse the vault, add and change secrets, see its projects | `sourceorrery ui` |
+| change the view check, the recovery key or the storage | `sourceorrery vault create development` (the setup screens), or `c` in the browser |
+| see a value (the view check asks what you chose) | `sourceorrery secret get database-password --reveal` |
+| check before a deploy | `sourceorrery check` |
+| move the vault | `sourceorrery vault export --out FILE`, then `vault import FILE` |
 
-Every command is in the [CLI reference](cli.md); what the guard, the codes
-and the hint do and do not protect against is in the
+Every command is in the [CLI reference](cli.md); what the view check and
+the recovery key do and do not protect against is in the
 [threat model](threat-model.md).

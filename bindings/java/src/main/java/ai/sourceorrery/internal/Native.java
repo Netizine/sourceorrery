@@ -15,7 +15,6 @@ import java.lang.invoke.VarHandle;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 
 import ai.sourceorrery.SourceOrreryException;
@@ -106,11 +105,7 @@ public final class Native {
         String resource = "/ai/sourceorrery/native/" + platform() + "/" + file;
         try (InputStream stream = Native.class.getResourceAsStream(resource)) {
             if (stream != null) {
-                Path dir = Files.createTempDirectory("sourceorrery-native");
-                Path extracted = dir.resolve(file);
-                Files.copy(stream, extracted, StandardCopyOption.REPLACE_EXISTING);
-                extracted.toFile().deleteOnExit();
-                dir.toFile().deleteOnExit();
+                Path extracted = NativeExtraction.extract(stream, file);
                 System.load(extracted.toAbsolutePath().toString());
                 return SymbolLookup.loaderLookup();
             }
@@ -261,7 +256,7 @@ public final class Native {
      * C ABI version these downcalls follow: {@code SO_ABI_VERSION} in the
      * {@code sourceorrery.h} this package was written against.
      */
-    public static final int ABI_VERSION = 1;
+    public static final int ABI_VERSION = 2;
 
     /**
      * Refuse a library built for another C ABI version before anything is
@@ -298,13 +293,13 @@ public final class Native {
         }
     }
 
-    public static MemorySegment readerOpen(String vault, String optionsJson, byte[] passphrase) {
+    public static MemorySegment readerOpen(String vault, String optionsJson, byte[] recoveryKey) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment out = arena.allocate(ValueLayout.ADDRESS);
             int status = (int) SO_READER_OPEN.invokeExact(
                     utf8(arena, vault), utf8Length(vault),
                     utf8(arena, optionsJson), utf8Length(optionsJson),
-                    bytes(arena, passphrase), (long) (passphrase == null ? 0 : passphrase.length),
+                    bytes(arena, recoveryKey), (long) (recoveryKey == null ? 0 : recoveryKey.length),
                     out);
             check(status);
             return out.get(ValueLayout.ADDRESS, 0);
@@ -381,13 +376,13 @@ public final class Native {
         }
     }
 
-    public static MemorySegment projectLoad(String manifest, String optionsJson, byte[] passphrase) {
+    public static MemorySegment projectLoad(String manifest, String optionsJson, byte[] recoveryKey) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment out = arena.allocate(ValueLayout.ADDRESS);
             int status = (int) SO_PROJECT_LOAD.invokeExact(
                     utf8(arena, manifest), utf8Length(manifest),
                     utf8(arena, optionsJson), utf8Length(optionsJson),
-                    bytes(arena, passphrase), (long) (passphrase == null ? 0 : passphrase.length),
+                    bytes(arena, recoveryKey), (long) (recoveryKey == null ? 0 : recoveryKey.length),
                     out);
             check(status);
             return out.get(ValueLayout.ADDRESS, 0);

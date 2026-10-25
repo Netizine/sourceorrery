@@ -4,16 +4,23 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 
-use sourceorrery_conformance::{FIXTURE_PASSPHRASE, Fixture};
+use sourceorrery_conformance::Fixture;
 use sourceorrery_core::{
-    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ExportOptions,
-    ListOptions, Manifest, RestoreOptions, SecretBytes, SecretClient, SetSecretOptions,
-    UpdateSecretProperties, VaultBackup, timestamp,
+    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ListOptions, Manifest,
+    SecretBytes, SecretClient, SetSecretOptions, UpdateSecretProperties, timestamp,
 };
-use sourceorrery_crypto::{Argon2Params, SymmetricKey, aead, envelope, kdf, random};
-use sourceorrery_storage::backup;
-use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase};
+use sourceorrery_crypto::Argon2Params;
+use sourceorrery_storage::{
+    CreateVaultOptions, CredentialStore, MemoryStore, NoInteraction, NoStore, SqliteVault,
+    StaticRecoveryKey, VaultRegistry,
+};
 use time::Duration;
+
+/// No credential store: a test never touches the real OS store, and these
+/// vaults open with their recovery keys.
+fn no_store() -> Arc<dyn CredentialStore> {
+    Arc::new(NoStore)
+}
 
 const CANARY: &str = "CANARY-7f3a9c2e-plaintext-must-never-appear";
 
@@ -26,7 +33,7 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 #[test]
-fn vault_file_never_contains_plaintext_or_passphrase() {
+fn vault_file_never_contains_plaintext_or_the_recovery_key() {
     let fx = Fixture::new();
     let path = fx.registry.vault_path("dev").unwrap();
     {
@@ -58,9 +65,11 @@ fn vault_file_never_contains_plaintext_or_passphrase() {
         !contains(&bytes, &canary_bytes()),
         "plaintext found in vault file"
     );
+    let key = fx.recovery_key("dev");
+    let folded: String = key.chars().filter(char::is_ascii_alphanumeric).collect();
     assert!(
-        !contains(&bytes, FIXTURE_PASSPHRASE.as_bytes()),
-        "passphrase found in vault file"
+        !contains(&bytes, key.as_bytes()) && !contains(&bytes, folded.as_bytes()),
+        "recovery key found in vault file"
     );
     // Also check UTF-16LE, in case a platform API re-encoded the value.
     let utf16: Vec<u8> = CANARY.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -93,7 +102,7 @@ fn audit_log_and_errors_never_contain_values() {
     let events = vault.audit_events(AuditQuery::default()).unwrap();
     let dump = serde_json::to_string(&events).unwrap();
     assert!(!dump.contains(CANARY));
-    assert!(!dump.contains(FIXTURE_PASSPHRASE));
+    assert!(!dump.contains(&fx.recovery_key("dev")));
 }
 
 #[test]
@@ -197,12 +206,12 @@ fn tampered_ciphertext_is_rejected() {
 }
 
 #[test]
-fn wrong_passphrase_is_refused_and_recorded() {
+fn wrong_recovery_key_is_refused_and_recorded() {
     let fx = Fixture::new();
     fx.create_vault("dev");
     let err = fx
         .registry
-        .open("dev", &StaticPassphrase::new("not-the-passphrase"))
+        .open("dev", &StaticRecoveryKey::new("not-the-recovery-key"))
         .unwrap_err();
     assert_eq!(err.code(), "locked");
 
@@ -493,7 +502,7 @@ fn fresh_vault_chain_is_intact_and_counts_unkeyed_rows() {
     // Two rows written before unlock: the denied attempt and the failure.
     assert!(
         fx.registry
-            .open("dev", &StaticPassphrase::new("wrong"))
+            .open("dev", &StaticRecoveryKey::new("wrong"))
             .is_err()
     );
     let vault = fx.open_vault("dev");
@@ -528,7 +537,7 @@ fn deleted_middle_audit_row_is_detected_at_unlock() {
         conn.execute("DELETE FROM audit_events WHERE id = ?1", [victim])
             .unwrap();
     }
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
@@ -573,7 +582,7 @@ fn deleting_the_truncation_record_is_detected_as_another_break() {
         event_ids(&vault)
     };
     truncate_after(&path, ids[ids.len() - 3]);
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     assert_eq!(
         fx.registry.open("dev", &unlock).unwrap_err().code(),
         "crypto"
@@ -637,7 +646,7 @@ fn deleting_a_versions_checkpoint_row_refuses_the_unlock() {
         )
         .unwrap();
     }
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
@@ -708,7 +717,7 @@ fn edited_audit_row_breaks_the_chain() {
     }
     // The edited row's hash no longer verifies: the unlock finds it, records
     // it and blocks the vault until the owner has acknowledged it.
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert!(
@@ -766,7 +775,7 @@ fn removed_tail_rows_are_detected_on_the_next_write() {
     // chain, so a shortened chain cannot be consulted: the unlock is refused,
     // and recording the refusal puts the detection itself on the chain and
     // re-anchors the head.
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert!(
@@ -841,7 +850,7 @@ fn deleted_chain_head_is_detected() {
         conn.execute("DELETE FROM vault_meta WHERE key = 'audit_head'", [])
             .unwrap();
     }
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert!(err.to_string().contains("head missing"), "{err}");
@@ -866,311 +875,33 @@ fn deleted_chain_head_is_detected() {
 }
 
 // ---------------------------------------------------------------------------
-// Schema 1 vaults migrate forward on first unlock
+// Files from other releases are refused; there is no migration
 // ---------------------------------------------------------------------------
 
-/// The milestone 1 on-disk schema, verbatim.
-const SCHEMA_V1: &str = "
-CREATE TABLE vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE key_protectors (
-    id TEXT PRIMARY KEY, label TEXT NOT NULL UNIQUE, kind_json TEXT NOT NULL,
-    wrapped_nonce BLOB NOT NULL, wrapped_dek BLOB NOT NULL, created_on INTEGER NOT NULL);
-CREATE TABLE secrets (
-    name TEXT PRIMARY KEY, created_on INTEGER NOT NULL, deleted_on INTEGER,
-    scheduled_purge_on INTEGER, recovery_id TEXT);
-CREATE TABLE secret_versions (
-    name TEXT NOT NULL REFERENCES secrets(name) ON DELETE CASCADE, version TEXT NOT NULL,
-    seq INTEGER NOT NULL UNIQUE, nonce BLOB NOT NULL, ciphertext BLOB NOT NULL,
-    content_type TEXT, tags_json TEXT NOT NULL, enabled INTEGER NOT NULL,
-    not_before INTEGER, expires_on INTEGER, created_on INTEGER NOT NULL,
-    updated_on INTEGER NOT NULL, PRIMARY KEY (name, version));
-CREATE INDEX secret_versions_by_seq ON secret_versions(name, seq DESC);
-CREATE TABLE audit_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_on INTEGER NOT NULL, actor TEXT NOT NULL,
-    operation TEXT NOT NULL, secret_name TEXT, version TEXT, outcome TEXT NOT NULL, detail TEXT);
-CREATE INDEX audit_events_by_secret ON audit_events(secret_name, id DESC);
-";
-
-struct LegacyVault {
-    alpha_old: String,
-    alpha_new: String,
-}
-
-/// Writes schema 1 rows the way the milestone 1 build did.
-struct V1Writer<'a> {
-    conn: &'a rusqlite::Connection,
-    dek: SymmetricKey,
-    vault_id: String,
-    now: i64,
-    seq: i64,
-}
-
-impl V1Writer<'_> {
-    /// Install a passphrase protector for [`FIXTURE_PASSPHRASE`] with
-    /// testing KDF parameters, wrapping the DEK under the schema 1 AAD.
-    fn protector(&self) {
-        let protector_id = random::random_hex(8).unwrap();
-        let salt = random::random_bytes::<{ sourceorrery_crypto::SALT_LEN }>().unwrap();
-        let params = Argon2Params::TESTING;
-        let kek = kdf::derive_key(FIXTURE_PASSPHRASE.as_bytes(), &salt, params).unwrap();
-        let wrapped = envelope::wrap_key(
-            &kek,
-            &self.dek,
-            format!("sourceorrery/v1/protector/{}/{protector_id}", self.vault_id).as_bytes(),
-        )
-        .unwrap();
-        let kind_json = format!(
-            "{{\"kind\":\"passphrase\",\"salt\":\"{}\",\"params\":{{\"memory_kib\":{},\"iterations\":{},\"parallelism\":{}}}}}",
-            hex::encode(salt),
-            params.memory_kib,
-            params.iterations,
-            params.parallelism
-        );
-        self.conn
-            .execute(
-                "INSERT INTO key_protectors
-                    (id, label, kind_json, wrapped_nonce, wrapped_dek, created_on)
-                 VALUES (?1, 'passphrase', ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    protector_id,
-                    kind_json,
-                    wrapped.nonce.as_slice(),
-                    wrapped.bytes,
-                    self.now
-                ],
-            )
-            .unwrap();
-    }
-
-    /// Encrypt `value` under the schema 1 value AAD and insert a version row.
-    fn version(
-        &mut self,
-        name: &str,
-        value: &str,
-        enabled: bool,
-        expires_on: Option<i64>,
-    ) -> String {
-        self.seq += 1;
-        let version = random::random_hex(16).unwrap();
-        let ct = aead::seal(
-            &self.dek,
-            format!("sourceorrery/v1/value/{}/{name}/{version}", self.vault_id).as_bytes(),
-            value.as_bytes(),
-        )
-        .unwrap();
-        self.conn
-            .execute(
-                "INSERT INTO secret_versions
-                    (name, version, seq, nonce, ciphertext, content_type, tags_json, enabled,
-                     not_before, expires_on, created_on, updated_on)
-                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, '{}', ?6, NULL, ?7, ?8, ?8)",
-                rusqlite::params![
-                    name,
-                    version,
-                    self.seq,
-                    ct.nonce.as_slice(),
-                    ct.bytes,
-                    i64::from(enabled),
-                    expires_on,
-                    self.now
-                ],
-            )
-            .unwrap();
-        version
-    }
-
-    /// Insert a schema 1 audit row (no chain columns).
-    fn audit(
-        &self,
-        op: &str,
-        name: Option<&str>,
-        ver: Option<&str>,
-        outcome: &str,
-        detail: Option<&str>,
-    ) {
-        self.conn
-            .execute(
-                "INSERT INTO audit_events
-                    (occurred_on, actor, operation, secret_name, version, outcome, detail)
-                 VALUES (?1, 'user:legacy', ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![self.now, op, name, ver, outcome, detail],
-            )
-            .unwrap();
-    }
-}
-
-/// Write a schema 1 vault file by hand, exactly as the milestone 1 build
-/// did (`*.sorvault` fixtures are git-ignored by policy, so the fixture is
-/// constructed rather than checked in). Passphrase: [`FIXTURE_PASSPHRASE`].
-fn craft_schema_1_vault(path: &Path) -> LegacyVault {
-    let conn = rusqlite::Connection::open(path).unwrap();
-    conn.execute_batch(SCHEMA_V1).unwrap();
-    let vault_id = random::random_hex(16).unwrap();
-    let now = i64::try_from(timestamp::to_unix_nanos(timestamp::now())).unwrap();
-    for (key, value) in [
-        ("schema_version", "1".to_owned()),
-        ("name", "legacy".to_owned()),
-        ("id", vault_id.clone()),
-        ("created_on", now.to_string()),
-        ("recovery_level", "\"recoverable\"".to_owned()),
-        ("retention_days", "90".to_owned()),
-    ] {
-        conn.execute(
-            "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)",
-            [key, value.as_str()],
-        )
-        .unwrap();
-    }
-    for name in ["alpha", "beta"] {
-        conn.execute(
-            "INSERT INTO secrets (name, created_on) VALUES (?1, ?2)",
-            rusqlite::params![name, now],
-        )
-        .unwrap();
-    }
-
-    let mut w = V1Writer {
-        conn: &conn,
-        dek: SymmetricKey::generate().unwrap(),
-        vault_id,
-        now,
-        seq: 0,
-    };
-    w.protector();
-    let alpha_old = w.version("alpha", "alpha-old", false, None);
-    let alpha_new = w.version("alpha", "alpha-new", true, None);
-    let fifty_years = 50 * 365 * 24 * 3600 * 1_000_000_000i64;
-    let beta = w.version("beta", "beta-value", true, Some(now + fifty_years));
-
-    w.audit(
-        "vault_create",
-        None,
-        None,
-        "success",
-        Some("encrypted-sqlite"),
-    );
-    w.audit(
-        "secret_set",
-        Some("alpha"),
-        Some(&alpha_old),
-        "success",
-        None,
-    );
-    w.audit(
-        "secret_set",
-        Some("alpha"),
-        Some(&alpha_new),
-        "success",
-        None,
-    );
-    w.audit("secret_set", Some("beta"), Some(&beta), "success", None);
-    w.audit(
-        "vault_open",
-        None,
-        None,
-        "denied",
-        Some("incorrect passphrase"),
-    );
-    w.audit("vault_open", None, None, "failure", Some("locked"));
-    LegacyVault {
-        alpha_old,
-        alpha_new,
-    }
-}
-
-/// Completed migrations: the summary `vault_migrate` rows, not the
-/// per-row checkpoints a migration also records.
-fn migrations(vault: &SqliteVault) -> usize {
-    events_of(vault, AuditOperation::VaultMigrate, AuditOutcome::Success)
-        .iter()
-        .filter(|e| e.secret_name.is_none())
-        .count()
-}
-
-/// Checkpoint rows a migration recorded: one per secret and per version.
-fn migration_checkpoints(vault: &SqliteVault) -> usize {
-    events_of(vault, AuditOperation::VaultMigrate, AuditOutcome::Success)
-        .iter()
-        .filter(|e| e.secret_name.is_some() && e.detail.as_deref() == Some("checkpoint"))
-        .count()
-}
-
 #[test]
-fn schema_1_vault_is_migrated_forward_and_protected() {
+fn a_vault_from_an_earlier_release_is_refused_and_never_migrated() {
     let fx = Fixture::new();
-    std::fs::create_dir_all(fx.registry.vaults_dir()).unwrap();
-    let path = fx.registry.vault_path("legacy").unwrap();
-    let legacy = craft_schema_1_vault(&path);
-
-    // A legacy file is never opened silently: migration is an explicit step.
-    let err = fx
-        .registry
-        .open("legacy", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
-        .unwrap_err();
-    assert_eq!(err.code(), "migration_required", "{err}");
-
-    // The explicit migration unlocks, converts, and leaves data and policy unchanged.
-    let vault = fx.migrate_vault("legacy");
-    let alpha = vault.get_secret("alpha", None).unwrap();
-    assert_eq!(alpha.properties.version, legacy.alpha_new);
-    assert_eq!(alpha.value.expose(), b"alpha-new");
-    assert_eq!(
-        vault
-            .get_secret("alpha", Some(&legacy.alpha_old))
-            .unwrap_err()
-            .code(),
-        "disabled"
-    );
-    assert_eq!(
-        vault.get_secret("beta", None).unwrap().value.expose(),
-        b"beta-value"
-    );
-    assert_eq!(vault.list_properties_of_secrets().unwrap().len(), 2);
-    assert_eq!(migrations(&vault), 1);
-    assert_eq!(
-        migration_checkpoints(&vault),
-        2 + 3,
-        "every secret and version row is checkpointed"
-    );
-
-    // Historical audit rows are chained under the vault key.
-    let check = vault.verify_audit_chain().unwrap();
-    assert!(check.is_intact(), "{check:?}");
-    assert_eq!(check.unkeyed, 0);
-    let events = vault.audit_events(AuditQuery::default()).unwrap();
-    assert_eq!(check.rows, u64::try_from(events.len()).unwrap());
-    assert!(
-        events
-            .iter()
-            .any(|e| e.operation == AuditOperation::VaultOpen && e.outcome == AuditOutcome::Denied),
-        "pre-migration rows survive"
-    );
-    drop(vault);
-
-    // The file now says schema 3, and a second unlock does not migrate again.
-    assert_eq!(schema_marker(&path), "3");
-    let vault = fx.open_vault("legacy");
-    assert_eq!(migrations(&vault), 1);
-    assert!(vault.verify_audit_chain().unwrap().is_intact());
-    drop(vault);
-
-    // Migrated rows are protected exactly like new ones.
+    let path = fx.registry.vault_path("dev").unwrap();
     {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute(
-            "UPDATE secret_versions SET enabled = 1 WHERE version = ?1",
-            [&legacy.alpha_old],
-        )
-        .unwrap();
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", CANARY, SetSecretOptions::default());
     }
-    let vault = fx.open_vault("legacy");
-    assert_eq!(
-        vault
-            .get_secret("alpha", Some(&legacy.alpha_old))
-            .unwrap_err()
-            .code(),
-        "crypto"
-    );
+    for older in ["1", "2", "3"] {
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute(
+                "UPDATE vault_meta SET value = ?1 WHERE key = 'schema_version'",
+                [older],
+            )
+            .unwrap();
+        }
+        let err = fx.registry.open("dev", &fx.unlock("dev")).unwrap_err();
+        assert_eq!(err.code(), "migration_required", "{err}");
+        assert!(err.to_string().contains("recreate the vault"), "{err}");
+        assert!(!err.to_string().contains(CANARY));
+        // Nothing was converted or written: the marker is as it was set.
+        assert_eq!(schema_marker(&path), older);
+    }
 }
 
 #[test]
@@ -1186,96 +917,9 @@ fn newer_schema_is_refused_cleanly() {
         )
         .unwrap();
     }
-    let err = fx
-        .registry
-        .open("dev", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
-        .unwrap_err();
+    let err = fx.registry.open("dev", &fx.unlock("dev")).unwrap_err();
     assert_eq!(err.code(), "storage");
-    assert!(err.to_string().contains("not supported"), "{err}");
-}
-
-// ---------------------------------------------------------------------------
-// Format boundary: a rolled-back schema marker is not a legacy vault
-// ---------------------------------------------------------------------------
-
-/// The attack from the review: take a schema 2 vault, edit policy and
-/// history, strip the integrity data and set the marker back to 1, then let
-/// the owner unlock it so the migration re-authenticates the edits.
-fn roll_back_to_schema_1(path: &Path) {
-    let conn = rusqlite::Connection::open(path).unwrap();
-    conn.execute_batch(
-        "UPDATE vault_meta SET value = '1' WHERE key = 'schema_version';
-         DELETE FROM vault_meta WHERE key IN ('audit_head', 'settings_tag');
-         UPDATE secret_versions SET enabled = 1, tag = NULL;
-         UPDATE secrets SET tag = NULL;
-         UPDATE audit_events SET outcome = 'success', prev_hash = NULL, hash = NULL, keyed = 0;",
-    )
-    .unwrap();
-}
-
-#[test]
-fn rolled_back_schema_marker_is_refused_by_open_and_by_migrate() {
-    let fx = Fixture::new();
-    let path = fx.registry.vault_path("dev").unwrap();
-    {
-        let vault = fx.create_vault("dev");
-        set_with(
-            &vault,
-            "k",
-            CANARY,
-            SetSecretOptions {
-                enabled: false,
-                ..Default::default()
-            },
-        );
-        assert_eq!(vault.get_secret("k", None).unwrap_err().code(), "disabled");
-    }
-    roll_back_to_schema_1(&path);
-
-    // Plain open never migrates.
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
-    let err = fx.registry.open("dev", &unlock).unwrap_err();
-    assert_eq!(err.code(), "migration_required", "{err}");
-
-    // The explicit migration sees a key bound to schema 2 and refuses.
-    let err = fx.registry.migrate("dev", &unlock).unwrap_err();
-    assert_eq!(err.code(), "crypto", "{err}");
-    assert!(
-        err.to_string().contains("rolled back") || err.to_string().contains("altered"),
-        "{err}"
-    );
-
-    // Nothing was laundered: the disabled secret is still unreadable.
-    let still_locked = fx.registry.open("dev", &unlock).unwrap_err();
-    assert_eq!(still_locked.code(), "migration_required");
-}
-
-#[test]
-fn migrated_legacy_vault_cannot_be_rolled_back_again() {
-    let fx = Fixture::new();
-    std::fs::create_dir_all(fx.registry.vaults_dir()).unwrap();
-    let path = fx.registry.vault_path("legacy").unwrap();
-    let legacy = craft_schema_1_vault(&path);
-
-    // Genuine legacy file: the explicit migration is allowed once.
-    let vault = fx.migrate_vault("legacy");
-    assert_eq!(
-        vault
-            .get_secret("alpha", Some(&legacy.alpha_old))
-            .unwrap_err()
-            .code(),
-        "disabled"
-    );
-    drop(vault);
-
-    // The migration re-wrapped the unlocking key under schema 2, so the same
-    // trick no longer works on this file.
-    roll_back_to_schema_1(&path);
-    let err = fx
-        .registry
-        .migrate("legacy", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
-        .unwrap_err();
-    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(err.to_string().contains("newer than this build"), "{err}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1298,7 +942,7 @@ fn removing_all_audit_rows_and_the_head_is_detected() {
         )
         .unwrap();
     }
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert!(err.to_string().contains("history missing"), "{err}");
@@ -1343,9 +987,7 @@ fn settings_tamper(sql: &str) -> sourceorrery_core::SecretError {
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute_batch(sql).unwrap();
     }
-    fx.registry
-        .open("dev", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
-        .unwrap_err()
+    fx.registry.open("dev", &fx.unlock("dev")).unwrap_err()
 }
 
 #[test]
@@ -1361,36 +1003,6 @@ fn shortened_retention_or_changed_recovery_level_is_refused() {
         assert_eq!(err.code(), "crypto", "{sql}: {err}");
         assert!(err.to_string().contains("settings"), "{sql}: {err}");
     }
-}
-
-// ---------------------------------------------------------------------------
-// Resource ceilings before authentication
-// ---------------------------------------------------------------------------
-
-#[test]
-fn oversized_kdf_parameters_are_skipped_not_run() {
-    let fx = Fixture::new();
-    let path = fx.registry.vault_path("dev").unwrap();
-    fx.create_vault("dev");
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute(
-            "UPDATE key_protectors SET kind_json = replace(kind_json, '\"iterations\":1', '\"iterations\":100000')",
-            [],
-        )
-        .unwrap();
-    }
-    let started = std::time::Instant::now();
-    let err = fx
-        .registry
-        .open("dev", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
-        .unwrap_err();
-    assert_eq!(err.code(), "locked", "{err}");
-    assert!(err.to_string().contains("limits"), "{err}");
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(5),
-        "unlock ran the oversized KDF"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1415,16 +1027,15 @@ fn vault_id(path: &Path) -> String {
     .unwrap()
 }
 
-fn insert_keyring_protector_row(path: &Path, protector_id: &str, account: &str) {
+fn insert_this_machine_wrap_row(path: &Path, wrap_id: &str, account: &str) {
     let conn = rusqlite::Connection::open(path).unwrap();
     conn.execute(
-        "INSERT INTO key_protectors (id, label, kind_json, wrapped_nonce, wrapped_dek, created_on)
-         VALUES (?1, ?2, ?3, zeroblob(24), zeroblob(48), 0)",
+        "INSERT INTO key_wraps (id, kind_json, wrapped_nonce, wrapped_key, created_on)
+         VALUES (?1, ?2, zeroblob(24), zeroblob(48), 0)",
         rusqlite::params![
-            protector_id,
-            format!("fake-{protector_id}"),
+            wrap_id,
             format!(
-                "{{\"kind\":\"os-keyring\",\"service\":\"sourceorrery\",\"account\":\"{account}\"}}"
+                "{{\"kind\":\"this-machine\",\"service\":\"sourceorrery\",\"account\":\"{account}\"}}"
             ),
         ],
     )
@@ -1442,12 +1053,12 @@ fn destroy_keeps_keyring_entries_it_cannot_prove_it_owns() {
     let dev_id = vault_id(&dev);
 
     // 1. An account that names another vault's identity (plain substitution).
-    insert_keyring_protector_row(&dev, "aaaaaaaa", &format!("vault/{other_id}/aaaaaaaa"));
+    insert_this_machine_wrap_row(&dev, "aaaaaaaa", &format!("vault/{other_id}/aaaaaaaa"));
     // 2. An account that matches this vault's identity but is also listed by
     //    a sibling vault file (a cloned vault).
     let shared = format!("vault/{dev_id}/bbbbbbbb");
-    insert_keyring_protector_row(&dev, "bbbbbbbb", &shared);
-    insert_keyring_protector_row(&other, "bbbbbbbb", &shared);
+    insert_this_machine_wrap_row(&dev, "bbbbbbbb", &shared);
+    insert_this_machine_wrap_row(&other, "bbbbbbbb", &shared);
 
     let report = fx.registry.destroy("dev", false).unwrap();
     assert!(report.removed_keys.is_empty(), "{report:?}");
@@ -1461,7 +1072,7 @@ fn destroy_keeps_keyring_entries_it_cannot_prove_it_owns() {
     assert!(fx.registry.exists("other"));
 
     // --keep-os-key never touches the store at all.
-    insert_keyring_protector_row(&other, "cccccccc", &format!("vault/{other_id}/cccccccc"));
+    insert_this_machine_wrap_row(&other, "cccccccc", &format!("vault/{other_id}/cccccccc"));
     let report = fx.registry.destroy("other", true).unwrap();
     assert!(report.removed_keys.is_empty(), "{report:?}");
     assert!(
@@ -1799,7 +1410,7 @@ fn forged_checkpoint_rows_do_not_count() {
         .unwrap();
     };
     forge(0);
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     assert_eq!(
         fx.registry.open("dev", &unlock).unwrap_err().code(),
         "crypto"
@@ -1854,7 +1465,7 @@ fn truncating_the_log_to_replay_a_row_is_blocked_until_acknowledged() {
     };
     replay(&path, "secret_versions", "k");
     truncate_after(&path, before_disable);
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert!(
@@ -1907,7 +1518,7 @@ fn truncation_blocks_every_unlock_and_operation_until_acknowledged() {
     // The unlock that finds the stale head is refused and records the
     // detection; the second and third are refused because nobody has
     // acknowledged it, and say so.
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     let err = fx.registry.open("dev", &unlock).unwrap_err();
     assert_eq!(err.code(), "crypto", "{err}");
     assert!(
@@ -1918,8 +1529,6 @@ fn truncation_blocks_every_unlock_and_operation_until_acknowledged() {
     for _ in 0..2 {
         assert_blocked(&fx.registry.open("dev", &unlock).unwrap_err());
     }
-    // The explicit migration is not a way round it either.
-    assert_blocked(&fx.registry.migrate("dev", &unlock).unwrap_err());
 
     // An inspection unlock gets a handle that shows what was detected ...
     let vault = fx.inspect_vault("dev");
@@ -1942,7 +1551,7 @@ fn truncation_blocks_every_unlock_and_operation_until_acknowledged() {
         "the refusal names the detection: {err}"
     );
 
-    // ... and refuses every secret and protector operation ...
+    // ... and refuses every secret, key and view-check change ...
     let refused: Vec<(&str, sourceorrery_core::SecretError)> = vec![
         ("get", vault.get_secret("k", None).unwrap_err()),
         (
@@ -1979,20 +1588,14 @@ fn truncation_blocks_every_unlock_and_operation_until_acknowledged() {
         ("recover", vault.recover_deleted_secret("k").unwrap_err()),
         ("purge", vault.purge_deleted_secret("k").unwrap_err()),
         (
-            "protector-add",
-            vault
-                .add_protector(
-                    ProtectorSpec::Passphrase {
-                        passphrase: SecretBytes::from("another"),
-                        params: Argon2Params::TESTING,
-                    },
-                    Some("another"),
-                )
-                .unwrap_err(),
+            "recovery-key",
+            vault.replace_recovery_key().map(drop).unwrap_err(),
         ),
         (
-            "protector-remove",
-            vault.remove_protector("passphrase").unwrap_err(),
+            "password",
+            vault
+                .set_password(&SecretBytes::from("another"), None, Argon2Params::TESTING)
+                .unwrap_err(),
         ),
     ];
     for (what, err) in &refused {
@@ -2000,7 +1603,8 @@ fn truncation_blocks_every_unlock_and_operation_until_acknowledged() {
         assert!(err.to_string().contains("unacknowledged"), "{what}: {err}");
         assert!(!err.to_string().contains(CANARY), "{what}");
     }
-    assert_eq!(vault.protectors().unwrap().len(), 1, "nothing changed");
+    assert_eq!(vault.wraps().unwrap().len(), 1, "nothing changed");
+    assert!(vault.view_check().unwrap().is_none(), "nothing changed");
 
     // ... while inspection itself works and every refusal is on the record.
     let check = vault.verify_audit_chain().unwrap();
@@ -2012,8 +1616,8 @@ fn truncation_blocks_every_unlock_and_operation_until_acknowledged() {
     assert_eq!(open_refusals(&vault, "audit log truncated"), 1);
     assert_eq!(
         open_refusals(&vault, "truncation unacknowledged"),
-        4,
-        "two plain unlocks, the migration and the unlock after inspection"
+        3,
+        "two plain unlocks and the unlock after inspection"
     );
     let inspections = events_of(&vault, AuditOperation::VaultOpen, AuditOutcome::Success)
         .iter()
@@ -2046,7 +1650,7 @@ fn acknowledgement_records_one_keyed_success_row_and_unblocks_the_vault() {
         event_ids(&vault)
     };
     truncate_after(&path, ids[ids.len() - 2]);
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     assert_eq!(
         fx.registry.open("dev", &unlock).unwrap_err().code(),
         "crypto"
@@ -2162,7 +1766,7 @@ fn acknowledgement_refuses_a_truncation_it_was_not_shown() {
         event_ids(&vault)
     };
     truncate_after(&path, ids[ids.len() - 2]);
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
     assert_eq!(
         fx.registry.open("dev", &unlock).unwrap_err().code(),
         "crypto"
@@ -2228,27 +1832,16 @@ fn concurrent_creation_yields_exactly_one_vault_that_survives() {
             let barrier = Arc::clone(&barrier);
             std::thread::spawn(move || {
                 barrier.wait();
-                SqliteVault::create(
-                    &path,
-                    "race",
-                    CreateVaultOptions::default(),
-                    ProtectorSpec::Passphrase {
-                        passphrase: SecretBytes::from(format!("pass-{i}")),
-                        params: Argon2Params::TESTING,
-                    },
-                )
-                .map(|vault| {
-                    drop(vault);
-                    i
-                })
-                .map_err(|err| err.code().to_owned())
+                SqliteVault::create(&path, "race", CreateVaultOptions::default(), no_store())
+                    .map(|created| (i, created.recovery_key.to_string()))
+                    .map_err(|err| err.code().to_owned())
             })
         })
         .collect();
-    let results: Vec<Result<usize, String>> =
+    let results: Vec<Result<(usize, String), String>> =
         workers.into_iter().map(|w| w.join().unwrap()).collect();
 
-    let winners: Vec<usize> = results.iter().filter_map(|r| r.clone().ok()).collect();
+    let winners: Vec<(usize, String)> = results.iter().filter_map(|r| r.clone().ok()).collect();
     assert_eq!(winners.len(), 1, "{results:?}");
     assert!(
         results
@@ -2259,86 +1852,15 @@ fn concurrent_creation_yields_exactly_one_vault_that_survives() {
     );
     assert!(path.is_file(), "a losing creator removed the winner's file");
 
-    // The winner's vault reopens with the winner's passphrase and holds
-    // exactly the winner's protector.
-    let winner = winners[0];
+    // The winner's vault reopens with the winner's recovery key and holds
+    // exactly the winner's key wrap.
+    let (_, key) = &winners[0];
     let vault = fx
         .registry
-        .open("race", &StaticPassphrase::new(format!("pass-{winner}")))
+        .open("race", &StaticRecoveryKey::new(key.as_str()))
         .unwrap();
-    assert_eq!(vault.protectors().unwrap().len(), 1);
+    assert_eq!(vault.wraps().unwrap().len(), 1);
     assert!(vault.verify_audit_chain().unwrap().is_intact());
-    drop(vault);
-    let loser = (0..CREATORS).find(|i| *i != winner).unwrap();
-    assert_eq!(
-        fx.registry
-            .open("race", &StaticPassphrase::new(format!("pass-{loser}")))
-            .unwrap_err()
-            .code(),
-        "locked"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Every accepted protector can unlock (review R4)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn passphrase_protectors_are_capped_at_what_unlock_will_try() {
-    let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    set_with(&vault, "k", "v", SetSecretOptions::default());
-    let extra = |i: usize| format!("extra-{i}");
-    for i in 1..8 {
-        vault
-            .add_protector(
-                ProtectorSpec::Passphrase {
-                    passphrase: SecretBytes::from(extra(i)),
-                    params: Argon2Params::TESTING,
-                },
-                Some(&extra(i)),
-            )
-            .unwrap();
-    }
-    assert_eq!(vault.protectors().unwrap().len(), 8);
-
-    let err = vault
-        .add_protector(
-            ProtectorSpec::Passphrase {
-                passphrase: SecretBytes::from(extra(8)),
-                params: Argon2Params::TESTING,
-            },
-            Some(&extra(8)),
-        )
-        .unwrap_err();
-    assert_eq!(err.code(), "invalid_argument", "{err}");
-    assert!(err.to_string().contains("at most 8"), "{err}");
-    assert_eq!(
-        vault.protectors().unwrap().len(),
-        8,
-        "a rejected addition installs nothing"
-    );
-    assert_eq!(
-        events_of(&vault, AuditOperation::ProtectorAdd, AuditOutcome::Failure).len(),
-        1
-    );
-    drop(vault);
-
-    // Every accepted protector unlocks the vault; the rejected one does not.
-    for passphrase in std::iter::once(FIXTURE_PASSPHRASE.to_owned()).chain((1..8).map(extra)) {
-        let vault = fx
-            .registry
-            .open("dev", &StaticPassphrase::new(passphrase.clone()))
-            .unwrap_or_else(|err| panic!("{passphrase} must unlock: {err}"));
-        assert_eq!(vault.get_secret("k", None).unwrap().value.expose(), b"v");
-    }
-    assert_eq!(
-        fx.registry
-            .open("dev", &StaticPassphrase::new(extra(8)))
-            .unwrap_err()
-            .code(),
-        "locked"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2455,522 +1977,22 @@ fn rejected_operations_are_audited_failures() {
         assert_eq!(newest.secret_name, None, "{op:?} must not record the input");
     }
 
-    // Rejected protector management.
-    let err = vault
-        .add_protector(
-            ProtectorSpec::Passphrase {
-                passphrase: SecretBytes::from("another"),
-                params: Argon2Params::TESTING,
-            },
-            Some("passphrase"),
-        )
-        .unwrap_err();
-    assert_eq!(err.code(), "invalid_argument");
-    assert_eq!(failures(AuditOperation::ProtectorAdd).len(), 1);
+    // Rejected view-check changes: an authenticator without a password,
+    // and removing one that is not there.
     assert_eq!(
-        vault.remove_protector("nope").unwrap_err().code(),
+        vault.enrol_authenticator().map(drop).unwrap_err().code(),
         "invalid_argument"
     );
     assert_eq!(
-        vault.remove_protector("passphrase").unwrap_err().code(),
+        vault.remove_authenticator().unwrap_err().code(),
         "invalid_argument"
     );
-    assert_eq!(failures(AuditOperation::ProtectorRemove).len(), 2);
-    assert_eq!(vault.protectors().unwrap().len(), 1);
+    assert_eq!(failures(AuditOperation::Guard).len(), 2);
+    assert!(vault.view_check().unwrap().is_none());
 
     // None of it touched the secret, and the chain is whole.
     assert_eq!(vault.get_secret("k", None).unwrap().value.expose(), b"v");
     assert!(vault.verify_audit_chain().unwrap().is_intact());
-}
-
-// ---------------------------------------------------------------------------
-// Schema 2 vaults migrate forward and gain checkpoints
-// ---------------------------------------------------------------------------
-
-/// The schema 2 table layout, as the 20 October 2026 hardening release
-/// wrote it.
-const SCHEMA_V2: &str = "
-CREATE TABLE vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE key_protectors (
-    id TEXT PRIMARY KEY, label TEXT NOT NULL UNIQUE, kind_json TEXT NOT NULL,
-    wrapped_nonce BLOB NOT NULL, wrapped_dek BLOB NOT NULL, created_on INTEGER NOT NULL);
-CREATE TABLE secrets (
-    name TEXT PRIMARY KEY, created_on INTEGER NOT NULL, deleted_on INTEGER,
-    scheduled_purge_on INTEGER, recovery_id TEXT, tag BLOB);
-CREATE TABLE secret_versions (
-    name TEXT NOT NULL REFERENCES secrets(name) ON DELETE CASCADE, version TEXT NOT NULL,
-    seq INTEGER NOT NULL UNIQUE, nonce BLOB NOT NULL, ciphertext BLOB NOT NULL,
-    content_type TEXT, tags_json TEXT NOT NULL, enabled INTEGER NOT NULL,
-    not_before INTEGER, expires_on INTEGER, created_on INTEGER NOT NULL,
-    updated_on INTEGER NOT NULL, tag BLOB, PRIMARY KEY (name, version));
-CREATE INDEX secret_versions_by_seq ON secret_versions(name, seq DESC);
-CREATE TABLE audit_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_on INTEGER NOT NULL, actor TEXT NOT NULL,
-    operation TEXT NOT NULL, secret_name TEXT, version TEXT, outcome TEXT NOT NULL, detail TEXT,
-    prev_hash BLOB, hash BLOB, keyed INTEGER NOT NULL DEFAULT 0);
-CREATE INDEX audit_events_by_secret ON audit_events(secret_name, id DESC);
-";
-
-/// The canonical encoding from `docs/vault-format.md`, written out
-/// independently of the storage crate.
-#[derive(Default)]
-struct Canon(Vec<u8>);
-
-impl Canon {
-    fn new(domain: &str, vault_id: &str) -> Self {
-        Self::default().str(domain).str(vault_id)
-    }
-    fn bytes(mut self, b: &[u8]) -> Self {
-        self.0
-            .extend_from_slice(&u64::try_from(b.len()).unwrap().to_be_bytes());
-        self.0.extend_from_slice(b);
-        self
-    }
-    fn str(self, s: &str) -> Self {
-        self.bytes(s.as_bytes())
-    }
-    fn int(mut self, i: i64) -> Self {
-        self.0.extend_from_slice(&i.to_be_bytes());
-        self
-    }
-    fn flag(mut self, b: bool) -> Self {
-        self.0.push(u8::from(b));
-        self
-    }
-    fn opt_str(self, s: Option<&str>) -> Self {
-        match s {
-            Some(s) => self.flag(true).str(s),
-            None => self.flag(false),
-        }
-    }
-    fn opt_int(self, i: Option<i64>) -> Self {
-        match i {
-            Some(i) => self.flag(true).int(i),
-            None => self.flag(false),
-        }
-    }
-}
-
-/// Writes schema 2 rows the way the schema 2 build did: tagged rows, a keyed
-/// audit chain with its head, authenticated settings and a key wrapped under
-/// the schema 2 AAD.
-struct V2Writer<'a> {
-    conn: &'a rusqlite::Connection,
-    dek: SymmetricKey,
-    meta_key: SymmetricKey,
-    vault_id: String,
-    now: i64,
-    seq: i64,
-    prev: [u8; 32],
-    head: Option<(i64, [u8; 32])>,
-}
-
-impl V2Writer<'_> {
-    fn protector(&self) {
-        let protector_id = random::random_hex(8).unwrap();
-        let salt = random::random_bytes::<{ sourceorrery_crypto::SALT_LEN }>().unwrap();
-        let params = Argon2Params::TESTING;
-        let kek = kdf::derive_key(FIXTURE_PASSPHRASE.as_bytes(), &salt, params).unwrap();
-        let wrapped = envelope::wrap_key(
-            &kek,
-            &self.dek,
-            format!("sourceorrery/v2/protector/{}/{protector_id}", self.vault_id).as_bytes(),
-        )
-        .unwrap();
-        let kind_json = format!(
-            "{{\"kind\":\"passphrase\",\"salt\":\"{}\",\"params\":{{\"memory_kib\":{},\"iterations\":{},\"parallelism\":{}}}}}",
-            hex::encode(salt),
-            params.memory_kib,
-            params.iterations,
-            params.parallelism
-        );
-        self.conn
-            .execute(
-                "INSERT INTO key_protectors
-                    (id, label, kind_json, wrapped_nonce, wrapped_dek, created_on)
-                 VALUES (?1, 'passphrase', ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    protector_id,
-                    kind_json,
-                    wrapped.nonce.as_slice(),
-                    wrapped.bytes,
-                    self.now
-                ],
-            )
-            .unwrap();
-    }
-
-    fn secret(&self, name: &str) {
-        let tag = sourceorrery_crypto::mac(
-            &self.meta_key,
-            &Canon::new("sourceorrery/v2/secret", &self.vault_id)
-                .str(name)
-                .int(self.now)
-                .opt_int(None)
-                .opt_int(None)
-                .opt_str(None)
-                .0,
-        );
-        self.conn
-            .execute(
-                "INSERT INTO secrets (name, created_on, tag) VALUES (?1, ?2, ?3)",
-                rusqlite::params![name, self.now, tag.as_slice()],
-            )
-            .unwrap();
-    }
-
-    fn version(&mut self, name: &str, value: &str, enabled: bool) -> String {
-        self.seq += 1;
-        let version = random::random_hex(16).unwrap();
-        let ct = aead::seal(
-            &self.dek,
-            format!("sourceorrery/v1/value/{}/{name}/{version}", self.vault_id).as_bytes(),
-            value.as_bytes(),
-        )
-        .unwrap();
-        let tag = sourceorrery_crypto::mac(
-            &self.meta_key,
-            &Canon::new("sourceorrery/v2/version", &self.vault_id)
-                .str(name)
-                .str(&version)
-                .int(self.seq)
-                .flag(enabled)
-                .opt_str(None)
-                .str("{}")
-                .opt_int(None)
-                .opt_int(None)
-                .int(self.now)
-                .int(self.now)
-                .0,
-        );
-        self.conn
-            .execute(
-                "INSERT INTO secret_versions
-                    (name, version, seq, nonce, ciphertext, content_type, tags_json, enabled,
-                     not_before, expires_on, created_on, updated_on, tag)
-                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, '{}', ?6, NULL, NULL, ?7, ?7, ?8)",
-                rusqlite::params![
-                    name,
-                    version,
-                    self.seq,
-                    ct.nonce.as_slice(),
-                    ct.bytes,
-                    i64::from(enabled),
-                    self.now,
-                    tag.as_slice()
-                ],
-            )
-            .unwrap();
-        version
-    }
-
-    /// Append a keyed, chained audit row and move the head to it.
-    fn audit(&mut self, op: &str, name: Option<&str>, ver: Option<&str>, outcome: &str) {
-        self.audit_with_detail(op, name, ver, outcome, None);
-    }
-
-    fn audit_with_detail(
-        &mut self,
-        op: &str,
-        name: Option<&str>,
-        ver: Option<&str>,
-        outcome: &str,
-        detail: Option<&str>,
-    ) {
-        self.conn
-            .execute(
-                "INSERT INTO audit_events
-                    (occurred_on, actor, operation, secret_name, version, outcome, detail,
-                     prev_hash, keyed)
-                 VALUES (?1, 'user:legacy', ?2, ?3, ?4, ?5, ?6, ?7, 1)",
-                rusqlite::params![
-                    self.now,
-                    op,
-                    name,
-                    ver,
-                    outcome,
-                    detail,
-                    self.prev.as_slice()
-                ],
-            )
-            .unwrap();
-        let id = self.conn.last_insert_rowid();
-        let hash = sourceorrery_crypto::mac(
-            &self.meta_key,
-            &Canon::new("sourceorrery/v2/audit", &self.vault_id)
-                .bytes(&self.prev)
-                .int(id)
-                .int(self.now)
-                .str("user:legacy")
-                .str(op)
-                .opt_str(name)
-                .opt_str(ver)
-                .str(outcome)
-                .opt_str(detail)
-                .flag(true)
-                .0,
-        );
-        self.conn
-            .execute(
-                "UPDATE audit_events SET hash = ?2 WHERE id = ?1",
-                rusqlite::params![id, hash.as_slice()],
-            )
-            .unwrap();
-        self.prev = hash;
-        self.head = Some((id, hash));
-    }
-
-    fn finish(&self) {
-        let (id, hash) = self.head.unwrap();
-        let head_mac = sourceorrery_crypto::mac(
-            &self.meta_key,
-            &Canon::new("sourceorrery/v2/audit-head", &self.vault_id)
-                .int(id)
-                .bytes(&hash)
-                .0,
-        );
-        let settings = sourceorrery_crypto::mac(
-            &self.meta_key,
-            &Canon::new("sourceorrery/v2/settings", &self.vault_id)
-                .int(2)
-                .str("legacy2")
-                .int(self.now)
-                .str("\"recoverable\"")
-                .int(90)
-                .0,
-        );
-        for (key, value) in [
-            ("audit_head", format!("{id}:{}", hex::encode(head_mac))),
-            ("settings_tag", hex::encode(settings)),
-        ] {
-            self.conn
-                .execute(
-                    "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)",
-                    [key, value.as_str()],
-                )
-                .unwrap();
-        }
-    }
-}
-
-/// Write a schema 2 vault named `legacy2` by hand, from the documented
-/// format (`*.sorvault` fixtures are git-ignored by policy).
-fn craft_schema_2_vault(path: &Path) -> LegacyVault {
-    craft_schema_2_vault_with(path, false)
-}
-
-/// As [`craft_schema_2_vault`]; with `truncation_recorded`, the log also
-/// carries the `audit_verify` / `failure` row a schema 2 build wrote when
-/// it found rows missing (it noted truncations without blocking).
-fn craft_schema_2_vault_with(path: &Path, truncation_recorded: bool) -> LegacyVault {
-    let conn = rusqlite::Connection::open(path).unwrap();
-    conn.execute_batch(SCHEMA_V2).unwrap();
-    let vault_id = random::random_hex(16).unwrap();
-    let now = i64::try_from(timestamp::to_unix_nanos(timestamp::now())).unwrap();
-    for (key, value) in [
-        ("schema_version", "2".to_owned()),
-        ("name", "legacy2".to_owned()),
-        ("id", vault_id.clone()),
-        ("created_on", now.to_string()),
-        ("recovery_level", "\"recoverable\"".to_owned()),
-        ("retention_days", "90".to_owned()),
-    ] {
-        conn.execute(
-            "INSERT INTO vault_meta (key, value) VALUES (?1, ?2)",
-            [key, value.as_str()],
-        )
-        .unwrap();
-    }
-    let dek = SymmetricKey::generate().unwrap();
-    let meta_key = sourceorrery_crypto::derive_subkey(
-        &dek,
-        sourceorrery_storage::integrity::METADATA_KEY_LABEL,
-    );
-    let mut w = V2Writer {
-        conn: &conn,
-        dek,
-        meta_key,
-        vault_id,
-        now,
-        seq: 0,
-        prev: [0u8; 32],
-        head: None,
-    };
-    w.protector();
-    w.secret("alpha");
-    w.secret("beta");
-    let alpha_old = w.version("alpha", "alpha-old", false);
-    let alpha_new = w.version("alpha", "alpha-new", true);
-    let beta = w.version("beta", "beta-value", true);
-    w.audit("vault_create", None, None, "success");
-    w.audit("secret_set", Some("alpha"), Some(&alpha_old), "success");
-    w.audit("secret_set", Some("alpha"), Some(&alpha_new), "success");
-    if truncation_recorded {
-        w.audit_with_detail(
-            "audit_verify",
-            None,
-            None,
-            "failure",
-            Some("rows removed after event 3 (head was event 5)"),
-        );
-    }
-    w.audit("secret_set", Some("beta"), Some(&beta), "success");
-    w.finish();
-    LegacyVault {
-        alpha_old,
-        alpha_new,
-    }
-}
-
-/// Schema 2 noted a truncation and carried on. Once migrated, that record
-/// is a keyed truncation like any other, and the owner has to acknowledge
-/// it before the vault serves anything.
-#[test]
-fn schema_2_truncation_record_blocks_the_migrated_vault_until_acknowledged() {
-    let fx = Fixture::new();
-    std::fs::create_dir_all(fx.registry.vaults_dir()).unwrap();
-    let path = fx.registry.vault_path("legacy2").unwrap();
-    let legacy = craft_schema_2_vault_with(&path, true);
-
-    // The migration itself completes (the file is now schema 3) but hands
-    // out no handle.
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
-    assert_blocked(&fx.registry.migrate("legacy2", &unlock).unwrap_err());
-    assert_eq!(schema_marker(&path), "3");
-    assert_blocked(&fx.registry.open("legacy2", &unlock).unwrap_err());
-
-    let vault = fx.inspect_vault("legacy2");
-    assert_eq!(migrations(&vault), 1, "migrated exactly once");
-    let pending = vault.unacknowledged_truncations().unwrap();
-    assert_eq!(pending.len(), 1, "{pending:?}");
-    assert_eq!(
-        pending[0].detail.as_deref(),
-        Some("rows removed after event 3 (head was event 5)")
-    );
-    assert_blocked(&vault.get_secret("alpha", None).unwrap_err());
-    let check = vault.verify_audit_chain().unwrap();
-    assert_eq!(check.truncations, 1);
-    assert_eq!(check.unacknowledged, 1);
-    assert_eq!(check.first_broken, None, "{check:?}");
-    drop(vault);
-
-    fx.acknowledge_truncations("legacy2");
-    let vault = fx.open_vault("legacy2");
-    assert_eq!(
-        vault.get_secret("alpha", None).unwrap().properties.version,
-        legacy.alpha_new
-    );
-    assert_eq!(vault.list_properties_of_secrets().unwrap().len(), 2);
-    assert_eq!(vault.verify_audit_chain().unwrap().unacknowledged, 0);
-}
-
-#[test]
-fn schema_2_vault_is_migrated_forward_and_its_rows_become_checkpointed() {
-    let fx = Fixture::new();
-    std::fs::create_dir_all(fx.registry.vaults_dir()).unwrap();
-    let path = fx.registry.vault_path("legacy2").unwrap();
-    let legacy = craft_schema_2_vault(&path);
-
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
-    let err = fx.registry.open("legacy2", &unlock).unwrap_err();
-    assert_eq!(err.code(), "migration_required", "{err}");
-    assert!(err.to_string().contains("schema 2"), "{err}");
-
-    // The crafted file is accepted as genuine schema 2: its head, chain,
-    // tags and settings all verify (a wrong encoding here would be refused).
-    let vault = fx.migrate_vault("legacy2");
-    let alpha = vault.get_secret("alpha", None).unwrap();
-    assert_eq!(alpha.properties.version, legacy.alpha_new);
-    assert_eq!(alpha.value.expose(), b"alpha-new");
-    assert_eq!(
-        vault
-            .get_secret("alpha", Some(&legacy.alpha_old))
-            .unwrap_err()
-            .code(),
-        "disabled"
-    );
-    assert_eq!(
-        vault.get_secret("beta", None).unwrap().value.expose(),
-        b"beta-value"
-    );
-    assert_eq!(vault.list_properties_of_secrets().unwrap().len(), 2);
-    assert_eq!(
-        vault
-            .list_properties_of_secret_versions("alpha")
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(migrations(&vault), 1);
-    assert_eq!(migration_checkpoints(&vault), 2 + 3);
-    let summary = events_of(&vault, AuditOperation::VaultMigrate, AuditOutcome::Success)
-        .into_iter()
-        .find(|e| e.secret_name.is_none())
-        .unwrap();
-    assert_eq!(summary.detail.as_deref(), Some("schema 2 -> 3"));
-    let check = vault.verify_audit_chain().unwrap();
-    assert!(check.is_intact(), "{check:?}");
-    assert_eq!(check.unkeyed, 0);
-    drop(vault);
-    assert_eq!(schema_marker(&path), "3");
-
-    // A second unlock is an ordinary open.
-    let vault = fx.open_vault("legacy2");
-    assert_eq!(migrations(&vault), 1);
-    drop(vault);
-
-    // Migrated rows are bound to the chain exactly like new ones.
-    stash(&path, "secret_versions", "alpha");
-    {
-        let vault = fx.open_vault("legacy2");
-        disable(&vault, "alpha");
-        assert_eq!(
-            vault.get_secret("alpha", None).unwrap_err().code(),
-            "disabled"
-        );
-    }
-    replay(&path, "secret_versions", "alpha");
-    let vault = fx.open_vault("legacy2");
-    assert_eq!(
-        vault.get_secret("alpha", None).unwrap_err().code(),
-        "crypto"
-    );
-}
-
-#[test]
-fn schema_3_marker_rolled_back_to_2_is_refused() {
-    let fx = Fixture::new();
-    let path = fx.registry.vault_path("dev").unwrap();
-    {
-        let vault = fx.create_vault("dev");
-        set_with(
-            &vault,
-            "k",
-            CANARY,
-            SetSecretOptions {
-                enabled: false,
-                ..Default::default()
-            },
-        );
-    }
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "UPDATE vault_meta SET value = '2' WHERE key = 'schema_version';
-             UPDATE secret_versions SET enabled = 1;",
-        )
-        .unwrap();
-    }
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
-    assert_eq!(
-        fx.registry.open("dev", &unlock).unwrap_err().code(),
-        "migration_required"
-    );
-    // The key is bound to schema 3, so the "schema 2" file is not migrated.
-    let err = fx.registry.migrate("dev", &unlock).unwrap_err();
-    assert_eq!(err.code(), "crypto", "{err}");
-    assert!(err.to_string().contains("altered"), "{err}");
-    assert_eq!(schema_marker(&path), "2", "nothing was laundered");
 }
 
 // ---------------------------------------------------------------------------
@@ -3101,7 +2123,7 @@ fn a_vault_file_under_another_name_is_refused() {
     let dev_path = fx.registry.vault_path("dev").unwrap();
     let prod_path = fx.registry.vault_path("prod").unwrap();
     std::fs::copy(&dev_path, &prod_path).unwrap();
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    let unlock = fx.unlock("dev");
 
     // Every way of opening by name refuses the copy once its stored name
     // is authenticated: it unlocks, but it is not the vault asked for.
@@ -3117,16 +2139,11 @@ fn a_vault_file_under_another_name_is_refused() {
         "prod",
         "dev",
     );
-    assert_mismatch(
-        &fx.registry.migrate("prod", &unlock).unwrap_err(),
-        "prod",
-        "dev",
-    );
 
     // Each refusal is on the copy's own log; the original never saw them.
     {
-        let copy = SqliteVault::open(&prod_path, &unlock).unwrap();
-        assert_eq!(open_refusals(&copy, "opened as vault 'prod'"), 3);
+        let copy = SqliteVault::open(&prod_path, no_store(), &unlock).unwrap();
+        assert_eq!(open_refusals(&copy, "opened as vault 'prod'"), 2);
         assert!(copy.verify_audit_chain().unwrap().is_intact());
         let dev = fx.open_vault("dev");
         assert_eq!(open_refusals(&dev, "opened as vault 'prod'"), 0);
@@ -3152,189 +2169,38 @@ fn a_vault_file_under_another_name_is_refused() {
 #[test]
 fn swapped_vault_files_are_not_served_under_each_others_names() {
     let fx = Fixture::new();
+    let registry =
+        VaultRegistry::with_root(fx.home.path()).with_store(Arc::new(MemoryStore::new()));
     for (name, value) in [("dev", "dev-value"), ("prod", "prod-value")] {
+        let created = registry
+            .create(name, CreateVaultOptions::default())
+            .unwrap();
+        assert!(created.this_machine);
         set_with(
-            &fx.create_vault(name),
+            &created.vault,
             "db-password",
             value,
             SetSecretOptions::default(),
         );
     }
-    let dev = fx.registry.vault_path("dev").unwrap();
-    let prod = fx.registry.vault_path("prod").unwrap();
+    let dev = registry.vault_path("dev").unwrap();
+    let prod = registry.vault_path("prod").unwrap();
     let parked = dev.with_extension("parked");
     std::fs::rename(&prod, &parked).unwrap();
     std::fs::rename(&dev, &prod).unwrap();
     std::fs::rename(&parked, &dev).unwrap();
 
-    // Both vaults share the fixture passphrase, so both files unlock: only
-    // the name check stands between an application asking for `prod` and
-    // the development secrets.
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
+    // This machine's store opens both files without asking: only the name
+    // check stands between an application asking for `prod` and the
+    // development secrets.
     assert_mismatch(
-        &fx.registry.open("prod", &unlock).unwrap_err(),
+        &registry.open("prod", &NoInteraction).unwrap_err(),
         "prod",
         "dev",
     );
     assert_mismatch(
-        &fx.registry.open("dev", &unlock).unwrap_err(),
+        &registry.open("dev", &NoInteraction).unwrap_err(),
         "dev",
         "prod",
-    );
-}
-
-#[test]
-fn a_legacy_vault_under_another_name_is_not_migrated() {
-    let fx = Fixture::new();
-    std::fs::create_dir_all(fx.registry.vaults_dir()).unwrap();
-    // A schema 1 file holding the vault `legacy`, under the name `other`.
-    let other = fx.registry.vault_path("other").unwrap();
-    craft_schema_1_vault(&other);
-    let unlock = StaticPassphrase::new(FIXTURE_PASSPHRASE);
-
-    // Migration would bind whatever name it finds into the settings tag
-    // for good, so a file under the wrong name is refused before it starts.
-    assert_mismatch(
-        &fx.registry.migrate("other", &unlock).unwrap_err(),
-        "other",
-        "legacy",
-    );
-    assert_eq!(schema_marker(&other), "1", "nothing was migrated");
-
-    // Under its own name it migrates as usual.
-    std::fs::rename(&other, fx.registry.vault_path("legacy").unwrap()).unwrap();
-    let vault = fx.migrate_vault("legacy");
-    assert_eq!(migrations(&vault), 1);
-    assert_eq!(
-        vault.get_secret("beta", None).unwrap().value.expose(),
-        b"beta-value"
-    );
-}
-
-#[test]
-fn backup_file_never_contains_a_value_a_name_or_the_passphrase() {
-    let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    set_with(&vault, "api-key", CANARY, SetSecretOptions::default());
-    let snapshot = vault.export(&ExportOptions::default()).unwrap();
-    let passphrase = SecretBytes::from("CANARY-backup-passphrase-2b1d");
-    let bytes = backup::seal(&snapshot, &passphrase, Argon2Params::TESTING).unwrap();
-    for needle in [CANARY.as_bytes(), b"api-key", passphrase.expose()] {
-        assert!(
-            !contains(&bytes, needle),
-            "the backup file leaks {}",
-            String::from_utf8_lossy(needle)
-        );
-    }
-    // Neither does anything the export or the file put on the record.
-    let json = serde_json::to_string(&vault.audit_events(AuditQuery::default()).unwrap()).unwrap();
-    assert!(!json.contains(CANARY));
-    assert!(!format!("{snapshot:?}").contains(CANARY));
-    let info = backup::inspect(&bytes).unwrap();
-    assert!(!format!("{info:?}").contains("api-key"));
-}
-
-#[test]
-fn wrong_passphrase_tampering_and_newer_formats_refuse_a_backup() {
-    let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    set_with(&vault, "api-key", CANARY, SetSecretOptions::default());
-    let snapshot = vault.export(&ExportOptions::default()).unwrap();
-    let bytes = backup::seal(
-        &snapshot,
-        &SecretBytes::from("right"),
-        Argon2Params::TESTING,
-    )
-    .unwrap();
-
-    assert_eq!(
-        backup::open(&bytes, &SecretBytes::from("wrong"))
-            .unwrap_err()
-            .code(),
-        "backup_passphrase"
-    );
-    // Any altered byte of the ciphertext is an integrity failure, and a
-    // changed header field is too, because the header is authenticated.
-    for position in [bytes.len() - 1, bytes.len() - 40] {
-        let mut flipped = bytes.clone();
-        flipped[position] ^= 0x01;
-        assert_eq!(
-            backup::open(&flipped, &SecretBytes::from("right"))
-                .unwrap_err()
-                .code(),
-            "crypto",
-            "byte {position}"
-        );
-    }
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    let renamed = text.replacen("\"vault\":\"dev\"", "\"vault\":\"prd\"", 1);
-    assert_eq!(
-        backup::open(renamed.as_bytes(), &SecretBytes::from("right"))
-            .unwrap_err()
-            .code(),
-        "crypto"
-    );
-    let newer = text.replacen("\"format\":1", "\"format\":7", 1);
-    assert_eq!(
-        backup::open(newer.as_bytes(), &SecretBytes::from("right"))
-            .unwrap_err()
-            .code(),
-        "backup_format"
-    );
-    assert_eq!(
-        backup::open(b"not a backup", &SecretBytes::from("right"))
-            .unwrap_err()
-            .code(),
-        "crypto"
-    );
-    // Nothing above restored anything, and the honest file still does.
-    let target = fx.create_vault("copy");
-    let snapshot = backup::open(&bytes, &SecretBytes::from("right")).unwrap();
-    target
-        .restore(&snapshot, &RestoreOptions::default())
-        .unwrap();
-    assert_eq!(
-        target.get_secret("api-key", None).unwrap().value.expose(),
-        CANARY.as_bytes()
-    );
-}
-
-#[test]
-fn restore_is_an_audited_write_that_keeps_the_chain_intact() {
-    let fx = Fixture::new();
-    let vault = fx.create_vault("dev");
-    set_with(&vault, "api-key", CANARY, SetSecretOptions::default());
-    let snapshot = vault.export(&ExportOptions::default()).unwrap();
-    let target = fx.create_vault("copy");
-    target
-        .restore(&snapshot, &RestoreOptions::default())
-        .unwrap();
-    let restores = events_of(
-        &target,
-        AuditOperation::SecretRestore,
-        AuditOutcome::Success,
-    );
-    assert_eq!(restores.len(), 1);
-    assert_eq!(restores[0].secret_name.as_deref(), Some("api-key"));
-    assert!(restores[0].version.is_some());
-    let detail = restores[0].detail.clone().unwrap_or_default();
-    assert!(detail.starts_with("from version "), "{detail}");
-    assert!(!detail.contains(CANARY));
-    assert!(target.verify_audit_chain().unwrap().is_intact());
-    // The restored row is checkpointed like any other: removing it out of
-    // band is caught.
-    let path = fx.registry.vault_path("copy").unwrap();
-    drop(target);
-    {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch(
-            "PRAGMA foreign_keys = ON; DELETE FROM secret_versions WHERE name = 'api-key';",
-        )
-        .unwrap();
-    }
-    let target = fx.open_vault("copy");
-    assert_eq!(
-        target.get_secret("api-key", None).unwrap_err().code(),
-        "crypto"
     );
 }

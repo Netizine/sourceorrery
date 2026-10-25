@@ -1,0 +1,2511 @@
+{
+  "exportedAtUTC": "2026-10-23T19:33:42.264736+00:00",
+  "projectKey": "Netizine_sourceorrery",
+  "branch": "main (default branch)",
+  "analysisCommit": "224c3fb",
+  "coverageRun": "40008371065",
+  "issuesQuery": "https://sonarcloud.io/api/issues/search?componentKeys=Netizine_sourceorrery&ps=500&p=1",
+  "pagination": {
+    "pageSize": 500,
+    "pagesDownloaded": 1,
+    "totalVisibleIssues": 153,
+    "recordsDownloaded": 153,
+    "truncated": false
+  },
+  "unresolvedFilter": "All downloaded statuses except CLOSED and RESOLVED; API query had no status, severity, type or new-code filter.",
+  "closedOrResolvedCount": 101,
+  "unresolvedCount": 52,
+  "hotspots": {
+    "unfilteredTotal": 0,
+    "toReviewTotal": 0,
+    "reviewedTotal": 0
+  },
+  "visibilityLimit": "Anonymous public API only. No hidden/restricted data or organization-wide projects were queried; zero hotspots means zero returned by this public project API.",
+  "counts": {
+    "severity": {
+      "BLOCKER": 1,
+      "CRITICAL": 2,
+      "MAJOR": 41,
+      "INFO": 8
+    },
+    "type": {
+      "VULNERABILITY": 9,
+      "BUG": 1,
+      "CODE_SMELL": 42
+    },
+    "status": {
+      "OPEN": 52
+    },
+    "rule": {
+      "secrets:S7273": 1,
+      "java:S5443": 1,
+      "javascript:S2871": 1,
+      "csharpsquid:S6640": 7,
+      "csharpsquid:S6966": 1,
+      "shelldre:S7688": 33,
+      "external_roslyn:CA1513": 1,
+      "external_roslyn:CA1861": 1,
+      "external_roslyn:CA2101": 2,
+      "external_roslyn:SYSLIB1054": 2,
+      "external_roslyn:xUnit2032": 2
+    },
+    "component": {
+      "Netizine_sourceorrery:crates/sourceorrery-core/src/manifest.rs": 1,
+      "Netizine_sourceorrery:bindings/java/src/main/java/ai/sourceorrery/internal/Native.java": 1,
+      "Netizine_sourceorrery:site/scripts/sync-docs.mjs": 1,
+      "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/Native/NativeLibraryLoader.cs": 1,
+      "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/Native/NativeMethods.cs": 2,
+      "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/Project.cs": 1,
+      "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/SecretReader.cs": 3,
+      "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/SecretValue.cs": 1,
+      "Netizine_sourceorrery:bindings/dotnet/examples/GetSecret/Program.cs": 1,
+      "Netizine_sourceorrery:scripts/coverage/native.sh": 11,
+      "Netizine_sourceorrery:scripts/coverage/run.sh": 22,
+      "Netizine_sourceorrery:bindings/dotnet/SourceOrrery.Tests/ReaderTests.cs": 7
+    }
+  },
+  "issues": [
+    {
+      "key": "AaFqMvdmxc0nYNeDNy6B",
+      "rule": "secrets:S7273",
+      "severity": "BLOCKER",
+      "component": "Netizine_sourceorrery:crates/sourceorrery-core/src/manifest.rs",
+      "project": "Netizine_sourceorrery",
+      "line": 660,
+      "hash": "c1b5d69055697686b946c104a69f426b",
+      "textRange": {
+        "startLine": 660,
+        "endLine": 660,
+        "startOffset": 30,
+        "endOffset": 62
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Make sure this Hashicorp Vault service token gets revoked, changed, and removed from the code.",
+      "effort": "30min",
+      "debt": "30min",
+      "tags": [
+        "cwe",
+        "secret"
+      ],
+      "creationDate": "2026-10-23T02:26:40+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "VULNERABILITY",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "TRUSTWORTHY",
+      "cleanCodeAttributeCategory": "RESPONSIBLE",
+      "impacts": [
+        {
+          "softwareQuality": "SECURITY",
+          "severity": "BLOCKER"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvfvxc0nYNeDNy6C",
+      "rule": "java:S5443",
+      "severity": "CRITICAL",
+      "component": "Netizine_sourceorrery:bindings/java/src/main/java/ai/sourceorrery/internal/Native.java",
+      "project": "Netizine_sourceorrery",
+      "line": 109,
+      "hash": "b98f1ba4d917bbc1a717ad348d4e015c",
+      "textRange": {
+        "startLine": 109,
+        "endLine": 109,
+        "startOffset": 27,
+        "endOffset": 75
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Make sure publicly writable directories are used safely here.",
+      "effort": "30min",
+      "debt": "30min",
+      "tags": [
+        "cwe",
+        "former-hotspot"
+      ],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "VULNERABILITY",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "COMPLETE",
+      "cleanCodeAttributeCategory": "INTENTIONAL",
+      "impacts": [
+        {
+          "softwareQuality": "SECURITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvh0xc0nYNeDNy60",
+      "rule": "javascript:S2871",
+      "severity": "CRITICAL",
+      "component": "Netizine_sourceorrery:site/scripts/sync-docs.mjs",
+      "project": "Netizine_sourceorrery",
+      "line": 191,
+      "hash": "bbc580ff0d340efbe42d455f2f99bd73",
+      "textRange": {
+        "startLine": 191,
+        "endLine": 191,
+        "startOffset": 3,
+        "endOffset": 7
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Provide a compare function that depends on \"String.localeCompare\", to reliably sort elements alphabetically.",
+      "effort": "10min",
+      "debt": "10min",
+      "tags": [
+        "bad-practice",
+        "type-dependent"
+      ],
+      "creationDate": "2026-10-20T04:38:27+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "BUG",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CLEAR",
+      "cleanCodeAttributeCategory": "INTENTIONAL",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvgpxc0nYNeDNy6F",
+      "rule": "csharpsquid:S6640",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/Native/NativeLibraryLoader.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 87,
+      "hash": "4d43e9d18e91a999eeb98defab259ba8",
+      "textRange": {
+        "startLine": 87,
+        "endLine": 87,
+        "startOffset": 18,
+        "endOffset": 24
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Avoid using this unsafe code block.",
+      "effort": "1h",
+      "debt": "1h",
+      "tags": [
+        "former-hotspot"
+      ],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "VULNERABILITY",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "SECURITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvgjxc0nYNeDNy6E",
+      "rule": "csharpsquid:S6640",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/Native/NativeMethods.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 12,
+      "hash": "b53708b721779d7e1d50e9c4e62c39a9",
+      "textRange": {
+        "startLine": 12,
+        "endLine": 12,
+        "startOffset": 9,
+        "endOffset": 15
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Avoid using this unsafe code block.",
+      "effort": "1h",
+      "debt": "1h",
+      "tags": [
+        "former-hotspot"
+      ],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "VULNERABILITY",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "SECURITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvgjxc0nYNeDNy6D",
+      "rule": "csharpsquid:S6640",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/Native/NativeMethods.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 18,
+      "hash": "b5680aa59a11409adcde0759a25ce2b3",
+      "textRange": {
+        "startLine": 18,
+        "endLine": 18,
+        "startOffset": 16,
+        "endOffset": 22
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Avoid using this unsafe code block.",
+      "effort": "1h",
+      "debt": "1h",
+      "tags": [
+        "former-hotspot"
+      ],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "VULNERABILITY",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "SECURITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvg0xc0nYNeDNy6H",
+      "rule": "csharpsquid:S6640",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/Project.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 23,
+      "hash": "cb93df04117216e3799e35d22e1a9d31",
+      "textRange": {
+        "startLine": 23,
+        "endLine": 23,
+        "startOffset": 14,
+        "endOffset": 20
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Avoid using this unsafe code block.",
+      "effort": "1h",
+      "debt": "1h",
+      "tags": [
+        "former-hotspot"
+      ],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "VULNERABILITY",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "SECURITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvg7xc0nYNeDNy6J",
+      "rule": "csharpsquid:S6640",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/SecretReader.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 12,
+      "hash": "f7d9169e36a7ab385eb0306a103c03e9",
+      "textRange": {
+        "startLine": 12,
+        "endLine": 12,
+        "startOffset": 14,
+        "endOffset": 20
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Avoid using this unsafe code block.",
+      "effort": "1h",
+      "debt": "1h",
+      "tags": [
+        "former-hotspot"
+      ],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "VULNERABILITY",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "SECURITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvg7xc0nYNeDNy6I",
+      "rule": "csharpsquid:S6640",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/SecretReader.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 153,
+      "hash": "9cdebc2a3818119165c85a80a071cdd9",
+      "textRange": {
+        "startLine": 153,
+        "endLine": 153,
+        "startOffset": 16,
+        "endOffset": 22
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Avoid using this unsafe code block.",
+      "effort": "1h",
+      "debt": "1h",
+      "tags": [
+        "former-hotspot"
+      ],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "VULNERABILITY",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "SECURITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvguxc0nYNeDNy6G",
+      "rule": "csharpsquid:S6640",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/SecretValue.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 14,
+      "hash": "0b0c83eb3f4d01441dba0af155616639",
+      "textRange": {
+        "startLine": 14,
+        "endLine": 14,
+        "startOffset": 14,
+        "endOffset": 20
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Avoid using this unsafe code block.",
+      "effort": "1h",
+      "debt": "1h",
+      "tags": [
+        "former-hotspot"
+      ],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "VULNERABILITY",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "SECURITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhHxc0nYNeDNy6S",
+      "rule": "csharpsquid:S6966",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:bindings/dotnet/examples/GetSecret/Program.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 23,
+      "hash": "0b3c98e0e74e7bbad3df92c90ac048d9",
+      "textRange": {
+        "startLine": 23,
+        "endLine": 23,
+        "startOffset": 4,
+        "endOffset": 65
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Await WriteLineAsync instead.",
+      "effort": "5min",
+      "debt": "5min",
+      "tags": [
+        "async-await"
+      ],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "COMPLETE",
+      "cleanCodeAttributeCategory": "INTENTIONAL",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6p",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 25,
+      "hash": "24f9bcea52b054c93f1d5ed5390c8ebe",
+      "textRange": {
+        "startLine": 25,
+        "endLine": 25,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6q",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 25,
+      "hash": "24f9bcea52b054c93f1d5ed5390c8ebe",
+      "textRange": {
+        "startLine": 25,
+        "endLine": 25,
+        "startOffset": 21,
+        "endOffset": 22
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6r",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 42,
+      "hash": "b269e57d0bd6003e9759ffa893a7bd66",
+      "textRange": {
+        "startLine": 42,
+        "endLine": 42,
+        "startOffset": 5,
+        "endOffset": 6
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6s",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 47,
+      "hash": "e77af48b52be831138f935bb853b7a3c",
+      "textRange": {
+        "startLine": 47,
+        "endLine": 47,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6t",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 47,
+      "hash": "e77af48b52be831138f935bb853b7a3c",
+      "textRange": {
+        "startLine": 47,
+        "endLine": 47,
+        "startOffset": 36,
+        "endOffset": 37
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6u",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 64,
+      "hash": "ee943db33093df38fded0e8b2fcce5db",
+      "textRange": {
+        "startLine": 64,
+        "endLine": 64,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6v",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 68,
+      "hash": "18bcf165a5856b97942c173b280f169b",
+      "textRange": {
+        "startLine": 68,
+        "endLine": 68,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6w",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 102,
+      "hash": "53acae3aecebdc03b5f99489704e8fa4",
+      "textRange": {
+        "startLine": 102,
+        "endLine": 102,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6x",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 120,
+      "hash": "18bcf165a5856b97942c173b280f169b",
+      "textRange": {
+        "startLine": 120,
+        "endLine": 120,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6y",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 123,
+      "hash": "1d60a297f41564952a94af68e977e14e",
+      "textRange": {
+        "startLine": 123,
+        "endLine": 123,
+        "startOffset": 5,
+        "endOffset": 6
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhfxc0nYNeDNy6z",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/native.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 194,
+      "hash": "02787dbee5bb46914428f6ba705074ad",
+      "textRange": {
+        "startLine": 194,
+        "endLine": 194,
+        "startOffset": 5,
+        "endOffset": 6
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T18:25:22+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6T",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 9,
+      "hash": "8bc1de3aaefcaac1792215cb90a0a67a",
+      "textRange": {
+        "startLine": 9,
+        "endLine": 9,
+        "startOffset": 6,
+        "endOffset": 7
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6U",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 12,
+      "hash": "a44d7373913b5ac487906ecd9081c97f",
+      "textRange": {
+        "startLine": 12,
+        "endLine": 12,
+        "startOffset": 16,
+        "endOffset": 17
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6V",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 24,
+      "hash": "00304a495ac5d89723522bf1f93fda40",
+      "textRange": {
+        "startLine": 24,
+        "endLine": 24,
+        "startOffset": 18,
+        "endOffset": 19
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6W",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 25,
+      "hash": "3fc7418faf760eb2cf9d942307ffa788",
+      "textRange": {
+        "startLine": 25,
+        "endLine": 25,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6X",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 35,
+      "hash": "3b1646e0675d59d9d82aeaeb20428138",
+      "textRange": {
+        "startLine": 35,
+        "endLine": 35,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6Y",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 38,
+      "hash": "d5cf5098352945265aeda781d9c85216",
+      "textRange": {
+        "startLine": 38,
+        "endLine": 38,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6Z",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 38,
+      "hash": "d5cf5098352945265aeda781d9c85216",
+      "textRange": {
+        "startLine": 38,
+        "endLine": 38,
+        "startOffset": 25,
+        "endOffset": 26
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6a",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 43,
+      "hash": "f381c21b278f76712b261341a891b33a",
+      "textRange": {
+        "startLine": 43,
+        "endLine": 43,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6b",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 47,
+      "hash": "3b1646e0675d59d9d82aeaeb20428138",
+      "textRange": {
+        "startLine": 47,
+        "endLine": 47,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6c",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 50,
+      "hash": "d5cf5098352945265aeda781d9c85216",
+      "textRange": {
+        "startLine": 50,
+        "endLine": 50,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6d",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 50,
+      "hash": "d5cf5098352945265aeda781d9c85216",
+      "textRange": {
+        "startLine": 50,
+        "endLine": 50,
+        "startOffset": 25,
+        "endOffset": 26
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6e",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 81,
+      "hash": "b7ceea465e95fe647384901213ce2edc",
+      "textRange": {
+        "startLine": 81,
+        "endLine": 81,
+        "startOffset": 2,
+        "endOffset": 3
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6f",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 83,
+      "hash": "f381c21b278f76712b261341a891b33a",
+      "textRange": {
+        "startLine": 83,
+        "endLine": 83,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6g",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 92,
+      "hash": "1d6c600bc46044f9a6e0a57f5445d0f6",
+      "textRange": {
+        "startLine": 92,
+        "endLine": 92,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6h",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 103,
+      "hash": "d5cf5098352945265aeda781d9c85216",
+      "textRange": {
+        "startLine": 103,
+        "endLine": 103,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6i",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 103,
+      "hash": "d5cf5098352945265aeda781d9c85216",
+      "textRange": {
+        "startLine": 103,
+        "endLine": 103,
+        "startOffset": 25,
+        "endOffset": 26
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6j",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 104,
+      "hash": "764971b9a62c18a336716cd7f8548a5d",
+      "textRange": {
+        "startLine": 104,
+        "endLine": 104,
+        "startOffset": 5,
+        "endOffset": 6
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6k",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 104,
+      "hash": "764971b9a62c18a336716cd7f8548a5d",
+      "textRange": {
+        "startLine": 104,
+        "endLine": 104,
+        "startOffset": 51,
+        "endOffset": 52
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6l",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 127,
+      "hash": "cce3baddcff32bb15732ae26d931ac41",
+      "textRange": {
+        "startLine": 127,
+        "endLine": 127,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6m",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 127,
+      "hash": "cce3baddcff32bb15732ae26d931ac41",
+      "textRange": {
+        "startLine": 127,
+        "endLine": 127,
+        "startOffset": 25,
+        "endOffset": 26
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6n",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 135,
+      "hash": "5a7076f6a60416a64b807f45a250f9b3",
+      "textRange": {
+        "startLine": 135,
+        "endLine": 135,
+        "startOffset": 3,
+        "endOffset": 4
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhYxc0nYNeDNy6o",
+      "rule": "shelldre:S7688",
+      "severity": "MAJOR",
+      "component": "Netizine_sourceorrery:scripts/coverage/run.sh",
+      "project": "Netizine_sourceorrery",
+      "line": 135,
+      "hash": "5a7076f6a60416a64b807f45a250f9b3",
+      "textRange": {
+        "startLine": 135,
+        "endLine": 135,
+        "startOffset": 25,
+        "endOffset": 26
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Use '[[' instead of '[' for conditional tests. The '[[' construct is safer and more feature-rich.",
+      "effort": "2min",
+      "debt": "2min",
+      "tags": [
+        "bash",
+        "best-practices",
+        "scripting",
+        "shell"
+      ],
+      "creationDate": "2026-10-23T19:05:01+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "RELIABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvg7xc0nYNeDNy6K",
+      "rule": "external_roslyn:CA1513",
+      "severity": "INFO",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/SecretReader.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 145,
+      "hash": "6e3270900da16aa6be04e2f1297d39ca",
+      "textRange": {
+        "startLine": 145,
+        "endLine": 148,
+        "startOffset": 8,
+        "endOffset": 9
+      },
+      "flows": [
+        {
+          "locations": [
+            {
+              "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery/SecretReader.cs",
+              "textRange": {
+                "startLine": 145,
+                "endLine": 145,
+                "startOffset": 12,
+                "endOffset": 32
+              }
+            }
+          ]
+        }
+      ],
+      "status": "OPEN",
+      "message": "Use 'ObjectDisposedException.ThrowIf' instead of explicitly throwing a new exception instance",
+      "effort": "0min",
+      "debt": "0min",
+      "tags": [],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "externalRuleEngine": "roslyn",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhCxc0nYNeDNy6R",
+      "rule": "external_roslyn:CA1861",
+      "severity": "INFO",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery.Tests/ReaderTests.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 231,
+      "hash": "825cc05892234b97f16d0094993bb204",
+      "textRange": {
+        "startLine": 231,
+        "endLine": 231,
+        "startOffset": 25,
+        "endOffset": 69
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Prefer 'static readonly' fields over constant array arguments if the called method is called repeatedly and is not mutating the passed array",
+      "effort": "0min",
+      "debt": "0min",
+      "tags": [],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "externalRuleEngine": "roslyn",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhCxc0nYNeDNy6L",
+      "rule": "external_roslyn:CA2101",
+      "severity": "INFO",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery.Tests/ReaderTests.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 34,
+      "hash": "68802ae074f766c8a31cb8d72ac9c202",
+      "textRange": {
+        "startLine": 34,
+        "endLine": 34,
+        "startOffset": 5,
+        "endOffset": 22
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Specify marshaling for P/Invoke string arguments",
+      "effort": "0min",
+      "debt": "0min",
+      "tags": [],
+      "creationDate": "2026-10-23T03:18:32+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "externalRuleEngine": "roslyn",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhCxc0nYNeDNy6M",
+      "rule": "external_roslyn:CA2101",
+      "severity": "INFO",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery.Tests/ReaderTests.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 37,
+      "hash": "68802ae074f766c8a31cb8d72ac9c202",
+      "textRange": {
+        "startLine": 37,
+        "endLine": 37,
+        "startOffset": 5,
+        "endOffset": 22
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Specify marshaling for P/Invoke string arguments",
+      "effort": "0min",
+      "debt": "0min",
+      "tags": [],
+      "creationDate": "2026-10-23T03:18:32+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "externalRuleEngine": "roslyn",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhCxc0nYNeDNy6O",
+      "rule": "external_roslyn:SYSLIB1054",
+      "severity": "INFO",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery.Tests/ReaderTests.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 35,
+      "hash": "db1ae5763dcad43186fb237f20d68d9a",
+      "textRange": {
+        "startLine": 35,
+        "endLine": 35,
+        "startOffset": 30,
+        "endOffset": 36
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Mark the method 'setenv' with 'LibraryImportAttribute' instead of 'DllImportAttribute' to generate P/Invoke marshalling code at compile time",
+      "effort": "0min",
+      "debt": "0min",
+      "tags": [],
+      "creationDate": "2026-10-23T03:18:32+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "externalRuleEngine": "roslyn",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhCxc0nYNeDNy6N",
+      "rule": "external_roslyn:SYSLIB1054",
+      "severity": "INFO",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery.Tests/ReaderTests.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 38,
+      "hash": "8c214a7a6f3bf334051065a1c1413b60",
+      "textRange": {
+        "startLine": 38,
+        "endLine": 38,
+        "startOffset": 30,
+        "endOffset": 38
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "Mark the method 'unsetenv' with 'LibraryImportAttribute' instead of 'DllImportAttribute' to generate P/Invoke marshalling code at compile time",
+      "effort": "0min",
+      "debt": "0min",
+      "tags": [],
+      "creationDate": "2026-10-23T03:18:32+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "externalRuleEngine": "roslyn",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhCxc0nYNeDNy6P",
+      "rule": "external_roslyn:xUnit2032",
+      "severity": "INFO",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery.Tests/ReaderTests.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 137,
+      "hash": "8fec2f1612910f5ca8e50d4e9a0d43a1",
+      "textRange": {
+        "startLine": 137,
+        "endLine": 137,
+        "startOffset": 8,
+        "endOffset": 53
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "The naming of Assert.IsAssignableFrom can be confusing. An overload of Assert.IsType is available with an exact match flag which can be set to false to perform the same operation.",
+      "effort": "0min",
+      "debt": "0min",
+      "tags": [],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "externalRuleEngine": "roslyn",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    },
+    {
+      "key": "AaFqMvhCxc0nYNeDNy6Q",
+      "rule": "external_roslyn:xUnit2032",
+      "severity": "INFO",
+      "component": "Netizine_sourceorrery:bindings/dotnet/SourceOrrery.Tests/ReaderTests.cs",
+      "project": "Netizine_sourceorrery",
+      "line": 165,
+      "hash": "6f703120f462768812fa7cb0211228f7",
+      "textRange": {
+        "startLine": 165,
+        "endLine": 165,
+        "startOffset": 8,
+        "endOffset": 65
+      },
+      "flows": [],
+      "status": "OPEN",
+      "message": "The naming of Assert.IsAssignableFrom can be confusing. An overload of Assert.IsType is available with an exact match flag which can be set to false to perform the same operation.",
+      "effort": "0min",
+      "debt": "0min",
+      "tags": [],
+      "creationDate": "2026-10-20T09:57:41+01:00",
+      "updateDate": "2026-10-23T20:16:30+01:00",
+      "type": "CODE_SMELL",
+      "organization": "netizine-3",
+      "externalRuleEngine": "roslyn",
+      "cleanCodeAttribute": "CONVENTIONAL",
+      "cleanCodeAttributeCategory": "CONSISTENT",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "projectName": "sourceorrery",
+      "internalTags": [],
+      "lastChangeAnalysisUuid": "7805f004-850c-4075-ab86-209344ec83c2",
+      "lastChangeSource": "ANALYSIS"
+    }
+  ],
+  "qualityGate": {
+    "status": "ERROR",
+    "conditions": [
+      {
+        "status": "ERROR",
+        "metricKey": "new_coverage",
+        "comparator": "LT",
+        "periodIndex": 1,
+        "errorThreshold": "80",
+        "actualValue": "2.5"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_duplicated_lines_density",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "3",
+        "actualValue": "0.0"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_bugs_severity",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "9",
+        "actualValue": "0"
+      },
+      {
+        "status": "ERROR",
+        "metricKey": "new_code_smells_severity",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "14",
+        "actualValue": "15"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_sca_severity_any_issue",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "9",
+        "actualValue": "0"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_vulnerabilities_severity",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "9",
+        "actualValue": "0"
+      }
+    ],
+    "periods": [
+      {
+        "index": 1,
+        "mode": "previous_version",
+        "date": "2026-10-23T11:58:14+01:00"
+      }
+    ],
+    "ignoredConditions": false
+  },
+  "measures": [
+    {
+      "metric": "coverage",
+      "value": "80.6",
+      "bestValue": false
+    },
+    {
+      "metric": "alert_status",
+      "value": "ERROR"
+    },
+    {
+      "metric": "lines_to_cover",
+      "value": "25989"
+    },
+    {
+      "metric": "branch_coverage",
+      "value": "60.8",
+      "bestValue": false
+    },
+    {
+      "metric": "uncovered_lines",
+      "value": "4831",
+      "bestValue": false
+    },
+    {
+      "metric": "new_coverage",
+      "periods": [
+        {
+          "index": 1,
+          "value": "2.5225225225225225",
+          "bestValue": false
+        }
+      ]
+    },
+    {
+      "metric": "new_uncovered_lines",
+      "periods": [
+        {
+          "index": 1,
+          "value": "541",
+          "bestValue": false
+        }
+      ]
+    },
+    {
+      "metric": "line_coverage",
+      "value": "81.4",
+      "bestValue": false
+    },
+    {
+      "metric": "new_lines_to_cover",
+      "periods": [
+        {
+          "index": 1,
+          "value": "555"
+        }
+      ]
+    }
+  ],
+  "scannerWarnings": [
+    {
+      "logLine": 4420,
+      "message": "No coverage report can be found with sonar.coverage.jacoco.xmlReportPaths='bindings/java/target/site/jacoco/jacoco.xml'. Using default locations: target/site/jacoco/jacoco.xml,target/site/jacoco-it/jacoco.xml,build/reports/jacoco/test/jacocoTestReport.xml"
+    },
+    {
+      "logLine": 4474,
+      "message": "No coverage report can be found with sonar.coverage.jacoco.xmlReportPaths='bindings/java/target/site/jacoco/jacoco.xml'. Using default locations: target/site/jacoco/jacoco.xml,target/site/jacoco-it/jacoco.xml,build/reports/jacoco/test/jacocoTestReport.xml"
+    },
+    {
+      "logLine": 4500,
+      "message": "Unresolved imports/types have been detected during analysis. Enable DEBUG mode to see them."
+    },
+    {
+      "logLine": 4501,
+      "message": "Use of preview features have been detected during analysis. Enable DEBUG mode to see them."
+    },
+    {
+      "logLine": 4564,
+      "message": "File 'bindings/go/project.go' is not included in the project, ignoring coverage"
+    },
+    {
+      "logLine": 4565,
+      "message": "File 'bindings/go/errors.go' is not included in the project, ignoring coverage"
+    },
+    {
+      "logLine": 4566,
+      "message": "File 'bindings/go/sourceorrery.go' is not included in the project, ignoring coverage"
+    },
+    {
+      "logLine": 4587,
+      "message": "The sonar.modules is a deprecated property and should not be used anymore, it inhibits an optimized analysis"
+    },
+    {
+      "logLine": 4606,
+      "message": "Found 98 problems in LCOV report: /home/runner/work/sourceorrery/sourceorrery/coverage/rust-combined.lcov. More details in verbose mode"
+    },
+    {
+      "logLine": 4610,
+      "message": "Duplication reported for 'crates/sourceorrery-cli/tests/integrations.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4611,
+      "message": "Duplication reported for 'tests/conformance/src/lib.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4612,
+      "message": "Duplication reported for 'crates/sourceorrery-provider/src/tests.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4613,
+      "message": "Duplication reported for 'crates/sourceorrery-cli/src/ui/setup/tests.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4614,
+      "message": "Duplication reported for 'tests/conformance/tests/lifecycle.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4615,
+      "message": "Duplication reported for 'crates/sourceorrery-cli/src/ui/view/tests.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4616,
+      "message": "Duplication reported for 'crates/sourceorrery-cli/tests/cli.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4617,
+      "message": "Duplication reported for 'tests/conformance/src/lifecycle.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4618,
+      "message": "Duplication reported for 'crates/sourceorrery-storage/src/sqlite/tests.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4619,
+      "message": "Duplication reported for 'crates/sourceorrery/examples/conformance.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4620,
+      "message": "Duplication reported for 'crates/sourceorrery-provider-vault/tests/live.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4621,
+      "message": "Duplication reported for 'crates/sourceorrery-ffi/tests/reader.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4622,
+      "message": "Duplication reported for 'crates/sourceorrery-provider-vault/tests/errors.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4623,
+      "message": "Duplication reported for 'crates/sourceorrery-cli/src/ui/fake.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4624,
+      "message": "Duplication reported for 'crates/sourceorrery-provider-aws/tests/live.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4625,
+      "message": "Duplication reported for 'crates/sourceorrery/tests/reader.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4626,
+      "message": "Duplication reported for 'tests/conformance/tests/security.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4627,
+      "message": "Duplication reported for 'crates/sourceorrery-ffi/tests/header.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4628,
+      "message": "Duplication reported for 'crates/sourceorrery-ffi/tests/smoke.rs' will be ignored because it's a test file."
+    },
+    {
+      "logLine": 4675,
+      "message": "No coverage report can be found with sonar.coverage.jacoco.xmlReportPaths='bindings/java/target/site/jacoco/jacoco.xml'. Using default locations: target/site/jacoco/jacoco.xml,target/site/jacoco-it/jacoco.xml,build/reports/jacoco/test/jacocoTestReport.xml"
+    },
+    {
+      "logLine": 4700,
+      "message": "Could not write cache key javasecurity:types: (Cache already contains key 'javasecurity:types:')"
+    },
+    {
+      "logLine": 4818,
+      "message": "The sonar.modules is a deprecated property and should not be used anymore, it inhibits an optimized analysis"
+    },
+    {
+      "logLine": 4837,
+      "message": "Found 1 problems in LCOV report: /home/runner/work/sourceorrery/sourceorrery/coverage/rust-combined.lcov. More details in verbose mode"
+    },
+    {
+      "logLine": 4899,
+      "message": "No coverage report can be found with sonar.coverage.jacoco.xmlReportPaths='bindings/java/target/site/jacoco/jacoco.xml'. Using default locations: target/site/jacoco/jacoco.xml,target/site/jacoco-it/jacoco.xml,build/reports/jacoco/test/jacocoTestReport.xml"
+    }
+  ]
+}

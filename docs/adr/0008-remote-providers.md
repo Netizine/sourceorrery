@@ -56,7 +56,8 @@ Providers that speak HTTP use `reqwest` with `rustls-tls` only, never
 OpenSSL, so the Linux release archives stay free of system TLS libraries.
 
 **Features.** The provider crates are optional dependencies behind Cargo
-features `remote` (all providers) and `provider-vault`, `provider-aws` in
+features `remote` (all providers) and `provider-vault`, `provider-aws`,
+`provider-azure` in
 `sourceorrery` and the CLI, on by default in the CLI,
 the Rust SDK and the release archives of the C ABI, so `sourceorrery run`
 and every SDK reach a remote vault out of the box; `--no-default-features`

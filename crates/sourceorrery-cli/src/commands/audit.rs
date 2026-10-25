@@ -3,12 +3,12 @@
 //! The one command that opens a vault *for inspection*: a vault blocked by
 //! an unacknowledged audit-log truncation is unlocked here too, so its owner
 //! can read the log, verify the chain and acknowledge the truncation. Every
-//! other command, and every secret or protector operation, stays refused
+//! other command, and every secret or settings operation, stays refused
 //! until that acknowledgement is on the chain.
 
 use anyhow::anyhow;
 use sourceorrery_core::{
-    AuditEvent, AuditOperation, AuditQuery, Provider, RemoteVault, SecretClient, timestamp,
+    AuditEvent, AuditOperation, AuditQuery, ConnectionSettings, Provider, SecretClient, timestamp,
 };
 use sourceorrery_storage::{AuditVerification, SqliteVault};
 
@@ -26,12 +26,6 @@ pub fn run(ctx: &Ctx, args: &AuditArgs) -> anyhow::Result<()> {
     }
     if args.acknowledge {
         return acknowledge(ctx, args.yes);
-    }
-    // A remote vault has no local log: say where the provider keeps its
-    // trail instead of failing.
-    let name = ctx.vault_name()?;
-    if let Some(remote) = Ctx::remote_vault(&name)? {
-        return remote_trail(ctx, &name, &remote);
     }
     let operation = match &args.operation {
         Some(op) => Some(op.parse::<AuditOperation>().map_err(|err| {
@@ -53,6 +47,7 @@ pub fn run(ctx: &Ctx, args: &AuditArgs) -> anyhow::Result<()> {
         limit: Some(args.limit),
     };
     let vault = ctx.inspect_default()?;
+    ctx.check_view(&vault)?;
     warn_if_blocked(&vault)?;
     let events = vault.audit_events(query)?;
     if ctx.json() {
@@ -60,55 +55,70 @@ pub fn run(ctx: &Ctx, args: &AuditArgs) -> anyhow::Result<()> {
     }
     if events.is_empty() {
         eprintln!("no matching audit events");
-        return Ok(());
+    } else {
+        print_events(&events)?;
     }
-    print_events(&events)
+    note_provider_trails(&vault)
 }
 
-/// Where a remote provider's audit trail lives and the query that shows
-/// SourceOrrery's operations in it; the provider's documentation page has
-/// the full form.
-pub fn trail_pointer(remote: &RemoteVault) -> (Provider, String, String) {
-    let provider = remote.provider();
+/// Where a connection's provider keeps its own audit trail and the query
+/// that shows SourceOrrery's operations in it; the provider's documentation
+/// page has the full form.
+fn trail_pointer(settings: &ConnectionSettings) -> (Provider, String, String) {
+    let provider = settings.provider();
     let location = provider.audit_location().to_owned();
-    let query = match remote {
-        RemoteVault::HashicorpVault { mount, .. } => format!(
+    let query = match settings {
+        ConnectionSettings::HashicorpVault { mount, .. } => format!(
             "on the server, with a file audit device: jq -c 'select(.type == \"response\" and \
              (.request.path | startswith(\"{mount}/data/\") or \
              startswith(\"{mount}/metadata/\")))' /var/log/vault/audit.log"
         ),
-        RemoteVault::AwsSecretsManager { prefix, .. } => format!(
+        ConnectionSettings::AwsSecretsManager { prefix, .. } => format!(
             "aws cloudtrail lookup-events --lookup-attributes \
              AttributeKey=EventSource,AttributeValue=secretsmanager.amazonaws.com --query \
              'Events[].CloudTrailEvent' --output text | jq -c 'select(.requestParameters.secretId \
              | startswith(\"{}\"))'",
             prefix.as_deref().unwrap_or("")
         ),
+        ConnectionSettings::AzureKeyVault { vault_url } => {
+            // Diagnostic logs name the vault resource in capitals.
+            let vault = vault_url
+                .split("://")
+                .nth(1)
+                .and_then(|rest| rest.split(['.', ':', '/']).next())
+                .unwrap_or_default()
+                .to_ascii_uppercase();
+            format!(
+                "with the vault's diagnostic setting sending AuditEvent logs to a Log Analytics \
+                 workspace: az monitor log-analytics query --workspace <workspace-id> \
+                 --analytics-query \"AzureDiagnostics | where ResourceProvider == \
+                 'MICROSOFT.KEYVAULT' and Resource == '{vault}' and OperationName startswith \
+                 'Secret' | project TimeGenerated, OperationName, id_s, \
+                 identity_claim_appid_g, ResultSignature\""
+            )
+        }
     };
     (provider, location, query)
 }
 
-fn remote_trail(ctx: &Ctx, name: &str, remote: &RemoteVault) -> anyhow::Result<()> {
-    let (provider, location, query) = trail_pointer(remote);
-    let docs = format!(
-        "https://sourceorrery.ai/providers/{}/#audit-trail",
-        provider.name()
-    );
-    if ctx.json() {
-        return output::json(&serde_json::json!({
-            "vault": name,
-            "provider": provider.name(),
-            "audit_trail": location,
-            "query": query,
-            "docs": docs,
-        }));
+/// For each connection that stores a secret: the log above records what
+/// SourceOrrery asked of the provider, and the provider's own trail is the
+/// record of what it served.
+fn note_provider_trails(vault: &SqliteVault) -> anyhow::Result<()> {
+    for connection in vault.connections()? {
+        if vault.secrets_at(&connection.id)?.is_empty() {
+            continue;
+        }
+        let (provider, location, query) = trail_pointer(&connection.settings);
+        output::note(&format!(
+            "connection {} stores secrets at {}, which keeps its own audit trail in {location}; \
+             SourceOrrery's calls show there as the provider's own API calls. To see them: \
+             {query}. Details: https://sourceorrery.ai/providers/{}/#audit-trail",
+            connection.id,
+            provider.display_name(),
+            provider.name()
+        ));
     }
-    output::note(&format!(
-        "vault '{name}' is served by {}, which keeps its own audit trail in {location}; \
-         SourceOrrery's operations there show as the provider's own API calls. To see them: \
-         {query}. Details: {docs}",
-        provider.display_name()
-    ));
     Ok(())
 }
 
@@ -176,6 +186,7 @@ fn describe_truncations(events: &[AuditEvent]) -> String {
 /// printed; a chain that is not intact additionally fails the command.
 fn verify(ctx: &Ctx) -> anyhow::Result<()> {
     let vault = ctx.inspect_default()?;
+    ctx.check_view(&vault)?;
     let result = vault.verify_audit_chain()?;
     if ctx.json() {
         output::json(&result)?;
@@ -192,6 +203,7 @@ fn verify(ctx: &Ctx) -> anyhow::Result<()> {
 /// owner's acknowledgement so the vault accepts operations again.
 fn acknowledge(ctx: &Ctx, yes: bool) -> anyhow::Result<()> {
     let vault = ctx.inspect_default()?;
+    ctx.check_view(&vault)?;
     let name = vault.vault_name().to_owned();
     let pending = vault.unacknowledged_truncations()?;
     if pending.is_empty() {
@@ -214,7 +226,7 @@ fn acknowledge(ctx: &Ctx, yes: bool) -> anyhow::Result<()> {
         print_events(&pending)?;
         output::note(
             "whatever the missing events recorded is gone for good; the surviving history \
-             becomes authoritative once acknowledged. Compare it with a backup first.",
+             becomes authoritative once acknowledged. Compare it with an exported copy first.",
         );
     }
     if !yes

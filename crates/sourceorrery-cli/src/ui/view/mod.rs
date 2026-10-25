@@ -11,6 +11,7 @@
 mod dialog;
 mod lists;
 mod overview;
+mod projects;
 mod secrets;
 
 use ratatui::Frame;
@@ -100,10 +101,15 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Opt
             overview::draw(frame, session, theme, rows(area, used, area.height));
             None
         }
-        Tab::Secrets | Tab::Deleted if session.is_blocked() => {
+        Tab::Secrets | Tab::Projects | Tab::Deleted if session.is_blocked() => {
             draw_blocked(frame, session, theme, area);
             None
         }
+        Tab::Projects if app.detail.is_some() => {
+            projects::detail(frame, app, theme, area);
+            None
+        }
+        Tab::Projects => Some(projects::list(frame, app, theme, area)),
         Tab::Secrets | Tab::Deleted if app.detail.is_some() => {
             secrets::detail(frame, app, theme, area)
         }
@@ -128,7 +134,7 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Opt
 /// What the views say with no vault open: locked, or never opened.
 fn closed_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
     let vaults = vec![
-        Span::styled("5", theme.key),
+        Span::styled("6", theme.key),
         Span::styled(" lists the vaults.", theme.muted),
     ];
     match &app.locked {
@@ -153,7 +159,8 @@ fn closed_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
                         vec![
                             Span::styled("Enter", theme.key),
                             Span::styled(
-                                " unlocks it again (asking for its passphrase if it needs one); ",
+                                " unlocks it again (asking its recovery key and view check where \
+                                 it has them); ",
                                 theme.muted,
                             ),
                         ],
@@ -167,7 +174,7 @@ fn closed_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
             Line::from("No vault is open."),
             Line::from(vec![
                 Span::styled("Pick one in ", theme.muted),
-                Span::styled("5 Vaults", theme.key),
+                Span::styled("6 Vaults", theme.key),
                 Span::styled(", or start with ", theme.muted),
                 Span::styled(" sourceorrery ui --vault NAME ", theme.code),
             ]),
@@ -180,25 +187,25 @@ fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
     match &app.session {
         Some(session) => {
             let vault = &session.vault;
-            let deletion = match vault.recovery_level {
-                RecoveryLevel::Recoverable => {
-                    format!("recoverable for {} days", vault.retention_days)
-                }
-                RecoveryLevel::Purgeable => "purgeable".to_owned(),
-            };
-            let protectors = match vault.protectors.len() {
-                1 => "1 protector".to_owned(),
-                n => format!("{n} protectors"),
-            };
             spans.push(Span::styled("  vault ", theme.muted));
             spans.push(Span::styled(
                 output::sanitize(&vault.name).into_owned(),
                 theme.vault,
             ));
-            spans.push(Span::styled(
-                format!("  ·  {deletion}  ·  {protectors}"),
-                theme.muted,
-            ));
+            if !session.is_blocked() {
+                let check = match (
+                    session.view.check.password,
+                    session.view.check.authenticator,
+                ) {
+                    (false, _) => "no view check",
+                    (true, false) => "password",
+                    (true, true) => "password + authenticator",
+                };
+                spans.push(Span::styled(
+                    format!("  ·  {check}  ·  storage: {}", storages(session)),
+                    theme.muted,
+                ));
+            }
             if app.is_read_only() {
                 spans.push(Span::styled("  ·  read-only", theme.muted));
             }
@@ -218,6 +225,28 @@ fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
     Paragraph::new(Line::from(spans)).style(theme.bar)
 }
 
+/// The storages the vault keeps secrets in: `SourceOrrery, Azure Key Vault`.
+fn storages(session: &Session) -> String {
+    let mut names = vec!["SourceOrrery".to_owned()];
+    names.extend(
+        session
+            .connections
+            .iter()
+            .map(|c| c.settings.provider().display_name().to_owned()),
+    );
+    names.join(", ")
+}
+
+/// How a deleted secret is kept: `recoverable for 90 days`, `purgeable`.
+fn deletion(session: &Session) -> String {
+    match session.vault.recovery_level {
+        RecoveryLevel::Recoverable => {
+            format!("soft, {} days", session.vault.retention_days)
+        }
+        RecoveryLevel::Purgeable => "at once (purgeable)".to_owned(),
+    }
+}
+
 fn tab_bar(app: &App, theme: &Theme) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
     for (i, tab) in Tab::ALL.into_iter().enumerate() {
@@ -231,7 +260,7 @@ fn tab_bar(app: &App, theme: &Theme) -> Line<'static> {
         if let Some(total) = app.total(tab) {
             spans.push(Span::styled(format!(" {total}"), theme.muted));
         }
-        spans.push(Span::raw("    "));
+        spans.push(Span::raw("   "));
     }
     Line::from(spans)
 }
@@ -336,7 +365,7 @@ fn draw_blocked(frame: &mut Frame<'_>, session: &Session, theme: &Theme, area: R
             "Vault '{name}' refuses every operation: its audit log was found truncated ({events})."
         )),
         Line::from(vec![
-            Span::raw("Review the audit log, ideally against a backup, then run "),
+            Span::raw("Review the audit log, ideally against an exported copy, then run "),
             Span::styled(" sourceorrery audit --acknowledge ", theme.code),
             Span::raw(" in a terminal."),
         ]),
@@ -406,8 +435,15 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
     } else if app.session.is_none() && app.locked.is_some() && app.tab != Tab::Vaults {
         &[
             ("Enter", "unlock"),
-            ("5", "vaults"),
+            ("6", "vaults"),
             ("?", "help"),
+            ("q", "quit"),
+        ]
+    } else if app.detail.is_some() && app.tab == Tab::Projects {
+        &[
+            ("x", "forget if gone"),
+            ("Esc", "back"),
+            ("?", "keys"),
             ("q", "quit"),
         ]
     } else if app.detail.is_some() && changes && app.tab == Tab::Secrets {
@@ -446,6 +482,7 @@ fn view_hints(app: &App, changes: bool) -> &'static [(&'static str, &'static str
         &[
             ("v", "verify chain"),
             ("a", "add secret"),
+            ("c", "settings"),
             ("L", "lock"),
             ("Tab", "views"),
             ("?", "keys"),
@@ -458,6 +495,26 @@ fn view_hints(app: &App, changes: bool) -> &'static [(&'static str, &'static str
             ("/", "search"),
             ("e", "edit"),
             ("d", "delete"),
+            ("?", "keys"),
+            ("q", "quit"),
+        ]
+    } else if changes && app.tab == Tab::Projects {
+        &[
+            ("↑↓", "move"),
+            ("Enter", "manifest"),
+            ("x", "forget if gone"),
+            ("/", "search"),
+            ("?", "keys"),
+            ("q", "quit"),
+        ]
+    } else if !app.is_read_only() && app.tab == Tab::Vaults {
+        &[
+            ("↑↓", "move"),
+            ("Enter", "open"),
+            ("n", "new vault"),
+            ("c", "settings"),
+            ("/", "search"),
+            ("r", "rescan"),
             ("?", "keys"),
             ("q", "quit"),
         ]
@@ -497,7 +554,7 @@ fn view_hints(app: &App, changes: bool) -> &'static [(&'static str, &'static str
                 ("?", "help"),
                 ("q", "quit"),
             ],
-            Tab::Secrets | Tab::Deleted => &[
+            Tab::Secrets | Tab::Projects | Tab::Deleted => &[
                 ("↑↓", "move"),
                 ("Enter", "details"),
                 ("/", "search"),
@@ -538,8 +595,8 @@ const HELP_KEYS: [(&str, &str); 13] = [
     ("↑ ↓  k j", "move"),
     ("PgUp PgDn", "move a screenful"),
     ("g G  Home End", "first, last"),
-    ("Tab Shift-Tab ← → 1-5", "switch view"),
-    ("Enter", "details · open the vault"),
+    ("Tab Shift-Tab ← → 1-6", "switch view"),
+    ("Enter", "details · a manifest · open the vault"),
     ("Esc", "back · clear the search"),
     ("/", "search"),
     ("r", "read the vault again"),
@@ -550,13 +607,16 @@ const HELP_KEYS: [(&str, &str); 13] = [
     ("", ""),
 ];
 
-const HELP_CHANGES: [(&str, &str); 6] = [
+const HELP_CHANGES: [(&str, &str); 9] = [
     ("space", "enable or disable the selected version"),
     ("e", "change its metadata"),
     ("n", "new version: the value at a hidden prompt"),
-    ("a", "new secret"),
+    ("a", "new secret, in the storage you pick"),
     ("d", "delete the secret"),
     ("u", "recover a deleted secret (Deleted view)"),
+    ("x", "forget a project whose folder is gone"),
+    ("c", "change the vault on the setup screens"),
+    ("n  (Vaults)", "a new vault on the setup screens"),
 ];
 
 fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
@@ -599,16 +659,19 @@ fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         theme.label,
     )));
     lines.push(Line::from(
-        "Its secret list when it opens and on r (secret_list), the",
+        "Its secret list when it opens and on r (secret_list, and one",
     ));
     lines.push(Line::from(
-        "deleted list once (secret_list), a secret's versions the",
+        "listing at each provider that stores some), the deleted list",
     ));
     lines.push(Line::from(
-        "first time its details open (secret_inspect). Moving,",
+        "once, a secret's versions the first time its details open",
     ));
     lines.push(Line::from(
-        "searching, verifying and the audit log read nothing.",
+        "(secret_inspect). Moving, searching, verifying, the audit log",
+    ));
+    lines.push(Line::from(
+        "and a project's manifest on disk read nothing of the vault.",
     ));
     let height = u16::try_from(lines.len()).unwrap_or(0) + 4;
     let [area] = Layout::vertical([Constraint::Length(height)])

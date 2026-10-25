@@ -16,9 +16,10 @@ Non-negotiable:
   `sourceorrery import <file> --dry-run`.
 - Never run `sourceorrery secret get --reveal`, never print environment
   variables, never write a value anywhere.
-- Ask the user before creating a vault that needs a passphrase, before
-  importing staging or production values, before deleting files and
-  before rewriting git history.
+- Never create a vault or see its recovery key: ask the user to run
+  `sourceorrery setup` in their own terminal. Never answer a vault's view
+  check. Ask the user before importing staging or production values,
+  before deleting files and before rewriting git history.
 
 Finish with a report: keys migrated, keys skipped and why, files changed,
 files deleted, and what the user still has to do.

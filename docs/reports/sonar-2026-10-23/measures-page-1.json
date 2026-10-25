@@ -1,0 +1,67 @@
+{
+  "component": {
+    "id": "AaFoaTeQqKHLcCyS1Wnz",
+    "key": "Netizine_sourceorrery",
+    "name": "sourceorrery",
+    "qualifier": "TRK",
+    "measures": [
+      {
+        "metric": "coverage",
+        "value": "80.6",
+        "bestValue": false
+      },
+      {
+        "metric": "alert_status",
+        "value": "ERROR"
+      },
+      {
+        "metric": "lines_to_cover",
+        "value": "25989"
+      },
+      {
+        "metric": "branch_coverage",
+        "value": "60.8",
+        "bestValue": false
+      },
+      {
+        "metric": "uncovered_lines",
+        "value": "4831",
+        "bestValue": false
+      },
+      {
+        "metric": "new_coverage",
+        "periods": [
+          {
+            "index": 1,
+            "value": "2.5225225225225225",
+            "bestValue": false
+          }
+        ]
+      },
+      {
+        "metric": "new_uncovered_lines",
+        "periods": [
+          {
+            "index": 1,
+            "value": "541",
+            "bestValue": false
+          }
+        ]
+      },
+      {
+        "metric": "line_coverage",
+        "value": "81.4",
+        "bestValue": false
+      },
+      {
+        "metric": "new_lines_to_cover",
+        "periods": [
+          {
+            "index": 1,
+            "value": "555"
+          }
+        ]
+      }
+    ]
+  }
+}

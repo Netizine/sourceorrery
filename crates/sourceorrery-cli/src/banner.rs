@@ -238,9 +238,9 @@ pub fn render(style: BannerStyle) -> String {
 
     out.push('\n');
     out.push_str("Quick start\n");
-    out.push_str("  sourceorrery vault create development\n");
+    out.push_str("  sourceorrery setup\n");
     out.push_str("  sourceorrery secret set database-password --vault development\n");
-    out.push_str("  sourceorrery init && sourceorrery run -- <your command>\n");
+    out.push_str("  sourceorrery init --all && sourceorrery run -- <your command>\n");
     out.push('\n');
     out.push_str("Run `sourceorrery --help` for all commands.\n");
     out

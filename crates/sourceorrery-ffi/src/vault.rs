@@ -12,7 +12,7 @@ use sourceorrery_core::{
     Result, SecretBytes, SecretClient, SecretError, SetSecretOptions, UpdateSecretProperties,
 };
 use sourceorrery_storage::{
-    NoInteraction, ProtectorSpec, SqliteVault, StaticPassphrase, UnlockProvider, VaultRegistry,
+    NoInteraction, SqliteVault, StaticRecoveryKey, UnlockProvider, VaultRegistry,
 };
 
 use crate::buffer::so_bytes;
@@ -194,24 +194,23 @@ fn publish(out: &mut *mut so_vault, vault: SqliteVault) {
 // Vault lifecycle
 // ---------------------------------------------------------------------------
 
-/// Create a vault and return an open handle to it.
+/// Create a vault and return an open handle to it, with its recovery key.
 ///
 /// `home` (nullable) is the SourceOrrery home directory; `NULL` or empty
 /// selects `SOURCEORRERY_HOME` or the platform data directory. `name` must
 /// satisfy the vault naming rules. `options_json` (nullable) is documented at
-/// `CreateOptions` in the crate documentation. With a non-null `passphrase`
-/// the vault gets a passphrase protector; with `NULL` it gets an OS-keyring
-/// protector (`unsupported` where no credential store is available). An
-/// empty passphrase is rejected.
+/// `CreateOptions` in the crate documentation.
 ///
-/// On success `*out_handle` holds the handle; on failure it is `NULL`.
+/// `*out_recovery_key` receives the vault's recovery key: it opens the vault
+/// anywhere and is not stored, so show it to its owner once and release it
+/// with `so_bytes_free`, which zeroises it. On success `*out_handle` holds
+/// the handle; on failure both outputs are empty.
 ///
 /// # Safety
 ///
 /// Every `(pointer, length)` pair must be `NULL` or readable for that many
-/// bytes for the duration of the call, and `out_handle` must be valid for
-/// writes. The caller's `passphrase` buffer is copied and should be zeroised
-/// by the caller afterwards.
+/// bytes for the duration of the call, and both output pointers must be
+/// valid for writes and distinct.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn so_vault_create(
     home: *const u8,
@@ -220,73 +219,71 @@ pub unsafe extern "C" fn so_vault_create(
     name_len: usize,
     options_json: *const u8,
     options_json_len: usize,
-    passphrase: *const u8,
-    passphrase_len: usize,
+    out_recovery_key: *mut so_bytes,
     out_handle: *mut *mut so_vault,
 ) -> so_status {
     guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
-        let out = unsafe { output(out_handle, ptr::null_mut(), "out_handle") }?;
+        let (out_key, out) = unsafe {
+            (
+                output(out_recovery_key, so_bytes::EMPTY, "out_recovery_key")?,
+                output(out_handle, ptr::null_mut(), "out_handle")?,
+            )
+        };
         // SAFETY: the caller upholds this function's `# Safety` contract.
-        let (home, name, options, passphrase) = unsafe {
+        let (home, name, options) = unsafe {
             (
                 opt_string(home, home_len, "home")?,
                 string(name, name_len, "name")?,
                 opt_json::<CreateOptions>(options_json, options_json_len, "options_json")?,
-                opt_bytes(passphrase, passphrase_len, "passphrase")?,
             )
         };
-        let protector = match passphrase {
-            None => ProtectorSpec::OsKeyring,
-            Some([]) => return Err(invalid_argument("passphrase: must not be empty")),
-            Some(passphrase) => ProtectorSpec::Passphrase {
-                passphrase: SecretBytes::new(passphrase.to_vec()),
-                params: options.argon2_params(),
-            },
-        };
-        let vault = registry(home)?.create(name, options.vault_options(), protector)?;
-        publish(out, vault);
+        let created = registry(home)?.create(name, options.vault_options())?;
+        *out_key = so_bytes::copy_of(created.recovery_key.as_bytes());
+        publish(out, created.vault);
         Ok(())
     })
 }
 
-/// Open and unlock an existing vault.
+/// Open an existing vault.
 ///
-/// `home` and `name` are as for [`so_vault_create`]. OS-keyring protectors
-/// are tried first. If none unlocks the vault and `passphrase` is non-null
-/// it is tried once against the passphrase protectors; with `NULL` the call
-/// fails with `locked` when the keyring cannot unlock the vault. Failed
-/// unlock attempts are audited.
+/// `home` and `name` are as for [`so_vault_create`]. This machine's key in
+/// the OS credential store is tried first. If it cannot open the vault and
+/// `recovery_key` is non-null, the recovery key is tried once; with `NULL`
+/// the call fails with `locked`. Failed attempts are audited.
 ///
 /// # Safety
 ///
-/// As [`so_vault_create`].
+/// Every `(pointer, length)` pair must be `NULL` or readable for that many
+/// bytes for the duration of the call, and `out_handle` must be valid for
+/// writes. The caller's `recovery_key` buffer is copied and should be
+/// zeroised by the caller afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn so_vault_open(
     home: *const u8,
     home_len: usize,
     name: *const u8,
     name_len: usize,
-    passphrase: *const u8,
-    passphrase_len: usize,
+    recovery_key: *const u8,
+    recovery_key_len: usize,
     out_handle: *mut *mut so_vault,
 ) -> so_status {
     guard(|| -> Result<()> {
         // SAFETY: the caller upholds this function's `# Safety` contract.
         let out = unsafe { output(out_handle, ptr::null_mut(), "out_handle") }?;
         // SAFETY: the caller upholds this function's `# Safety` contract.
-        let (home, name, passphrase) = unsafe {
+        let (home, name, recovery_key) = unsafe {
             (
                 opt_string(home, home_len, "home")?,
                 string(name, name_len, "name")?,
-                opt_bytes(passphrase, passphrase_len, "passphrase")?,
+                opt_bytes(recovery_key, recovery_key_len, "recovery_key")?,
             )
         };
         let registry = registry(home)?;
-        let vault = match passphrase {
+        let vault = match recovery_key {
             None => registry.open(name, &NoInteraction),
-            Some(passphrase) => {
-                let unlock = StaticPassphrase::new(SecretBytes::new(passphrase.to_vec()));
+            Some(key) => {
+                let unlock = StaticRecoveryKey::new(SecretBytes::new(key.to_vec()));
                 let provider: &dyn UnlockProvider = &unlock;
                 registry.open(name, provider)
             }

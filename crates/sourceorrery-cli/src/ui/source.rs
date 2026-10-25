@@ -3,9 +3,24 @@
 use std::fmt::Debug;
 
 use sourceorrery_core::{
-    AuditEvent, AuditQuery, DeletedSecret, Result, SecretClient, SecretProperties, VaultDescriptor,
+    AuditEvent, AuditQuery, Capability, DeletedSecret, Result, SecretClient, SecretProperties,
+    VaultDescriptor,
 };
-use sourceorrery_storage::{AuditVerification, ProtectorInfo, SqliteVault};
+use sourceorrery_provider::Routed;
+use sourceorrery_storage::{
+    AuditVerification, ConnectionInfo, ProjectLink, SecondFactorInfo, ViewCheck, WrapInfo,
+};
+
+/// What the vault's view check asks for: never the password's hash, its
+/// hint's text or the authenticator's key.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ViewSettings {
+    pub check: ViewCheck,
+    /// A hint is shown when the password is asked for.
+    pub hint: bool,
+    /// The authenticator enrolled, when there is one.
+    pub authenticator: Option<SecondFactorInfo>,
+}
 
 /// What the browser may ask of a vault: metadata, never a value.
 ///
@@ -13,7 +28,8 @@ use sourceorrery_storage::{AuditVerification, ProtectorInfo, SqliteVault};
 /// screen can show one by mistake; a screen that needs more of the vault
 /// adds a method here, and a method that would return a value does not
 /// belong here at all. Each method says what the vault records in its audit
-/// log when it is called.
+/// log when it is called. A secret a connection stores is read at its
+/// provider, and the vault records that call too.
 pub trait MetadataSource: Debug {
     /// The vault's non-sensitive description. Not audited.
     fn descriptor(&self) -> Result<VaultDescriptor>;
@@ -23,15 +39,25 @@ pub trait MetadataSource: Debug {
     /// refusal), so the browser shows only the audit log. Not audited.
     fn truncations(&self) -> Result<Vec<AuditEvent>>;
 
-    /// The newest version of every live secret. One `secret_list` event.
+    /// The newest version of every live secret the vault file keeps. One
+    /// `secret_list` event.
     fn secrets(&self) -> Result<Vec<SecretProperties>>;
 
-    /// Every version of one live secret, newest first. One
-    /// `secret_inspect` event.
+    /// The newest version of every live secret the connection `id` stores,
+    /// from its provider. One listing there, recorded as `secret_list`.
+    fn secrets_at(&self, id: &str) -> Result<Vec<SecretProperties>>;
+
+    /// Every version of one live secret, newest first, from where it is
+    /// kept. One `secret_inspect` event.
     fn versions(&self, name: &str) -> Result<Vec<SecretProperties>>;
 
-    /// Soft-deleted secrets. One `secret_list` event.
+    /// The secrets the vault file keeps soft-deleted. One `secret_list`
+    /// event.
     fn deleted(&self) -> Result<Vec<DeletedSecret>>;
+
+    /// The soft-deleted secrets of the connection `id`, from its provider.
+    /// One listing there, recorded as `secret_list`.
+    fn deleted_at(&self, id: &str) -> Result<Vec<DeletedSecret>>;
 
     /// Audit events, newest first. Not audited.
     fn audit(&self, query: AuditQuery) -> Result<Vec<AuditEvent>>;
@@ -40,22 +66,43 @@ pub trait MetadataSource: Debug {
     /// `audit --verify` does. Not audited.
     fn verify(&self) -> Result<AuditVerification>;
 
-    /// The key protectors that can unlock the vault: labels, kinds, dates.
-    /// Not audited.
-    fn protectors(&self) -> Result<Vec<ProtectorInfo>>;
+    /// The ways the vault's key opens (this machine, the recovery key):
+    /// kinds and dates, never the keys. Not audited.
+    fn keys(&self) -> Result<Vec<WrapInfo>>;
+
+    /// The vault's connections to providers: their settings and last
+    /// test, never their credentials. Not audited.
+    fn connections(&self) -> Result<Vec<ConnectionInfo>>;
+
+    /// The names of the secrets the connection `id` stores. Not audited.
+    fn stored_at(&self, id: &str) -> Result<Vec<String>>;
+
+    /// What the view check asks for. Not audited.
+    fn view_settings(&self) -> Result<ViewSettings>;
+
+    /// The project folders the vault records. Not audited.
+    fn projects(&self) -> Result<Vec<ProjectLink>>;
+
+    /// What the storage of `name` can express, so a change it would refuse
+    /// is never sent. Not audited.
+    fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]>;
 }
 
-impl MetadataSource for SqliteVault {
+impl MetadataSource for Routed {
     fn descriptor(&self) -> Result<VaultDescriptor> {
-        SqliteVault::descriptor(self)
+        self.vault().descriptor()
     }
 
     fn truncations(&self) -> Result<Vec<AuditEvent>> {
-        self.unacknowledged_truncations()
+        self.vault().unacknowledged_truncations()
     }
 
     fn secrets(&self) -> Result<Vec<SecretProperties>> {
-        self.list_properties_of_secrets()
+        self.vault().list_properties_of_secrets()
+    }
+
+    fn secrets_at(&self, id: &str) -> Result<Vec<SecretProperties>> {
+        self.list_at(id)
     }
 
     fn versions(&self, name: &str) -> Result<Vec<SecretProperties>> {
@@ -63,19 +110,48 @@ impl MetadataSource for SqliteVault {
     }
 
     fn deleted(&self) -> Result<Vec<DeletedSecret>> {
-        self.list_deleted_secrets()
+        self.vault().list_deleted_secrets()
+    }
+
+    fn deleted_at(&self, id: &str) -> Result<Vec<DeletedSecret>> {
+        self.list_deleted_at(id)
     }
 
     fn audit(&self, query: AuditQuery) -> Result<Vec<AuditEvent>> {
-        self.audit_events(query)
+        self.vault().audit_events(query)
     }
 
     fn verify(&self) -> Result<AuditVerification> {
-        self.verify_audit_chain()
+        self.vault().verify_audit_chain()
     }
 
-    fn protectors(&self) -> Result<Vec<ProtectorInfo>> {
-        SqliteVault::protectors(self)
+    fn keys(&self) -> Result<Vec<WrapInfo>> {
+        self.vault().wraps()
+    }
+
+    fn connections(&self) -> Result<Vec<ConnectionInfo>> {
+        self.vault().connections()
+    }
+
+    fn stored_at(&self, id: &str) -> Result<Vec<String>> {
+        self.vault().secrets_at(id)
+    }
+
+    fn view_settings(&self) -> Result<ViewSettings> {
+        let vault = self.vault();
+        Ok(ViewSettings {
+            check: vault.view_check()?,
+            hint: vault.password_hint()?.is_some(),
+            authenticator: vault.authenticator()?,
+        })
+    }
+
+    fn projects(&self) -> Result<Vec<ProjectLink>> {
+        self.vault().projects()
+    }
+
+    fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]> {
+        SecretClient::capabilities_of(self, name)
     }
 }
 
@@ -92,11 +168,17 @@ impl<T: MetadataSource> MetadataSource for std::rc::Rc<T> {
     fn secrets(&self) -> Result<Vec<SecretProperties>> {
         (**self).secrets()
     }
+    fn secrets_at(&self, id: &str) -> Result<Vec<SecretProperties>> {
+        (**self).secrets_at(id)
+    }
     fn versions(&self, name: &str) -> Result<Vec<SecretProperties>> {
         (**self).versions(name)
     }
     fn deleted(&self) -> Result<Vec<DeletedSecret>> {
         (**self).deleted()
+    }
+    fn deleted_at(&self, id: &str) -> Result<Vec<DeletedSecret>> {
+        (**self).deleted_at(id)
     }
     fn audit(&self, query: AuditQuery) -> Result<Vec<AuditEvent>> {
         (**self).audit(query)
@@ -104,7 +186,22 @@ impl<T: MetadataSource> MetadataSource for std::rc::Rc<T> {
     fn verify(&self) -> Result<AuditVerification> {
         (**self).verify()
     }
-    fn protectors(&self) -> Result<Vec<ProtectorInfo>> {
-        (**self).protectors()
+    fn keys(&self) -> Result<Vec<WrapInfo>> {
+        (**self).keys()
+    }
+    fn connections(&self) -> Result<Vec<ConnectionInfo>> {
+        (**self).connections()
+    }
+    fn stored_at(&self, id: &str) -> Result<Vec<String>> {
+        (**self).stored_at(id)
+    }
+    fn view_settings(&self) -> Result<ViewSettings> {
+        (**self).view_settings()
+    }
+    fn projects(&self) -> Result<Vec<ProjectLink>> {
+        (**self).projects()
+    }
+    fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]> {
+        (**self).capabilities_of(name)
     }
 }

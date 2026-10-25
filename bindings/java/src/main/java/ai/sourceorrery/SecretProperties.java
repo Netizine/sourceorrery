@@ -75,7 +75,7 @@ public record SecretProperties(
         return value instanceof String text ? Optional.of(Instant.parse(text)) : Optional.empty();
     }
 
-    /** Protector kinds and other descriptor lists come back as strings. */
+    /** Key kinds and other descriptor lists come back as strings. */
     static List<String> strings(Object value) {
         if (value instanceof List<?> list) {
             return list.stream().map(String::valueOf).toList();

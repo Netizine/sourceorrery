@@ -20,9 +20,10 @@ pub enum AuditOperation {
     VaultCreate,
     /// A vault was unlocked (or an unlock attempt failed).
     VaultOpen,
-    /// A key protector was added to a vault.
+    /// A key that opens the vault was added (a new recovery key, this
+    /// machine's key).
     ProtectorAdd,
-    /// A key protector was removed from a vault.
+    /// A key that opens the vault was removed (this machine's key).
     ProtectorRemove,
     /// A new secret version was written.
     SecretSet,
@@ -50,18 +51,38 @@ pub enum AuditOperation {
     /// Secret metadata was read without disclosing a value: properties, the
     /// version list, or a deleted secret's details.
     SecretInspect,
-    /// Every version of a secret, disabled and expired ones included, was
-    /// read for an encrypted backup (`VaultBackup::export`); one event per
-    /// secret, with the version count as detail.
+    /// Every version of a secret was read for an encrypted backup. No
+    /// operation records it since `vault export` replaced backups (ADR
+    /// 0009); the name stays so a log that has it still reads.
     VaultBackup,
-    /// A version was written from a backup (`VaultBackup::restore`); one
-    /// event per version, checkpointed like `secret_set`.
+    /// A version was written from a backup. No operation records it since
+    /// `vault import` replaced restores (ADR 0009); the name stays so a log
+    /// that has it still reads.
     SecretRestore,
-    /// The reveal guard: a passphrase re-check or a second-factor code
-    /// (`success` / `denied`), the second factor enrolled, verified or
-    /// disabled, the guard or the passphrase hint changed. The detail names
-    /// which; never a code, a secret or a hint.
+    /// The view check: a password or authenticator code asked
+    /// (`success` / `denied`), the password, its hint or the authenticator
+    /// set or removed. The detail names which; never a code, a password or
+    /// a hint.
     Guard,
+    /// A vault-wide setting changed. With a secret name, that secret's row
+    /// was rewritten to follow it (a deleted secret's recovery id when the
+    /// vault took a new name at import).
+    VaultChange,
+    /// A copy of the vault was written for another machine; the detail
+    /// names what the copy left out. Recorded in the vault and in the copy.
+    VaultExport,
+    /// A copy of a vault was imported into this home; the detail says under
+    /// which name and whether this machine can open it without asking.
+    VaultImport,
+    /// A connection to a provider was tested with one metadata call; the
+    /// detail names the connection and the outcome (`ok`, or the error
+    /// code). Adding, changing and removing a connection is `vault_change`.
+    ConnectionTest,
+    /// A project folder was recorded in the vault, or its name changed; the
+    /// detail names the project's id, never its path or name.
+    ProjectLink,
+    /// A project folder's record was removed; the detail names its id.
+    ProjectUnlink,
 }
 
 impl AuditOperation {
@@ -85,11 +106,17 @@ impl AuditOperation {
             Self::VaultBackup => "vault_backup",
             Self::SecretRestore => "secret_restore",
             Self::Guard => "guard",
+            Self::VaultChange => "vault_change",
+            Self::VaultExport => "vault_export",
+            Self::VaultImport => "vault_import",
+            Self::ConnectionTest => "connection_test",
+            Self::ProjectLink => "project_link",
+            Self::ProjectUnlink => "project_unlink",
         }
     }
 
     /// Every operation, for documentation and exhaustive tests.
-    pub const ALL: [AuditOperation; 17] = [
+    pub const ALL: [AuditOperation; 23] = [
         Self::VaultCreate,
         Self::VaultOpen,
         Self::ProtectorAdd,
@@ -107,6 +134,12 @@ impl AuditOperation {
         Self::VaultBackup,
         Self::SecretRestore,
         Self::Guard,
+        Self::VaultChange,
+        Self::VaultExport,
+        Self::VaultImport,
+        Self::ConnectionTest,
+        Self::ProjectLink,
+        Self::ProjectUnlink,
     ];
 }
 

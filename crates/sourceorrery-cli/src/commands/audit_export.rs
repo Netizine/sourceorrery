@@ -16,7 +16,7 @@ use std::time::Duration;
 #[cfg(not(feature = "otlp"))]
 use anyhow::anyhow;
 use serde::Serialize;
-use sourceorrery_core::{AuditEvent, AuditQuery, SecretClient, SecretError, timestamp};
+use sourceorrery_core::{AuditEvent, AuditQuery, SecretClient, timestamp};
 use sourceorrery_storage::{AuditVerification, SqliteVault};
 use time::OffsetDateTime;
 
@@ -118,18 +118,9 @@ impl Sink for Jsonl {
 
 pub fn run(ctx: &Ctx, args: &AuditExportArgs) -> anyhow::Result<()> {
     let name = ctx.vault_name()?;
-    if let Some(remote) = Ctx::remote_vault(&name)? {
-        // Nothing of ours to export: the provider's own trail is the record.
-        let (provider, location, query) = super::audit::trail_pointer(&remote);
-        return Err(SecretError::Unsupported(format!(
-            "vault '{name}' is served by {}, which keeps its audit trail in {location}; collect \
-             it from there ({query})",
-            provider.display_name()
-        ))
-        .into());
-    }
     let since = args.since.as_deref().map(timestamp::parse).transpose()?;
     let vault = ctx.inspect_default()?;
+    ctx.check_view(&vault)?;
     let mut sink: Box<dyn Sink> = match args.format {
         AuditFormat::Jsonl => Box::new(Jsonl {
             out: std::io::stdout(),

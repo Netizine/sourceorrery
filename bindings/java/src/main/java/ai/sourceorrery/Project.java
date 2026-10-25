@@ -40,7 +40,7 @@ public final class Project implements AutoCloseable {
     /** Load {@code manifest} (empty: discover it) with options that apply to every vault the manifest names. */
     public static Project load(Optional<String> manifest, OpenOptions options) {
         Native.requireAbi();
-        MemorySegment handle = Native.projectLoad(manifest.orElse(null), options.toJson(), options.passphraseBytes());
+        MemorySegment handle = Native.projectLoad(manifest.orElse(null), options.toJson(), options.recoveryKeyBytes());
         List<ProjectSecret> secrets = new ArrayList<>();
         try {
             Map<String, Object> info = Json.parseObject(Native.projectInfo(handle));

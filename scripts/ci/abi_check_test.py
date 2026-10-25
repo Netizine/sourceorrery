@@ -118,7 +118,8 @@ class Verdicts(unittest.TestCase):
     def test_real_header_is_compatible_with_itself(self) -> None:
         real = (HERE / ".." / ".." / "crates" / "sourceorrery-ffi" / "include" / "sourceorrery.h").read_text()
         decls = ac.parse(real)
-        self.assertEqual(decls.abi_version, "1")
+        # Whatever the version is now: it is bumped for each breaking change.
+        self.assertRegex(decls.abi_version or "", r"^[1-9][0-9]*$")
         self.assertIn("so_reader_get", decls.functions)
         self.assertIn("so_secret_list", decls.functions)
         self.assertGreaterEqual(len(decls.functions), 30, sorted(decls.functions))

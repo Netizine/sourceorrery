@@ -1,43 +1,187 @@
-//! Operating-system credential store access for key-encryption keys.
+//! Credential stores for key-encryption keys.
 //!
-//! Backed by `keyring-core` with one native store per platform:
-//! Windows Credential Manager, macOS Keychain, and the D-Bus Secret Service
-//! (GNOME Keyring, KWallet, KeePassXC, ...) on other Unix systems.
+//! A vault reaches its key-encryption keys through a [`CredentialStore`]:
+//! [`OsStore`], the operating system's store, backed by `keyring-core` with
+//! one native store per platform (Windows Credential Manager, macOS
+//! Keychain, and the D-Bus Secret Service on other Unix systems);
+//! [`NoStore`], for machines and runs that must not use one; and
+//! [`MemoryStore`], an in-process store for tests and tooling, so that a
+//! test never touches the real store. [`from_env`] picks the OS store unless
+//! `SOURCEORRERY_KEYRING=off`.
 //!
 //! Only 32-byte KEKs are ever stored here; secret values never are.
 
-use sourceorrery_core::Result;
+use std::collections::BTreeMap;
+use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
+
+use sourceorrery_core::{Result, SecretError};
 use sourceorrery_crypto::SymmetricKey;
 
 /// Service name under which SourceOrrery entries are filed.
 pub const SERVICE: &str = "sourceorrery";
 
-/// Human-readable name of the store compiled into this build.
+/// Human-readable name of the OS store compiled into this build.
 pub const STORE_NAME: &str = imp::STORE_NAME;
 
-/// True when the OS credential store can be used right now.
-pub fn available() -> bool {
-    imp::available()
+/// Environment variable that switches the OS store off: `off` treats it as
+/// absent ([`NoStore`]), for tests, containers and shared machines.
+pub const KEYRING_ENV: &str = "SOURCEORRERY_KEYRING";
+
+/// Where a vault keeps the key-encryption keys that unlock it on this
+/// machine. Every method is keyed by an account name the vault derives from
+/// its own identity.
+pub trait CredentialStore: Debug + Send + Sync {
+    /// The store's name, for messages.
+    fn name(&self) -> &str;
+
+    /// True when the store can be used right now.
+    fn available(&self) -> bool;
+
+    /// Why the store is unavailable, if it is.
+    fn unavailable_reason(&self) -> Option<String>;
+
+    /// Store `key` under `account`, replacing any existing entry.
+    fn store_key(&self, account: &str, key: &SymmetricKey) -> Result<()>;
+
+    /// Load the key stored under `account`, or `None` if there is no entry.
+    fn load_key(&self, account: &str) -> Result<Option<SymmetricKey>>;
+
+    /// Delete the entry under `account`. A missing entry is not an error.
+    fn delete_key(&self, account: &str) -> Result<()>;
 }
 
-/// Why the store is unavailable, if it is.
-pub fn unavailable_reason() -> Option<String> {
-    imp::unavailable_reason()
+/// The store [`KEYRING_ENV`] asks for: [`NoStore`] when it is `off`,
+/// otherwise [`OsStore`].
+pub fn from_env() -> Arc<dyn CredentialStore> {
+    match std::env::var(KEYRING_ENV) {
+        Ok(value) if value.eq_ignore_ascii_case("off") => Arc::new(NoStore),
+        _ => Arc::new(OsStore),
+    }
 }
 
-/// Store `key` under `account`, replacing any existing entry.
-pub fn store_key(account: &str, key: &SymmetricKey) -> Result<()> {
-    imp::store_key(account, key)
+/// The operating system's credential store.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OsStore;
+
+impl CredentialStore for OsStore {
+    fn name(&self) -> &'static str {
+        STORE_NAME
+    }
+
+    fn available(&self) -> bool {
+        imp::available()
+    }
+
+    fn unavailable_reason(&self) -> Option<String> {
+        imp::unavailable_reason()
+    }
+
+    fn store_key(&self, account: &str, key: &SymmetricKey) -> Result<()> {
+        imp::store_key(account, key)
+    }
+
+    fn load_key(&self, account: &str) -> Result<Option<SymmetricKey>> {
+        imp::load_key(account)
+    }
+
+    fn delete_key(&self, account: &str) -> Result<()> {
+        imp::delete_key(account)
+    }
 }
 
-/// Load the key stored under `account`, or `None` if there is no entry.
-pub fn load_key(account: &str) -> Result<Option<SymmetricKey>> {
-    imp::load_key(account)
+/// No credential store: never available, holds nothing.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoStore;
+
+impl NoStore {
+    fn refused() -> SecretError {
+        SecretError::Unsupported(format!(
+            "the OS credential store is switched off ({KEYRING_ENV}=off)"
+        ))
+    }
 }
 
-/// Delete the entry under `account`. Missing entries are not an error.
-pub fn delete_key(account: &str) -> Result<()> {
-    imp::delete_key(account)
+impl CredentialStore for NoStore {
+    fn name(&self) -> &'static str {
+        "none (switched off)"
+    }
+
+    fn available(&self) -> bool {
+        false
+    }
+
+    fn unavailable_reason(&self) -> Option<String> {
+        Some(format!("switched off with {KEYRING_ENV}=off"))
+    }
+
+    fn store_key(&self, _account: &str, _key: &SymmetricKey) -> Result<()> {
+        Err(Self::refused())
+    }
+
+    fn load_key(&self, _account: &str) -> Result<Option<SymmetricKey>> {
+        Err(Self::refused())
+    }
+
+    fn delete_key(&self, _account: &str) -> Result<()> {
+        Err(Self::refused())
+    }
+}
+
+/// A store in this process's memory, gone when it is dropped. For tests and
+/// tooling: it stands in for the OS store without touching it.
+#[derive(Debug, Default)]
+pub struct MemoryStore {
+    entries: Mutex<BTreeMap<String, SymmetricKey>>,
+}
+
+impl MemoryStore {
+    /// An empty store.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The accounts it holds a key for, in order.
+    pub fn accounts(&self) -> Vec<String> {
+        self.entries
+            .lock()
+            .map(|entries| entries.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn entries(&self) -> Result<std::sync::MutexGuard<'_, BTreeMap<String, SymmetricKey>>> {
+        self.entries
+            .lock()
+            .map_err(|_| SecretError::Storage("in-memory credential store poisoned".to_owned()))
+    }
+}
+
+impl CredentialStore for MemoryStore {
+    fn name(&self) -> &'static str {
+        "in-memory store"
+    }
+
+    fn available(&self) -> bool {
+        true
+    }
+
+    fn unavailable_reason(&self) -> Option<String> {
+        None
+    }
+
+    fn store_key(&self, account: &str, key: &SymmetricKey) -> Result<()> {
+        self.entries()?.insert(account.to_owned(), key.clone());
+        Ok(())
+    }
+
+    fn load_key(&self, account: &str) -> Result<Option<SymmetricKey>> {
+        Ok(self.entries()?.get(account).cloned())
+    }
+
+    fn delete_key(&self, account: &str) -> Result<()> {
+        self.entries()?.remove(account);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "os-keyring")]
@@ -145,7 +289,8 @@ mod imp {
 
     fn unsupported() -> SecretError {
         SecretError::Unsupported(
-            "this build has no OS credential store support; use a passphrase protector".to_owned(),
+            "this build has no OS credential store support; open the vault with its recovery key"
+                .to_owned(),
         )
     }
 
@@ -168,5 +313,41 @@ mod imp {
 
     pub fn delete_key(_account: &str) -> Result<()> {
         Err(unsupported())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_memory_store_keeps_replaces_and_forgets_keys() {
+        let store = MemoryStore::new();
+        assert!(store.available());
+        assert!(store.load_key("vault/a/b").unwrap().is_none());
+        let first = SymmetricKey::generate().unwrap();
+        store.store_key("vault/a/b", &first).unwrap();
+        assert_eq!(store.load_key("vault/a/b").unwrap().unwrap(), first);
+        let second = SymmetricKey::generate().unwrap();
+        store.store_key("vault/a/b", &second).unwrap();
+        assert_eq!(store.load_key("vault/a/b").unwrap().unwrap(), second);
+        assert_eq!(store.accounts(), vec!["vault/a/b".to_owned()]);
+        store.delete_key("vault/a/b").unwrap();
+        store.delete_key("vault/a/b").unwrap();
+        assert!(store.load_key("vault/a/b").unwrap().is_none());
+    }
+
+    #[test]
+    fn the_switched_off_store_refuses_everything() {
+        let store = NoStore;
+        assert!(!store.available());
+        assert!(store.unavailable_reason().unwrap().contains(KEYRING_ENV));
+        let key = SymmetricKey::generate().unwrap();
+        assert_eq!(
+            store.store_key("a", &key).unwrap_err().code(),
+            "unsupported"
+        );
+        assert_eq!(store.load_key("a").unwrap_err().code(), "unsupported");
+        assert_eq!(store.delete_key("a").unwrap_err().code(), "unsupported");
     }
 }

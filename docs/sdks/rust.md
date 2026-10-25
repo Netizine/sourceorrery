@@ -21,9 +21,10 @@ the read-only client every other SDK is built on. It depends on
 the CLI needs to build: Rust 1.91.1 or newer and a C compiler for the
 bundled SQLite, and on Linux `pkg-config` and `libdbus-1-dev` for the
 Secret Service. The `os-keyring` feature (default) enables the OS
-credential store; for headless servers that only use passphrases, turn it
-off with `cargo add sourceorrery --no-default-features`, which also drops
-the D-Bus requirement.
+credential store and `remote` (default) the providers; for headless
+servers that open vaults with their recovery keys only, turn them off with
+`cargo add sourceorrery --no-default-features`, which also drops the D-Bus
+requirement.
 
 ### From the v0.2.0 tag
 
@@ -51,12 +52,21 @@ connect(secret.value.expose());
 // `secret.value` is a SecretBytes: zeroised on drop, redacted in Debug, no Serialize
 ```
 
-`SecretReader::open` behaves like the CLI: `SOURCEORRERY_HOME` locates the
-vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`, then
-`SOURCEORRERY_PASSPHRASE_FILE` unlock it; there is never a prompt.
-`SecretReader::open_with(vault, &OpenOptions)` takes a `home`, a
-`passphrase`, a `passphrase_file` and `environment(false)` to ignore the
-two passphrase variables.
+With the default options, `SOURCEORRERY_HOME` locates the vault;
+this machine's key in the OS credential store opens it, else the
+recovery key: `recovery_key`, `SOURCEORRERY_RECOVERY_KEY`, then
+`recovery_key_file` or `SOURCEORRERY_RECOVERY_KEY_FILE`; there is never a
+prompt and never the vault's view check. `OpenOptions::new()` takes a
+`home`, a `recovery_key`, a `recovery_key_file` and `environment(false)`
+to ignore the two variables.
+
+A secret the vault keeps at a provider
+([HashiCorp Vault](../providers/hashicorp-vault.md),
+[AWS Secrets Manager](../providers/aws-secrets-manager.md),
+[Azure Key Vault](../providers/azure-key-vault.md)) is read there through
+the vault's connection, with the same calls: the connection signs in with
+the credentials it stores, or with the provider's own sign-in on the
+machine. No provider is contacted until a secret it keeps is read.
 
 | Call | Returns |
 |------|---------|

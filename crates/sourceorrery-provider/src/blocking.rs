@@ -133,6 +133,10 @@ impl<A: AsyncSecretClient> SecretClient for Blocking<A> {
         self.inner.capabilities()
     }
 
+    fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]> {
+        self.run(self.inner.capabilities_of(name))
+    }
+
     fn set_secret(
         &self,
         name: &str,

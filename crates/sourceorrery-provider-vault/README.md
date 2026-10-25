@@ -5,22 +5,19 @@ secrets engine behind the [SourceOrrery](https://sourceorrery.ai) secret
 contract: the same `get`, `set`, versions, policy, soft delete and recover
 as a local vault, served by a Vault server.
 
-**You probably want another crate.** Applications read secrets through
+**You probably want another crate.** A SourceOrrery vault keeps a
+secret at a Vault server through a connection it holds, made with the CLI
+(`sourceorrery setup`, or `vault create --hashicorp-vault ADDRESS`), and
+applications read it through
 [`sourceorrery`](https://crates.io/crates/sourceorrery) (feature
-`provider-vault`, on by default) and name the Vault server in
-`sourceorrery.toml`:
+`provider-vault`, on by default) like any other secret; the manifest never
+names the server.
 
-```toml
-[vaults.production]
-provider = "hashicorp-vault"
-address = "https://vault.example.com:8200"
-mount = "secret"
-```
-
-Credentials never live in the manifest: the provider takes `VAULT_TOKEN`
-(or `~/.vault-token`), an AppRole (`VAULT_ROLE_ID`, `VAULT_SECRET_ID`), a
-JWT (`VAULT_AUTH_ROLE`, `VAULT_JWT_FILE`) or the Kubernetes service account
-token (`VAULT_AUTH_ROLE`), in that order.
+The connection signs in with a token it stores, sealed in the vault, or
+else as Vault's own tools do: `VAULT_TOKEN` (or `~/.vault-token`), an
+AppRole (`VAULT_ROLE_ID`, `VAULT_SECRET_ID`), a JWT (`VAULT_AUTH_ROLE`,
+`VAULT_JWT_FILE`) or the Kubernetes service account token
+(`VAULT_AUTH_ROLE`), in that order.
 
 The mapping of SourceOrrery semantics onto KV v2 (versions, per-version
 properties in `custom_metadata`, soft delete as `delete`/`undelete`/

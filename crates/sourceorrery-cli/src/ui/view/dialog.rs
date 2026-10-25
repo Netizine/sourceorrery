@@ -59,7 +59,8 @@ fn form_lines(form: &Form, theme: &Theme) -> Vec<Line<'static>> {
             Span::raw(sanitize(&field.value).into_owned()),
         ];
         if focused {
-            if field.key != FieldKey::Enabled {
+            // A choice switches with space; only text has a cursor.
+            if !matches!(field.key, FieldKey::Enabled | FieldKey::Storage) {
                 spans.push(Span::styled("▌", theme.key));
             }
             spans.push(Span::styled(

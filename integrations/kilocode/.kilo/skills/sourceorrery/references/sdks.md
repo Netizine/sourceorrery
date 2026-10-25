@@ -2,9 +2,12 @@
 
 Every SDK only reads: the vault must already exist and hold the secrets
 (created with the CLI). Each one opens the vault the way the CLI does:
-`SOURCEORRERY_HOME` locates it, then the OS credential store,
-`SOURCEORRERY_PASSPHRASE` and `SOURCEORRERY_PASSPHRASE_FILE` unlock it;
-there is never a prompt. `Project.load()` finds the nearest
+`SOURCEORRERY_HOME` locates it, then this machine's key in the OS
+credential store opens it, else its recovery key from
+`SOURCEORRERY_RECOVERY_KEY` or `SOURCEORRERY_RECOVERY_KEY_FILE`; there is
+never a prompt, and never the vault's view check. A secret kept at a
+provider is read there through the vault's connection, with no change to
+the code. `Project.load()` finds the nearest
 `sourceorrery.toml`, resolves every secret it declares (a required secret
 that cannot be read is an error) and `env("NAME")` returns the value
 delivered as that variable, or nothing if an optional one is missing.

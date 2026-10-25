@@ -61,7 +61,7 @@ fn command(code: KeyCode) -> Option<Action> {
         KeyCode::Char('G') => Action::Bottom,
         KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => Action::NextTab,
         KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => Action::PrevTab,
-        KeyCode::Char(c @ '1'..='5') => {
+        KeyCode::Char(c @ '1'..='6') => {
             let index = usize::from(u8::try_from(c).ok()? - b'1');
             Action::Show(Tab::ALL[index])
         }
@@ -77,6 +77,8 @@ fn command(code: KeyCode) -> Option<Action> {
         KeyCode::Char('a') => Action::Add,
         KeyCode::Char('d') => Action::Delete,
         KeyCode::Char('u') => Action::Recover,
+        KeyCode::Char('c') => Action::ChangeVault,
+        KeyCode::Char('x') => Action::Unlink,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('q') => Action::Quit,
         _ => return None,
@@ -123,9 +125,13 @@ mod tests {
             Some(Action::Show(Tab::Overview))
         );
         assert_eq!(normal(KeyCode::Char('2')), Some(Action::Show(Tab::Secrets)));
-        assert_eq!(normal(KeyCode::Char('4')), Some(Action::Show(Tab::Audit)));
-        assert_eq!(normal(KeyCode::Char('5')), Some(Action::Show(Tab::Vaults)));
-        assert_eq!(normal(KeyCode::Char('6')), None);
+        assert_eq!(
+            normal(KeyCode::Char('3')),
+            Some(Action::Show(Tab::Projects))
+        );
+        assert_eq!(normal(KeyCode::Char('5')), Some(Action::Show(Tab::Audit)));
+        assert_eq!(normal(KeyCode::Char('6')), Some(Action::Show(Tab::Vaults)));
+        assert_eq!(normal(KeyCode::Char('7')), None);
     }
 
     #[test]
@@ -163,6 +169,8 @@ mod tests {
         assert_eq!(normal(KeyCode::Char('a')), Some(Action::Add));
         assert_eq!(normal(KeyCode::Char('d')), Some(Action::Delete));
         assert_eq!(normal(KeyCode::Char('u')), Some(Action::Recover));
+        assert_eq!(normal(KeyCode::Char('c')), Some(Action::ChangeVault));
+        assert_eq!(normal(KeyCode::Char('x')), Some(Action::Unlink));
         let dialog = |code| press(code, Mode::Dialog);
         assert_eq!(
             dialog(KeyCode::Char('q')),

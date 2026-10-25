@@ -1,100 +1,95 @@
 ---
 title: "Headless: WSL, Docker, CI"
-description: How to unlock a SourceOrrery vault where there is no OS credential store or no terminal, using a passphrase protector, a passphrase file and the SOURCEORRERY_HOME directory.
+description: How to open a SourceOrrery vault where this machine's key is not available or there is no terminal, using the vault's recovery key from a file and the SOURCEORRERY_HOME directory.
 ---
 
-On a desktop, an OS credential store can protect the vault key and unlock it
-without a prompt. Linux programs in WSL cannot use Windows Credential
-Manager, and containers and CI runners usually have no usable credential
-store. Give the vault a **passphrase protector** and supply the passphrase
-from a restricted file.
+On a desktop, the OS credential store keeps this machine's key to the vault
+and opens it without a prompt. Linux programs in WSL cannot use Windows
+Credential Manager, and containers and CI runners usually have no usable
+credential store, or not the one that holds this machine's key. There the
+vault opens with its **recovery key**, shown once when the vault was made,
+supplied from a restricted file.
 
 > [!IMPORTANT]
-> Keep the passphrase separate from the vault. The vault directory needs
+> Keep the recovery key separate from the vault. The vault directory needs
 > write access because even metadata reads append audit events. A read-only
 > volume is not sufficient for a read-only SDK or for `sourceorrery check`.
 
-## How unlocking works
+## How a vault opens
 
-The CLI unlocks a vault using:
+The CLI opens a vault with:
 
-1. every **OS-keyring protector** (Windows Credential Manager, macOS
-   Keychain, Secret Service), with no prompt;
-2. the first configured passphrase source: non-empty
-   `SOURCEORRERY_PASSPHRASE`, otherwise the file named by `--passphrase-file`
-   or `SOURCEORRERY_PASSPHRASE_FILE`;
-3. an interactive prompt on stderr if needed and stdin is a terminal, up to
-   the vault's three-attempt limit.
+1. **this machine's key** in the OS credential store (Windows Credential
+   Manager, macOS Keychain, Secret Service), with no prompt;
+2. otherwise the **recovery key**: `SOURCEORRERY_RECOVERY_KEY` if set,
+   else the file named by `--recovery-key-file` or
+   `SOURCEORRERY_RECOVERY_KEY_FILE`;
+3. otherwise a hidden prompt on stderr when stdin is a terminal, up to
+   three attempts.
 
 > [!TIP]
-> An incorrect `SOURCEORRERY_PASSPHRASE` prevents the CLI from trying a
-> configured passphrase file. Unset that variable before using a file.
-> SDKs never prompt and try their configured candidates in sequence; see
+> A recovery key from the environment or a file is tried once; a wrong one
+> is not retried. `SOURCEORRERY_KEYRING=off` skips the credential store
+> altogether. SDKs never prompt and try the same sources; see
 > [SDK setup](/sdks/#setting-up).
 
-Each passphrase is tried against every passphrase protector on the vault.
 Failed attempts are recorded in the audit log as `vault_open` / `denied`;
 giving up is recorded as `vault_open` / `failure`. Nothing ever falls back to
 an unprotected vault.
 
-A vault can carry several protectors because each one wraps the same vault
-key (see [Vault format](/reference/vault-format/#key-hierarchy)). A vault
-created on Windows with Credential Manager can therefore also be unlocked with
-a passphrase from WSL, Docker or CI. The last protector cannot be removed.
+Both keys wrap the same vault key (see
+[Vault format](/reference/vault-format/#key-hierarchy)), so a vault made on
+Windows opens with its recovery key from WSL, Docker or CI. The vault's
+**view check** (a password, perhaps with an authenticator code) is asked
+only when a person views the vault or reveals a value; `run`, `check` and
+the SDKs never ask it, and a vault opened with its recovery key has passed
+it.
 
-## Add a passphrase protector
+## The recovery key
 
-Run this where the vault can already be unlocked, for example on the Windows
-desktop that created it. Without a configured passphrase source, you are
-prompted for the new passphrase twice. If an environment variable or file is
-configured, that source supplies the new protector's passphrase instead.
-
-```bash
-sourceorrery vault protector add --kind passphrase --vault development
-sourceorrery vault protector list --vault development
-```
-
-To create a vault that only ever uses a passphrase, for instance one dedicated
-to a pipeline:
+`sourceorrery setup` shows the recovery key once, behind a "written down"
+tick; `vault create` prints it once, or writes it to a new file readable by
+you only:
 
 ```bash
-sourceorrery vault create ci --protector passphrase
+sourceorrery vault create development --recovery-key-out ~/.config/development.recovery-key
 ```
 
-Choose a passphrase you can provision independently of the vault file. Argon2id
-(64 MiB, 3 passes) slows offline guessing against a stolen file; it does not
-rescue a weak passphrase.
+A vault for a pipeline only, with no key for this machine:
+
+```bash
+sourceorrery vault create ci --no-keyring --recovery-key-out ci.recovery-key
+```
+
+A lost recovery key is replaced on a machine that still opens the vault,
+on the setup screens (`sourceorrery vault create development`, or `c` in
+`sourceorrery ui`); the old one stops working at once.
 
 ## WSL
 
 The Windows home directory is reachable from WSL, so point `SOURCEORRERY_HOME`
-at it and unlock with the passphrase protector added above:
-
-```bash
-export SOURCEORRERY_HOME=/mnt/c/Users/me/AppData/Local/sourceorrery
-sourceorrery secret list --vault development         # prompts for the passphrase
-sourceorrery run --vault development -- ./app         # same
-```
-
-To avoid the prompt, keep the passphrase in a file that only you can read:
+at it and give the recovery key from a file only you can read:
 
 ```bash
 mkdir -p ~/.config
-install -m 600 /dev/null ~/.config/sourceorrery-pass
-# write the passphrase into it with your editor, then
-export SOURCEORRERY_PASSPHRASE_FILE=~/.config/sourceorrery-pass
+install -m 600 /dev/null ~/.config/development.recovery-key
+# write the recovery key into it with your editor, then
+export SOURCEORRERY_HOME=/mnt/c/Users/me/AppData/Local/sourceorrery
+export SOURCEORRERY_RECOVERY_KEY_FILE=~/.config/development.recovery-key
 sourceorrery check
+sourceorrery run --vault development -- ./app
 ```
 
-Use a Linux build of `sourceorrery` to launch Linux applications inside WSL.
-A build with `--no-default-features` is enough for passphrase-based CLI
-commands; it omits both OS-keyring support and the interactive `ui`.
+Without the variable, each command prompts for the recovery key. Use a
+Linux build of `sourceorrery` to launch Linux applications inside WSL. A
+build with `--no-default-features` is enough for that; it omits the OS
+credential store, the screens (`ui`, `setup`, `init`'s) and the providers.
 
 ## Docker
 
-Build the CLI without OS-keyring support, since a container has no Secret
-Service, and give the container two things: the home directory that holds the
-vault file, and the passphrase as a file.
+Build the CLI without the credential store, since a container has no
+Secret Service, and give the container two things: the home directory that
+holds the vault file, and the recovery key as a file.
 
 ```dockerfile
 FROM rust:1.91.1-bookworm AS build
@@ -107,16 +102,20 @@ COPY --from=build /src/target/release/sourceorrery /usr/local/bin/sourceorrery
 ENV SOURCEORRERY_HOME=/var/lib/sourceorrery
 ```
 
+For secrets the vault keeps at HashiCorp Vault, AWS Secrets Manager or
+Azure Key Vault, build with `--no-default-features --features remote`
+instead.
+
 Mount the vault directory read-write (every access appends an audit row) and
-pass the passphrase through a file rather than an environment variable:
+pass the recovery key through a file rather than an environment variable:
 
 ```bash
 docker run --rm \
   -v "$HOME/.local/share/sourceorrery:/var/lib/sourceorrery" \
   -v "$PWD/sourceorrery.toml:/app/sourceorrery.toml:ro" \
-  -v "$HOME/.config/sourceorrery-pass:/run/secrets/sopass:ro" \
+  -v "$HOME/.config/development.recovery-key:/run/secrets/recovery-key:ro" \
   -w /app my-image \
-  sourceorrery --passphrase-file /run/secrets/sopass check
+  sourceorrery --recovery-key-file /run/secrets/recovery-key check
 ```
 
 Build `my-image` from the Dockerfile above in the SourceOrrery repository.
@@ -125,65 +124,63 @@ application and its runtime to the image, then replace `check` with
 `run -- <your application's command>`. Keep build and runtime images on the
 same Debian release so the compiled binary has compatible system libraries.
 
-With Docker Compose or Swarm, declare the passphrase under `secrets:` and it
-appears at `/run/secrets/<name>` in the container, which is exactly what
-`--passphrase-file` expects.
+With Docker Compose or Swarm, declare the recovery key under `secrets:` and
+it appears at `/run/secrets/<name>` in the container, which is exactly what
+`--recovery-key-file` expects.
 
 ## CI
 
-`SOURCEORRERY_PASSPHRASE` works but environment variables are visible to
-process inspection, so prefer a file. In GitHub Actions, store the passphrase
-as a repository secret and write it to the runner's temporary directory for
-the length of the job:
+`SOURCEORRERY_RECOVERY_KEY` works but environment variables are visible to
+process inspection, so prefer a file. In GitHub Actions, store the recovery
+key as a repository secret and write it to the runner's temporary directory
+for the length of the job:
 
 ```yaml
-- name: Provide the vault passphrase
+- name: Provide the vault's recovery key
   shell: bash
   run: |
     umask 077
-    printf '%s' "$VAULT_PASSPHRASE" > "$RUNNER_TEMP/sopass"
+    printf '%s' "$VAULT_RECOVERY_KEY" > "$RUNNER_TEMP/recovery-key"
   env:
-    VAULT_PASSPHRASE: ${{ secrets.VAULT_PASSPHRASE }}
+    VAULT_RECOVERY_KEY: ${{ secrets.VAULT_RECOVERY_KEY }}
 
 - name: Check the manifest resolves
   shell: bash
-  run: sourceorrery --passphrase-file "$RUNNER_TEMP/sopass" check
+  run: sourceorrery --recovery-key-file "$RUNNER_TEMP/recovery-key" check
 
 - name: Deploy with secrets in the environment
   shell: bash
-  run: sourceorrery --passphrase-file "$RUNNER_TEMP/sopass" run -- ./deploy.sh
+  run: sourceorrery --recovery-key-file "$RUNNER_TEMP/recovery-key" run -- ./deploy.sh
 
-- name: Remove the passphrase file
+- name: Remove the recovery key file
   if: always()
   shell: bash
-  run: rm -f -- "$RUNNER_TEMP/sopass"
+  run: rm -f -- "$RUNNER_TEMP/recovery-key"
 ```
 
 These steps assume the CLI is installed, the repository is checked out and
 the runner can access a provisioned vault. `check` reads metadata only and
-writes no `secret_get` audit rows, but its unlock and inspection operations
-are still audited. `run` resolves every entry and starts the
-command with the values in its environment; a missing required secret aborts
-before the command starts.
+writes no `secret_get` audit rows, but its open and inspection operations
+are still audited. `run` resolves every entry and starts the command with
+the values in its environment; a missing required secret aborts before the
+command starts.
 
 For a local vault, the file itself has to reach the runner. `*.sorvault`
-is gitignored on purpose; do not commit one. Use a
-self-hosted runner with a persistent home directory, or a container image or
-volume provisioned with the vault, and provide the passphrase separately.
+is gitignored on purpose; do not commit one. Use a self-hosted runner with
+a persistent home directory, or a container image or volume provisioned
+with a copy of the vault: `sourceorrery vault export --out FILE` writes
+one that opens with the recovery key only, and `vault import FILE` brings
+it onto a machine. A secret the vault keeps at a provider
+([providers](/providers/)) is read there through the vault's connection,
+with the credentials the connection stores or the provider's own sign-in
+on the runner, so only the vault's catalog travels with the file.
 
-Version 0.2.0 also includes encrypted [backup and restore](/reference/cli/#backup-and-restore)
-for local vaults. A backup has its own passphrase and restores secret
-versions into a target vault; provision and unlock that vault separately.
-Alternatively, [remote providers](/providers/) retrieve secrets from AWS
-Secrets Manager or HashiCorp Vault using the provider's credentials, with
-no local vault file to copy.
-
-## What a passphrase does not change
+## What a recovery key does not change
 
 > [!WARNING]
-> Whoever holds the passphrase, or runs as the user that can read the
-> passphrase file, can unlock the vault and reveal any accessible secret in
-> it. Keep the file out of images, logs and the repository. Treat a runner
-> that holds it as having access to the vault, and use a separate vault with
-> credentials scoped to that pipeline. See the
+> Whoever holds the recovery key, or runs as the user that can read the
+> file, can open the vault and reveal any accessible secret in it, with
+> no view check. Keep the file out of images, logs and the repository.
+> Treat a runner that holds it as having access to the vault, and use a
+> separate vault for that pipeline. See the
 > [threat model](/security/threat-model/#the-three-guarantees).

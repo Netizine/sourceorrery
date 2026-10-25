@@ -11,7 +11,6 @@ use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use sourceorrery_core::audit::{AuditOperation, AuditQuery};
 use sourceorrery_core::{RecoveryLevel, Result, SecretError};
-use sourceorrery_crypto::Argon2Params;
 use sourceorrery_storage::CreateVaultOptions;
 use time::OffsetDateTime;
 
@@ -23,13 +22,13 @@ use crate::buffer::so_bytes;
 /// {
 ///   "recovery_level": "recoverable" | "purgeable",
 ///   "retention_days": 90,
-///   "argon2": { "memory_kib": 65536, "iterations": 3, "parallelism": 1 }
+///   "this_machine": true
 /// }
 /// ```
 ///
-/// `argon2` sets the cost of the passphrase protector and is ignored for an
-/// OS-keyring protector. Leave it unset outside tests: the defaults are the
-/// interactive parameters from `sourceorrery_crypto::Argon2Params`.
+/// `this_machine` (default `true`) keeps a key in the OS credential store so
+/// the vault opens here without its recovery key; it is ignored where no
+/// store is available, and tests set it to `false`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateOptions {
@@ -39,9 +38,9 @@ pub struct CreateOptions {
     /// Soft-delete retention in days (7–90).
     #[serde(default)]
     pub retention_days: Option<u32>,
-    /// Passphrase key-derivation cost.
+    /// Keep a key for this machine in the OS credential store.
     #[serde(default)]
-    pub argon2: Option<Argon2Params>,
+    pub this_machine: Option<bool>,
 }
 
 impl CreateOptions {
@@ -51,12 +50,8 @@ impl CreateOptions {
         CreateVaultOptions {
             recovery_level: self.recovery_level.unwrap_or(defaults.recovery_level),
             retention_days: self.retention_days.unwrap_or(defaults.retention_days),
+            this_machine: self.this_machine.unwrap_or(defaults.this_machine),
         }
-    }
-
-    /// Argon2id parameters for a passphrase protector.
-    pub fn argon2_params(&self) -> Argon2Params {
-        self.argon2.unwrap_or_default()
     }
 }
 
@@ -121,10 +116,10 @@ mod tests {
         let vault = options.vault_options();
         assert_eq!(vault.recovery_level, RecoveryLevel::Recoverable);
         assert_eq!(vault.retention_days, 90);
-        assert_eq!(options.argon2_params(), Argon2Params::INTERACTIVE);
+        assert!(vault.this_machine);
 
         let options: CreateOptions = parse(
-            br#"{"recovery_level":"purgeable","retention_days":7,"argon2":{"memory_kib":8192,"iterations":1,"parallelism":1}}"#,
+            br#"{"recovery_level":"purgeable","retention_days":7,"this_machine":false}"#,
             "options",
         )
         .unwrap();
@@ -133,7 +128,7 @@ mod tests {
             RecoveryLevel::Purgeable
         );
         assert_eq!(options.vault_options().retention_days, 7);
-        assert_eq!(options.argon2_params(), Argon2Params::TESTING);
+        assert!(!options.vault_options().this_machine);
 
         let err = parse::<CreateOptions>(br#"{"retentionDays":7}"#, "options").unwrap_err();
         assert_eq!(err.code(), "invalid_argument");

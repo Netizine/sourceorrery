@@ -35,10 +35,10 @@ source code.
   server to get started.
 
 > [!NOTE]
-> In 0.2.0, retrieval uses an encrypted local vault or an optional AWS Secrets
-> Manager or HashiCorp Vault provider. Remote access uses the provider's
-> identity and policy controls; local access uses the caller's unlock
-> credentials. The authenticated local broker and same-user agent isolation
+> Retrieval goes through an encrypted local vault, which keeps each secret
+> in its own file or at a provider it connects to (HashiCorp Vault, AWS
+> Secrets Manager, Azure Key Vault). A provider's secrets use its identity
+> and policy controls; the vault file's use the key that opens it. The authenticated local broker and same-user agent isolation
 > remain planned work, not guarantees of the local SDKs.
 
 One important qualification: removing `.env` files eliminates a major
@@ -55,19 +55,24 @@ sourceorrery/
 │   ├── sourceorrery-core       contracts: SecretClient, properties, errors,
 │   │                           policy, identity, audit, manifest
 │   ├── sourceorrery-crypto     XChaCha20-Poly1305, Argon2id, envelope wrapping
-│   ├── sourceorrery-storage    encrypted SQLite vault, key protectors,
-│   │                           OS keyring, vault registry
+│   ├── sourceorrery-storage    encrypted SQLite vault, its key wraps
+│   │                           (this machine, the recovery key), the view
+│   │                           check, connections, catalog, projects,
+│   │                           export and import, vault registry
 │   ├── sourceorrery-cli        the `sourceorrery` binary
-│   ├── sourceorrery            the read-only client: CLI unlock order,
-│   │                           manifest loading, error hints (the Rust SDK)
+│   ├── sourceorrery            the read-only client: the CLI's opening
+│   │                           order, manifest loading, error hints (the
+│   │                           Rust SDK)
 │   ├── sourceorrery-ffi        stable C ABI (cbindgen header): read-only
 │   │                           so_reader_* for SDKs, so_vault_* for tooling
 │   ├── sourceorrery-provider   Blocking / AsyncLocal adapters between the
 │   │                           sync and async shapes of the contract;
-│   │                           open_remote picks a provider for a manifest's
-│   │                           [vaults.<name>] table
+│   │                           open_connection picks a provider for a
+│   │                           vault's connection; Routed, the vault over
+│   │                           every storage
 │   ├── sourceorrery-provider-vault  HashiCorp Vault KV v2 behind the contract
-│   └── sourceorrery-provider-aws    AWS Secrets Manager behind the contract
+│   ├── sourceorrery-provider-aws    AWS Secrets Manager behind the contract
+│   └── sourceorrery-provider-azure  Azure Key Vault behind the contract
 ├── bindings/                   the other nine SDKs (see §7)
 ├── tests/conformance           lifecycle + security suite for every backend/SDK
 ├── scripts/ci, scripts/release fixture vault for SDK tests; version stamping
@@ -87,11 +92,13 @@ cli ──► storage ──► crypto
  │         │
  └────► core ◄──────┘ (crypto has no core dependency; storage maps its errors)
 
-sourceorrery (client) ──► storage, core
+cli ──► provider (Routed, the connections)
+sourceorrery (client) ──► provider, storage, core
 sourceorrery-ffi ──────► sourceorrery (client), storage, core
-sourceorrery-provider ─► core, tokio; provider-vault, provider-aws (features)
+sourceorrery-provider ─► core, tokio; provider-vault, provider-aws, provider-azure (features)
 sourceorrery-provider-vault ─► core, reqwest (rustls)
 sourceorrery-provider-aws ───► core, aws-sdk-secretsmanager, aws-config
+sourceorrery-provider-azure ─► core, azure_security_keyvault_secrets, azure_identity
 tests/conformance ─────► storage, core; provider in its tests
 bindings/python, bindings/node ──► sourceorrery (client)      native extensions
 bindings/{java,dotnet,go,cpp,php} ──► sourceorrery-ffi (C ABI) foreign-function calls
@@ -110,7 +117,8 @@ bindings/{java,dotnet,go,cpp,php} ──► sourceorrery-ffi (C ABI) foreign-fun
 | `SecretError` | Typed errors with stable, append-only string codes for SDKs. |
 | `Principal` | Who is asking (`user`, `workload`, `agent`, `system`). Today it labels the OS user; it is not verified identity. |
 | `AuditEvent` | Metadata-only record: actor, operation, secret, version, outcome, detail (error code). |
-| `Manifest` | `sourceorrery.toml`: project name, default vault, required secrets, and the remote vaults (`[vaults.<name>]`: a `RemoteVault`, the provider and its addressing keys only). Rejects unknown fields, so it cannot hold a value or a credential. |
+| `Manifest` | `sourceorrery.toml`: project name, the vault, the secrets it uses (and how each is delivered), rotation hooks. Rejects unknown fields, so it cannot hold a value, a credential or where a secret is kept. |
+| `ConnectionSettings` / `Credentials` | How a vault reaches a provider (`core::connection`): the provider and its addressing keys, and optionally its credentials as `SecretBytes`. The vault stores both; a credential is sealed and never serialised. |
 
 ### The `SecretClient` contract
 
@@ -166,9 +174,18 @@ The lifecycle conformance suite checks these as functions over
 `&dyn SecretClient` (`sourceorrery_conformance::lifecycle`), run against the
 SQLite vault directly and through the adapter pair, and by each remote
 provider's CI job through its `Blocking` adapter. A remote backend may
-differ only where its service cannot express the contract, and documents
-each difference; `audit_events` returning `unsupported` (the service keeps
-its own log) is the one common to all.
+differ only where its service cannot express the contract
+(`SecretClient::capabilities`, per secret through `capabilities_of`), and
+documents each difference; `audit_events` returning `unsupported` (the
+service keeps its own log) is the one common to all.
+
+A vault keeps each secret in one storage: its own file, or a provider
+through one of its connections. `Routed` (`sourceorrery-provider`) is the
+vault over every storage: a `SecretClient` over the vault file that sends
+each call to where the secret is kept and records the provider's call in
+the vault's own audit log. The CLI, the SDKs and the browser all read
+through it; a secret's storage is the vault's record (`secrets.storage`),
+never the manifest's.
 
 A deliberate difference from the managed cloud secrets services: `not_before` and `expires_on`
 are **enforced** on retrieval, not advisory.
@@ -180,19 +197,14 @@ disabled, and the previous credential retired at the issuer after a grace
 period. Every step is an ordinary `set` or `update`, recorded in the
 versions' tags; the issuer's side is a command the CLI runs, because a new
 value is not a rotated credential until the issuer knows about it. It needs
-per-version properties (`SecretClient::capabilities`), which the local vault
-and HashiCorp Vault have and AWS Secrets Manager has not.
+per-version properties (`SecretClient::capabilities`), which the local vault,
+HashiCorp Vault and Azure Key Vault have and AWS Secrets Manager has not.
 
-A second, smaller contract, `VaultBackup`, covers backups: `export` takes
-a `Snapshot` of the secrets with every version's value (disabled and
-expired ones included, which is why it is a separate, privileged read,
-recorded as `vault_backup` per secret), and `restore` writes a snapshot's
-versions through the ordinary checkpointed write path as new versions
-(`secret_restore` per version), skipping names the target already has
-unless asked to add to them. The snapshot holds values as `SecretBytes`
-and has no `Serialize`; sealing it into a file is the storage crate's
-([backup format](backup-format.md)). Only the CLI uses it: SDKs stay
-read-only (ADR 0005).
+Moving a vault is not an operation of the contract either: `vault
+export` copies the file (SQLite's online backup) without this machine's
+key or the view check, so the copy opens with the recovery key only, and
+`vault import` brings such a copy in and gives it this machine's key
+(`storage::sqlite::export`).
 
 ## 4. Cryptography (`sourceorrery-crypto`)
 
@@ -201,8 +213,9 @@ No algorithms are implemented in this repository.
 | Purpose | Primitive | Crate |
 |---------|-----------|-------|
 | Value and key encryption | XChaCha20-Poly1305, random 24-byte nonce | `chacha20poly1305` |
-| Passphrase → key | Argon2id v1.3, 64 MiB / 3 passes / 1 lane by default | `argon2` |
-| Integrity keys | HKDF-SHA256 sub-keys of the vault key | `hkdf` |
+| View-check password hash | Argon2id v1.3, 64 MiB / 3 passes / 1 lane by default | `argon2` |
+| Recovery key → key, integrity keys | HKDF-SHA256 (the recovery key is 125 random bits; sub-keys of the vault key) | `hkdf` |
+| Authenticator codes | TOTP, RFC 6238 over HMAC-SHA1 | `hmac`, `sha1` |
 | Metadata, settings and audit-chain tags | HMAC-SHA256 | `hmac`, `sha2` |
 | Randomness | OS CSPRNG | `getrandom` |
 
@@ -211,9 +224,10 @@ lives, so a ciphertext copied between records fails to decrypt instead of
 returning the wrong secret:
 
 * values: `sourceorrery/v1/value/<vault id>/<name>/<version>`
-* wrapped keys: `sourceorrery/v<schema>/protector/<vault id>/<protector id>`,
-  so a wrapped key is bound to the on-disk format it was written for (`v3`
-  now)
+* wrapped keys: `sourceorrery/v4/wrap/<vault id>/<wrap id>`, so a wrapped
+  key is bound to the on-disk format it was written for
+* the view check's records, a connection's credentials, a project's path
+  and name: `sourceorrery/v4/<kind>/<vault id>[/<id>]`
 
 Mutable rows, vault settings and the audit chain are authenticated with
 HMAC-SHA256 under keys derived from the vault key; the domains and what
@@ -230,28 +244,31 @@ version history, retention, policy or audit. See [vault-format.md](vault-format.
 ### Key hierarchy
 
 ```
-key protector                          one or more per vault
-  os-keyring  : random KEK in the OS credential store
-  passphrase  : KEK = Argon2id(passphrase, salt, params)
+key wrap                               two per vault
+  this-machine : random KEK in the OS credential store
+  recovery     : KEK = HKDF(recovery key, salt)
         │ wraps
         ▼
-vault DEK  ────────────────────────►  encrypts every value
+vault DEK  ────────────────────────►  encrypts every value and every sealed record
 ```
 
-Adding a protector wraps the same DEK again. A vault created on Windows with
-Credential Manager can therefore also carry a passphrase protector for WSL,
-Docker or CI. Removing the last protector is refused.
+This machine opens the vault without asking; the recovery key, shown once
+when the vault is made, opens it on any other machine, in WSL, a
+container, CI or an exported copy. Replacing the recovery key removes the
+old wrap in the same transaction. The view check (an optional password and
+authenticator code before a person views the vault) is a check the vault
+enforces, not part of this hierarchy: the key does not depend on it.
 
 ### Backend classes
 
 | Backend | Status |
 |---------|--------|
-| Encrypted SQLite vault, key in OS store or passphrase | Shipped (milestone 1) |
-| Remote providers (HashiCorp Vault, AWS Secrets Manager) implementing the same contract ([providers](providers/index.md); identity, policy and revocation: [enterprise](enterprise.md)) | Implemented for 0.2.0 |
+| Encrypted SQLite vault, its key in the OS store and under its recovery key | Shipped (milestone 1) |
+| Providers a vault connects to (HashiCorp Vault, AWS Secrets Manager, Azure Key Vault), each implementing the same contract, chosen per secret ([providers](providers/index.md); identity, policy and revocation: [enterprise](enterprise.md)) | Shipped |
 
-Headless Linux servers often have no Secret Service daemon. The fallback is a
-passphrase protector with an independently provisioned secret — never silent
-fallback to plaintext or an unprotected vault.
+Headless Linux servers often have no Secret Service daemon. There the vault
+opens with its recovery key, provisioned from a file or the environment —
+never a silent fallback to plaintext or an unprotected vault.
 
 ## 6. CLI (`sourceorrery-cli`)
 
@@ -262,6 +279,13 @@ for output, `tracing` for diagnostics. Design rules:
   `--value` flag: arguments leak via shell history and process listings.
 * `list`, `versions`, `get`, `audit` show metadata. `get --reveal` is the one
   deliberate disclosure; `run` is the other (into a child's environment).
+  The viewing commands and `ui` ask the vault's view check
+  (`Ctx::check_view`); `run`, `check`, `init` and the SDKs never do.
+* `setup` and `vault create [NAME]` are the setup screens (`ui::setup`): a
+  state machine over a backend, drawn by a view, committed in one
+  transaction at its review (`SqliteVault::change_settings`). `init` has
+  screens of its own (`ui::init`) that read the vault's catalog and write
+  the manifest. Without a terminal both take flags.
 * Prompts go to stderr so stdout stays clean for data and `--output json`.
 * Every error carries its stable code in JSON mode.
 * `ui` is an interactive browser built on Ratatui (the `ui` cargo feature,
@@ -269,9 +293,12 @@ for output, `tracing` for diagnostics. Design rules:
   which has no operation that returns a value, and it reads each thing
   once, when first shown, because every metadata read is audited. It opens
   vaults for inspection, as `audit` does, so a blocked vault still shows
-  its audit log. Changes go through a separate `ui::editor::MetadataEditor`
-  that only `ui::app` holds, once checked and confirmed (`ui::edit`); a
-  new value comes from the CLI's hidden prompt with the screen suspended.
+  its audit log, and through `Routed`, so a secret a provider keeps is
+  listed and changed there. Changes go through a separate
+  `ui::editor::MetadataEditor` that only `ui::app` holds, once checked
+  (against the storage's capabilities too) and confirmed (`ui::edit`); a
+  new value comes from the CLI's hidden prompt with the screen suspended;
+  the vault's settings change on the setup screens.
   Its `dark` and `light` themes are the documentation site's palettes
   (`site/src/styles/paper.css`); keep the two in step.
 
@@ -307,9 +334,9 @@ not any binding generator. See [`bindings/README.md`](../bindings/README.md).
 ### The bindings layer
 
 Ten SDKs, all **read-only** ([ADR 0005](adr/0005-read-only-sdks.md)): open
-a vault with the CLI's unlock order, get the newest accessible or an
+a vault with the CLI's opening order, get the newest accessible or an
 explicit version, read properties, resolve a `sourceorrery://` reference,
-load a `sourceorrery.toml`, close. No write, protector or audit surface
+load a `sourceorrery.toml`, close. No write, key or audit surface
 exists in any of them; a library that cannot write cannot be tricked into
 writing. User guides: [sdks/](sdks/index.md).
 
@@ -317,7 +344,7 @@ writing. User guides: [sdks/](sdks/index.md).
                      ┌────────────────────────────────────────────┐
   Rust (crate)  ───► │ sourceorrery                               │
   Python (PyO3) ───► │   SecretReader · Project · Error{code,hint}│ ──► storage ──► crypto
-  Node (napi-rs) ──► │   unlock order, manifest semantics, hints  │
+  Node (napi-rs) ──► │   opening order, manifest semantics, hints │
                      └──────────────────────┬─────────────────────┘
                                             │
                      ┌──────────────────────▼─────────────────────┐
@@ -330,9 +357,10 @@ writing. User guides: [sdks/](sdks/index.md).
 
 Three rules keep the layer thin ([ADR 0006](adr/0006-binding-technologies.md)):
 
-* **All logic in Rust.** The `sourceorrery` crate owns the unlock order
-  (OS credential store, explicit passphrase, `SOURCEORRERY_PASSPHRASE`,
-  `SOURCEORRERY_PASSPHRASE_FILE`, never a prompt), the manifest semantics
+* **All logic in Rust.** The `sourceorrery` crate owns the opening order
+  (this machine's key in the OS credential store, then the recovery key: an
+  explicit one, `SOURCEORRERY_RECOVERY_KEY`, `SOURCEORRERY_RECOVERY_KEY_FILE`;
+  never a prompt, never the view check), the manifest semantics
   (mirroring `sourceorrery run`) and the *hint* attached to every error:
   the sentence that tells the person what to do. A binding maps the stable
   code to a typed error and passes code, message and hint through.
@@ -361,9 +389,9 @@ Three rules keep the layer thin ([ADR 0006](adr/0006-binding-technologies.md)):
 Every release builds the CLI, the C ABI and the SDK packages for the six
 Tier 1 targets on native runners (Windows arm64 is cross-compiled); CI
 runs every test on Ubuntu, Windows and macOS. A working binary does not
-guarantee a working credential backend; CI tests the passphrase path
-everywhere and the OS-keyring path is validated manually per platform
-until a keyring-capable CI matrix exists.
+guarantee a working credential backend; CI tests the recovery-key path
+everywhere and runs the OS-keyring smoke test against a real store on
+each platform (`scripts/dev/keyring-smoke.sh` and `.ps1`).
 
 ## 9. Differentiators
 

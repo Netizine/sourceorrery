@@ -11,6 +11,23 @@
     <SonarQubeTestProject>false</SonarQubeTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <!-- These reports describe this module's production files. Importing them
+         again in the separate test/.NET modules produces misleading warnings. -->
+    <SonarQubeSetting Include="sonar.rust.lcov.reportPaths">
+      <Value>$(RepositoryRoot)coverage/rust-production.lcov</Value>
+    </SonarQubeSetting>
+    <SonarQubeSetting Include="sonar.python.coverage.reportPaths">
+      <Value>$(RepositoryRoot)coverage/python.xml,$(RepositoryRoot)coverage/tooling-python.xml</Value>
+    </SonarQubeSetting>
+    <SonarQubeSetting Include="sonar.javascript.lcov.reportPaths">
+      <Value>$(RepositoryRoot)coverage/node/lcov.info,$(RepositoryRoot)coverage/site/lcov.info,$(RepositoryRoot)coverage/tooling-node/lcov.info</Value>
+    </SonarQubeSetting>
+    <SonarQubeSetting Include="sonar.go.coverage.reportPaths">
+      <Value>$(RepositoryRoot)coverage/go.out</Value>
+    </SonarQubeSetting>
+    <SonarQubeSetting Include="sonar.coverage.jacoco.xmlReportPaths">
+      <Value>$(RepositoryRoot)bindings/java/target/site/jacoco/jacoco.xml</Value>
+    </SonarQubeSetting>
     <!-- The scanner keeps files under this project's directory in its module.
          A root project preserves source/test classification for every language. -->
     <Content Include="@(AnalysisFile)" Exclude="@(AnalysisTestFile)" />

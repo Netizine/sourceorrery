@@ -1,11 +1,10 @@
 //! # AWS Secrets Manager behind the SourceOrrery contract
 //!
 //! [`AwsClient`] implements `AsyncSecretClient` over Secrets Manager with
-//! the official AWS SDK. Applications do not use it directly: the
-//! `sourceorrery` crate opens it for a vault that `sourceorrery.toml`
-//! declares with `provider = "aws-secrets-manager"`, and the CLI, the C ABI
-//! and every SDK reach it through the `Blocking` adapter of
-//! `sourceorrery-provider`.
+//! the official AWS SDK. Applications do not use it directly:
+//! `sourceorrery-provider` opens it for a connection with
+//! `provider = "aws-secrets-manager"`, and the CLI, the C ABI and every SDK
+//! reach it through that crate's `Blocking` adapter.
 //!
 //! Secrets Manager keeps metadata per secret, not per version, so
 //! `enabled`, `content_type`, `not_before` and `expires_on` apply to the
@@ -22,22 +21,23 @@ use std::fmt;
 
 use async_trait::async_trait;
 use aws_sdk_secretsmanager::Client;
+use aws_sdk_secretsmanager::config::Credentials as AccessKey;
 use aws_sdk_secretsmanager::config::{BehaviorVersion, ProvideCredentials, Region};
 use aws_sdk_secretsmanager::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_secretsmanager::operation::describe_secret::DescribeSecretOutput;
 use aws_sdk_secretsmanager::primitives::Blob;
 use aws_sdk_secretsmanager::types::{Filter, FilterNameStringType};
 use sourceorrery_core::{
-    AsyncSecretClient, AuditEvent, AuditQuery, Capability, DeletedSecret, Provider, RecoveryLevel,
-    RemoteVault, Result, Secret, SecretBytes, SecretError, SecretProperties, SetSecretOptions,
-    UpdateSecretProperties, VaultDescriptor, policy, timestamp, validate_secret_name,
+    AsyncSecretClient, AuditEvent, AuditQuery, Capability, ConnectionSettings, Credentials,
+    DeletedSecret, Provider, RecoveryLevel, Result, Secret, SecretBytes, SecretError,
+    SecretProperties, SetSecretOptions, UpdateSecretProperties, VaultDescriptor, policy, timestamp,
+    validate_secret_name,
 };
 use time::OffsetDateTime;
 
 use crate::mapping::{CURRENT, RECOVERY_WINDOW_DAYS, SecretProps, Version};
 
-/// How a client reaches Secrets Manager: the manifest's `[vaults.<name>]`
-/// table.
+/// How a client reaches Secrets Manager: a connection's settings.
 #[derive(Debug, Clone)]
 pub struct Settings {
     /// The region.
@@ -51,9 +51,9 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Settings for a manifest table.
-    pub fn from_manifest(remote: &RemoteVault) -> Result<Self> {
-        let RemoteVault::AwsSecretsManager {
+    /// Settings for a connection.
+    pub fn from_connection(remote: &ConnectionSettings) -> Result<Self> {
+        let ConnectionSettings::AwsSecretsManager {
             region,
             prefix,
             endpoint_url,
@@ -193,17 +193,18 @@ where
 }
 
 impl AwsClient {
-    /// Connect as the vault `vault_name`: load the SDK configuration (the
-    /// default credential chain, `settings.region`, the endpoint when
-    /// given) and resolve credentials once, so a process with none fails
-    /// here with `unauthenticated` and no request is made.
-    pub async fn connect(vault_name: &str, settings: &Settings) -> Result<Self> {
-        let mut loader = aws_config::defaults(BehaviorVersion::latest())
-            .region(Region::new(settings.region.clone()));
-        if let Some(url) = &settings.endpoint_url {
-            loader = loader.endpoint_url(url);
-        }
-        let config = loader.load().await;
+    /// Connect as the vault `vault_name`: load the SDK configuration
+    /// (`settings.region`, the endpoint when given, and the access key a
+    /// connection stores, or else the default credential chain) and resolve
+    /// credentials once, so a process with none fails here with
+    /// `unauthenticated` and no request is made. Credentials for another
+    /// provider are `invalid_argument`.
+    pub async fn connect(
+        vault_name: &str,
+        settings: &Settings,
+        credentials: Option<&Credentials>,
+    ) -> Result<Self> {
+        let config = Self::sdk_config(settings, credentials).await?;
         let provider = config.credentials_provider().ok_or_else(|| {
             unauthenticated("the SDK configuration has no credentials provider".to_owned())
         })?;
@@ -227,6 +228,47 @@ impl AwsClient {
                 protectors: Vec::new(),
             },
         })
+    }
+
+    /// The SDK configuration [`Self::connect`] uses: the region, the
+    /// endpoint when given, and the stored access key or else the default
+    /// credential chain. Nothing is resolved or requested here.
+    async fn sdk_config(
+        settings: &Settings,
+        credentials: Option<&Credentials>,
+    ) -> Result<aws_config::SdkConfig> {
+        let mut loader = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new(settings.region.clone()));
+        if let Some(url) = &settings.endpoint_url {
+            loader = loader.endpoint_url(url);
+        }
+        match credentials {
+            None => {}
+            Some(Credentials::AwsAccessKey {
+                access_key_id,
+                secret_access_key,
+            }) => {
+                let secret = secret_access_key.expose_utf8().ok_or_else(|| {
+                    SecretError::InvalidArgument(
+                        "the stored secret access key is not text".to_owned(),
+                    )
+                })?;
+                loader = loader.credentials_provider(AccessKey::new(
+                    access_key_id.clone(),
+                    secret.to_owned(),
+                    None,
+                    None,
+                    "sourceorrery-connection",
+                ));
+            }
+            Some(other) => {
+                return Err(SecretError::InvalidArgument(format!(
+                    "the connection stores credentials for {}, not AWS Secrets Manager",
+                    other.provider().display_name()
+                )));
+            }
+        }
+        Ok(loader.load().await)
     }
 
     /// Name, backend, region and prefix as id. Secrets Manager has no
@@ -471,9 +513,10 @@ impl AsyncSecretClient for AwsClient {
         &self.vault_name
     }
 
-    /// Secrets Manager keeps properties per secret, not per version.
+    /// Secrets Manager keeps properties per secret, not per version. The
+    /// time window lives in tags, so it can be removed.
     fn capabilities(&self) -> &'static [Capability] {
-        &[]
+        Provider::AwsSecretsManager.capabilities()
     }
 
     async fn set_secret(
@@ -665,6 +708,9 @@ impl AsyncSecretClient for AwsClient {
         let mut properties =
             props.properties(&self.vault_name, name, &current.id, current.created_on);
         update.apply(&mut properties, timestamp::now())?;
+        // The creation time is the service's clock, the update this
+        // machine's: an update never reads as earlier than the version.
+        properties.updated_on = properties.updated_on.max(current.created_on);
         let next = SecretProps::from_properties(&properties, current.created_on);
         self.write_tags(name, described.tags(), &next.to_tags())
             .await?;
@@ -803,8 +849,8 @@ mod tests {
     }
 
     #[test]
-    fn settings_come_from_the_manifest_table_only() {
-        let settings = Settings::from_manifest(&RemoteVault::AwsSecretsManager {
+    fn settings_come_from_the_connection_only() {
+        let settings = Settings::from_connection(&ConnectionSettings::AwsSecretsManager {
             region: "eu-west-1".to_owned(),
             prefix: Some("app/".to_owned()),
             endpoint_url: Some("http://localhost:4566".to_owned()),
@@ -816,12 +862,56 @@ mod tests {
             settings.endpoint_url.as_deref(),
             Some("http://localhost:4566")
         );
-        let err = Settings::from_manifest(&RemoteVault::HashicorpVault {
+        let err = Settings::from_connection(&ConnectionSettings::HashicorpVault {
             address: "https://vault.example.com".to_owned(),
             mount: "secret".to_owned(),
             namespace: None,
         })
         .unwrap_err();
         assert_eq!(err.code(), "invalid_argument");
+    }
+
+    #[tokio::test]
+    async fn credentials_of_another_provider_are_refused_before_any_request() {
+        let settings = Settings::from_connection(&ConnectionSettings::AwsSecretsManager {
+            region: "eu-west-1".to_owned(),
+            prefix: None,
+            endpoint_url: Some("http://localhost:9".to_owned()),
+        })
+        .unwrap();
+        let token = Credentials::VaultToken(SecretBytes::from("hunter2"));
+        let err = AwsClient::connect("v", &settings, Some(&token))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_argument");
+        assert!(!err.to_string().contains("hunter2"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_stored_access_key_is_used_instead_of_the_chain() {
+        let settings = Settings::from_connection(&ConnectionSettings::AwsSecretsManager {
+            region: "eu-west-1".to_owned(),
+            prefix: None,
+            endpoint_url: Some("http://localhost:9".to_owned()),
+        })
+        .unwrap();
+        let key = Credentials::AwsAccessKey {
+            access_key_id: "AKIASTORED".to_owned(),
+            secret_access_key: SecretBytes::from("stored-secret"),
+        };
+        // The stored key replaces the chain, whatever the environment holds,
+        // and resolving it needs no network, so connecting succeeds too.
+        let config = AwsClient::sdk_config(&settings, Some(&key)).await.unwrap();
+        let resolved = config
+            .credentials_provider()
+            .unwrap()
+            .provide_credentials()
+            .await
+            .unwrap();
+        assert_eq!(resolved.access_key_id(), "AKIASTORED");
+        assert_eq!(resolved.secret_access_key(), "stored-secret");
+        AwsClient::connect("v", &settings, Some(&key))
+            .await
+            .unwrap();
     }
 }

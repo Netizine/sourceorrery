@@ -3,7 +3,7 @@
 //! a single, deliberate call site.
 //!
 //! Text read from a vault file is not trusted to be printable: labels,
-//! audit actors and details, and protector metadata can be edited by anyone
+//! audit actors and details, and key-wrap metadata can be edited by anyone
 //! who can write the file, before or without unlocking it. Human-readable
 //! output therefore goes through [`sanitize`]: every table cell, and every
 //! status, note and error line. JSON needs no such pass (serde escapes
@@ -101,8 +101,8 @@ pub fn print_error(format: OutputFormat, code: &str, message: &str) {
             eprintln!("{label}: {}", sanitize_lines(message));
             if code == "locked" {
                 eprintln!(
-                    "hint: unlock with the OS credential store, a passphrase prompt, \
-                     --passphrase-file, or SOURCEORRERY_PASSPHRASE"
+                    "hint: where this machine cannot open the vault, give its recovery key \
+                     at the prompt, with --recovery-key-file or in SOURCEORRERY_RECOVERY_KEY"
                 );
             }
         }

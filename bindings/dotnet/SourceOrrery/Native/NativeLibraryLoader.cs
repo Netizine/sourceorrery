@@ -84,9 +84,9 @@ internal static class NativeLibraryLoader
     }
 
     /// <summary>UTF-8 text of a NUL-terminated string, or null.</summary>
-    public static unsafe string? ReadCString(byte* text)
+    public static string? ReadCString(nint text)
     {
-        return text == null ? null : Marshal.PtrToStringUTF8((nint)text);
+        return text == nint.Zero ? null : Marshal.PtrToStringUTF8(text);
     }
 
     /// <summary>UTF-8 bytes of <paramref name="text"/> (no terminator), or null.</summary>

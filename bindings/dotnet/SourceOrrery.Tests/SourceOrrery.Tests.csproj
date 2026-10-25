@@ -5,6 +5,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- For the marshalling code LibraryImport generates (setenv/unsetenv). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <!-- Opt in with -p:CollectCoverage=true. Keep VSTest: coverlet.msbuild

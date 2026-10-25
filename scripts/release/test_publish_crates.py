@@ -14,9 +14,13 @@ publish = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publish)
 
 
+# Providers already on crates.io: they publish through OIDC like the rest.
+ESTABLISHED = ["sourceorrery-provider-vault", "sourceorrery-provider-aws", "sourceorrery-provider"]
+
+
 class PublishCratesTests(unittest.TestCase):
     def metadata(self, extra=None):
-        names = [publish.CORE, *publish.PROVIDERS, "sourceorrery"]
+        names = [publish.CORE, *ESTABLISHED, *publish.PROVIDERS, "sourceorrery"]
         packages = [{"id": name, "name": name, "version": "0.2.0", "publish": None} for name in names]
         packages.append({"id": "tests", "name": "tests", "version": "0.2.0", "publish": []})
         if extra:
@@ -25,12 +29,15 @@ class PublishCratesTests(unittest.TestCase):
 
     def test_workspace_includes_every_publishable_member(self):
         extra = {"id": "future", "name": "future", "version": "0.2.0", "publish": None}
-        self.assertEqual(len(publish.selected_packages(self.metadata(extra), "0.2.0", "workspace")), 6)
+        self.assertEqual(len(publish.selected_packages(self.metadata(extra), "0.2.0", "workspace")), 7)
         self.assertNotIn("tests", publish.selected_packages(self.metadata(), "0.2.0", "workspace"))
 
-    def test_bootstrap_has_core_and_all_three_real_providers(self):
+    def test_bootstrap_has_core_and_only_the_unpublished_providers(self):
         self.assertEqual(publish.selected_packages(self.metadata(), "0.2.0", "bootstrap"),
                          [publish.CORE, *publish.PROVIDERS])
+        self.assertEqual(publish.PROVIDERS, ("sourceorrery-provider-azure",))
+        for established in ESTABLISHED:
+            self.assertNotIn(established, publish.PROVIDERS)
 
     def test_wrong_version_or_missing_provider_fails(self):
         with self.assertRaises(ValueError):
@@ -61,27 +68,26 @@ class PublishCratesTests(unittest.TestCase):
                     self.assertTrue(publish.version_exists(publish.CORE, "0.2.0"))
 
     def test_default_command_cannot_upload(self):
-        command = publish.cargo_publish_command(list(publish.PROVIDERS), False)
+        command = publish.cargo_publish_command(ESTABLISHED, False)
         self.assertIn("--dry-run", command)
-        self.assertNotIn("--dry-run", publish.cargo_publish_command(list(publish.PROVIDERS), True))
+        self.assertNotIn("--dry-run", publish.cargo_publish_command(ESTABLISHED, True))
         self.assertEqual(command.count("--package"), 3)
         self.assertIn("--locked", command)
 
     def test_partial_publish_resumes_only_missing_versions(self):
-        argv = ["publish-crates.py", "0.2.0", "--group", "providers", "--publish"]
+        argv = ["publish-crates.py", "0.2.0", "--group", "bootstrap", "--publish"]
         with patch.object(publish.sys, "argv", argv), \
                 patch.object(publish.subprocess, "check_output", return_value=json.dumps(self.metadata())), \
-                patch.object(publish, "version_exists", side_effect=[True, False, False]), \
+                patch.object(publish, "version_exists", side_effect=[True, False]), \
                 patch.object(publish.subprocess, "call", return_value=0) as upload, \
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(publish.main(), 0)
             command = upload.call_args.args[0]
-            self.assertNotIn(publish.PROVIDERS[0], command)
-            self.assertIn(publish.PROVIDERS[1], command)
-            self.assertIn(publish.PROVIDERS[2], command)
+            self.assertNotIn(publish.CORE, command)
+            self.assertIn(publish.PROVIDERS[0], command)
 
     def test_registry_failure_prevents_all_uploads(self):
-        argv = ["publish-crates.py", "0.2.0", "--group", "providers", "--publish"]
+        argv = ["publish-crates.py", "0.2.0", "--group", "bootstrap", "--publish"]
         with patch.object(publish.sys, "argv", argv), \
                 patch.object(publish.subprocess, "check_output", return_value=json.dumps(self.metadata())), \
                 patch.object(publish, "version_exists", side_effect=[False, RuntimeError("HTTP 503")]), \

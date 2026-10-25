@@ -12,6 +12,7 @@
     "postbuild": "node scripts/check-links.mjs",
     "check-links": "node scripts/check-links.mjs",
     "favicon": "node scripts/make-favicon.mjs",
+    "walkthroughs": "node scripts/sync-walkthroughs.mjs",
     "preview": "astro preview",
     "astro": "astro",
     "test": "node --test scripts/docs-tooling.test.mjs"

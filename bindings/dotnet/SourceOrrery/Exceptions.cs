@@ -60,10 +60,13 @@ public class SourceOrreryException : Exception
 /// <summary><c>vault_not_found</c>: no vault file with that name in the home directory.</summary>
 public class VaultNotFoundException(string message, string code = "vault_not_found", string hint = "") : SourceOrreryException(message, code, hint);
 
-/// <summary><c>locked</c>: no protector or passphrase source could unlock the vault.</summary>
+/// <summary><c>locked</c>: neither this machine's key nor a recovery key could open the vault.</summary>
 public class VaultLockedException(string message, string code = "locked", string hint = "") : SourceOrreryException(message, code, hint);
 
-/// <summary><c>migration_required</c>: run <c>sourceorrery vault migrate</c> first.</summary>
+/// <summary>
+/// <c>migration_required</c>: the vault was written by an earlier release, which this one
+/// cannot read; recreate it with <c>sourceorrery setup</c>.
+/// </summary>
 public class MigrationRequiredException(string message, string code = "migration_required", string hint = "") : SourceOrreryException(message, code, hint);
 
 /// <summary><c>vault_mismatch</c>: the file found for the vault holds another vault (renamed, copied or swapped in).</summary>
@@ -93,7 +96,7 @@ public class SecretExpiredException(string message, string code = "expired", str
 /// <summary><c>crypto</c>: the vault file failed an integrity check.</summary>
 public class IntegrityException(string message, string code = "crypto", string hint = "") : SourceOrreryException(message, code, hint);
 
-/// <summary><c>unsupported</c>: no OS credential store here (use a passphrase), or a remote provider this build does not include.</summary>
+/// <summary><c>unsupported</c>: no OS credential store here (use the vault's recovery key), or a remote provider this build does not include.</summary>
 public class UnsupportedException(string message, string code = "unsupported", string hint = "") : SourceOrreryException(message, code, hint);
 
 /// <summary><c>unauthenticated</c>: the remote provider refused the process's credentials; give it the ones its own tools expect.</summary>

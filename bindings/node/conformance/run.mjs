@@ -29,8 +29,8 @@ function run() {
   const vault = kv.vault || process.env.SOURCEORRERY_TEST_VAULT || 'development';
   const options = {
     home: kv.home,
-    passphrase: kv.passphrase,
-    passphraseFile: kv.passphrase_file,
+    recoveryKey: kv.recovery_key,
+    recoveryKeyFile: kv.recovery_key_file,
     environment: kv.environment !== 'false',
   };
   if (op === 'load') {

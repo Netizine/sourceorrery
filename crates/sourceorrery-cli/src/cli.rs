@@ -30,20 +30,30 @@ pub struct Cli {
     #[arg(short, long, global = true, value_enum, default_value_t = OutputFormat::Table)]
     pub output: OutputFormat,
 
-    /// Read the vault passphrase from this file instead of prompting (automation).
+    /// Read the vault's recovery key from this file when this machine cannot open the vault by
+    /// itself (WSL, containers, CI) instead of prompting.
     #[arg(
         long,
         global = true,
-        env = "SOURCEORRERY_PASSPHRASE_FILE",
+        env = "SOURCEORRERY_RECOVERY_KEY_FILE",
         value_name = "FILE"
     )]
-    pub passphrase_file: Option<PathBuf>,
+    pub recovery_key_file: Option<PathBuf>,
+
+    /// Read the view check's password from this file (scripts) instead of prompting.
+    #[arg(
+        long,
+        global = true,
+        env = "SOURCEORRERY_PASSWORD_FILE",
+        value_name = "FILE"
+    )]
+    pub password_file: Option<PathBuf>,
 
     /// Increase diagnostic output (-v, -vv, -vvv). Never prints secret values.
     #[arg(short, long, global = true, action = ArgAction::Count)]
     pub verbose: u8,
-    /// Second-factor code for an operation the vault's reveal guard protects (automation;
-    /// otherwise it is asked for). Codes are valid for about a minute and never reused.
+    /// Authenticator code for the vault's view check (scripts; otherwise it is asked for).
+    /// Codes are valid for about a minute and never reused.
     #[arg(
         long,
         global = true,
@@ -68,8 +78,8 @@ pub enum OutputFormat {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Guided first run: a vault, a first secret, recovery, a second factor, the
-    /// reveal guard and the project manifest, step by step on the terminal.
+    /// Set up a vault on screens: create one, or change a vault's view check, recovery key and
+    /// storage. With --guide, or without a terminal, it prints the one command that does it.
     Setup(SetupArgs),
     /// Create, inspect and manage vaults.
     #[command(subcommand)]
@@ -79,8 +89,8 @@ pub enum Command {
     Secret(SecretCommand),
     /// Show the metadata-only audit log of a vault.
     Audit(AuditArgs),
-    /// Write a sourceorrery.toml manifest for the current project, and install
-    /// the SourceOrrery skills for AI coding agents.
+    /// Write the project's sourceorrery.toml from the secrets of a vault (by name only), or add
+    /// to it, and record the folder in the vault; install the skills for AI coding agents.
     Init(InitArgs),
     /// Move a .env file into a vault: store every value (never printed) and
     /// declare each key in sourceorrery.toml.
@@ -89,10 +99,6 @@ pub enum Command {
     Check(CheckArgs),
     /// Run a command with the manifest's secrets injected as environment variables.
     Run(RunArgs),
-    /// Write an encrypted backup of the vault's secrets (every version, values included).
-    Backup(BackupArgs),
-    /// Restore the secrets of an encrypted backup into the vault as new versions.
-    Restore(RestoreArgs),
     /// Browse a vault interactively (metadata only; values are never shown).
     #[cfg(feature = "ui")]
     Ui(UiArgs),
@@ -106,19 +112,11 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct SetupArgs {
-    /// Name of the first secret.
-    #[arg(long, default_value = "database-password", value_name = "NAME")]
-    pub secret: String,
-    /// Project name for the manifest (default: current directory name).
-    #[arg(long, value_name = "NAME")]
-    pub project_name: Option<String>,
-    /// Where to write the manifest (default: ./sourceorrery.toml).
-    #[arg(long, value_name = "FILE")]
-    pub path: Option<PathBuf>,
-    /// Print the steps as commands on stderr instead of the guided screens.
+    /// Print the one `vault create` command that sets a vault up without the screens (as it is
+    /// printed without a terminal).
     #[arg(long)]
     pub guide: bool,
-    /// Colours: the documentation site's dark or light palette, or the terminal's own.
+    /// Colours of the screens.
     #[cfg(feature = "ui")]
     #[arg(long, value_enum, env = "SOURCEORRERY_THEME", default_value_t = UiTheme::Dark)]
     pub theme: UiTheme,
@@ -130,186 +128,186 @@ pub struct SetupArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum VaultCommand {
-    /// Create a new encrypted vault.
+    /// Create a vault, or change one (its view check, recovery key and storage), on the setup
+    /// screens (in a terminal, without the flags of a non-interactive create). With flags, or
+    /// without a terminal, it creates NAME at once: its recovery key is printed once (or written
+    /// to --recovery-key-out), and --password-file sets its view check's password.
     Create(VaultCreateArgs),
     /// List vaults in the home directory.
     List,
-    /// Show a vault's metadata and key protectors.
-    Info,
-    /// Manage the key protectors that can unlock a vault.
-    #[command(subcommand)]
-    Protector(ProtectorCommand),
-    /// The vault passphrase: generate a strong one, estimate one's strength, change it, or set
-    /// the hint shown at the prompt.
-    #[command(subcommand)]
-    Passphrase(PassphraseCommand),
-    /// The second factor (an authenticator app, TOTP): enable with a QR code, verify, disable,
-    /// status.
-    #[command(name = "2fa", subcommand)]
-    TwoFactor(TwoFactorCommand),
-    /// What revealing a secret or exporting the vault must present again: the passphrase, a
-    /// second-factor code, both or nothing. Without --reveal, show the current guard.
-    Guard(GuardArgs),
-    /// Recovery codes: one-time passphrases that unlock the vault when the passphrase is lost.
-    #[command(subcommand)]
-    Recovery(RecoveryCommand),
+    /// Write a copy of a vault for another machine. The copy opens with its recovery key only:
+    /// this machine's key and the view check stay behind.
+    Export(VaultExportArgs),
+    /// Bring a vault exported elsewhere onto this machine, opened with its recovery key; this
+    /// machine then opens it without asking. Its view check is set again from --password-file.
+    Import(VaultImportArgs),
     /// Permanently delete a vault file and its OS-keyring entries.
     Destroy(VaultDestroyArgs),
-    /// Upgrade a vault written by an older release to the current on-disk format.
-    ///
-    /// Older vaults carry no integrity tags, so this is an explicit trust decision:
-    /// only migrate a file you know is genuine. A file that was already in the
-    /// current format (a downgraded copy) is refused.
-    Migrate(VaultMigrateArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct VaultMigrateArgs {
-    /// Vault name.
-    pub name: String,
 }
 
 #[derive(Debug, Args)]
 pub struct VaultCreateArgs {
-    /// Vault name (lowercase letters, digits, hyphens).
-    pub name: String,
-    /// How the vault key is protected. Default: os-keyring when available, else passphrase.
-    #[arg(long, value_enum)]
-    pub protector: Option<ProtectorChoice>,
+    /// Vault name (letters, digits, hyphens and underscores; not starting with a hyphen). On
+    /// the screens, an existing vault's name opens it for changes.
+    pub name: Option<String>,
     /// Days a deleted secret stays recoverable (7-90).
     #[arg(long, default_value_t = 90, value_name = "DAYS")]
     pub retention_days: u32,
     /// Disable soft delete: deletions are immediate and permanent.
     #[arg(long)]
     pub purgeable: bool,
-    /// Accept a passphrase the strength estimate rates below "good" when it is typed at the
-    /// prompt. (A passphrase from SOURCEORRERY_PASSPHRASE or --passphrase-file is only warned about.)
+    /// Keep no key for this machine in the OS credential store: the vault then opens with its
+    /// recovery key only.
     #[arg(long)]
-    pub allow_weak: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum ProtectorChoice {
-    /// Random key stored in the OS credential store (Credential Manager, Keychain, Secret Service).
-    OsKeyring,
-    /// Key derived from a passphrase with Argon2id.
-    Passphrase,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum PassphraseCommand {
-    /// Print a random passphrase (letters, digits and symbols) to stdout, once. Pipe it where it
-    /// is needed, or write it down: it is not stored anywhere.
-    Generate(PassphraseGenerateArgs),
-    /// Read a passphrase from stdin or a hidden prompt and print its strength estimate: the
-    /// score, the estimated bits of guessing work and what weakened it. Nothing is stored.
-    Check,
-    /// Change the vault passphrase: the current one is asked for (or taken from
-    /// SOURCEORRERY_PASSPHRASE), the new one typed twice and strength-checked.
-    Set(PassphraseSetArgs),
-    /// Set, show or clear the hint shown at the passphrase prompt. Stored in clear in the vault
-    /// file and readable by anyone who has it; a hint that unlocks the vault is refused.
-    Hint(PassphraseHintArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct PassphraseSetArgs {
-    /// Read the new passphrase from a file (automation) instead of prompting.
+    pub no_keyring: bool,
+    /// Write the recovery key to this file (readable by the current user only) instead of
+    /// printing it.
     #[arg(long, value_name = "FILE")]
-    pub new_from_file: Option<PathBuf>,
-    /// Accept a new passphrase the strength estimate rates below "good".
-    #[arg(long)]
-    pub allow_weak: bool,
+    pub recovery_key_out: Option<PathBuf>,
+    #[command(flatten)]
+    pub connections: Box<ConnectionArgs>,
+    /// Colours of the setup screens.
+    #[cfg(feature = "ui")]
+    #[arg(long, value_enum, env = "SOURCEORRERY_THEME", default_value_t = UiTheme::Dark)]
+    pub theme: UiTheme,
 }
 
 #[derive(Debug, Args)]
-pub struct PassphraseHintArgs {
-    /// The hint (at most 120 characters). Without it, the current hint is shown.
-    pub text: Option<String>,
-    /// Remove the hint.
-    #[arg(long, conflicts_with = "text")]
-    pub clear: bool,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum TwoFactorCommand {
-    /// Enrol an authenticator: draws a QR code, then asks for one code to prove the enrolment.
-    Enable(TwoFactorEnableArgs),
-    /// Prove an enrolment made with --no-verify by entering one code.
-    Verify,
-    /// Remove the second factor (a code is asked for while the enrolment is verified).
-    Disable,
-    /// Whether a second factor is enrolled and verified, and what the guard asks for.
-    Status,
+pub struct VaultExportArgs {
+    /// Vault to export (default: --vault, else the project's).
+    pub name: Option<String>,
+    /// File to write. It must not exist: an export never replaces a file.
+    #[arg(long, value_name = "FILE")]
+    pub out: PathBuf,
 }
 
 #[derive(Debug, Args)]
-pub struct TwoFactorEnableArgs {
-    /// Also print the otpauth:// URI and the key, for an authenticator that cannot scan.
-    #[arg(long)]
-    pub show_uri: bool,
-    /// Leave the enrolment unverified instead of asking for a code now (`vault 2fa verify`
-    /// completes it). With -o json the key is printed, for automation.
-    #[arg(long)]
-    pub no_verify: bool,
+pub struct VaultImportArgs {
+    /// The exported vault file. It is only read.
+    pub file: PathBuf,
+    /// Register the vault under this name instead of the one it was exported with.
+    #[arg(long, value_name = "NAME")]
+    pub name: Option<String>,
 }
 
-#[derive(Debug, Args)]
-pub struct GuardArgs {
-    /// What a reveal or export must present: `passphrase`, `second-factor`,
-    /// `passphrase,second-factor` or `none`.
-    #[arg(long, value_name = "WHAT")]
-    pub reveal: Option<String>,
+/// The connections `vault create` gives the vault: one flag set per provider, each named by
+/// the provider. A credential is only ever read from a file; without one, the connection uses
+/// the provider's own sign-in (its environment variables, CLI login, workload or managed
+/// identity).
+#[derive(Debug, Default, Args)]
+pub struct ConnectionArgs {
+    /// Connect to a HashiCorp Vault server at this address (https://, or http:// to this machine).
+    #[arg(
+        long,
+        value_name = "ADDRESS",
+        help_heading = "HashiCorp Vault connection"
+    )]
+    pub hashicorp_vault: Option<String>,
+    /// The KV version 2 engine's mount path [default: secret].
+    #[arg(
+        long,
+        value_name = "MOUNT",
+        requires = "hashicorp_vault",
+        help_heading = "HashiCorp Vault connection"
+    )]
+    pub hashicorp_vault_mount: Option<String>,
+    /// Vault Enterprise namespace.
+    #[arg(
+        long,
+        value_name = "NAMESPACE",
+        requires = "hashicorp_vault",
+        help_heading = "HashiCorp Vault connection"
+    )]
+    pub hashicorp_vault_namespace: Option<String>,
+    /// Store the token in this file in the vault, sealed, instead of using VAULT_TOKEN and
+    /// Vault's other sign-in sources.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "hashicorp_vault",
+        help_heading = "HashiCorp Vault connection"
+    )]
+    pub hashicorp_vault_token_file: Option<PathBuf>,
+
+    /// Connect to AWS Secrets Manager in this region.
+    #[arg(
+        long,
+        value_name = "REGION",
+        help_heading = "AWS Secrets Manager connection"
+    )]
+    pub aws_secrets_manager: Option<String>,
+    /// Keep every secret under this name prefix (for example myapp/).
+    #[arg(
+        long,
+        value_name = "PREFIX",
+        requires = "aws_secrets_manager",
+        help_heading = "AWS Secrets Manager connection"
+    )]
+    pub aws_secrets_manager_prefix: Option<String>,
+    /// The service endpoint, for a private endpoint or an emulator (default: the region's).
+    #[arg(
+        long,
+        value_name = "URL",
+        requires = "aws_secrets_manager",
+        help_heading = "AWS Secrets Manager connection"
+    )]
+    pub aws_secrets_manager_endpoint: Option<String>,
+    /// Store an access key in the vault, sealed: this access key id, with the secret access
+    /// key from --aws-secret-access-key-file.
+    #[arg(
+        long,
+        value_name = "ID",
+        requires_all = ["aws_secrets_manager", "aws_secret_access_key_file"],
+        help_heading = "AWS Secrets Manager connection"
+    )]
+    pub aws_access_key_id: Option<String>,
+    /// The file holding the secret access key of --aws-access-key-id.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires_all = ["aws_secrets_manager", "aws_access_key_id"],
+        help_heading = "AWS Secrets Manager connection"
+    )]
+    pub aws_secret_access_key_file: Option<PathBuf>,
+
+    /// Connect to the Azure Key Vault at this URL (https://<name>.vault.azure.net).
+    #[arg(long, value_name = "URL", help_heading = "Azure Key Vault connection")]
+    pub azure_key_vault: Option<String>,
+    /// Store a service principal in the vault, sealed: its directory (tenant) id, with
+    /// --azure-client-id and --azure-client-secret-file.
+    #[arg(
+        long,
+        value_name = "ID",
+        requires_all = ["azure_key_vault", "azure_client_id", "azure_client_secret_file"],
+        help_heading = "Azure Key Vault connection"
+    )]
+    pub azure_tenant_id: Option<String>,
+    /// The service principal's application (client) id.
+    #[arg(
+        long,
+        value_name = "ID",
+        requires_all = ["azure_key_vault", "azure_tenant_id", "azure_client_secret_file"],
+        help_heading = "Azure Key Vault connection"
+    )]
+    pub azure_client_id: Option<String>,
+    /// The file holding the service principal's client secret.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires_all = ["azure_key_vault", "azure_tenant_id", "azure_client_id"],
+        help_heading = "Azure Key Vault connection"
+    )]
+    pub azure_client_secret_file: Option<PathBuf>,
 }
 
-#[derive(Debug, Subcommand)]
-pub enum RecoveryCommand {
-    /// Generate recovery codes (replacing any earlier ones) and print them once.
-    Codes(RecoveryCodesArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct RecoveryCodesArgs {
-    /// How many codes (1 to 7; they count against the eight passphrase protectors a vault holds).
-    #[arg(long, default_value_t = 5, value_name = "N")]
-    pub count: usize,
-}
-
-#[derive(Debug, Args)]
-pub struct PassphraseGenerateArgs {
-    /// Characters to generate (at least 12; the default is about 125 bits of entropy).
-    #[arg(long, default_value_t = 20, value_name = "N")]
-    pub length: usize,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum ProtectorCommand {
-    /// List key protectors.
-    List,
-    /// Add a key protector (e.g. a passphrase for use inside WSL, Docker or CI).
-    Add(ProtectorAddArgs),
-    /// Remove a key protector by id or label. The last one cannot be removed.
-    Remove(ProtectorRemoveArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct ProtectorAddArgs {
-    /// Kind of protector to add.
-    #[arg(long, value_enum)]
-    pub kind: ProtectorChoice,
-    /// Unique label (default: the kind).
-    #[arg(long)]
-    pub label: Option<String>,
-    /// Accept a passphrase the strength estimate rates below "good" when it is typed at the
-    /// prompt.
-    #[arg(long)]
-    pub allow_weak: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct ProtectorRemoveArgs {
-    /// Protector id or label.
-    pub protector: String,
+impl ConnectionArgs {
+    /// No connection is asked for (each provider's other flags require its first).
+    #[cfg(feature = "ui")]
+    pub fn is_empty(&self) -> bool {
+        self.hashicorp_vault.is_none()
+            && self.aws_secrets_manager.is_none()
+            && self.azure_key_vault.is_none()
+    }
 }
 
 #[derive(Debug, Args)]
@@ -444,6 +442,15 @@ pub struct SecretSetArgs {
     /// Create the version disabled.
     #[arg(long)]
     pub disabled: bool,
+    /// Where a new secret is kept: sourceorrery (the vault file, the default), or a provider
+    /// the vault has a connection to (hashicorp-vault, aws-secrets-manager, azure-key-vault).
+    /// A new version of an existing secret goes where the secret is.
+    #[arg(long, value_name = "STORAGE")]
+    pub storage: Option<String>,
+    /// What the secret is for, in one line: kept in the vault's catalog, and written into a
+    /// project's manifest as `purpose` by `init`. Replaces the description the secret has.
+    #[arg(long, value_name = "TEXT")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -549,7 +556,7 @@ pub struct AuditArgs {
     pub verify: bool,
     /// Acknowledge every detected audit-log truncation and unblock the vault. Prints the
     /// truncation events first and asks for confirmation; only do this after comparing the
-    /// surviving history with a backup.
+    /// surviving history with an exported copy of the vault.
     #[arg(long, conflicts_with_all = ["secret", "operation", "since", "limit", "verify"])]
     pub acknowledge: bool,
     /// With --acknowledge: confirm without prompting (automation).
@@ -604,20 +611,30 @@ pub struct AuditExportArgs {
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
-    /// Project name (default: current directory name).
+    /// The vault the project's secrets come from (default: the one an existing manifest names,
+    /// else --vault, else the only vault on this machine).
+    #[arg(value_name = "VAULT")]
+    pub target_vault: Option<String>,
+    /// Project name (default: the folder's name; an existing manifest keeps its own).
     #[arg(long, value_name = "NAME")]
     pub project_name: Option<String>,
-    /// Default vault for the project (default: development).
-    #[arg(long, value_name = "NAME")]
-    pub vault_name: Option<String>,
-    /// Where to write the manifest (default: ./sourceorrery.toml).
+    /// Declare every secret the vault holds.
+    #[arg(long, conflicts_with = "secrets")]
+    pub all: bool,
+    /// Declare this secret, which the vault must hold (repeatable). Store a new one first with
+    /// `sourceorrery secret set NAME --stdin`.
+    #[arg(long = "secret", value_name = "NAME")]
+    pub secrets: Vec<String>,
+    /// The manifest (default: ./sourceorrery.toml). An existing one is added to, in place.
     #[arg(long, value_name = "FILE")]
     pub path: Option<PathBuf>,
-    /// Overwrite an existing manifest.
-    #[arg(long)]
-    pub force: bool,
+    /// Colours of the screens init shows on a terminal when no secret is picked with a flag.
+    #[cfg(feature = "ui")]
+    #[arg(long, value_enum, env = "SOURCEORRERY_THEME", default_value_t = UiTheme::Dark)]
+    pub theme: UiTheme,
     /// Install the SourceOrrery skills for an AI coding agent (repeatable or
-    /// comma-separated; `all` for every one). An existing manifest is kept.
+    /// comma-separated; `all` for every one). The manifest is written too when
+    /// --all or --secret picks secrets.
     #[arg(
         long = "integration",
         value_enum,
@@ -708,44 +725,11 @@ pub struct ImportArgs {
     /// Do not create or change sourceorrery.toml.
     #[arg(long, conflicts_with = "manifest_only")]
     pub no_manifest: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct BackupArgs {
-    /// File to write (conventionally *.sobackup). Readable by the current user only.
-    #[arg(long, value_name = "FILE")]
-    pub out: PathBuf,
-    /// Back up only this secret (repeatable; default: every live secret).
-    #[arg(long = "secret", value_name = "NAME")]
-    pub secret: Vec<String>,
-    /// Include soft-deleted secrets, with their deleted state.
-    #[arg(long)]
-    pub include_deleted: bool,
-    /// Replace an existing file.
-    #[arg(long)]
-    pub force: bool,
-    /// Accept a typed backup passphrase that rates below "good".
-    #[arg(long)]
-    pub allow_weak: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct RestoreArgs {
-    /// The backup file to restore from.
-    pub file: PathBuf,
-    /// Restore only this secret (repeatable; default: every secret in the backup).
-    #[arg(long = "only", value_name = "NAME")]
-    pub only: Vec<String>,
-    /// Add the backup's versions to a secret that already exists
-    /// (by default an existing secret is skipped).
-    #[arg(long)]
-    pub overwrite: bool,
-    /// Soft-delete again a secret the backup holds as deleted (by default it comes back live).
-    #[arg(long)]
-    pub keep_deleted: bool,
-    /// Show what would happen, by name, and change nothing.
-    #[arg(long)]
-    pub dry_run: bool,
+    /// Where the new secrets are kept: sourceorrery (the vault file, the default), or a
+    /// provider the vault has a connection to (hashicorp-vault, aws-secrets-manager,
+    /// azure-key-vault).
+    #[arg(long, value_name = "STORAGE", conflicts_with = "manifest_only")]
+    pub storage: Option<String>,
 }
 
 #[derive(Debug, Args)]

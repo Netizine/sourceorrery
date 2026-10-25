@@ -70,12 +70,16 @@ All paths below are relative to the checkout root. The artifact named
 C's public header contains declarations; its executable implementation is
 Rust and is measured there. TypeScript declarations also have no executable
 lines; TypeScript callers use the measured JavaScript wrapper. Rust reports
-from the three native builds are merged with `lcov`, retaining execution
-of shared Rust dependencies from all three runtimes.
+from the three native builds, and from the Azure provider's own run, are
+merged with `lcov`, retaining execution of shared Rust dependencies from all
+runtimes.
 
 Workspace membership determines which Rust crates run, including the provider
-crates. CI starts disposable HashiCorp Vault and Moto services for their
-endpoint-dependent lifecycle tests. These tests use synthetic data and emulator
+crates. CI starts disposable HashiCorp Vault and LocalStack services for their
+endpoint-dependent lifecycle tests. LocalStack for Azure and for AWS bind the
+same ports, so the coverage job starts Azure first, collects
+`bash scripts/coverage/native.sh azure` into `coverage/rust-azure.lcov`,
+stops it, and then starts AWS for the rest. These tests use synthetic data and emulator
 credentials, with no production cloud account. The normal CI also runs remote
 CLI/SDK conformance and Vault federation checks; those separate jobs do not
 currently contribute their execution to the coverage report.
@@ -200,14 +204,19 @@ bash scripts/coverage/run.sh
 ```
 
 The runner creates a fresh test vault, measures all workspace crates and SDKs,
-merges the Rust reports, and verifies every expected report. Generated files
+measures the existing CI/release/coverage tooling tests, merges the Rust reports,
+and verifies every expected report. Generated files
 stay in ignored build, dependency and coverage directories. Existing test vaults
 and real secrets are not used.
 
 The provider server tests run when `SOURCEORRERY_VAULT_TEST_ADDR` and
-`SOURCEORRERY_AWS_TEST_ENDPOINT` point to disposable Vault and Moto instances,
-with their corresponding test credentials. Use the service images and environment
-in the coverage workflow as the reference. Without these endpoints, the local
+`SOURCEORRERY_AWS_TEST_ENDPOINT` point to disposable Vault and LocalStack instances,
+with their corresponding test credentials. Use the Vault service image, the
+LocalStack start (`scripts/ci/localstack.sh`, `.lstk/config.toml`) and the
+environment in the coverage workflow as the reference. The Azure provider's
+live coverage comes from `bash scripts/coverage/native.sh azure` with
+LocalStack for Azure running (`scripts/ci/localstack.sh start azure`,
+`.lstk/azure.toml`), before the AWS emulator starts. Without these endpoints, the local
 runner explicitly reports that those provider paths remain uncovered; ordinary
 workspace tests still run. Never point these lifecycle tests at production services.
 
@@ -236,7 +245,22 @@ and rejects overlapping source/test or dependency/generated-file entries.
 
 When adding a language or moving tests, update its report generation,
 `SonarQube.Analysis.xml`, the source/test patterns in
-`scripts/sonar/Analysis.props`, and those inventory checks together. Use
+`scripts/sonar/Analysis.props`, the module-specific report paths in
+`SourceOrrery.Analysis.Source.csproj`, and those inventory checks together. Use
 Sonar's [coverage parameter reference](https://docs.sonarsource.com/sonarqube-cloud/analyzing-source-code/test-coverage/test-coverage-parameters)
 to select the importer: generic coverage XML, Cobertura, JaCoCo and
 OpenCover are different formats.
+
+The complete Rust report remains available as `coverage/rust-combined.lcov`.
+The scanner imports `coverage/rust-production.lcov`, which preserves its counts
+for files classified as production by the existing MSBuild inventory. Test-only
+records are left out of that import copy; tests remain included in static analysis.
+Reports are assigned to the module that owns those source files, avoiding duplicate
+imports into the separate test and .NET modules.
+
+Tooling reports are `coverage/tooling-python.xml` and
+`coverage/tooling-node/lcov.info`. Their source scope includes unexecuted tools,
+so a passing test run does not mean full coverage. The Windows PowerShell runner
+is not instrumented by the Ubuntu job. Sonar's quality gate evaluates coverage of
+new code separately from overall coverage and can fail even when report generation
+and upload succeed.

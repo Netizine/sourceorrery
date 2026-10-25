@@ -36,7 +36,7 @@ final class Native
         const char *so_last_error_hint(void);
         so_status so_reader_open(const uint8_t *name, size_t name_len,
                                  const uint8_t *options_json, size_t options_json_len,
-                                 const uint8_t *passphrase, size_t passphrase_len,
+                                 const uint8_t *recovery_key, size_t recovery_key_len,
                                  so_reader **out_handle);
         void so_reader_close(so_reader *handle);
         so_status so_reader_descriptor(const so_reader *handle, so_bytes *out_json);
@@ -53,7 +53,7 @@ final class Native
                                     so_bytes *out_properties_json, so_bytes *out_value);
         so_status so_project_load(const uint8_t *manifest_path, size_t manifest_path_len,
                                   const uint8_t *options_json, size_t options_json_len,
-                                  const uint8_t *passphrase, size_t passphrase_len,
+                                  const uint8_t *recovery_key, size_t recovery_key_len,
                                   so_project **out_handle);
         size_t so_project_count(const so_project *handle);
         so_status so_project_info(const so_project *handle, so_bytes *out_json);
@@ -73,7 +73,7 @@ final class Native
      * C ABI version the declarations above follow: `SO_ABI_VERSION` in the
      * `sourceorrery.h` this package was written against.
      */
-    public const ABI_VERSION = 1;
+    public const ABI_VERSION = 2;
 
     /** Refuse a library built for another C ABI version before anything is opened (ADR 0007). */
     public static function requireAbi(): void

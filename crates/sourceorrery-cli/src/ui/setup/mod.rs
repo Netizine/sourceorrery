@@ -1,20 +1,16 @@
-//! `sourceorrery setup`: the guided first run, from a vault to `run`, as
-//! screens in the terminal.
+//! `sourceorrery setup` and `sourceorrery vault create [NAME]` on a terminal
+//! (ADR 0009, section 7): a vault created, or an existing one changed, on
+//! screens. Start, Name, View check (Password, Authenticator), Recovery
+//! key, Storage (Connections), Review, Done.
 //!
 //! The wizard ([`wizard::Wizard`]) is a state machine over a
-//! [`backend::Backend`]; the screens ([`view`]) are a function of its state.
-//! The real backend ([`backend::Live`]) creates the vault, stores the first
-//! secret, issues recovery codes, enrols the second factor, sets the guard
-//! and writes the manifest, each through the same storage calls the
-//! commands use, so the wizard has no semantics of its own.
-//!
-//! A passphrase or value typed on these screens lives in a zeroising
-//! buffer, is drawn as dots, and goes to the vault as [`SecretBytes`]; the
-//! screens never hold or show a stored value. The two things shown once,
-//! behind a "written down" gate, are a generated passphrase (the user must
-//! know it) and the recovery codes.
-//!
-//! [`SecretBytes`]: sourceorrery_core::SecretBytes
+//! [`backend::Backend`]; the screens ([`view`]) are a function of its
+//! state. Nothing is written before the review, which commits the whole of
+//! it in one transaction (`SqliteVault::change_settings`; a new vault that
+//! cannot take it is removed again). Opening a vault to change it never
+//! prompts: this machine's key is tried, else the recovery key is typed on
+//! the screen, and then the vault's view check is asked there, since
+//! without it anyone at this machine could switch the check off.
 
 pub mod backend;
 #[cfg(test)]
@@ -29,24 +25,18 @@ use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use self::backend::Live;
-use self::wizard::{Action, Request, Wizard};
+use self::wizard::{Action, Wizard};
 use super::theme::Theme;
-use crate::cli::SetupArgs;
+use crate::cli::UiTheme;
 use crate::context::Ctx;
+use crate::output;
 
-/// The vault the wizard creates when `--vault` names none.
-pub const DEFAULT_VAULT: &str = "development";
-
-/// The screens. The caller has checked that stdin and stdout are a
-/// terminal; `commands::setup` prints the steps as commands otherwise.
-pub fn run(ctx: &Ctx, args: &SetupArgs) -> anyhow::Result<()> {
-    let theme = Theme::detect(args.theme);
-    let vault_name = ctx
-        .vault_flag
-        .clone()
-        .unwrap_or_else(|| DEFAULT_VAULT.to_owned());
-    let backend = Live::new(ctx, args.path.as_deref(), args.project_name.as_deref());
-    let mut wizard = Wizard::new(backend, &vault_name, &args.secret);
+/// The screens, for the vault `name` names (created when new, changed when
+/// it exists) or from the start screen. The caller has checked that stdin
+/// and stdout are a terminal.
+pub fn run(ctx: &Ctx, name: Option<&str>, theme: UiTheme) -> anyhow::Result<()> {
+    let theme = Theme::detect(theme);
+    let mut wizard = wizard(ctx, name)?;
 
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
@@ -57,7 +47,47 @@ pub fn run(ctx: &Ctx, args: &SetupArgs) -> anyhow::Result<()> {
     };
     let result = event_loop(&mut terminal, &mut wizard, &theme);
     ratatui::restore();
-    result
+    result?;
+
+    if let Some(committed) = &wizard.committed {
+        let name = output::sanitize(&committed.name);
+        output::success(&format!(
+            "Vault '{name}' {}\n  {}",
+            if wizard.creating() {
+                "created"
+            } else {
+                "changed"
+            },
+            output::sanitize(&committed.path)
+        ));
+        eprintln!("  view check: {}", committed.view.describe());
+        eprintln!("next:\n  sourceorrery ui --vault {name}\n  sourceorrery init --vault {name}");
+    }
+    Ok(())
+}
+
+/// The screens on a terminal the browser already holds, in its theme: for
+/// `c` (the vault `name`) and `n` (a new vault). The name of the vault
+/// created or changed, when the review committed.
+pub fn run_on(
+    ctx: &Ctx,
+    terminal: &mut DefaultTerminal,
+    name: Option<&str>,
+    theme: &Theme,
+) -> anyhow::Result<Option<String>> {
+    let mut wizard = wizard(ctx, name)?;
+    event_loop(terminal, &mut wizard, theme)?;
+    Ok(wizard.committed.map(|committed| committed.name))
+}
+
+/// The wizard over this machine's vaults, on its first screen.
+fn wizard<'a>(ctx: &'a Ctx, name: Option<&str>) -> anyhow::Result<Wizard<Live<'a>>> {
+    if let Some(name) = name {
+        sourceorrery_core::validate_vault_name(name)?;
+    }
+    let mut wizard = Wizard::new(Live::new(ctx));
+    wizard.begin(name).map_err(|err| anyhow!(err))?;
+    Ok(wizard)
 }
 
 fn event_loop(
@@ -71,17 +101,6 @@ fn event_loop(
             && let Some(action) = action(key)
         {
             wizard.update(action);
-        }
-        if let Some(Request::OpenExisting(name)) = wizard.take_request() {
-            // The unlock may prompt for a passphrase: the ordinary prompt,
-            // with the screen out of the way.
-            super::suspend()?;
-            eprintln!(
-                "Opening vault '{}' for setup…",
-                crate::output::sanitize(&name)
-            );
-            wizard.open_existing(&name);
-            super::resume(terminal)?;
         }
     }
     Ok(())

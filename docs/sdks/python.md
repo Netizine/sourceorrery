@@ -78,21 +78,21 @@ with SecretReader("development") as reader, reader.get("database-password") as s
 # the SDK's native buffer is zeroised when the `with` block ends
 ```
 
-`SecretReader(vault, *, home=None, passphrase=None, passphrase_file=None, environment=True, manifest=None)`
+`SecretReader(vault, *, home=None, recovery_key=None, recovery_key_file=None, environment=True)`
 opens the vault. With the default options, `SOURCEORRERY_HOME` locates the
-vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`, then
-`SOURCEORRERY_PASSPHRASE_FILE` unlock it. Pass `environment=False` to
-ignore the two passphrase variables. The SDK never prompts interactively.
+vault; this machine's key in the OS credential store opens it, else the
+recovery key: `recovery_key`, `SOURCEORRERY_RECOVERY_KEY`, then
+`recovery_key_file` or `SOURCEORRERY_RECOVERY_KEY_FILE`. Pass
+`environment=False` to ignore the two variables. The SDK never prompts and
+never asks the vault's view check.
 
-`manifest` is the `sourceorrery.toml` whose `[vaults.<name>]` tables say
-which vaults are remote and where; the default is the nearest one above
-the current directory, as `sourceorrery run` finds it. A vault declared
-there is opened at its provider rather than as a local file, with the
-credentials the provider's own tools expect from the environment: the
-manifest never holds any. [HashiCorp Vault](../providers/hashicorp-vault.md) takes
-`VAULT_TOKEN` or the other sources it documents,
-[AWS Secrets Manager](../providers/aws-secrets-manager.md) the AWS default
-credential chain, never the manifest. A vault without a table stays local.
+A secret the vault keeps at a provider
+([HashiCorp Vault](../providers/hashicorp-vault.md),
+[AWS Secrets Manager](../providers/aws-secrets-manager.md),
+[Azure Key Vault](../providers/azure-key-vault.md)) is read there through
+the vault's connection, with the same calls: the connection signs in with
+the credentials it stores, or with the provider's own sign-in on the
+machine. No provider is contacted until a secret it keeps is read.
 
 > [!IMPORTANT]
 > `expose_text()` returns a Python `str` copy. Leaving the `with` block
@@ -138,7 +138,7 @@ try:
         with reader.get("database-password") as secret:
             connect(password=secret.value.expose_text())
 except VaultLockedError as err:
-    print(err.hint)   # which passphrase sources were tried, how to add a protector
+    print(err.hint)   # which recovery-key sources were tried
 except SecretNotFoundError as err:
     print(err.hint)   # "Store it with `sourceorrery secret set database-password --vault development` ..."
 except SourceOrreryError as err:
@@ -151,7 +151,7 @@ Classes: `VaultNotFoundError`, `VaultLockedError`,
 `SecretDisabledError`, `SecretNotYetValidError` (`.transient` is true),
 `SecretExpiredError`, `IntegrityError`, `UnsupportedError`,
 `InvalidArgumentError`, `InvalidNameError`, `ManifestError`,
-`PermissionDeniedError`, `StorageError`, and for remote vaults
+`PermissionDeniedError`, `StorageError`, and for secrets kept at a provider
 `UnauthenticatedError` (the provider has no credentials for this process)
 and `ProviderUnavailableError` (it could not be reached; `.transient` is
 true). See [the SDK overview](index.md#errors) for what each hint says.

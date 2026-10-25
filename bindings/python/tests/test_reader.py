@@ -35,13 +35,13 @@ from sourceorrery import (
 
 @pytest.fixture
 def reader(fixture):
-    # Unlocks through SOURCEORRERY_PASSPHRASE from the environment, like the CLI.
+    # Unlocks through SOURCEORRERY_RECOVERY_KEY from the environment, like the CLI.
     with SecretReader(fixture.vault) as reader:
         yield reader
 
 
 def test_contract_version():
-    assert sourceorrery.contract_version() == "1"
+    assert sourceorrery.contract_version() == "2"
 
 
 def test_get_returns_the_newest_accessible_version(reader, fixture):
@@ -133,20 +133,20 @@ def test_vault_errors_say_how_to_fix_them(fixture):
     assert fixture.home in missing.value.hint
 
     with pytest.raises(VaultLockedError) as locked:
-        SecretReader(fixture.vault, passphrase="wrong-passphrase", environment=False)
+        SecretReader(fixture.vault, recovery_key="wrong-recovery-key", environment=False)
     hint = locked.value.hint
-    assert "passphrase option: tried" in hint
-    assert "SOURCEORRERY_PASSPHRASE: not set" in hint
-    assert f"--vault {fixture.vault}" in hint
-    assert "wrong-passphrase" not in str(locked.value)
+    assert "recovery_key option: tried" in hint
+    assert "SOURCEORRERY_RECOVERY_KEY: not set" in hint
+    assert f"sourceorrery vault create {fixture.vault}" in hint
+    assert "wrong-recovery-key" not in str(locked.value)
 
-    # An explicit passphrase and an explicit home work without the environment.
+    # An explicit recovery key and an explicit home work without the environment.
     with SecretReader(
-        fixture.vault, home=fixture.home, passphrase=fixture.passphrase, environment=False
+        fixture.vault, home=fixture.home, recovery_key=fixture.recovery_key, environment=False
     ) as reader:
         assert reader.vault_name == fixture.vault
         assert reader.descriptor()["name"] == fixture.vault
-        assert "passphrase" in reader.descriptor()["protectors"]
+        assert "recovery" in reader.descriptor()["protectors"]
 
 
 def test_secret_values_do_not_leak(reader, fixture):
@@ -223,7 +223,7 @@ def test_project_load_mirrors_run(fixture):
     with pytest.raises(ManifestError):
         Project.load(fixture.manifest + ".missing")
     with pytest.raises(VaultLockedError):
-        Project.load(fixture.manifest, passphrase="wrong", environment=False)
+        Project.load(fixture.manifest, recovery_key="wrong", environment=False)
 
 
 def test_unknown_codes_keep_their_code():
@@ -243,44 +243,3 @@ def test_provider_codes_map_to_typed_errors():
     assert unavailable.transient
     assert UnauthenticatedError("m").code == "unauthenticated"
     assert ProviderUnavailableError("m").code == "provider_unavailable"
-
-
-def test_a_remote_vault_in_the_manifest_is_opened_at_its_provider(fixture, tmp_path, monkeypatch):
-    manifest = tmp_path / "sourceorrery.toml"
-    manifest.write_text(
-        "[project]\n"
-        'name = "demo"\n'
-        f'vault = "{fixture.vault}"\n'
-        "\n"
-        "[vaults.remote-x]\n"
-        'provider = "hashicorp-vault"\n'
-        'address = "http://127.0.0.1:1"\n'  # nothing listens here
-        'mount = "secret"\n'
-    )
-    options = dict(home=fixture.home, passphrase=fixture.passphrase, environment=False)
-
-    # With a credential, the remote vault is opened at its provider, which is not there.
-    monkeypatch.setenv("VAULT_TOKEN", "dummy-token-for-tests")
-    with pytest.raises(ProviderUnavailableError) as info:
-        SecretReader("remote-x", manifest=manifest, **options)
-    assert info.value.code == "provider_unavailable"
-    assert info.value.transient
-    assert "hashicorp-vault is unavailable" in info.value.message
-    assert "[vaults.remote-x]" in info.value.hint
-
-    # Without one, the provider refuses before any request, unless the developer
-    # running the tests has a ~/.vault-token or another Vault credential around.
-    monkeypatch.delenv("VAULT_TOKEN", raising=False)
-    with pytest.raises((UnauthenticatedError, ProviderUnavailableError)) as info:
-        SecretReader("remote-x", manifest=manifest, **options)
-    if isinstance(info.value, UnauthenticatedError):
-        assert info.value.code == "unauthenticated"
-        assert not info.value.transient
-        assert "not authenticated to hashicorp-vault" in info.value.message
-        assert "VAULT_TOKEN" in info.value.hint
-    else:
-        assert info.value.code == "provider_unavailable"
-
-    # A vault without a `[vaults.<name>]` table is still the local file.
-    with SecretReader(fixture.vault, manifest=manifest, **options) as reader:
-        assert reader.get("database-password").value.expose() == fixture.LATEST

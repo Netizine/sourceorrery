@@ -2,8 +2,9 @@
 
 SDK: `cargo add sourceorrery` (needs a C compiler for the bundled SQLite;
 on Linux also `pkg-config` and `libdbus-1-dev`, or
-`cargo add sourceorrery --no-default-features` for passphrase-only
-servers).
+`cargo add sourceorrery --no-default-features --features remote` for
+servers without a credential store, where vaults open with their
+recovery key).
 
 ## One module for every read
 

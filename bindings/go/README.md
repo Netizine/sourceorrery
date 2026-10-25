@@ -76,17 +76,14 @@ would store a missing secret; `errors.Is` matches the `Err*` sentinels. A
 value is a `*SecretValue`: it prints and encodes as `[REDACTED]`, the bytes
 come out only through `Bytes()` or `Text()`, and `Close()` zeroises them.
 
-## Remote vaults
+## Secrets at a provider
 
-`OpenOptions.Manifest` names the `sourceorrery.toml` whose
-`[vaults.<name>]` tables say which vaults are remote and at which provider;
-by default the nearest one above the current directory is used. A vault
-with such a table is opened at its provider instead of as a local file,
-and `ErrUnauthenticated` / `ErrProviderUnavailable` (transient) report
-its failures. Credentials come from the provider's own environment, never
-from the manifest: HashiCorp Vault is the first provider, and its credential
-comes from `VAULT_TOKEN` or the other sources
-[the provider documents](../../docs/providers/hashicorp-vault.md).
+A secret that one of the vault's connections stores (HashiCorp Vault, AWS
+Secrets Manager or Azure Key Vault) is read at that provider by the same
+calls, with the credentials the connection stores or the ones the
+provider's own tools find in the environment
+([providers](../../docs/providers/)); `ErrUnauthenticated` /
+`ErrProviderUnavailable` (transient) report a provider's failures.
 
 ## Tests
 

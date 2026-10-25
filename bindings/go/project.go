@@ -52,13 +52,13 @@ func LoadProject(manifest string, opts *OpenOptions) (*Project, error) {
 		return nil, err
 	}
 	optionsJSON := opts.json()
-	passphrase := opts.passphrase()
+	recoveryKey := opts.recoveryKey()
 	var handle *C.so_project
 	err := call(func() C.so_status {
 		return C.so_project_load(
 			bytesPtr([]byte(manifest)), C.size_t(len(manifest)),
 			bytesPtr(optionsJSON), C.size_t(len(optionsJSON)),
-			bytesPtr(passphrase), C.size_t(len(passphrase)),
+			bytesPtr(recoveryKey), C.size_t(len(recoveryKey)),
 			&handle)
 	})
 	if err != nil {

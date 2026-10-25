@@ -1,176 +1,212 @@
-//! A backend that creates nothing: what the wizard asked for, recorded, and
-//! fixed answers so the screens can be drawn and tested without a vault.
+//! A backend that touches no vault: fixed vaults, a view check and a
+//! recovery key to answer, and what the screens asked for, recorded, so
+//! they can be driven and drawn in tests.
 
-use sourceorrery_core::SecretBytes;
-use sourceorrery_storage::RevealGuard;
-use zeroize::Zeroizing;
+use sourceorrery_core::{ConnectionSettings, Provider, SecretBytes, timestamp};
+use sourceorrery_storage::{
+    AuthenticatorChange, ConnectionChange, ConnectionInfo, CredentialSource, PasswordChange,
+    ViewCheck,
+};
 
-use super::backend::{Backend, CheckRow, Enrolment, ProjectReady, VaultReady};
+use super::backend::{Backend, Committed, OpenOutcome, Opened, Plan, TestCredentials};
 
-/// The code the fake accepts.
-pub const CODE: &str = "492039";
-/// The key the fake enrols with (the RFC 6238 test secret).
-pub const KEY: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+/// Where the made-up person the fakes show keeps vaults, never the machine
+/// running them: the design snapshots draw these screens for the docs.
+pub const VAULTS_DIR: &str = r"C:\Users\alex\AppData\Local\sourceorrery\vaults";
+/// The password that passes the fake vaults' view check.
+pub const PASSWORD: &str = "orbit lantern copper nine 42";
+/// The code that passes it, when the vault asks for one.
+pub const CODE: &str = "123456";
+/// The recovery key that opens a locked fake vault.
+pub const RECOVERY_KEY: &str = "SORK-FAKE-RECOVERY-KEY";
 
-const CODES: [&str; 5] = [
-    "7K3QD-2M9RX-HT4VN-8WPB5-J6FGA",
-    "C2N8M-R4XKQ-9TB7W-P5DHJ-3VZ6Y",
-    "XQ4JF-8PNM2-T6RWB-D9HK3-5VZC7",
-    "M9T2K-W6XRQ-4JPNB-H8DF3-Z5V7C",
-    "R5H8W-K2QXM-7TNJ4-P9DB6-V3ZF8",
-];
-
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Fake {
-    pub keyring: Option<&'static str>,
-    /// Vault names that exist already.
-    pub existing: Vec<String>,
-    /// Refuse to open an existing vault with this message.
-    pub refuse_open: Option<String>,
-    /// `(name, keyring)` of the vault created.
-    pub created: Option<(String, bool)>,
-    /// Length of the passphrase the vault was created with.
-    pub passphrase_len: usize,
-    pub opened: Option<String>,
-    /// `(name, value length)` of each secret stored.
-    pub secrets: Vec<(String, usize)>,
-    pub codes_issued: usize,
-    pub hint: Option<String>,
-    pub enrolled: bool,
-    pub verified: bool,
-    pub cancelled: usize,
-    pub guard: Option<RevealGuard>,
-    pub project_written_for: Option<String>,
-    /// Make `write_project` report an existing manifest.
-    pub manifest_exists: bool,
+    pub vaults: Vec<Opened>,
+    pub store: Option<String>,
+    pub providers: Vec<Provider>,
+    /// The vault this machine cannot open without [`RECOVERY_KEY`].
+    pub locked: Option<String>,
+    /// The vaults opened, in order, and whether with a recovery key.
+    pub opens: Vec<(String, bool)>,
+    /// Answers to the view check, in order: the password's length and the code.
+    pub checks: Vec<(usize, Option<String>)>,
+    /// The connection tests: the settings, and `ambient`, `given` or `kept`.
+    pub tests: Vec<(ConnectionSettings, &'static str)>,
+    pub refuse_test: Option<String>,
+    pub refuse_commit: Option<String>,
+    /// The plans committed (or refused), in order.
+    pub plans: Vec<Plan>,
+}
+
+impl Default for Fake {
+    fn default() -> Self {
+        Self {
+            vaults: Vec::new(),
+            store: Some("Windows Credential Manager".to_owned()),
+            providers: Provider::ALL.to_vec(),
+            locked: None,
+            opens: Vec::new(),
+            checks: Vec::new(),
+            tests: Vec::new(),
+            refuse_test: None,
+            refuse_commit: None,
+            plans: Vec::new(),
+        }
+    }
+}
+
+pub fn hashicorp(id: &str) -> ConnectionInfo {
+    ConnectionInfo {
+        id: id.to_owned(),
+        settings: ConnectionSettings::HashicorpVault {
+            address: "https://vault.example.com:8200".to_owned(),
+            mount: "secret".to_owned(),
+            namespace: None,
+        },
+        credentials: CredentialSource::Stored,
+        created_on: timestamp::now(),
+        last_test: None,
+    }
 }
 
 impl Fake {
-    pub fn with_keyring() -> Self {
+    /// One vault, `dev`, with `view` and a HashiCorp Vault connection whose
+    /// token it stores.
+    pub fn one_vault(view: ViewCheck) -> Self {
         Self {
-            keyring: Some("macOS Keychain"),
+            vaults: vec![Opened {
+                name: "dev".to_owned(),
+                path: format!(r"{VAULTS_DIR}\dev.sorvault"),
+                view,
+                passed: false,
+                hint: view.password.then(|| "the long one".to_owned()),
+                connections: vec![hashicorp("c1")],
+            }],
             ..Self::default()
         }
+    }
+
+    fn find(&self, name: &str) -> Option<&Opened> {
+        self.vaults
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case(name))
+    }
+
+    /// The last plan the review sent.
+    pub fn plan(&self) -> &Plan {
+        self.plans.last().expect("a plan was committed")
     }
 }
 
 impl Backend for Fake {
-    fn keyring(&self) -> Option<&'static str> {
-        self.keyring
+    fn vaults(&self) -> Result<Vec<String>, String> {
+        Ok(self.vaults.iter().map(|v| v.name.clone()).collect())
     }
 
-    fn vault_exists(&self, name: &str) -> bool {
-        self.existing.iter().any(|n| n == name)
+    fn store(&self) -> Option<String> {
+        self.store.clone()
     }
 
-    fn create_vault(
+    fn providers(&self) -> Vec<Provider> {
+        self.providers.clone()
+    }
+
+    fn open(
         &mut self,
         name: &str,
-        passphrase: SecretBytes,
-        keyring: bool,
-    ) -> Result<VaultReady, String> {
-        if self.vault_exists(name) {
-            return Err(format!("vault '{name}' already exists (vault_exists)"));
+        recovery_key: Option<SecretBytes>,
+    ) -> Result<OpenOutcome, String> {
+        let mut opened = self.find(name).ok_or("no such vault")?.clone();
+        let with_key = recovery_key.is_some();
+        if self.locked.as_deref() == Some(opened.name.as_str()) {
+            match recovery_key {
+                // The recovery key passes the check by itself.
+                Some(key) if key.expose() == RECOVERY_KEY.as_bytes() => opened.passed = true,
+                _ => return Ok(OpenOutcome::NeedsRecoveryKey),
+            }
         }
-        self.created = Some((name.to_owned(), keyring));
-        self.passphrase_len = passphrase.len();
-        Ok(VaultReady {
-            name: name.to_owned(),
-            path: format!("C:/Users/you/AppData/Local/sourceorrery/vaults/{name}.sorvault"),
-            keyring,
-            created: true,
-        })
+        self.opens.push((opened.name.clone(), with_key));
+        Ok(OpenOutcome::Opened(opened))
     }
 
-    fn open_vault(&mut self, name: &str) -> Result<VaultReady, String> {
-        if let Some(refusal) = &self.refuse_open {
-            return Err(refusal.clone());
+    fn check_view(&mut self, password: SecretBytes, code: Option<String>) -> Result<(), String> {
+        self.checks.push((password.expose().len(), code.clone()));
+        let asked = self
+            .opens
+            .last()
+            .and_then(|(name, _)| self.find(name))
+            .map(|v| v.view)
+            .unwrap_or_default();
+        let code_ok = !asked.authenticator || code.as_deref() == Some(CODE);
+        if password.expose() == PASSWORD.as_bytes() && code_ok {
+            Ok(())
+        } else {
+            Err("the view check was not passed".to_owned())
         }
-        self.opened = Some(name.to_owned());
-        Ok(VaultReady {
-            name: name.to_owned(),
-            path: format!("C:/Users/you/AppData/Local/sourceorrery/vaults/{name}.sorvault"),
-            keyring: self.keyring.is_some(),
-            created: false,
-        })
     }
 
-    fn set_secret(&mut self, name: &str, value: SecretBytes) -> Result<(), String> {
-        self.secrets.push((name.to_owned(), value.len()));
-        Ok(())
+    fn test_connection(
+        &mut self,
+        settings: &ConnectionSettings,
+        credentials: &TestCredentials,
+    ) -> Result<(), String> {
+        let kind = match credentials {
+            TestCredentials::Ambient => "ambient",
+            TestCredentials::Given(_) => "given",
+            TestCredentials::Kept(_) => "kept",
+        };
+        self.tests.push((settings.clone(), kind));
+        self.refuse_test.clone().map_or(Ok(()), Err)
     }
 
-    fn recovery_codes(&mut self, count: usize) -> Result<Vec<Zeroizing<String>>, String> {
-        self.codes_issued = count;
-        Ok(CODES
-            .iter()
-            .take(count)
-            .map(|c| Zeroizing::new((*c).to_owned()))
-            .collect())
-    }
-
-    fn set_hint(&mut self, hint: &str) -> Result<(), String> {
-        if hint.len() > 120 {
-            return Err("a hint has at most 120 characters (invalid_argument)".to_owned());
+    fn commit(&mut self, plan: Plan) -> Result<Committed, String> {
+        let before = self.find(&plan.name).cloned();
+        let had = before.as_ref().map(|v| v.view).unwrap_or_default();
+        let password = match plan.change.password {
+            PasswordChange::Keep => had.password,
+            PasswordChange::Set { .. } => true,
+            PasswordChange::Clear => false,
+        };
+        let authenticator = password
+            && match plan.change.authenticator {
+                AuthenticatorChange::Keep => had.authenticator,
+                AuthenticatorChange::Remove => false,
+                AuthenticatorChange::Verified { .. } => true,
+            };
+        let mut connections = before.map(|v| v.connections).unwrap_or_default();
+        for (i, change) in plan.change.connections.iter().enumerate() {
+            match change {
+                ConnectionChange::Add {
+                    settings,
+                    credentials,
+                } => connections.push(ConnectionInfo {
+                    id: format!("n{i}"),
+                    settings: settings.clone(),
+                    credentials: if credentials.is_some() {
+                        CredentialSource::Stored
+                    } else {
+                        CredentialSource::Ambient
+                    },
+                    created_on: timestamp::now(),
+                    last_test: None,
+                }),
+                ConnectionChange::Remove { id } => connections.retain(|c| c.id != *id),
+                ConnectionChange::Settings { .. } | ConnectionChange::Credentials { .. } => {}
+            }
         }
-        self.hint = Some(hint.to_owned());
-        Ok(())
-    }
-
-    fn enrol(&mut self) -> Result<Enrolment, String> {
-        self.enrolled = true;
-        self.verified = false;
-        Ok(Enrolment {
-            uri: Zeroizing::new(format!(
-                "otpauth://totp/SourceOrrery:development?secret={KEY}&issuer=SourceOrrery"
-            )),
-            key: Zeroizing::new(KEY.to_owned()),
-        })
-    }
-
-    fn verify_code(&mut self, code: &str) -> Result<bool, String> {
-        if !self.enrolled {
-            return Err("no second factor is enrolled".to_owned());
-        }
-        self.verified = code == CODE;
-        Ok(self.verified)
-    }
-
-    fn cancel_enrolment(&mut self) -> Result<(), String> {
-        self.enrolled = false;
-        self.verified = false;
-        self.cancelled += 1;
-        Ok(())
-    }
-
-    fn set_guard(&mut self, guard: RevealGuard) -> Result<RevealGuard, String> {
-        if guard.second_factor && !self.verified {
-            return Err(
-                "the guard cannot ask for a second factor until one is enrolled and \
-                        verified (invalid_argument)"
-                    .to_owned(),
-            );
-        }
-        self.guard = Some(guard);
-        Ok(guard)
-    }
-
-    fn write_project(&mut self, secret: &str) -> Result<ProjectReady, String> {
-        self.project_written_for = Some(secret.to_owned());
-        let rows = vec![CheckRow {
-            name: secret.to_owned(),
-            env: secret.to_uppercase().replace('-', "_"),
-            status: if self.secrets.iter().any(|(n, _)| n == secret) {
-                "ok".to_owned()
-            } else {
-                "secret_not_found".to_owned()
+        let refused = self.refuse_commit.clone();
+        let committed = Committed {
+            name: plan.name.clone(),
+            path: format!(r"{VAULTS_DIR}\{}.sorvault", plan.name),
+            view: ViewCheck {
+                password,
+                authenticator,
             },
-        }];
-        Ok(ProjectReady {
-            manifest: "C:/code/my-application/sourceorrery.toml".into(),
-            written: !self.manifest_exists,
-            ok: rows.iter().all(|r| r.status == "ok"),
-            rows,
-        })
+            this_machine: self.store.is_some(),
+            connections,
+        };
+        self.plans.push(plan);
+        refused.map_or(Ok(committed), Err)
     }
 }

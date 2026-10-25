@@ -5,14 +5,14 @@ same five things and nothing more:
 
 | | |
 |---|---|
-| **Open a vault** | by name: OS credential store first, then an explicit passphrase, `SOURCEORRERY_PASSPHRASE`, and a configured passphrase file; never an interactive prompt. `SOURCEORRERY_HOME` says where vaults live. |
+| **Open a vault** | by name: this machine's key in the OS credential store first, then the vault's recovery key (given in code, `SOURCEORRERY_RECOVERY_KEY`, or a file, `SOURCEORRERY_RECOVERY_KEY_FILE`); never an interactive prompt and never the vault's view check. `SOURCEORRERY_HOME` says where vaults live. |
 | **Get a secret** | the newest *accessible* version (enabled, inside its time window) or an explicit version. |
 | **Read properties** | metadata of a version, without policy, so disabled and expired versions can be inspected. |
 | **Resolve a reference** | `sourceorrery://vault/name[/version]`, the form the manifest and the CLI use. |
 | **Load a project** | every secret a `sourceorrery.toml` declares, resolved like `sourceorrery run`: required secrets must resolve, optional ones that cannot are left out. |
 
-There is no `set`, `update`, `delete`, `recover` or `purge`, no protector
-and no audit management in any SDK. Writing is the CLI's job; a library
+There is no `set`, `update`, `delete`, `recover` or `purge`, no key,
+check or connection management and no audit management in any SDK. Writing is the CLI's job; a library
 that cannot write cannot be tricked into writing
 ([ADR 0005](../adr/0005-read-only-sdks.md)).
 
@@ -38,13 +38,13 @@ Why each technology: [ADR 0006](../adr/0006-binding-technologies.md).
 
 ## Installing
 
-Each language page opens with its package registry. The 0.2.0 release targets
+Each language page opens with its package registry. The 0.2.0 release publishes to
 PyPI, npm (under the `@sourceorreryai` scope), crates.io, Maven Central, NuGet
-and Packagist, and the Go module on pkg.go.dev. Until 0.2.0 is published,
-build from source. Next comes the
-[v0.2.0 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0),
-which carries the same packages (wheels, npm tarballs, the jar, the NuGet
-package) and the C ABI archive that the Go, C, C++ and PHP SDKs load. Each
+and Packagist, with the Go module on pkg.go.dev. The
+[v0.2.0 GitHub release](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0)
+also carries the packages (wheels, npm tarballs, the jar, the NuGet
+package) and the C ABI archive that the Go, C, C++ and PHP SDKs load. Use
+these release files if a registry is still indexing the new version. Each
 page ends with building that SDK from source;
 [Building from source](../building.md) covers the tools every build needs.
 How the packages are published and how to check them:
@@ -61,39 +61,39 @@ Every SDK reads a vault that already exists, so the first steps are the
 CLI's:
 
 ```bash
-sourceorrery vault create development          # OS credential store
+sourceorrery setup                             # screens: name, checks, recovery key, storage
 sourceorrery secret set database-password --vault development
 ```
 
-On a server, in a container or in CI there is no credential store: give
-the vault a passphrase protector and hand the passphrase to the process.
+`setup` keeps this machine's key in the OS credential store and hands out
+the vault's recovery key once. On a server, in a container or in CI there
+is no credential store, or not this machine's: give the process the
+recovery key in a file.
 
 ```bash
-sourceorrery vault protector add --kind passphrase --vault development
-export SOURCEORRERY_PASSPHRASE_FILE=/run/secrets/vault
+export SOURCEORRERY_RECOVERY_KEY_FILE=/run/secrets/vault-recovery-key
 ```
 
 Provision that file through your environment's secret-management mechanism
 and restrict it to the account running the application. Each SDK also
-accepts a passphrase, a passphrase file and a home directory in code, for
-tests and unusual layouts. Avoid putting a passphrase in source code or
-process arguments; an environment variable containing one can also be
-inspected by other processes with sufficient privileges.
+accepts a recovery key, a recovery-key file and a home directory in code,
+for tests and unusual layouts. Avoid putting a recovery key in source code
+or process arguments; an environment variable containing one can also be
+inspected by other processes with sufficient privileges. The vault's view
+check (a password, perhaps with an authenticator code) is for people
+browsing the vault; an SDK never asks it.
 
-### Remote vaults
+### Secrets kept at a provider
 
-A vault that `sourceorrery.toml` declares in a `[vaults.<name>]` table
-([providers](../providers/index.md)) is opened at its remote provider by
-the same `open` call, with the credentials the provider's own environment
-supplies (`VAULT_TOKEN`, the AWS credential chain); the manifest holds the
-address only. Every SDK takes a
-`manifest` option next to `home` and `passphrase_file` naming the manifest
-to resolve through; the default is the nearest `sourceorrery.toml` above
-the current directory, and the project loader always uses the manifest it
-loads. HashiCorp Vault and AWS Secrets Manager are the providers; a
-provider the build leaves out fails with `unsupported`, naming it. Who
-decides what, and the workload identity set-up per platform:
-[enterprise.md](../enterprise.md).
+A vault keeps each secret in its own file or at a provider through one of
+its connections ([providers](../providers/index.md)). The SDK reads such a
+secret at the provider with the same calls, signing in with the
+credentials the connection stores, or with the provider's own chain on the
+machine (`VAULT_TOKEN`, the AWS credential chain, an Azure identity); the
+manifest never names a provider. HashiCorp Vault, AWS Secrets Manager and
+Azure Key Vault are the providers; a provider the build leaves out fails
+with `unsupported`, naming it. Who decides what, and the workload identity
+set-up per platform: [enterprise.md](../enterprise.md).
 
 ## Errors
 
@@ -104,17 +104,18 @@ core, so every language says the same thing.
 | Code | Typed error | Hint says |
 |------|-------------|-----------|
 | `vault_not_found` | `VaultNotFound…` | how to create the vault with the CLI, and which home directory was searched |
-| `locked` | `VaultLocked…` | which passphrase sources were tried (option, `SOURCEORRERY_PASSPHRASE`, `SOURCEORRERY_PASSPHRASE_FILE`) and how to add a protector |
-| `migration_required` | `MigrationRequired…` | run `sourceorrery vault migrate <name>`; SDKs never migrate |
-| `vault_mismatch` (0.1.4) | `VaultMismatch…` | the file found for the vault holds another vault (renamed, copied or swapped in): move it back or restore the vault from a backup, and treat an unexplained swap as tampering |
+| `locked` | `VaultLocked…` | which recovery-key sources were tried (option, `SOURCEORRERY_RECOVERY_KEY`, `SOURCEORRERY_RECOVERY_KEY_FILE`) and how to give one |
+| `migration_required` | `MigrationRequired…` | the vault was written by an earlier release, which this one cannot read: recreate it with `sourceorrery setup` |
+| `vault_mismatch` | `VaultMismatch…` | the file found for the vault holds another vault (renamed, copied or swapped in): move it back or restore the vault from a backup, and treat an unexplained swap as tampering |
 | `not_found` | `SecretNotFound…` | how to store the secret (`sourceorrery secret set`) |
 | `version_not_found` | `VersionNotFound…` (a `SecretNotFound…`) | list versions, or omit the version |
 | `disabled`, `not_yet_valid`, `expired` | `SecretDisabled…`, `SecretNotYetValid…`, `SecretExpired…` (all `Policy…`) | the policy decision and the `secret update` that changes it; `not_yet_valid` is marked transient |
 | `deleted` | `SecretDeleted…` | `sourceorrery secret recover` |
 | `crypto` | `Integrity…` | the file failed an integrity check: compare with a backup, run `audit --verify` |
-| `unsupported` | `Unsupported…` | no OS credential store here: add a passphrase protector; or this build has no provider for a remote vault |
-| `unauthenticated` (0.2.0) | `Unauthenticated…` | where the remote provider's own tools take credentials from (`VAULT_TOKEN`, the AWS credential chain); never the manifest |
-| `provider_unavailable` (0.2.0) | `ProviderUnavailable…` | check that the provider is reachable and the address in `[vaults.<name>]` is right; transient, so retry |
+| `unsupported` | `Unsupported…` | no OS credential store here: give the recovery key; or this build has no provider for the one that stores the secret |
+| `unauthenticated` | `Unauthenticated…` | store credentials in the vault's connection, or where the provider's own tools take them from (`VAULT_TOKEN`, the AWS credential chain, an Azure identity) |
+| `permission_denied` | `PermissionDenied…` | the permission the provider's policy must grant this identity, and the command that shows which identity was refused |
+| `provider_unavailable` | `ProviderUnavailable…` | check that the provider is reachable and the address in the vault's connection is right; transient, so retry |
 | `invalid_argument`, `invalid_name` | `InvalidArgument…`, `InvalidName…` | the reference and name rules |
 | `manifest` | `Manifest…` | fix `sourceorrery.toml`, check with `sourceorrery check` |
 | `abi_mismatch` (Go, Java, .NET, PHP, C++) | the base type | the native library implements another C ABI version than the SDK was built for: install the `sourceorrery-ffi` library of the SDK's release. Raised by the SDK itself before anything is opened, never by the core ([ADR 0007](../adr/0007-versioning-and-compatibility.md)) |
@@ -154,9 +155,10 @@ The rules per surface, and how CI checks them, are in
 
 Every SDK has a test suite and an example that CI runs on Ubuntu, Windows
 and macOS against a vault the job creates with the CLI
-(`scripts/ci/fixture-vault.sh`: a passphrase protector,
-`SOURCEORRERY_PASSPHRASE` in the environment, secrets covering every
-policy state). A binding whose tests do not pass does not ship.
+(`scripts/ci/fixture-vault.sh`: a vault that opens with its recovery key,
+`SOURCEORRERY_RECOVERY_KEY` in the environment, secrets covering every
+policy state, and in the provider jobs secrets kept at the provider
+through a connection). A binding whose tests do not pass does not ship.
 
 On top of the per-language suites, one **conformance harness** holds every
 SDK to the same contract: `tests/conformance/sdk/scenarios.json` lists the

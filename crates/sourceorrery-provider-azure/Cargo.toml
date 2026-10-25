@@ -1,0 +1,39 @@
+[package]
+name = "sourceorrery-provider-azure"
+description = "Azure Key Vault behind the SourceOrrery secret contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+categories = ["authentication", "asynchronous"]
+keywords = ["secrets", "azure", "key-vault", "provider"]
+
+[dependencies]
+sourceorrery-core.workspace = true
+async-trait.workspace = true
+azure_core = "1.1"
+azure_identity = "1"
+azure_security_keyvault_secrets = "1.0.1"
+base64 = "0.22"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["time", "net"] }
+
+[dev-dependencies]
+# Test-only back edge: Cargo strips path-only dev dependencies on publish.
+sourceorrery-provider = { path = "../sourceorrery-provider" }
+sourceorrery-conformance = { path = "../../tests/conformance" }
+sourceorrery-storage = { path = "../sourceorrery-storage", default-features = false }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+# The live test creates its vaults through the emulator's Resource Manager.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking", "json", "form"] }
+
+[lints]
+workspace = true

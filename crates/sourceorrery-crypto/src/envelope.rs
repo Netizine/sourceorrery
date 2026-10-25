@@ -2,15 +2,15 @@
 //! key-encryption key (KEK).
 //!
 //! A vault has one DEK that encrypts every secret value, and one wrapped
-//! copy of that DEK per *key protector* (OS keyring, passphrase, ...).
-//! Adding a protector wraps the same DEK again; removing one deletes a
-//! wrapped copy. Secret values never need re-encrypting.
+//! copy of that DEK per key that opens it (this machine's key, the
+//! recovery key). Adding a key wraps the same DEK again; removing one
+//! deletes a wrapped copy. Secret values never need re-encrypting.
 
 use crate::Result;
 use crate::aead::{self, Ciphertext};
 use crate::key::SymmetricKey;
 
-/// Encrypt `dek` under `kek`, binding it to `aad` (vault id + protector id).
+/// Encrypt `dek` under `kek`, binding it to `aad` (vault id + wrap id).
 pub fn wrap_key(kek: &SymmetricKey, dek: &SymmetricKey, aad: &[u8]) -> Result<Ciphertext> {
     aead::seal(kek, aad, dek.expose())
 }

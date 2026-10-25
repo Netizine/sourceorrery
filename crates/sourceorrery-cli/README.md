@@ -64,8 +64,9 @@ sourceorrery init --integration claude      # or cursor, codex, copilot, gemini,
 The agent skills are compiled into the binary, so nothing is downloaded:
 [AI coding agents](https://sourceorrery.ai/guides/ai-agents/).
 
-On a server, in a container or in CI there is no credential store: add a
-passphrase protector and unlock with `SOURCEORRERY_PASSPHRASE_FILE`
+On a server, in a container or in CI, where this machine's key is not
+available, the vault opens with its recovery key from
+`SOURCEORRERY_RECOVERY_KEY_FILE`
 ([Headless](https://sourceorrery.ai/guides/headless/)).
 
 ## Reading secrets from code
@@ -96,9 +97,12 @@ treat it as a production secret store yet.
 
 ## Features
 
-`os-keyring` (default) protects vault keys with the OS credential store;
-`ui` (default) is the interactive vault manager. Build with
-`--no-default-features` for passphrase protectors only and no `ui`.
+`os-keyring` (default) keeps this machine's key in the OS credential
+store; `ui` (default) is the interactive vault manager and the setup and
+`init` screens; `remote` (default) the providers a vault's connections
+reach; `otlp` (default) the OpenTelemetry export of audit events. Build
+with `--no-default-features` for vaults that open with their recovery keys
+only, no screens and no providers.
 
 ## Licence
 

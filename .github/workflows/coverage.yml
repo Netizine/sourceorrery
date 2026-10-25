@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     # Match normal CI's disposable provider servers; no cloud account is used.
+    # LocalStack for Azure, then for AWS, is started by lstk below
+    # (.lstk/azure.toml and .lstk/config.toml pin the images).
     services:
       vault:
         image: hashicorp/vault:2.2.1
@@ -31,10 +33,6 @@ jobs:
         ports:
           - 8200:8200
         options: --cap-add=IPC_LOCK
-      moto:
-        image: motoserver/moto:5.2.4
-        ports:
-          - 4566:5000
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -42,19 +40,13 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       SOURCEORRERY_VAULT_TEST_ADDR: http://127.0.0.1:8200
       VAULT_TOKEN: root
-      SOURCEORRERY_AWS_TEST_ENDPOINT: http://127.0.0.1:4566
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_REGION: us-east-1
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-
-      - name: Correct Moto's stored version timestamps
-        env:
-          MOTO_CONTAINER_ID: ${{ job.services.moto.id }}
-        run: python3 scripts/ci/moto-version-timestamps.py --container "$MOTO_CONTAINER_ID"
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -65,7 +57,7 @@ jobs:
             site/package-lock.json
             scripts/coverage/package-lock.json
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
 
@@ -74,7 +66,7 @@ jobs:
           go-version: '1.24'
           cache: false
 
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: '25'
@@ -103,7 +95,7 @@ jobs:
       - name: Install LLVM coverage support
         run: rustup component add llvm-tools-preview
 
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-llvm-cov@0.9.1
 
@@ -118,16 +110,54 @@ jobs:
           FONTAWESOME_NPM_AUTH_TOKEN: ${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
         run: npm ci --ignore-scripts
 
-      - name: Wait for provider test servers
+      # The Azure and AWS emulators bind the same ports, so the Azure
+      # provider's live coverage is collected first, on its own, and merged
+      # by the collect stage. This job never runs for a fork, so the tokens
+      # must be there; only the steps that run lstk see them.
+      - name: Select the Azure emulator
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AZURE_AUTH_TOKEN }}
+          FORK: 'false'
+        run: bash scripts/ci/localstack.sh select azure
+
+      - name: Start LocalStack for Azure (lstk returns once it is ready)
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AZURE_AUTH_TOKEN }}
+        run: bash scripts/ci/localstack.sh start azure
+
+      - name: Azure Key Vault provider coverage against the emulator
+        run: bash scripts/coverage/native.sh azure
+
+      - name: LocalStack for Azure logs
+        if: always()
+        env:
+          # Only to remove it from the files uploaded below.
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AZURE_AUTH_TOKEN }}
+        run: bash scripts/ci/localstack.sh logs azure
+
+      - name: Stop LocalStack for Azure
+        if: always()
+        run: bash scripts/ci/localstack.sh stop azure
+
+      - name: Select the AWS emulator
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+          FORK: 'false'
+        run: bash scripts/ci/localstack.sh select aws
+
+      - name: Start LocalStack for AWS (lstk returns once it is ready)
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+        run: bash scripts/ci/localstack.sh start aws
+
+      - name: Wait for the Vault test server
         run: |
-          for service in http://127.0.0.1:8200/v1/sys/health http://127.0.0.1:4566/moto-api/; do
-            ready=false
-            for _attempt in $(seq 1 60); do
-              if curl --fail --silent "$service" >/dev/null; then ready=true; break; fi
-              sleep 1
-            done
-            if [ "$ready" != true ]; then echo "Provider test server did not start: $service" >&2; exit 1; fi
+          for _attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8200/v1/sys/health >/dev/null; then exit 0; fi
+            sleep 1
           done
+          echo 'The Vault test server did not start' >&2
+          exit 1
 
       - name: Collect Rust, provider, SDK and site coverage
         run: bash scripts/coverage/run.sh --stage collect
@@ -166,9 +196,25 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: bash scripts/sonar/scan.sh end
 
+      - name: LocalStack for AWS logs
+        if: always()
+        env:
+          # Only to remove it from the files uploaded below.
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+        run: bash scripts/ci/localstack.sh logs aws
+
+      - name: Keep the LocalStack logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: localstack-logs-coverage
+          path: ${{ runner.temp }}/localstack/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Keep coverage reports
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-reports
           path: |
@@ -177,6 +223,7 @@ jobs:
             coverage/go.out
             coverage/node/lcov.info
             coverage/site/lcov.info
+            coverage/tooling-node/lcov.info
             bindings/java/target/site/jacoco/jacoco.xml
           if-no-files-found: warn
           retention-days: 14

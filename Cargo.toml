@@ -10,6 +10,7 @@ members = [
     "crates/sourceorrery-provider",
     "crates/sourceorrery-provider-vault",
     "crates/sourceorrery-provider-aws",
+    "crates/sourceorrery-provider-azure",
     "tests/conformance",
 ]
 # Native extension crates build with their own toolchains (maturin, napi)
@@ -34,6 +35,7 @@ sourceorrery = { path = "crates/sourceorrery", version = "0.2.0", default-featur
 sourceorrery-provider = { path = "crates/sourceorrery-provider", version = "0.2.0" }
 sourceorrery-provider-vault = { path = "crates/sourceorrery-provider-vault", version = "0.2.0" }
 sourceorrery-provider-aws = { path = "crates/sourceorrery-provider-aws", version = "0.2.0" }
+sourceorrery-provider-azure = { path = "crates/sourceorrery-provider-azure", version = "0.2.0" }
 
 # shared
 serde = { version = "1", features = ["derive"] }

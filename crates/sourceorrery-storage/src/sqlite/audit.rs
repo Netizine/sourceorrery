@@ -9,7 +9,7 @@ use sourceorrery_core::audit::{AuditEvent, AuditOperation, AuditOutcome};
 use sourceorrery_core::{Principal, Result, SecretError, timestamp, validate_secret_name};
 use sourceorrery_crypto::{MAC_LEN, SymmetricKey};
 
-use super::schema::{Meta, begin_write, db, from_nanos, nanos};
+use super::schema::{Meta, SettingsTag, begin_write, db, from_nanos, nanos};
 use super::{Acknowledgement, SqliteVault};
 use crate::integrity::{self, AuditFields, AuditVerification, Checkpoint};
 
@@ -37,6 +37,7 @@ pub(super) struct ChainRow {
     pub(super) keyed: bool,
     pub(super) state_tag: Option<Vec<u8>>,
     pub(super) version_tag: Option<Vec<u8>>,
+    pub(super) settings_tag: Option<Vec<u8>>,
 }
 
 impl ChainRow {
@@ -55,6 +56,7 @@ impl ChainRow {
             keyed: self.keyed,
             state_tag: self.state_tag.as_deref(),
             version_tag: self.version_tag.as_deref(),
+            settings_tag: self.settings_tag.as_deref(),
         }
     }
 
@@ -103,13 +105,29 @@ pub(super) fn event_from_row(row: AuditRow) -> Result<AuditEvent> {
     })
 }
 
-/// The row checkpoints a success event carries (see `integrity`).
+/// How an operation that ended in `err` is recorded: `denied` when policy
+/// refused it, `failure` otherwise.
+pub(super) fn outcome_of(err: &SecretError) -> AuditOutcome {
+    match err {
+        SecretError::Disabled { .. }
+        | SecretError::NotYetValid { .. }
+        | SecretError::Expired { .. }
+        | SecretError::PermissionDenied(_) => AuditOutcome::Denied,
+        _ => AuditOutcome::Failure,
+    }
+}
+
+/// The checkpoints an event carries (see `integrity`): the rows a success
+/// changed, and the settings record whenever the event rewrote it, which a
+/// refused answer to the view check or a failed connection test does too.
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Checkpoints {
     /// State of the `secrets` row the event names.
     pub(super) state: Option<Checkpoint>,
     /// State of the `secret_versions` row the event names.
     pub(super) version: Option<Checkpoint>,
+    /// The tag the settings record carries after the event.
+    pub(super) settings: Option<SettingsTag>,
 }
 
 /// One audit event to append.
@@ -132,7 +150,7 @@ pub(super) struct AuditWriter<'a> {
     pub(super) key: Option<&'a SymmetricKey>,
     pub(super) actor: &'a Principal,
     /// Accept a log with no rows and no head record. True only while a vault
-    /// is being created or migrated; for an existing vault that state means
+    /// is being created; for an existing vault that state means
     /// the whole history and its head were removed.
     pub(super) allow_empty_chain: bool,
 }
@@ -165,11 +183,6 @@ impl AuditWriter<'_> {
 
     /// Append one row. As [`AuditWriter::record`].
     pub(super) fn record_entry(&self, conn: &Connection, entry: &Entry<'_>) -> Result<()> {
-        if self.meta.schema < 2 {
-            // Pre-migration rows (failed unlocks of a schema 1 vault): the
-            // chain columns do not exist yet; the migration chains them.
-            return record_legacy(conn, self.actor, entry);
-        }
         let own_tx = conn.is_autocommit();
         if own_tx {
             conn.execute_batch("BEGIN IMMEDIATE").map_err(db)?;
@@ -217,52 +230,28 @@ impl AuditWriter<'_> {
         let keyed = self.key.is_some();
         let state_tag = entry.checkpoints.state.as_ref().map(Checkpoint::as_blob);
         let version_tag = entry.checkpoints.version.as_ref().map(Checkpoint::as_blob);
-        if self.meta.schema >= 3 {
-            conn.execute(
-                "INSERT INTO audit_events
-                    (occurred_on, actor, operation, secret_name, version, outcome, detail,
-                     prev_hash, keyed, state_tag, version_tag)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    occurred_on,
-                    actor,
-                    entry.operation.as_str(),
-                    entry.secret_name,
-                    entry.version,
-                    entry.outcome.as_str(),
-                    entry.detail,
-                    prev.as_slice(),
-                    i64::from(keyed),
-                    state_tag,
-                    version_tag,
-                ],
-            )
-            .map_err(db)?;
-        } else {
-            // A schema 2 file before its migration (a refused unlock, or a
-            // refused migration): it has no checkpoint columns yet and no
-            // checkpoint is ever recorded in it. The migration re-chains
-            // these rows under the current encoding.
-            debug_assert!(state_tag.is_none() && version_tag.is_none());
-            conn.execute(
-                "INSERT INTO audit_events
-                    (occurred_on, actor, operation, secret_name, version, outcome, detail,
-                     prev_hash, keyed)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    occurred_on,
-                    actor,
-                    entry.operation.as_str(),
-                    entry.secret_name,
-                    entry.version,
-                    entry.outcome.as_str(),
-                    entry.detail,
-                    prev.as_slice(),
-                    i64::from(keyed),
-                ],
-            )
-            .map_err(db)?;
-        }
+        let settings_tag = entry.checkpoints.settings.as_ref().map(|tag| &tag.0[..]);
+        conn.execute(
+            "INSERT INTO audit_events
+                (occurred_on, actor, operation, secret_name, version, outcome, detail,
+                 prev_hash, keyed, state_tag, version_tag, settings_tag)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                occurred_on,
+                actor,
+                entry.operation.as_str(),
+                entry.secret_name,
+                entry.version,
+                entry.outcome.as_str(),
+                entry.detail,
+                prev.as_slice(),
+                i64::from(keyed),
+                state_tag,
+                version_tag,
+                settings_tag,
+            ],
+        )
+        .map_err(db)?;
         let id = conn.last_insert_rowid();
         let fields = AuditFields {
             vault_id: &self.meta.id,
@@ -277,6 +266,7 @@ impl AuditWriter<'_> {
             keyed,
             state_tag,
             version_tag,
+            settings_tag,
         };
         let zero = integrity::zero_key();
         let key = self.key.unwrap_or(&zero);
@@ -291,25 +281,6 @@ impl AuditWriter<'_> {
         }
         Ok(())
     }
-}
-
-/// Schema 1 insert: no chain columns.
-pub(super) fn record_legacy(conn: &Connection, actor: &Principal, entry: &Entry<'_>) -> Result<()> {
-    conn.execute(
-        "INSERT INTO audit_events (occurred_on, actor, operation, secret_name, version, outcome, detail)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            nanos(timestamp::now())?,
-            actor.to_string(),
-            entry.operation.as_str(),
-            entry.secret_name,
-            entry.version,
-            entry.outcome.as_str(),
-            entry.detail
-        ],
-    )
-    .map_err(db)?;
-    Ok(())
 }
 
 /// Chain hash of the newest audit row, or zeros for an empty log.
@@ -478,6 +449,15 @@ pub(super) fn quarantined_message(pending: &[ChainRow]) -> String {
     )
 }
 
+/// The error for a settings record refused by [`settings_problem`].
+pub(super) fn settings_message(problem: &str) -> String {
+    format!(
+        "vault settings integrity check failed: {problem}. The settings (the view check, the \
+         connections and the projects) are not the ones this vault wrote last, so an older \
+         authentic copy may have been put back"
+    )
+}
+
 fn event_id_list(ids: impl Iterator<Item = i64>) -> String {
     ids.map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
 }
@@ -574,9 +554,54 @@ pub(super) fn head_problem(
     })
 }
 
+/// Compare `stored`, the settings tag the file holds, with the newest
+/// settings checkpoint on the keyed chain: the `settings_tag` of the newest
+/// keyed event that carries one. `None` when they are equal; otherwise a
+/// short, value-free description of the problem, suitable as audit detail.
+/// There is no accept-if-none case, since every vault records its settings
+/// when it is created, and the newest checkpoint must verify: passing over
+/// one that does not would promote an older one to newest.
+pub(super) fn settings_problem(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+    stored: Option<&str>,
+) -> Result<Option<String>> {
+    let newest = conn
+        .query_row(
+            &format!(
+                "SELECT {CHAIN_COLUMNS} FROM audit_events
+                 WHERE settings_tag IS NOT NULL AND keyed = 1
+                 ORDER BY id DESC LIMIT 1"
+            ),
+            [],
+            chain_row,
+        )
+        .optional()
+        .map_err(db)?;
+    let Some(row) = newest else {
+        return Ok(Some("no audit event records the vault settings".to_owned()));
+    };
+    if !row.authentic(key, vault_id) {
+        return Ok(Some(format!(
+            "the settings checkpoint of audit event {} does not verify",
+            row.id()
+        )));
+    }
+    let stored = stored.and_then(|tag| hex::decode(tag).ok());
+    if stored.is_some() && stored == row.settings_tag {
+        Ok(None)
+    } else {
+        Ok(Some(format!(
+            "they are not the settings audit event {} recorded",
+            row.id()
+        )))
+    }
+}
+
 const CHAIN_COLUMNS: &str =
     "id, occurred_on, actor, operation, secret_name, version, outcome, detail,
-                             prev_hash, hash, keyed, state_tag, version_tag";
+                             prev_hash, hash, keyed, state_tag, version_tag, settings_tag";
 
 fn chain_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChainRow> {
     Ok(ChainRow {
@@ -595,6 +620,7 @@ fn chain_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChainRow> {
         keyed: row.get::<_, i64>(10)? != 0,
         state_tag: row.get(11)?,
         version_tag: row.get(12)?,
+        settings_tag: row.get(13)?,
     })
 }
 
@@ -871,13 +897,24 @@ impl SqliteVault {
             )));
         }
         let detail = acknowledgement_detail(&ids);
-        self.writer().record(
+        // The owner accepts the vault as it stands, its settings record
+        // included: the missing events may have held the newest settings
+        // checkpoint, and without one recorded here the vault would never
+        // open again.
+        let settings = self.verified_meta(&tx)?.stored_settings_tag();
+        self.writer().record_entry(
             &tx,
-            AuditOperation::AuditVerify,
-            None,
-            None,
-            AuditOutcome::Success,
-            Some(&detail),
+            &Entry {
+                operation: AuditOperation::AuditVerify,
+                secret_name: None,
+                version: None,
+                outcome: AuditOutcome::Success,
+                detail: Some(&detail),
+                checkpoints: Checkpoints {
+                    settings,
+                    ..Checkpoints::default()
+                },
+            },
         )?;
         let event_id = u64::try_from(tx.last_insert_rowid()).unwrap_or_default();
         tx.commit().map_err(db)?;
@@ -946,6 +983,7 @@ impl SqliteVault {
                     checkpoints: Checkpoints {
                         state: Some(Checkpoint::Absent),
                         version: None,
+                        settings: None,
                     },
                 },
             )?;
@@ -1006,6 +1044,26 @@ impl SqliteVault {
         }
     }
 
+    /// [`SqliteVault::begin`] for weighing the view check: a stale chain
+    /// head is refused and recorded the same way, but a truncation waiting
+    /// to be acknowledged is not, so the owner of a blocked vault can still
+    /// pass the check to read its audit log and acknowledge it. Until then
+    /// the check is judged against the settings record by its tag alone
+    /// (see [`SqliteVault::verified_meta`]).
+    pub(super) fn begin_view_check<'c>(&self, conn: &'c mut Connection) -> Result<Transaction<'c>> {
+        let tx = begin_write(conn)?;
+        if let Some(problem) = head_problem(&tx, &self.metadata_key, &self.meta.id, false)? {
+            return self.fail(
+                tx,
+                AuditOperation::Guard,
+                None,
+                None,
+                SecretError::Crypto(truncated_message(&problem)),
+            );
+        }
+        Ok(tx)
+    }
+
     /// The current state of `name` according to the keyed audit chain.
     pub(super) fn checkpoints(&self, conn: &Connection, name: &str) -> Result<SecretCheckpoints> {
         secret_checkpoints(conn, &self.metadata_key, &self.meta.id, name)
@@ -1050,6 +1108,32 @@ impl SqliteVault {
         }
     }
 
+    /// Record an event that rewrote the settings record, with the tag the
+    /// record now carries.
+    pub(super) fn audit_settings(
+        &self,
+        conn: &Connection,
+        operation: AuditOperation,
+        outcome: AuditOutcome,
+        detail: &str,
+        tag: SettingsTag,
+    ) -> Result<()> {
+        self.writer().record_entry(
+            conn,
+            &Entry {
+                operation,
+                secret_name: None,
+                version: None,
+                outcome,
+                detail: Some(detail),
+                checkpoints: Checkpoints {
+                    settings: Some(tag),
+                    ..Checkpoints::default()
+                },
+            },
+        )
+    }
+
     pub(super) fn audit(
         &self,
         conn: &Connection,
@@ -1075,17 +1159,16 @@ impl SqliteVault {
         version: Option<&str>,
         err: SecretError,
     ) -> Result<T> {
-        let outcome = match err {
-            SecretError::Disabled { .. }
-            | SecretError::NotYetValid { .. }
-            | SecretError::Expired { .. }
-            | SecretError::PermissionDenied(_) => AuditOutcome::Denied,
-            _ => AuditOutcome::Failure,
-        };
         tx.execute_batch("ROLLBACK TO SAVEPOINT body; RELEASE SAVEPOINT body;")
             .map_err(db)?;
-        self.writer()
-            .record(&tx, operation, name, version, outcome, Some(err.code()))?;
+        self.writer().record(
+            &tx,
+            operation,
+            name,
+            version,
+            outcome_of(&err),
+            Some(err.code()),
+        )?;
         tx.commit().map_err(db)?;
         Err(err)
     }

@@ -5,15 +5,16 @@ namespace SourceOrrery;
 
 /// <summary>
 /// A read-only, thread-safe handle on one vault, unlocked the way the CLI
-/// unlocks it: OS credential store, then <see cref="OpenOptions.Passphrase"/>,
-/// <c>SOURCEORRERY_PASSPHRASE</c>, then <see cref="OpenOptions.PassphraseFile"/>
-/// / <c>SOURCEORRERY_PASSPHRASE_FILE</c>. Never prompts.
+/// unlocks it: OS credential store, then <see cref="OpenOptions.RecoveryKey"/>,
+/// <c>SOURCEORRERY_RECOVERY_KEY</c>, then <see cref="OpenOptions.RecoveryKeyFile"/>
+/// / <c>SOURCEORRERY_RECOVERY_KEY_FILE</c>. Never prompts.
 /// </summary>
 public sealed unsafe class SecretReader : IDisposable
 {
-    private nint handle;
+    private readonly ReaderHandle handle;
+    private int disposed;
 
-    private SecretReader(nint handle, string vaultName)
+    private SecretReader(ReaderHandle handle, string vaultName)
     {
         this.handle = handle;
         VaultName = vaultName;
@@ -23,7 +24,7 @@ public sealed unsafe class SecretReader : IDisposable
     public string VaultName { get; }
 
     /// <summary>True once disposed.</summary>
-    public bool IsClosed => handle == nint.Zero;
+    public bool IsClosed => Volatile.Read(ref disposed) != 0;
 
     /// <summary>Open <paramref name="vault"/>; see the class remarks for the unlock order.</summary>
     public static SecretReader Open(string vault, OpenOptions? options = null)
@@ -33,20 +34,27 @@ public sealed unsafe class SecretReader : IDisposable
         options ??= new OpenOptions();
         var name = NativeLibraryLoader.Utf8(vault)!;
         var json = NativeLibraryLoader.Utf8(options.ToJson())!;
-        var passphrase = NativeLibraryLoader.Utf8(options.Passphrase);
-        nint opened;
-        fixed (byte* namePtr = name)
-        fixed (byte* jsonPtr = json)
-        fixed (byte* passPtr = passphrase)
+        var recoveryKey = NativeLibraryLoader.Utf8(options.RecoveryKey);
+        nint opened = nint.Zero;
+        try
         {
-            Interop.Check(NativeMethods.so_reader_open(
-                namePtr, (nuint)name.Length,
-                jsonPtr, (nuint)json.Length,
-                passPtr, (nuint)(passphrase?.Length ?? 0),
-                &opened));
+            fixed (byte* namePtr = name)
+            fixed (byte* jsonPtr = json)
+            fixed (byte* keyPtr = recoveryKey)
+            {
+                Interop.Check(NativeMethods.so_reader_open(
+                    namePtr, (nuint)name.Length,
+                    jsonPtr, (nuint)json.Length,
+                    keyPtr, (nuint)(recoveryKey?.Length ?? 0),
+                    &opened));
+            }
         }
-        Array.Clear(passphrase ?? Array.Empty<byte>());
-        return new SecretReader(opened, vault);
+        finally
+        {
+            // The library keeps its own copy; a wrong recovery key must be cleared too.
+            Array.Clear(recoveryKey ?? Array.Empty<byte>());
+        }
+        return new SecretReader(new ReaderHandle(opened), vault);
     }
 
     /// <summary>The newest accessible version of <paramref name="name"/> (enabled, inside its time window), or exactly <paramref name="version"/>.</summary>
@@ -57,16 +65,17 @@ public sealed unsafe class SecretReader : IDisposable
         var versionBytes = NativeLibraryLoader.Utf8(version);
         SoBytes props = default;
         SoBytes value = default;
+        ThrowIfClosed();
         fixed (byte* namePtr = nameBytes)
         fixed (byte* versionPtr = versionBytes)
         {
             Interop.Check(NativeMethods.so_reader_get(
-                Require(),
+                handle,
                 namePtr, (nuint)nameBytes.Length,
                 versionPtr, (nuint)(versionBytes?.Length ?? 0),
                 &props, &value));
         }
-        return new Secret(SecretProperties.Parse(Interop.TakeString(ref props)), new SecretValue(value));
+        return Interop.TakeSecret(ref props, value);
     }
 
     /// <summary>Metadata only; policy is not applied, so disabled and expired versions can be inspected.</summary>
@@ -76,11 +85,12 @@ public sealed unsafe class SecretReader : IDisposable
         var nameBytes = NativeLibraryLoader.Utf8(name)!;
         var versionBytes = NativeLibraryLoader.Utf8(version);
         SoBytes props = default;
+        ThrowIfClosed();
         fixed (byte* namePtr = nameBytes)
         fixed (byte* versionPtr = versionBytes)
         {
             Interop.Check(NativeMethods.so_reader_properties(
-                Require(),
+                handle,
                 namePtr, (nuint)nameBytes.Length,
                 versionPtr, (nuint)(versionBytes?.Length ?? 0),
                 &props));
@@ -95,19 +105,27 @@ public sealed unsafe class SecretReader : IDisposable
         var referenceBytes = NativeLibraryLoader.Utf8(reference)!;
         SoBytes props = default;
         SoBytes value = default;
+        ThrowIfClosed();
         fixed (byte* referencePtr = referenceBytes)
         {
             Interop.Check(NativeMethods.so_reader_resolve(
-                Require(), referencePtr, (nuint)referenceBytes.Length, &props, &value));
+                handle, referencePtr, (nuint)referenceBytes.Length, &props, &value));
         }
-        return new Secret(SecretProperties.Parse(Interop.TakeString(ref props)), new SecretValue(value));
+        return Interop.TakeSecret(ref props, value);
     }
 
     /// <summary>Non-sensitive description of the vault (name, id, path, protectors).</summary>
     public VaultDescriptor GetDescriptor()
     {
+        ThrowIfClosed();
+        return Descriptor(handle);
+    }
+
+    /// <summary>The descriptor through <paramref name="reader"/>.</summary>
+    internal static VaultDescriptor Descriptor(ReaderHandle reader)
+    {
         SoBytes json = default;
-        Interop.Check(NativeMethods.so_reader_descriptor(Require(), &json));
+        Interop.Check(NativeMethods.so_reader_descriptor(reader, &json));
         var dto = JsonSerializer.Deserialize(Interop.TakeString(ref json), SourceOrreryJsonContext.Default.VaultDescriptorDto)
             ?? throw new SourceOrreryException("empty descriptor", "storage");
         return new VaultDescriptor
@@ -123,31 +141,33 @@ public sealed unsafe class SecretReader : IDisposable
         };
     }
 
-    /// <summary>Release the vault; the key held in memory is zeroised. Idempotent.</summary>
+    /// <summary>
+    /// Release the vault; the key held in memory is zeroised. Idempotent. A call
+    /// already running on another thread finishes first; later calls throw
+    /// <see cref="ObjectDisposedException"/>.
+    /// </summary>
     public void Dispose()
     {
-        var current = Interlocked.Exchange(ref handle, nint.Zero);
-        if (current != nint.Zero)
+        if (Interlocked.Exchange(ref disposed, 1) == 0)
         {
-            NativeMethods.so_reader_close(current);
+            handle.Dispose();
         }
-        GC.SuppressFinalize(this);
     }
-
-    ~SecretReader() => Dispose();
 
     /// <inheritdoc />
     public override string ToString() => $"SecretReader(vault='{VaultName}')";
 
-    private nint Require()
-    {
-        var current = handle;
-        if (current == nint.Zero)
-        {
-            throw new ObjectDisposedException(nameof(SecretReader));
-        }
-        return current;
-    }
+    /// <summary>
+    /// The native handle. Each call passes it to its import, which keeps it
+    /// open for that call; see <see cref="ReaderHandle"/>.
+    /// </summary>
+    internal ReaderHandle Handle => handle;
+
+    /// <summary>
+    /// Refuse a call once disposed. A call already running holds the handle
+    /// open, so the handle alone would not refuse a new one.
+    /// </summary>
+    private void ThrowIfClosed() => ObjectDisposedException.ThrowIf(IsClosed, this);
 }
 
 internal static unsafe class Interop
@@ -156,7 +176,7 @@ internal static unsafe class Interop
     /// C ABI version the <c>NativeMethods</c> declarations follow: <c>SO_ABI_VERSION</c>
     /// in the <c>sourceorrery.h</c> this package was written against.
     /// </summary>
-    internal const uint AbiVersion = 1;
+    internal const uint AbiVersion = 2;
 
     /// <summary>Refuse a library built for another C ABI version before anything is opened (ADR 0007).</summary>
     internal static void RequireAbi()
@@ -196,6 +216,24 @@ internal static unsafe class Interop
         var message = NativeLibraryLoader.ReadCString(NativeMethods.so_last_error_message()) ?? "unknown error";
         var hint = NativeLibraryLoader.ReadCString(NativeMethods.so_last_error_hint()) ?? "";
         throw SourceOrreryException.ForCode(code, message, hint);
+    }
+
+    /// <summary>
+    /// A secret from a read's two buffers. The value is owned before the
+    /// metadata is parsed, so a parse failure still zeroises it.
+    /// </summary>
+    public static Secret TakeSecret(ref SoBytes props, SoBytes value)
+    {
+        var secretValue = new SecretValue(value);
+        try
+        {
+            return new Secret(SecretProperties.Parse(TakeString(ref props)), secretValue);
+        }
+        catch
+        {
+            secretValue.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Copy a UTF-8 buffer into a string and free it.</summary>

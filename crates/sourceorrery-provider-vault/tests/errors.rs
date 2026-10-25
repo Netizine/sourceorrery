@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use sourceorrery_core::{RemoteVault, SecretClient};
+use sourceorrery_core::{ConnectionSettings, SecretClient};
 use sourceorrery_provider::Blocking;
 use sourceorrery_provider_vault::{Auth, Settings, Token, VaultClient};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -116,7 +116,7 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn connect(server: &Server, token: &str) -> sourceorrery_core::Result<Blocking<VaultClient>> {
-    let settings = Settings::from_manifest(&RemoteVault::HashicorpVault {
+    let settings = Settings::from_connection(&ConnectionSettings::HashicorpVault {
         address: server.address.clone(),
         mount: "secret".to_owned(),
         namespace: Some("team".to_owned()),
@@ -259,7 +259,7 @@ fn an_unreachable_server_is_provider_unavailable() {
         format!("http://{}", listener.local_addr().unwrap())
     });
     drop(runtime);
-    let settings = Settings::from_manifest(&RemoteVault::HashicorpVault {
+    let settings = Settings::from_connection(&ConnectionSettings::HashicorpVault {
         address,
         mount: "secret".to_owned(),
         namespace: None,

@@ -12,6 +12,7 @@ use sourceorrery_core::{
 };
 
 use crate::cli::{CheckArgs, InitArgs, IntegrationChoice, RunArgs, SkillScope};
+use crate::commands::init;
 use crate::context::{Ctx, Opened};
 use crate::integrations::{self, Agent, Outcome};
 use crate::output::{self, Table};
@@ -30,42 +31,13 @@ pub fn init(ctx: &Ctx, args: &InitArgs) -> anyhow::Result<()> {
     if !args.integrations.is_empty() {
         return init_integrations(ctx, args, &cwd, &path);
     }
-    if path.exists() && !args.force {
-        return Err(anyhow!(
-            "{} already exists (pass --force to overwrite)",
-            path.display()
-        ));
+    // On a terminal, nothing picked with a flag: the screens pick.
+    #[cfg(feature = "ui")]
+    if !init::picks_secrets(args) && !ctx.json() && super::on_a_terminal() {
+        return crate::ui::init::run(ctx, args, &path);
     }
-    let vault = write_manifest(ctx, args, &cwd, &path)?;
-    if ctx.json() {
-        return output::json(&serde_json::json!({ "manifest": path, "vault": vault }));
-    }
-    output::success(&format!("Wrote {}", path.display()));
-    eprintln!(
-        "next:\n  sourceorrery vault create {vault}\n  \
-         sourceorrery secret set database-password\n  \
-         sourceorrery run -- <your command>"
-    );
-    Ok(())
-}
-
-/// Write the starter manifest and return its vault.
-fn write_manifest(ctx: &Ctx, args: &InitArgs, cwd: &Path, path: &Path) -> anyhow::Result<String> {
-    let project_name = args.project_name.clone().unwrap_or_else(|| {
-        cwd.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("my-application")
-            .to_owned()
-    });
-    let vault = args
-        .vault_name
-        .clone()
-        .or_else(|| ctx.vault_flag.clone())
-        .unwrap_or_else(|| "development".to_owned());
-    let manifest = Manifest::template(&project_name, &vault);
-    let text = format!("{MANIFEST_HEADER}{}", manifest.to_toml()?);
-    std::fs::write(path, text).with_context(|| format!("cannot write {}", path.display()))?;
-    Ok(vault)
+    let written = init::write(ctx, args, &path)?;
+    init::report(ctx, &written)
 }
 
 #[derive(serde::Serialize)]
@@ -83,8 +55,8 @@ struct InstalledFile {
     outcome: Outcome,
 }
 
-/// `init --integration`: the skills for each agent, and the manifest unless
-/// it exists already or the skills go outside the project.
+/// `init --integration`: the skills for each agent, and the manifest when
+/// secrets are picked and the skills go into the project.
 fn init_integrations(ctx: &Ctx, args: &InitArgs, cwd: &Path, path: &Path) -> anyhow::Result<()> {
     let agents: Vec<Agent> = if args.integrations.contains(&IntegrationChoice::All) {
         Agent::ALL.to_vec()
@@ -101,12 +73,16 @@ fn init_integrations(ctx: &Ctx, args: &InitArgs, cwd: &Path, path: &Path) -> any
     let in_project = args.skills_dir.is_none() && args.scope == SkillScope::Project;
     let manifest = if !in_project {
         "untouched"
-    } else if path.exists() && !args.force {
+    } else if init::picks_secrets(args) {
+        if init::write(ctx, args, path)?.created {
+            "created"
+        } else {
+            "updated"
+        }
+    } else if path.exists() {
         "kept"
     } else {
-        let existed = path.exists();
-        write_manifest(ctx, args, cwd, path)?;
-        if existed { "replaced" } else { "created" }
+        "not written"
     };
 
     let root = path
@@ -164,8 +140,14 @@ fn print_integrations(
     installed: &[InstalledIntegration],
 ) {
     match manifest {
-        "created" | "replaced" => output::success(&format!("Wrote {}", path.display())),
+        "created" => output::success(&format!("Wrote {}", path.display())),
+        "updated" => output::success(&format!("Added to {}", path.display())),
         "kept" => output::note(&format!("{} already exists; kept it", path.display())),
+        "not written" => output::note(&format!(
+            "no {} yet: write it from your vault with `sourceorrery init --all` or `--secret \
+             NAME`",
+            path.display()
+        )),
         _ => {}
     }
     let shown = |p: &Path| {
@@ -493,7 +475,7 @@ fn run_inner(ctx: &Ctx, args: &RunArgs) -> anyhow::Result<i32> {
     let mut command = std::process::Command::new(program);
     command.args(program_args);
     // The child gets the declared secrets and nothing that unlocks the vault:
-    // a passphrase in our environment must not become a passphrase in theirs.
+    // a recovery key or a password in our environment must not become theirs.
     for var in crate::context::UNLOCK_ENV_VARS {
         command.env_remove(var);
     }

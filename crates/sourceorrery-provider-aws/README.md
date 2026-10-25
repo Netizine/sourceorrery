@@ -5,20 +5,18 @@ the [SourceOrrery](https://sourceorrery.ai) secret contract: the same
 `get`, `set`, versions, policy, soft delete and recover as a local vault,
 served by Secrets Manager.
 
-**You probably want another crate.** Applications read secrets through
+**You probably want another crate.** A SourceOrrery vault keeps a
+secret at Secrets Manager through a connection it holds, made with the CLI
+(`sourceorrery setup`, or `vault create --aws-secrets-manager REGION`,
+optionally with a name prefix), and applications read it through
 [`sourceorrery`](https://crates.io/crates/sourceorrery) (feature
-`provider-aws`, on by default) and name the region in `sourceorrery.toml`:
+`provider-aws`, on by default) like any other secret; the manifest never
+names the region.
 
-```toml
-[vaults.production]
-provider = "aws-secrets-manager"
-region = "eu-west-1"
-prefix = "myapp/"          # optional: every secret name is placed under it
-```
-
-Credentials never live in the manifest: the official AWS SDK's default
-chain finds them (environment, shared config and credentials files, SSO,
-web identity, ECS and EC2 instance roles).
+The connection signs in with an access key it stores, sealed in the
+vault, or else through the official AWS SDK's default chain (environment,
+shared config and credentials files, SSO, web identity, ECS and EC2
+instance roles).
 
 Secrets Manager keeps metadata per secret, not per version, so `enabled`,
 `content_type`, `not_before` and `expires_on` apply to the whole secret and

@@ -56,16 +56,13 @@ aarch64) and extracts it on first use; set `SOURCEORRERY_NATIVE_DIR` to use
 a library from elsewhere. Every file on Maven Central is signed with the
 release key ([Supply chain](https://sourceorrery.ai/security/supply-chain/)).
 
-## Remote vaults
+## Secrets at a provider
 
-A vault that `sourceorrery.toml` declares in a `[vaults.<name>]` table is
-opened at its remote provider by the same `SecretReader.open` call;
-`OpenOptions.defaults().withManifest(path)` names the manifest to resolve
-through (default: the nearest `sourceorrery.toml` above the current
-directory). Credentials come from the provider's own environment, never
-from the manifest: HashiCorp Vault is the first provider, and its credential
-comes from `VAULT_TOKEN` or the other sources
-[the provider documents](../../docs/providers/hashicorp-vault.md).
+A secret that one of the vault's connections stores (HashiCorp Vault, AWS
+Secrets Manager or Azure Key Vault) is read at that provider by the same
+calls, with the credentials the connection stores or the ones the
+provider's own tools find in the environment
+([providers](../../docs/providers/)).
 
 ## Errors and values
 

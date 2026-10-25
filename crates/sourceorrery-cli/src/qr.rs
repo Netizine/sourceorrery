@@ -1,5 +1,7 @@
 //! A QR code drawn in the terminal with half-block characters, two module
-//! rows per text line, with the quiet zone the standard asks for. Used to
+//! rows per text line, with one module of quiet zone: the setup screen
+//! keeps blank cells around the code, which give the rest of the zone the
+//! standard asks for, and the code then fits a 24-line terminal. Used to
 //! show an authenticator enrolment; the text encoded is the caller's to
 //! guard.
 
@@ -7,7 +9,7 @@ use anyhow::anyhow;
 use qrcode::{EcLevel, QrCode};
 
 /// Modules of quiet zone around the code.
-const QUIET: usize = 2;
+const QUIET: usize = 1;
 
 /// `text` as a QR code, one `String` per terminal line, dark modules as
 /// block characters on the terminal's background. Most authenticator apps
@@ -63,9 +65,11 @@ mod tests {
         let width = code.width() + 2 * QUIET;
         assert_eq!(lines.len(), width.div_ceil(2));
         assert!(lines.iter().all(|l| l.chars().count() == width));
-        // The quiet zone is blank and the finder pattern starts dark.
-        assert!(lines[0].chars().all(|c| c == ' '));
-        assert!(lines[1].starts_with("  █"), "{}", lines[1]);
+        // A blank module round the code: the first column, and the top half
+        // of the first line, whose bottom half is the finder pattern's edge.
+        assert!(lines.iter().all(|l| l.starts_with(' ')));
+        assert!(lines[0].starts_with(" ▄▄▄▄▄▄▄"), "{}", lines[0]);
+        assert!(lines[1].starts_with(" █"), "{}", lines[1]);
         assert!(lines.iter().any(|l| l.contains('▀') || l.contains('▄')));
     }
 }

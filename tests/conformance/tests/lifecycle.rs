@@ -4,23 +4,23 @@
 //! lifecycle` and run here against the SQLite vault, directly and through
 //! the `Blocking<AsyncLocal<_>>` adapter pair. The tests in this file are
 //! what the local vault adds on top: version-id shape, purgeable vaults,
-//! the audit log, protectors, the registry, reopening and backups. Together
+//! the audit log, its keys, the registry and reopening. Together
 //! they are the reference for every SDK binding: if a binding cannot pass
 //! the equivalent of each scenario, it does not implement SourceOrrery.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
+use sourceorrery_conformance::Fixture;
 use sourceorrery_conformance::lifecycle::{self, seed_paged, set, walk_pages};
-use sourceorrery_conformance::{FIXTURE_PASSPHRASE, Fixture};
 use sourceorrery_core::{
-    AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ExportOptions, ListOptions,
-    RESTORED_CREATED_ON_TAG, RESTORED_FROM_TAG, RecoveryLevel, RestoreOptions, SecretBytes,
-    SecretClient, SetSecretOptions, SkipReason, UpdateSecretProperties, VaultBackup, timestamp,
+    AuditOperation, AuditOutcome, AuditQuery, ContinuationToken, ListOptions, RecoveryLevel,
+    SecretBytes, SecretClient, SetSecretOptions, UpdateSecretProperties,
 };
-use sourceorrery_crypto::Argon2Params;
 use sourceorrery_provider::{AsyncLocal, Blocking};
-use sourceorrery_storage::backup;
-use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase};
+use sourceorrery_storage::{
+    CreateVaultOptions, MemoryStore, NoInteraction, StaticRecoveryKey, VaultRegistry,
+};
 
 /// The lifecycle scenarios, each on a fresh vault.
 #[test]
@@ -105,10 +105,7 @@ fn vault_retention_is_validated() {
             CreateVaultOptions {
                 recovery_level: RecoveryLevel::Recoverable,
                 retention_days: 3,
-            },
-            ProtectorSpec::Passphrase {
-                passphrase: SecretBytes::from(FIXTURE_PASSPHRASE),
-                params: Argon2Params::TESTING,
+                ..CreateVaultOptions::default()
             },
         )
         .unwrap_err();
@@ -151,6 +148,7 @@ fn purgeable_vaults_delete_immediately() {
         CreateVaultOptions {
             recovery_level: RecoveryLevel::Purgeable,
             retention_days: 7,
+            ..CreateVaultOptions::default()
         },
     );
     let props = set(&vault, "tmp", "x");
@@ -238,50 +236,75 @@ fn audit_trail_records_every_operation_without_values() {
     assert!(!dump.contains("plaintext-value-123"));
 }
 
+/// A replaced recovery key opens the vault and the one before it no longer
+/// does; the vault's keys are listed by kind, never by value.
 #[test]
-fn protectors_can_be_added_and_removed() {
+fn the_recovery_key_can_be_replaced() {
     let fx = Fixture::new();
     let vault = fx.create_vault("dev");
     set(&vault, "k", "v");
+    let kinds: Vec<String> = vault.wraps().unwrap().into_iter().map(|w| w.kind).collect();
+    assert_eq!(
+        kinds,
+        ["recovery"],
+        "no credential store: the recovery key only"
+    );
 
-    let added = vault
-        .add_protector(
-            ProtectorSpec::Passphrase {
-                passphrase: SecretBytes::from("second-passphrase"),
-                params: Argon2Params::TESTING,
-            },
-            Some("ci"),
-        )
-        .unwrap();
-    assert_eq!(added.label, "ci");
-    assert_eq!(vault.protectors().unwrap().len(), 2);
+    let new_key = vault.replace_recovery_key().unwrap();
+    assert_eq!(vault.wraps().unwrap().len(), 1);
     drop(vault);
 
-    let via_second = fx
-        .registry
-        .open("dev", &StaticPassphrase::new("second-passphrase"))
-        .unwrap();
+    let err = fx.registry.open("dev", &fx.unlock("dev")).unwrap_err();
     assert_eq!(
-        via_second.get_secret("k", None).unwrap().value.expose(),
-        b"v"
+        err.code(),
+        "locked",
+        "the replaced key still opens the vault"
     );
-
-    via_second.remove_protector("passphrase").unwrap();
-    assert_eq!(via_second.protectors().unwrap().len(), 1);
-    let err = via_second.remove_protector("ci").unwrap_err();
-    assert_eq!(err.code(), "invalid_argument");
-    drop(via_second);
-
-    let err = fx
+    let reopened = fx
         .registry
-        .open("dev", &StaticPassphrase::new(FIXTURE_PASSPHRASE))
-        .unwrap_err();
-    assert_eq!(err.code(), "locked");
-    assert!(
-        fx.registry
-            .open("dev", &StaticPassphrase::new("second-passphrase"))
-            .is_ok()
+        .open("dev", &StaticRecoveryKey::new(new_key.as_str()))
+        .unwrap();
+    assert_eq!(reopened.get_secret("k", None).unwrap().value.expose(), b"v");
+}
+
+/// With a credential store, the vault opens on this machine without being
+/// asked anything, and with its recovery key where the store's key is gone.
+#[test]
+fn this_machine_opens_the_vault_without_asking() {
+    let fx = Fixture::new();
+    let store = Arc::new(MemoryStore::new());
+    let registry = VaultRegistry::with_root(fx.home.path()).with_store(store.clone());
+    let created = registry
+        .create("dev", CreateVaultOptions::default())
+        .unwrap();
+    assert!(created.this_machine);
+    set(&created.vault, "k", "v");
+    let kinds: Vec<String> = created
+        .vault
+        .wraps()
+        .unwrap()
+        .into_iter()
+        .map(|w| w.kind)
+        .collect();
+    assert_eq!(kinds.len(), 2);
+    assert!(kinds.iter().any(|k| k == "this-machine"));
+    assert!(kinds.iter().any(|k| k == "recovery"));
+    let key = created.recovery_key.to_string();
+    drop(created);
+
+    let opened = registry.open("dev", &NoInteraction).unwrap();
+    assert_eq!(opened.get_secret("k", None).unwrap().value.expose(), b"v");
+    drop(opened);
+
+    // Another machine (no store) is asked for the recovery key.
+    let elsewhere = VaultRegistry::with_root(fx.home.path())
+        .with_store(Arc::new(sourceorrery_storage::NoStore));
+    assert_eq!(
+        elsewhere.open("dev", &NoInteraction).unwrap_err().code(),
+        "locked"
     );
+    assert!(elsewhere.open("dev", &StaticRecoveryKey::new(key)).is_ok());
+    assert_eq!(store.accounts().len(), 1);
 }
 
 #[test]
@@ -295,11 +318,7 @@ fn registry_lists_and_destroys_vaults() {
 
     let err = fx
         .registry
-        .create(
-            "a-vault",
-            CreateVaultOptions::default(),
-            ProtectorSpec::passphrase("x"),
-        )
+        .create("a-vault", CreateVaultOptions::default())
         .unwrap_err();
     assert_eq!(err.code(), "vault_exists");
     assert_eq!(
@@ -343,7 +362,7 @@ fn reopening_preserves_everything() {
     let descriptor = vault.descriptor().unwrap();
     assert_eq!(descriptor.name, "dev");
     assert_eq!(descriptor.backend, "encrypted-sqlite");
-    assert_eq!(descriptor.protectors, vec!["passphrase"]);
+    assert_eq!(descriptor.protectors, vec!["recovery"]);
 }
 
 /// Every `SecretClient` operation adds exactly one audit event of its own
@@ -499,247 +518,4 @@ fn every_operation_leaves_exactly_one_audit_event() {
     // Reading the log and verifying the chain are read-only.
     vault.verify_audit_chain().unwrap();
     assert_eq!(count(&vault), n, "verification must not write events");
-}
-
-fn count_events(vault: &impl SecretClient, op: AuditOperation, outcome: AuditOutcome) -> usize {
-    vault
-        .audit_events(AuditQuery::default())
-        .unwrap()
-        .into_iter()
-        .filter(|e| e.operation == op && e.outcome == outcome)
-        .count()
-}
-
-/// A vault worth backing up: `db-password` with three versions, the middle
-/// one disabled with a content type, tags and a window (which `get` would
-/// refuse, a backup must still carry); `api-key`; and `gone`, deleted.
-/// Returns the vault and the disabled version's properties.
-fn vault_to_back_up(fx: &Fixture) -> (SqliteVault, sourceorrery_core::SecretProperties) {
-    let source = fx.create_vault("dev");
-    set(&source, "db-password", "one");
-    let disabled = source
-        .set_secret(
-            "db-password",
-            SecretBytes::from("two"),
-            SetSecretOptions {
-                content_type: Some("text/plain".into()),
-                tags: BTreeMap::from([("env".to_owned(), "ci".to_owned())]),
-                enabled: false,
-                not_before: Some(timestamp::parse("2020-01-01T00:00:00Z").unwrap()),
-                expires_on: Some(timestamp::parse("2100-01-01T00:00:00Z").unwrap()),
-            },
-        )
-        .unwrap();
-    set(&source, "db-password", "three");
-    set(&source, "api-key", "k");
-    set(&source, "gone", "x");
-    source.delete_secret("gone").unwrap();
-    (source, disabled)
-}
-
-fn everything() -> ExportOptions {
-    ExportOptions {
-        secrets: None,
-        include_deleted: true,
-    }
-}
-
-#[test]
-fn export_reads_every_version_whatever_its_policy_and_is_audited_per_secret() {
-    let fx = Fixture::new();
-    let (source, disabled) = vault_to_back_up(&fx);
-
-    // Live secrets only by default; deleted ones on request.
-    let live = source.export(&ExportOptions::default()).unwrap();
-    let names: Vec<&str> = live.secrets.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(names, ["api-key", "db-password"], "name order, live only");
-    let snapshot = source.export(&everything()).unwrap();
-    assert_eq!(snapshot.secrets.len(), 3);
-    assert_eq!(snapshot.vault, "dev");
-    assert_eq!(snapshot.version_count(), 5);
-    let db = snapshot
-        .secrets
-        .iter()
-        .find(|s| s.name == "db-password")
-        .unwrap();
-    let values: Vec<&[u8]> = db.versions.iter().map(|v| v.value.expose()).collect();
-    assert_eq!(
-        values,
-        [b"one".as_slice(), b"two", b"three"],
-        "oldest first, disabled included"
-    );
-    assert_eq!(db.versions[1].version, disabled.version);
-    assert!(!db.versions[1].enabled);
-    assert_eq!(db.versions[1].content_type.as_deref(), Some("text/plain"));
-    assert_eq!(db.versions[1].tags["env"], "ci");
-    assert_eq!(db.versions[1].not_before, disabled.not_before);
-    let gone = snapshot.secrets.iter().find(|s| s.name == "gone").unwrap();
-    assert!(gone.deleted.is_some());
-    // One `vault_backup` event per secret exported.
-    assert_eq!(
-        count_events(&source, AuditOperation::VaultBackup, AuditOutcome::Success),
-        2 + 3
-    );
-    let only = source
-        .export(&ExportOptions {
-            secrets: Some(vec!["api-key".into()]),
-            include_deleted: false,
-        })
-        .unwrap();
-    assert_eq!(only.secrets.len(), 1);
-    assert_eq!(
-        source
-            .export(&ExportOptions {
-                secrets: Some(vec!["nope".into()]),
-                include_deleted: false,
-            })
-            .unwrap_err()
-            .code(),
-        "not_found"
-    );
-}
-
-#[test]
-fn backup_round_trip_restores_every_version_with_its_metadata() {
-    let fx = Fixture::new();
-    let (source, disabled) = vault_to_back_up(&fx);
-    let snapshot = source.export(&everything()).unwrap();
-
-    let passphrase = SecretBytes::from("backup-passphrase");
-    let bytes = backup::seal(&snapshot, &passphrase, Argon2Params::TESTING).unwrap();
-    let info = backup::inspect(&bytes).unwrap();
-    assert_eq!(
-        (info.vault.as_str(), info.format),
-        ("dev", backup::BACKUP_FORMAT)
-    );
-    let from_file = backup::open(&bytes, &passphrase).unwrap();
-    let target = fx.create_vault("copy");
-    let report = target
-        .restore(&from_file, &RestoreOptions::default())
-        .unwrap();
-    assert_eq!(report.skipped, vec![]);
-    let restored: Vec<(&str, usize, bool)> = report
-        .restored
-        .iter()
-        .map(|r| (r.name.as_str(), r.versions, r.deleted))
-        .collect();
-    assert_eq!(
-        restored,
-        [
-            ("api-key", 1, false),
-            ("db-password", 3, false),
-            ("gone", 1, false)
-        ]
-    );
-
-    // Newest stays newest; the disabled version is still disabled with its
-    // metadata; every version remembers where it came from.
-    let newest = target.get_secret("db-password", None).unwrap();
-    assert_eq!(newest.value.expose(), b"three");
-    let versions = target
-        .list_properties_of_secret_versions("db-password")
-        .unwrap();
-    assert_eq!(versions.len(), 3);
-    let middle = &versions[1];
-    assert!(!middle.enabled);
-    assert_eq!(middle.content_type.as_deref(), Some("text/plain"));
-    assert_eq!(middle.tags["env"], "ci");
-    assert_eq!(middle.tags[RESTORED_FROM_TAG], disabled.version);
-    assert_eq!(
-        middle.tags[RESTORED_CREATED_ON_TAG],
-        timestamp::format(disabled.created_on)
-    );
-    assert_ne!(
-        middle.version, disabled.version,
-        "a restored version is a new version"
-    );
-    assert_eq!(
-        target
-            .get_secret("db-password", Some(&middle.version))
-            .unwrap_err()
-            .code(),
-        "disabled"
-    );
-    assert_eq!(
-        target.get_secret("gone", None).unwrap().value.expose(),
-        b"x"
-    );
-    assert_eq!(
-        count_events(
-            &target,
-            AuditOperation::SecretRestore,
-            AuditOutcome::Success
-        ),
-        5
-    );
-    assert!(target.verify_audit_chain().unwrap().is_intact());
-}
-
-#[test]
-fn restore_skips_existing_secrets_adds_on_request_and_can_keep_deleted() {
-    let fx = Fixture::new();
-    let (source, _) = vault_to_back_up(&fx);
-    let snapshot = source.export(&everything()).unwrap();
-    let target = fx.create_vault("copy");
-    target
-        .restore(&snapshot, &RestoreOptions::default())
-        .unwrap();
-
-    // Restoring again skips what exists; `overwrite` adds versions on top.
-    let again = target
-        .restore(&snapshot, &RestoreOptions::default())
-        .unwrap();
-    assert_eq!(again.restored, vec![]);
-    assert_eq!(again.skipped.len(), 3);
-    assert!(again.skipped.iter().all(|s| s.reason == SkipReason::Exists));
-    let over = target
-        .restore(
-            &snapshot,
-            &RestoreOptions {
-                only: Some(vec!["api-key".into()]),
-                overwrite: true,
-                keep_deleted: false,
-            },
-        )
-        .unwrap();
-    assert_eq!(over.restored.len(), 1);
-    assert_eq!(
-        target
-            .list_properties_of_secret_versions("api-key")
-            .unwrap()
-            .len(),
-        2
-    );
-
-    // `keep_deleted` puts a deleted secret back into the deleted state, and
-    // a deleted name in the target is never written to.
-    let fresh = fx.create_vault("fresh");
-    let kept = fresh
-        .restore(
-            &snapshot,
-            &RestoreOptions {
-                only: Some(vec!["gone".into()]),
-                overwrite: false,
-                keep_deleted: true,
-            },
-        )
-        .unwrap();
-    assert!(kept.restored[0].deleted);
-    assert_eq!(
-        fresh.get_secret("gone", None).unwrap_err().code(),
-        "deleted"
-    );
-    assert_eq!(fresh.list_deleted_secrets().unwrap().len(), 1);
-    let blocked = fresh
-        .restore(
-            &snapshot,
-            &RestoreOptions {
-                only: Some(vec!["gone".into()]),
-                overwrite: true,
-                keep_deleted: false,
-            },
-        )
-        .unwrap();
-    assert_eq!(blocked.skipped[0].reason, SkipReason::Deleted);
-    assert_eq!(blocked.restored, vec![]);
 }

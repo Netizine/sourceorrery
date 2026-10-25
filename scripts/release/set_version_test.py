@@ -22,7 +22,8 @@ spec.loader.exec_module(stamping)
 
 VERSION = "9.8.7"
 LOCKS = ("Cargo.lock", "bindings/python/Cargo.lock", "bindings/node/Cargo.lock")
-PROVIDERS = {"sourceorrery-provider", "sourceorrery-provider-vault", "sourceorrery-provider-aws"}
+PROVIDERS = {"sourceorrery-provider", "sourceorrery-provider-vault", "sourceorrery-provider-aws",
+             "sourceorrery-provider-azure"}
 
 
 class VersionStamping(unittest.TestCase):

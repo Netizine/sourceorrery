@@ -34,7 +34,7 @@
  * Version of this C ABI. Bumped only for incompatible changes to the
  * functions or structs in the header; additions do not bump it.
  */
-#define SO_ABI_VERSION 1
+#define SO_ABI_VERSION 2
 
 /**
  * Outcome of a call.
@@ -156,7 +156,7 @@ const char *so_last_error_message(void);
 
 /**
  * What to do about the error reported by the last call on this thread
- * (which command creates the vault, which passphrase sources were tried,
+ * (which command creates the vault, which recovery-key sources were tried,
  * why a version was refused, ...), or `NULL` if that call succeeded or has
  * nothing specific to suggest. Wording may change between releases. The
  * string is NUL-terminated and valid until the next SourceOrrery call on
@@ -173,13 +173,14 @@ void so_last_error_clear(void);
  * Open a vault for reading, the way the CLI does.
  *
  * `name` is the vault name. `options_json` (nullable) is a
- * [`ReaderOptions`] document. A vault the manifest declares as remote
- * (`[vaults.<name>]`) is opened at its provider with the credentials the
- * provider's own environment supplies. Otherwise the vault file is
- * unlocked in this order: the OS credential store, then `passphrase` if
- * non-null, then `SOURCEORRERY_PASSPHRASE`, then the passphrase file from
- * the options or `SOURCEORRERY_PASSPHRASE_FILE`. There is no prompt. A
- * vault in an older on-disk format is refused with `migration_required`.
+ * [`ReaderOptions`] document. The vault file is opened in this order: this
+ * machine's key in the OS credential store, then the recovery key from
+ * `recovery_key` if non-null, `SOURCEORRERY_RECOVERY_KEY`, then the file
+ * from the options or `SOURCEORRERY_RECOVERY_KEY_FILE`. There is no
+ * prompt, and the vault's view check is never asked. A secret one of the
+ * vault's connections stores is read at that provider, with the
+ * credentials the connection stores or the provider's own chain. A vault
+ * written by an earlier release is refused with `migration_required`.
  *
  * On success `*out_handle` holds the handle; on failure it is `NULL` and
  * `so_last_error_hint()` says what to do.
@@ -188,15 +189,15 @@ void so_last_error_clear(void);
  *
  * Every `(pointer, length)` pair must be `NULL` or readable for that many
  * bytes for the duration of the call, and `out_handle` must be valid for
- * writes. The caller's `passphrase` buffer is copied and should be
+ * writes. The caller's `recovery_key` buffer is copied and should be
  * zeroised by the caller afterwards.
  */
 so_status so_reader_open(const uint8_t *name,
                          size_t name_len,
                          const uint8_t *options_json,
                          size_t options_json_len,
-                         const uint8_t *passphrase,
-                         size_t passphrase_len,
+                         const uint8_t *recovery_key,
+                         size_t recovery_key_len,
                          struct so_reader **out_handle);
 
 /**
@@ -284,7 +285,7 @@ so_status so_reader_resolve(const struct so_reader *handle,
  *
  * `manifest_path` (nullable) is the manifest file; `NULL` finds the nearest
  * `sourceorrery.toml` above the current directory. `options_json` and
- * `passphrase` are as for [`so_reader_open`] and apply to every vault the
+ * `recovery_key` are as for [`so_reader_open`] and apply to every vault the
  * manifest names. A required secret that cannot be read fails the whole
  * call with that secret's error; an optional one that is missing, refused
  * by policy or whose vault does not exist is left out.
@@ -297,8 +298,8 @@ so_status so_project_load(const uint8_t *manifest_path,
                           size_t manifest_path_len,
                           const uint8_t *options_json,
                           size_t options_json_len,
-                          const uint8_t *passphrase,
-                          size_t passphrase_len,
+                          const uint8_t *recovery_key,
+                          size_t recovery_key_len,
                           struct so_project **out_handle);
 
 /**
@@ -352,24 +353,23 @@ so_status so_project_entry(const struct so_project *handle,
 void so_project_free(struct so_project *handle);
 
 /**
- * Create a vault and return an open handle to it.
+ * Create a vault and return an open handle to it, with its recovery key.
  *
  * `home` (nullable) is the SourceOrrery home directory; `NULL` or empty
  * selects `SOURCEORRERY_HOME` or the platform data directory. `name` must
  * satisfy the vault naming rules. `options_json` (nullable) is documented at
- * `CreateOptions` in the crate documentation. With a non-null `passphrase`
- * the vault gets a passphrase protector; with `NULL` it gets an OS-keyring
- * protector (`unsupported` where no credential store is available). An
- * empty passphrase is rejected.
+ * `CreateOptions` in the crate documentation.
  *
- * On success `*out_handle` holds the handle; on failure it is `NULL`.
+ * `*out_recovery_key` receives the vault's recovery key: it opens the vault
+ * anywhere and is not stored, so show it to its owner once and release it
+ * with `so_bytes_free`, which zeroises it. On success `*out_handle` holds
+ * the handle; on failure both outputs are empty.
  *
  * # Safety
  *
  * Every `(pointer, length)` pair must be `NULL` or readable for that many
- * bytes for the duration of the call, and `out_handle` must be valid for
- * writes. The caller's `passphrase` buffer is copied and should be zeroised
- * by the caller afterwards.
+ * bytes for the duration of the call, and both output pointers must be
+ * valid for writes and distinct.
  */
 so_status so_vault_create(const uint8_t *home,
                           size_t home_len,
@@ -377,29 +377,30 @@ so_status so_vault_create(const uint8_t *home,
                           size_t name_len,
                           const uint8_t *options_json,
                           size_t options_json_len,
-                          const uint8_t *passphrase,
-                          size_t passphrase_len,
+                          struct so_bytes *out_recovery_key,
                           struct so_vault **out_handle);
 
 /**
- * Open and unlock an existing vault.
+ * Open an existing vault.
  *
- * `home` and `name` are as for [`so_vault_create`]. OS-keyring protectors
- * are tried first. If none unlocks the vault and `passphrase` is non-null
- * it is tried once against the passphrase protectors; with `NULL` the call
- * fails with `locked` when the keyring cannot unlock the vault. Failed
- * unlock attempts are audited.
+ * `home` and `name` are as for [`so_vault_create`]. This machine's key in
+ * the OS credential store is tried first. If it cannot open the vault and
+ * `recovery_key` is non-null, the recovery key is tried once; with `NULL`
+ * the call fails with `locked`. Failed attempts are audited.
  *
  * # Safety
  *
- * As [`so_vault_create`].
+ * Every `(pointer, length)` pair must be `NULL` or readable for that many
+ * bytes for the duration of the call, and `out_handle` must be valid for
+ * writes. The caller's `recovery_key` buffer is copied and should be
+ * zeroised by the caller afterwards.
  */
 so_status so_vault_open(const uint8_t *home,
                         size_t home_len,
                         const uint8_t *name,
                         size_t name_len,
-                        const uint8_t *passphrase,
-                        size_t passphrase_len,
+                        const uint8_t *recovery_key,
+                        size_t recovery_key_len,
                         struct so_vault **out_handle);
 
 /**

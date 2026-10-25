@@ -3,12 +3,15 @@
 #   bash scripts/coverage/native.sh          # Rust workspace, C ABI and C++
 #   bash scripts/coverage/native.sh python   # PyO3 + Python wrapper coverage
 #   bash scripts/coverage/native.sh node     # N-API + JavaScript wrapper coverage
+#   bash scripts/coverage/native.sh azure    # Azure Key Vault provider, emulator running
 #
 # Install cargo-llvm-cov, llvm-tools-preview, gcc/g++/gcov, gcovr and python3
 # beforehand. The extension modes also need the dependencies of sdk.sh;
 # Node needs `npm ci` in bindings/node. This script installs no tools.
 #
-# Rust reports: coverage/rust{,-python,-node}.lcov. C++ executable header
+# Rust reports: coverage/rust{,-python,-node,-azure}.lcov. The Azure mode
+# exists because the Azure emulator cannot run beside the AWS one
+# (scripts/ci/localstack.sh); run.sh merges its report. C++ executable header
 # coverage: coverage/cpp.xml (Sonar generic format). The C ABI implementation
 # is Rust, so the declaration-only C header must not receive invented coverage.
 # coverage/compile_commands.json contains compiler arguments, never environment
@@ -19,10 +22,10 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo"
 mode="${1:-workspace}"
 case "$mode" in
-  workspace|python|node) ;;
-  *) echo "usage: $0 [workspace|python|node]" >&2; exit 2 ;;
+  workspace|python|node|azure) ;;
+  *) echo "usage: $0 [workspace|python|node|azure]" >&2; exit 2 ;;
 esac
-if [ "$#" -gt 1 ] || [ "$(uname -s)" != Linux ]; then
+if [[ "$#" -gt 1 ]] || [[ "$(uname -s)" != Linux ]]; then
   echo "native coverage requires Ubuntu/Linux and at most one mode argument" >&2
   exit 2
 fi
@@ -37,14 +40,14 @@ require "$python_command"
 cargo llvm-cov --version >/dev/null
 
 # Fail instead of silently skipping SDK tests or using a developer's own vault.
-for variable in SOURCEORRERY_HOME SOURCEORRERY_PASSPHRASE SOURCEORRERY_TEST_VAULT \
+for variable in SOURCEORRERY_HOME SOURCEORRERY_RECOVERY_KEY SOURCEORRERY_TEST_VAULT \
   SOURCEORRERY_TEST_MANIFEST SOURCEORRERY_TEST_OLD_VERSION; do
-  if [ -z "${!variable:-}" ]; then
+  if [[ -z "${!variable:-}" ]]; then
     echo "native coverage: $variable is missing; run the SDK fixture action first" >&2
     exit 1
   fi
 done
-if [ ! -d "$SOURCEORRERY_HOME" ] || [ ! -f "$SOURCEORRERY_TEST_MANIFEST" ]; then
+if [[ ! -d "$SOURCEORRERY_HOME" ]] || [[ ! -f "$SOURCEORRERY_TEST_MANIFEST" ]]; then
   echo "native coverage: the exported SDK fixture paths do not exist" >&2
   exit 1
 fi
@@ -61,11 +64,11 @@ export CARGO_LLVM_COV_SETUP=no
 export CARGO_PROFILE_DEV_STRIP=none
 export CARGO_PROFILE_DEV_DEBUG=2
 
-if [ "$mode" != workspace ]; then
+if [[ "$mode" = python ]] || [[ "$mode" = node ]]; then
   cd "$repo/bindings/$mode"
 fi
 coverage_target=()
-if [ "$mode" = node ]; then
+if [[ "$mode" = node ]]; then
   # napi always passes --target, including for a native build. Use that same
   # target when configuring and finding coverage objects under target/<triple>.
   rust_host="$(rustc -vV | awk '/^host: / { print $2 }')"
@@ -99,7 +102,7 @@ PY
 extension_build_flags=(--locked --config 'profile.dev.package.argon2.opt-level=3'
   --config 'profile.dev.package.blake2.opt-level=3')
 
-if [ "$mode" = python ]; then
+if [[ "$mode" = python ]]; then
   # This crate is outside the root workspace. Build the debug cdylib directly
   # so maturin's packaging-time `strip = true` cannot remove coverage metadata.
   # PyO3 exports PyInit__native; the standard interpreter suffix makes this the
@@ -117,10 +120,10 @@ if [ "$mode" = python ]; then
   exit 0
 fi
 
-if [ "$mode" = node ]; then
+if [[ "$mode" = node ]]; then
   require node
   require npm
-  if [ ! -x node_modules/.bin/napi ]; then
+  if [[ ! -x node_modules/.bin/napi ]]; then
     echo "native coverage: run npm ci in bindings/node first" >&2
     exit 1
   fi
@@ -130,6 +133,17 @@ if [ "$mode" = node ]; then
   bash "$repo/scripts/coverage/sdk.sh" node
   cargo llvm-cov report "${coverage_target[@]}" --lcov --output-path "$coverage/rust-node.lcov"
   verify_rust_report "$coverage/rust-node.lcov" bindings/node/src/lib.rs
+  exit 0
+fi
+
+if [[ "$mode" = azure ]]; then
+  if [[ -z "${SOURCEORRERY_AZURE_TEST_ENDPOINT:-}" ]]; then
+    echo "native coverage: start the Azure emulator first (scripts/ci/localstack.sh start azure)" >&2
+    exit 1
+  fi
+  cargo test --locked -p sourceorrery-provider-azure
+  cargo llvm-cov report --lcov --output-path "$coverage/rust-azure.lcov"
+  verify_rust_report "$coverage/rust-azure.lcov" crates/sourceorrery-provider-azure/src/lib.rs
   exit 0
 fi
 
@@ -191,7 +205,7 @@ mkdir -p "$native_build/smoke-home"
 "$native_build/get_secret_cpp" "$SOURCEORRERY_TEST_VAULT" database-password >/dev/null
 for language in c cpp rust; do
   binary="$native_build/conformance_$language"
-  if [ "$language" = rust ]; then binary="$CARGO_TARGET_DIR/debug/examples/conformance"; fi
+  if [[ "$language" = rust ]]; then binary="$CARGO_TARGET_DIR/debug/examples/conformance"; fi
   runner_command="$("$python_command" -c 'import shlex, sys; print(shlex.quote(sys.argv[1]))' "$binary")"
   "$python_command" tests/conformance/sdk/harness.py --runner "$language" --command "$runner_command"
 done

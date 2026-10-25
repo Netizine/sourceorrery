@@ -1,6 +1,6 @@
 package ai.sourceorrery;
 
-/** {@code unsupported}: no OS credential store here (use a passphrase), or a remote provider this build does not include. */
+/** {@code unsupported}: no OS credential store here (use the vault's recovery key), or a remote provider this build does not include. */
 public class UnsupportedException extends SourceOrreryException {
     private static final long serialVersionUID = 1L;
 

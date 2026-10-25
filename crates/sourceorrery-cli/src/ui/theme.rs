@@ -125,9 +125,6 @@ pub struct Theme {
     pub caution: Style,
     pub info: Callout,
     pub error: Callout,
-    /// A QR code: dark modules black on a white field, the polarity every
-    /// scanner reads, whatever the terminal's colours.
-    pub qr: Style,
     enabled: Style,
     pending: Style,
     disabled: Style,
@@ -209,7 +206,6 @@ impl Theme {
             caution: fg(p.taupe),
             info: callout(p.blue, p.blue_bg),
             error: callout(p.red, p.red_bg),
-            qr: Style::new().fg(Color::Black).bg(Color::White),
             enabled: fg(p.green),
             pending: fg(p.blue),
             disabled: fg(p.gray_3),
@@ -245,7 +241,6 @@ impl Theme {
             caution: fg(Color::Magenta),
             info: callout(Color::Blue),
             error: callout(Color::Red),
-            qr: Style::new().fg(Color::Black).bg(Color::White),
             enabled: fg(Color::Green),
             pending: fg(Color::Blue),
             disabled: Style::new().add_modifier(Modifier::DIM),
@@ -280,7 +275,6 @@ impl Theme {
             caution: bold,
             info: callout,
             error: callout,
-            qr: Style::new(),
             enabled: Style::new(),
             pending: Style::new(),
             disabled: dim,

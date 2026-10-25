@@ -7,11 +7,12 @@ Release and publishes each package to its registry. A dry run does
 everything except create the tag, the release and the registry uploads,
 so the pipeline can be exercised without touching a registry.
 
-The next release is **0.2.0**. The new public manifest fields and audit
+The current release is [**0.2.0**](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0),
+published on 23 October 2026. The new public manifest fields and audit
 operations change the Rust API compared with 0.1.4, so these features
-cannot ship as a compatible 0.1.5 patch. The existing compatibility gate
+could not ship as a compatible 0.1.5 patch. The existing compatibility gate
 remains enabled. The [first provider publication](#first-provider-publication-for-020)
-is part of the same full release run: every crate, SDK and release asset
+was part of the same full release run: every crate, SDK and release asset
 uses **0.2.0**. Enabling trusted publishing for the new providers afterward
 does not require a 0.2.1 release.
 
@@ -28,8 +29,8 @@ does not require a 0.2.1 release.
    commit to `main`, then push the complete release candidate once. A Git
    push makes that commit available to Actions; it does not start a release.
 2. In GitHub, open *Actions → Release → Run workflow*, enter the version
-   (`X.Y.Z`, no `v`) and leave **dry_run** ticked. For the first provider
-   publication, also tick **bootstrap_providers** as described below.
+   (`X.Y.Z`, no `v`) and leave **dry_run** ticked. Leave **bootstrap_providers**
+   unticked for ordinary releases; the initial 0.2.0 publication is recorded below.
    Wait for green. The
    `release-dry-run-X.Y.Z` artifact holds everything the real run would
    attach, plus `SHA256SUMS` and the release notes; download it and try a
@@ -167,8 +168,9 @@ token for a short-lived upload token and uploads a signed attestation
 
 **crates.io** (`sourceorrery-core`, `sourceorrery-crypto`,
 `sourceorrery-storage`, `sourceorrery-provider-vault`,
-`sourceorrery-provider-aws`, `sourceorrery-provider`, `sourceorrery`,
-`sourceorrery-ffi`, `sourceorrery-cli`), with trusted publishing for normal
+`sourceorrery-provider-aws`, `sourceorrery-provider-azure`,
+`sourceorrery-provider`, `sourceorrery`, `sourceorrery-ffi`,
+`sourceorrery-cli`), with trusted publishing for normal
 releases. `scripts/release/publish-crates.py` discovers the publishable
 workspace members, verifies their versions and lets Cargo publish them in
 dependency order. Both release workflows skip exact versions already on
@@ -183,8 +185,8 @@ before its Trusted Publishing configuration can be created. The
 [crates.io rollout documentation](https://blog.rust-lang.org/2025/07/11/crates-io-development-update-2025-07/)
 requires an initial token-authenticated publication; pending publishers
 for names that do not exist are not available. The three providers are
-new in 0.2.0 and use the initial-publication option below. The six existing
-crates, including core, continue to use OIDC throughout that release.
+new in 0.2.0 and used the initial-publication option below. The six existing
+crates, including core, used OIDC throughout that release.
 
 1. For each crate, *Settings → Trusted Publishing → Add →
    GitHub*: Repository owner `Netizine`, Repository name `sourceorrery`,
@@ -197,6 +199,10 @@ crates, including core, continue to use OIDC throughout that release.
    token can publish it.
 
 #### First provider publication for 0.2.0
+
+All nine crates are now published as 0.2.0. The procedure below records
+their initial publication; future releases use ordinary trusted publishing
+after the providers' registry configuration is complete.
 
 The real providers use `AsyncSecretClient`, `Provider` and `RemoteVault`
 from the new core. Published core 0.1.4 does not contain those APIs, so
@@ -242,6 +248,25 @@ crate names are authenticated; it is not a provider-only release mode.
    *Only allow trusted publishing* on all three. These are registry
    settings: enabling them requires no new package version or release.
    Leave **bootstrap_providers** unticked on future ordinary releases.
+
+#### First publication of the Azure Key Vault provider
+
+`sourceorrery-provider-azure` is new and not yet on crates.io, so the first
+release that contains it needs the same initial publication; it is the only
+name in `PROVIDERS` of `scripts/release/publish-crates.py`, the crates the
+bootstrap step publishes with the temporary token. Every other crate,
+including the three providers published in 0.2.0, uses OIDC. Keep
+**CRATES_BOOTSTRAP_TOKEN** until then, or create a new `publish-new` token
+scoped to exactly `sourceorrery-provider-azure` for that run.
+
+1. Dry-run the release with **bootstrap_providers** ticked, as above.
+2. Run it for real with **bootstrap_providers** ticked: core through OIDC,
+   `sourceorrery-provider-azure` with the temporary token, then the remaining
+   workspace crates, `sourceorrery-provider` among them, through OIDC.
+3. Add both trusted-publisher configurations to `sourceorrery-provider-azure`,
+   revoke the temporary token, delete **CRATES_BOOTSTRAP_TOKEN**, and remove
+   the name from `PROVIDERS`. Later releases leave **bootstrap_providers**
+   unticked.
 
 The Git push, dry-run dispatch and real dispatch are separate actions;
 only the real dispatch publishes. If a registry job fails after the GitHub
@@ -328,11 +353,13 @@ by itself; the job keeps it current either way.
 2. A fine-grained personal access token (*Settings → Developer settings →
    Fine-grained tokens*) limited to those two repositories with
    *Contents: read and write*, saved as the repository secret
-   `PACKAGING_TOKEN`. Set an expiry and note it: the job is skipped, not
-   failed, once the token has expired.
+   `PACKAGING_TOKEN`. Set an expiry and note it. An absent secret skips
+   the job; an expired token or missing repository permissions fails it.
+   If GitHub returns `403`, check access to both repositories and the
+   token's *Contents: read and write* permission before retrying.
 
 **WinGet** (`Netizine.SourceOrrery`): the release job renders the three
-manifests (`version`, `installer`, `defaultLocale`, manifest schema 1.10,
+manifests (`version`, `installer`, `defaultLocale`, manifest schema 1.12,
 installer type `zip` with a `portable` nested installer) and runs
 `wingetcreate submit`, which forks `microsoft/winget-pkgs` under the
 token's account and opens a pull request there. The first submission of a
@@ -343,7 +370,11 @@ once its pull request is merged, usually within a few days.
 1. A classic personal access token with the `public_repo` scope (a
    fine-grained token cannot open a pull request on a repository you do not
    own), saved as the repository secret `WINGET_TOKEN`.
-2. Nothing else: `wingetcreate` creates the fork on first use.
+2. `wingetcreate` creates the fork on first use. For the first contribution,
+   the account holder must also review and accept Microsoft's Contributor
+   License Agreement when its policy bot requests it on the pull request.
+   The [0.2.0 submission](https://github.com/microsoft/winget-pkgs/pull/460455)
+   is awaiting that acceptance and catalog approval.
 
 ## Publishing an existing release
 

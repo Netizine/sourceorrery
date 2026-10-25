@@ -74,18 +74,21 @@ int main() {
 }
 ```
 
-`Reader::open(vault)` behaves like the CLI: `SOURCEORRERY_HOME` locates
-the vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`, then
-`SOURCEORRERY_PASSPHRASE_FILE` unlock it. `Reader::open(vault, options)`
-takes a `sourceorrery::OpenOptions{home, passphrase, passphrase_file,
-environment, manifest}`. `manifest` names the `sourceorrery.toml` whose
-`[vaults.<name>]` tables say which vaults are remote and at which provider
-(default: the nearest one above the current directory); a vault with such
-a table is opened at its provider instead of as a local file. Credentials
-come from the provider's own environment, never from the manifest: [HashiCorp
-Vault](../providers/hashicorp-vault.md) takes `VAULT_TOKEN` or the other
-sources it documents, [AWS Secrets Manager](../providers/aws-secrets-manager.md)
-the AWS default credential chain.
+With the default options, `SOURCEORRERY_HOME` locates the vault;
+this machine's key in the OS credential store opens it, else the
+recovery key: an explicit one, `SOURCEORRERY_RECOVERY_KEY`, then a file
+or `SOURCEORRERY_RECOVERY_KEY_FILE`. `Reader::open(vault, options)` takes a
+`sourceorrery::OpenOptions{home, recovery_key, recovery_key_file,
+environment}` that overrides any of that. The SDK never prompts and never
+asks the vault's view check.
+
+A secret the vault keeps at a provider
+([HashiCorp Vault](../providers/hashicorp-vault.md),
+[AWS Secrets Manager](../providers/aws-secrets-manager.md),
+[Azure Key Vault](../providers/azure-key-vault.md)) is read there through
+the vault's connection, with the same calls: the connection signs in with
+the credentials it stores, or with the provider's own sign-in on the
+machine. No provider is contacted until a secret it keeps is read.
 
 | Call | Returns |
 |------|---------|
@@ -111,7 +114,7 @@ subclass: `VaultNotFoundError`, `VaultLockedError`,
 (also `version_not_found`), `SecretDeletedError`, `PolicyError`
 (`disabled`, `not_yet_valid`, `expired`), `IntegrityError`,
 `UnsupportedError`, `InvalidArgumentError` (also `invalid_name`),
-`ManifestError`, `UnauthenticatedError` (the remote provider has no
+`ManifestError`, `UnauthenticatedError` (the provider that stores the secret has no
 credentials for this process), `ProviderUnavailableError` (it could not be
 reached). Each has `code()`, `message()`, `hint()`, `kind()`,
 `transient()` (true for `not_yet_valid` and `provider_unavailable`) and

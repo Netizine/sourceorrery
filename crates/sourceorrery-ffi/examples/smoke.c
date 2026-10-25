@@ -1,6 +1,7 @@
 /*
- * Minimal C caller of the SourceOrrery C ABI: create a passphrase vault,
- * store a secret, read it back, check an error code, close.
+ * Minimal C caller of the SourceOrrery C ABI: create a vault (its recovery
+ * key is returned and released at once), store a secret, read it back, check
+ * an error code, close.
  *
  * Build after `cargo build -p sourceorrery-ffi`, from the repository root:
  *
@@ -11,8 +12,9 @@
  *     cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include \
  *        crates/sourceorrery-ffi/examples/smoke.c -L target/debug -lsourceorrery_ffi -o smoke
  *
- * Run with a scratch home directory as the only argument. Argon2id runs with
- * its interactive defaults here, so creating the vault takes a moment.
+ * Run with a scratch home directory as the only argument. The vault keeps no
+ * key in the OS credential store ("this_machine": false), so the example
+ * leaves nothing behind there.
  */
 #include <stdio.h>
 #include <string.h>
@@ -31,21 +33,30 @@ static const uint8_t *text(const char *s) {
 int main(int argc, char **argv) {
     const char *home = argc > 1 ? argv[1] : NULL; /* NULL: SOURCEORRERY_HOME or the platform default */
     const char *name = "smoke";
-    const char *passphrase = "smoke-test-passphrase";
+    const char *create_options = "{\"this_machine\":false}";
     const char *secret = "db-password";
     const char *plaintext = "hunter2";
     const char *options = "{\"content_type\":\"text/plain\"}";
     so_vault *vault = NULL;
     so_bytes props = {NULL, 0};
     so_bytes value = {NULL, 0};
+    so_bytes recovery_key = {NULL, 0};
     int rc = 0;
 
     printf("contract %s, abi %u\n", so_contract_version(), (unsigned)so_abi_version());
 
-    if (so_vault_create(text(home), home ? strlen(home) : 0, text(name), strlen(name), NULL, 0,
-                        text(passphrase), strlen(passphrase), &vault) != SO_STATUS_OK) {
+    if (so_vault_create(text(home), home ? strlen(home) : 0, text(name), strlen(name),
+                        text(create_options), strlen(create_options), &recovery_key,
+                        &vault) != SO_STATUS_OK) {
         return fail("so_vault_create");
     }
+    /* A real tool shows the recovery key to its owner once; this one only
+       checks its shape and wipes it. */
+    if (recovery_key.len != 29) {
+        fprintf(stderr, "unexpected recovery key length %zu\n", recovery_key.len);
+        rc = 1;
+    }
+    so_bytes_free(&recovery_key); /* zeroised before free */
 
     if (so_secret_set(vault, text(secret), strlen(secret), text(plaintext), strlen(plaintext),
                       text(options), strlen(options), &props) != SO_STATUS_OK) {

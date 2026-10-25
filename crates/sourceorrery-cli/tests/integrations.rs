@@ -13,7 +13,6 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-const PASSPHRASE: &str = "integrations-test-passphrase";
 const CANARY: &str = "import-canary-7c41";
 
 const AGENTS: [(&str, &str); 12] = [
@@ -51,7 +50,11 @@ impl Env {
             .args(args)
             .current_dir(self.project.path())
             .env("SOURCEORRERY_HOME", self.home.path())
-            .env("SOURCEORRERY_PASSPHRASE", PASSPHRASE)
+            // Never the real OS credential store: the vault opens with its
+            // recovery key, which `create_vault` writes to this file.
+            .env("SOURCEORRERY_KEYRING", "off")
+            .env("SOURCEORRERY_RECOVERY_KEY_FILE", self.key_file())
+            .env_remove("SOURCEORRERY_RECOVERY_KEY")
             .env("HOME", self.user.path())
             .env("USERPROFILE", self.user.path())
             .env_remove("SOURCEORRERY_VAULT")
@@ -80,6 +83,24 @@ impl Env {
 
     fn path(&self, relative: &str) -> PathBuf {
         self.project.path().join(relative)
+    }
+
+    /// Where the test vault's recovery key is kept.
+    fn key_file(&self) -> PathBuf {
+        self.user.path().join("vault.key")
+    }
+
+    /// Create the one vault a test uses, opening with its recovery key only.
+    fn create_vault(&self, name: &str) {
+        let key = self.key_file();
+        self.ok(&[
+            "vault",
+            "create",
+            name,
+            "--no-keyring",
+            "--recovery-key-out",
+            key.to_str().unwrap(),
+        ]);
     }
 }
 
@@ -197,7 +218,9 @@ fn committed_skills_are_exactly_what_the_cli_writes() {
 fn init_installs_every_agent_and_keeps_an_existing_manifest() {
     let env = Env::new();
     let out = env.ok(&["init", "--integration", "all"]);
-    assert!(env.path("sourceorrery.toml").is_file());
+    // No secrets picked: the skills only, and how to write the manifest.
+    assert!(!env.path("sourceorrery.toml").exists());
+    assert!(out.contains("init --all"), "{out}");
     for (agent, dir) in AGENTS {
         for skill in ["sourceorrery", "sourceorrery-migrate-env"] {
             let skill_md = env.path(&format!("{dir}/{skill}/SKILL.md"));
@@ -230,8 +253,27 @@ fn init_installs_every_agent_and_keeps_an_existing_manifest() {
     assert!(out.contains("kept it"), "{out}");
     assert_eq!(tree(env.project.path()), before);
 
-    // Without --integration, init still refuses to overwrite.
+    // Without --integration, init needs secrets picked and a vault.
     assert!(!env.run(&["init"]).status.success());
+}
+
+#[test]
+fn init_with_an_integration_writes_the_manifest_when_secrets_are_picked() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.ok(&[
+        "secret",
+        "set",
+        "api-key",
+        "--vault",
+        "dev",
+        "--allow-empty",
+    ]);
+    let out = env.ok(&["init", "--integration", "claude", "--all"]);
+    assert!(out.contains("Wrote"), "{out}");
+    let manifest = std::fs::read_to_string(env.path("sourceorrery.toml")).unwrap();
+    assert!(manifest.contains("[secrets.api-key]"), "{manifest}");
+    assert!(env.path(".claude/skills/sourceorrery/SKILL.md").is_file());
 }
 
 #[test]
@@ -331,13 +373,7 @@ fn env_file(env: &Env) {
 #[test]
 fn import_stores_values_without_ever_showing_them() {
     let env = Env::new();
-    env.ok(&[
-        "vault",
-        "create",
-        "development",
-        "--protector",
-        "passphrase",
-    ]);
+    env.create_vault("development");
     env_file(&env);
 
     let dry = env.ok(&["import", ".env", "--dry-run"]);
@@ -404,13 +440,7 @@ fn import_appends_to_an_existing_manifest_and_supports_manifest_only() {
 #[test]
 fn import_refuses_ambiguous_files_without_quoting_them() {
     let env = Env::new();
-    env.ok(&[
-        "vault",
-        "create",
-        "development",
-        "--protector",
-        "passphrase",
-    ]);
+    env.create_vault("development");
     for (text, expected) in [
         (format!("A={CANARY}\nA={CANARY}-again\n"), "A (lines 1, 2)"),
         (format!("OK=1\nBROKEN {CANARY}\n"), "line 2"),

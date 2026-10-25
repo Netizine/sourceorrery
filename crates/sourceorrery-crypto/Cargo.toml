@@ -1,6 +1,6 @@
 [package]
 name = "sourceorrery-crypto"
-description = "Audited-primitive wrappers for SourceOrrery: authenticated encryption, passphrase KDF and envelope key wrapping"
+description = "Audited-primitive wrappers for SourceOrrery: authenticated encryption, password KDF, TOTP and envelope key wrapping"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

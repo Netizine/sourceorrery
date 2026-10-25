@@ -165,7 +165,7 @@ pub extern "C" fn so_last_error_message() -> *const c_char {
 }
 
 /// What to do about the error reported by the last call on this thread
-/// (which command creates the vault, which passphrase sources were tried,
+/// (which command creates the vault, which recovery-key sources were tried,
 /// why a version was refused, ...), or `NULL` if that call succeeded or has
 /// nothing specific to suggest. Wording may change between releases. The
 /// string is NUL-terminated and valid until the next SourceOrrery call on

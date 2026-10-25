@@ -11,9 +11,12 @@ use crate::secret::RecoveryLevel;
 /// Maximum length of a vault name.
 pub const MAX_VAULT_NAME_LEN: usize = 64;
 
-/// Validate a vault name: 1–64 lowercase ASCII letters, digits or hyphens,
-/// not starting or ending with a hyphen. Vault names become file names and
-/// URI authorities, so the rules are stricter than secret names.
+/// Validate a vault name: 1–64 ASCII letters, digits, hyphens or
+/// underscores, not starting with a hyphen (a command line would read it as
+/// a flag). Vault names become file names and URI authorities, so the rules
+/// are stricter than secret names. Two names that differ only in case name
+/// the same vault (Windows and macOS file names ignore case); the registry
+/// enforces that.
 pub fn validate_vault_name(name: &str) -> Result<()> {
     let invalid = |reason: &str| SecretError::InvalidName {
         name: name.to_owned(),
@@ -27,14 +30,14 @@ pub fn validate_vault_name(name: &str) -> Result<()> {
     }
     if !name
         .bytes()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     {
         return Err(invalid(
-            "may contain only lowercase ASCII letters, digits and hyphens",
+            "may contain only ASCII letters, digits, hyphens and underscores",
         ));
     }
-    if name.starts_with('-') || name.ends_with('-') {
-        return Err(invalid("must not start or end with a hyphen"));
+    if name.starts_with('-') {
+        return Err(invalid("must not start with a hyphen"));
     }
     Ok(())
 }
@@ -58,7 +61,7 @@ pub struct VaultDescriptor {
     pub recovery_level: RecoveryLevel,
     /// Soft-delete retention in days.
     pub retention_days: u32,
-    /// Names of the key protectors that can unlock this vault.
+    /// The kinds of key that open this vault (`this-machine`, `recovery`).
     #[serde(default)]
     pub protectors: Vec<String>,
 }
@@ -71,12 +74,17 @@ mod tests {
     fn vault_names() {
         assert!(validate_vault_name("development").is_ok());
         assert!(validate_vault_name("prod-eu-1").is_ok());
+        assert!(validate_vault_name("Prod").is_ok());
+        assert!(validate_vault_name("has_underscore").is_ok());
+        assert!(validate_vault_name("_leading").is_ok());
+        assert!(validate_vault_name("prod-").is_ok());
+        assert!(validate_vault_name(&"a".repeat(64)).is_ok());
         assert!(validate_vault_name("").is_err());
-        assert!(validate_vault_name("Prod").is_err());
         assert!(validate_vault_name("-prod").is_err());
-        assert!(validate_vault_name("prod-").is_err());
-        assert!(validate_vault_name("has_underscore").is_err());
+        assert!(validate_vault_name("has space").is_err());
+        assert!(validate_vault_name("dot.ted").is_err());
         assert!(validate_vault_name("../escape").is_err());
+        assert!(validate_vault_name("café").is_err());
         assert!(validate_vault_name(&"a".repeat(65)).is_err());
     }
 }

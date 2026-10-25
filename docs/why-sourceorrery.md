@@ -13,10 +13,10 @@ printing a secret, and give credentials a lifecycle beyond copying a line
 between `.env` files.
 
 > [!IMPORTANT]
-> **The boundary in 0.2.0:** SourceOrrery reduces plaintext storage and
+> **The boundary:** SourceOrrery reduces plaintext storage and
 > accidental disclosure in development workflows. It does not isolate an
-> agent or other program that can unlock your vault with your OS credentials
-> or passphrase. The authenticated broker is planned work; see the
+> agent or other program that can open your vault with your OS credentials
+> or its recovery key. The authenticated broker is planned work; see the
 > [threat model](threat-model.md).
 
 ## Why an ignored `.env` file is still a secret file
@@ -147,7 +147,7 @@ sourceorrery run -- npm start
 
 The child process receives the declared value without changing the parent
 shell's environment. Other parent environment variables are inherited,
-except SourceOrrery's passphrase and passphrase-file variables. The child and
+except the variables that open a vault or answer its view check. The child and
 its dependencies can read or disclose the injected value, so this remains a
 command for running trusted application code.
 
@@ -173,15 +173,16 @@ when ready.
 
 ## Why these design choices
 
-| Choice in 0.2.0 | Reason |
+| Choice | Reason |
 | --- | --- |
 | Encrypted local vault | Keep stored credential values out of plaintext project files, without requiring a cloud account or hosted service. |
-| OS credential store or passphrase protection | Protect the vault key rather than placing an unprotected key beside the encrypted data. |
+| This machine's key in the OS credential store, and a recovery key | Protect the vault key rather than placing an unprotected key beside the encrypted data, without a password to type every day; the recovery key opens the vault anywhere else. |
+| An optional view check | Ask for a password, and a code from an authenticator app, before a person views the vault or reveals a value, while applications start without a prompt. |
 | References and a manifest | Make application requirements reviewable and version-controlled without embedding values. |
 | Metadata by default | Inspect names, versions and status without printing credentials; revealing a value is explicit. |
 | Versioning, time windows, recovery and audit | Manage changes and investigate use with more context than a copied configuration file provides. |
 | One Rust core and read-only SDKs | Keep retrieval behaviour consistent across supported languages and keep mutation out of the application-facing SDK API. |
-| Optional remote providers | Use AWS Secrets Manager or HashiCorp Vault when their existing identity and policy controls fit the application, while keeping references in the same manifest. |
+| Storage per secret | Keep a secret at AWS Secrets Manager, Azure Key Vault or HashiCorp Vault, through a connection the vault holds, when their identity and policy controls fit it, while the manifest and references stay the same. |
 
 These choices also work for development without AI. A mistaken commit, an
 overly broad diagnostic and a compromised dependency do not require a model.
@@ -190,10 +191,10 @@ needs from the values used to run it.
 
 ## Where stronger controls are still needed
 
-SourceOrrery 0.2.0 supports local vaults and optional remote providers. It has
+SourceOrrery supports local vaults that keep secrets in their own file or at a provider. It has
 not been independently audited and should be used with development credentials,
 rather than treated as a production secret store. A program that can unlock
-a local vault can read its secrets. Remote providers enforce their own
+a local vault can read the secrets it keeps. Providers enforce their own
 identity and policy rules; code with an authorised provider credential can
 still request the values that credential permits. A read-only SDK, a
 manifest and agent instructions do not change those boundaries.
@@ -204,7 +205,7 @@ and an authenticated service that authorises the operations it may perform.
 Network restrictions, narrowly scoped credentials, provider-side spending
 limits and rapid revocation can further reduce the consequences of misuse.
 The [planned broker](roadmap.md#milestone-3--local-broker-and-agent-isolation)
-addresses part of this future architecture; it is not included in 0.2.0.
+addresses part of this future architecture; it is not included yet.
 
 If a credential has already been exposed, revoke or replace it at its issuer.
 Importing it into an encrypted vault does not remove copies from Git history,

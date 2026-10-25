@@ -15,8 +15,8 @@
  *        /link target\release\sourceorrery_ffi.dll.lib
  *
  * Run: get_secret [VAULT] [SECRET]. The vault is unlocked by the OS
- * credential store, then SOURCEORRERY_PASSPHRASE, then
- * SOURCEORRERY_PASSPHRASE_FILE; SOURCEORRERY_HOME selects the home
+ * credential store, then SOURCEORRERY_RECOVERY_KEY, then
+ * SOURCEORRERY_RECOVERY_KEY_FILE; SOURCEORRERY_HOME selects the home
  * directory. Nothing printed here is ever the value.
  */
 #include <stdio.h>
@@ -41,7 +41,8 @@ int main(int argc, char **argv) {
     so_bytes value = {NULL, 0};
     int rc = 0;
 
-    /* NULL options: SOURCEORRERY_HOME and the environment passphrase sources. */
+    /* NULL options: SOURCEORRERY_HOME, this machine's key, then the recovery key
+       from SOURCEORRERY_RECOVERY_KEY or SOURCEORRERY_RECOVERY_KEY_FILE. */
     if (so_reader_open((const uint8_t *)vault, strlen(vault), NULL, 0, NULL, 0, &reader) != SO_STATUS_OK) {
         return fail("so_reader_open");
     }

@@ -17,9 +17,9 @@ file with an encrypted local vault, a cloud-secrets-manager-style lifecycle API
 declares *which* secrets a project needs without ever holding their values.
 
 > [!WARNING]
-> **Version 0.2.0 — development build with an encrypted local vault,
-> optional AWS Secrets Manager and HashiCorp Vault providers, a CLI with
-> an interactive vault manager, and read-only SDKs.**
+> **Version 0.2.0 — an encrypted local vault that keeps each secret in
+> its own file or at AWS Secrets Manager, Azure Key Vault or HashiCorp
+> Vault, a CLI with an interactive vault manager, and read-only SDKs.**
 > Local-first and usable today on Windows, macOS and Linux, from Python,
 > JavaScript/TypeScript, Rust, Java, .NET, Go, C, C++ and PHP
 > ([docs/sdks](docs/sdks/index.md)). The authenticated local broker remains
@@ -27,9 +27,8 @@ declares *which* secrets a project needs without ever holding their values.
 > do not treat it as a production secret store.
 
 > [!NOTE]
-> This documentation is prepared for **0.2.0**, including guided setup,
-> `.env` import, agent integrations and remote providers. Until the release
-> is published, use a source build. See the
+> This documentation covers the [**0.2.0 release**](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0),
+> including guided setup, `.env` import, agent integrations and storage at a provider. See the
 > [release roadmap](docs/roadmap.md#release-020).
 
 ## Why
@@ -42,10 +41,11 @@ SourceOrrery takes a different line:
 
 * **No plaintext at rest, in anything SourceOrrery writes.** Every value is
   encrypted (XChaCha20-Poly1305) in a single SQLite file whose policy metadata
-  and audit log are authenticated too. The vault key is protected by your OS
+  and audit log are authenticated too. The vault key is kept in your OS
   credential store (Windows Credential Manager, macOS Keychain, Secret
-  Service) and/or an Argon2id passphrase. Files you pass in, child processes,
-  logs and other software are outside that boundary.
+  Service) for this machine, and opens anywhere else with the vault's
+  recovery key. Files you pass in, child processes, logs and other software
+  are outside that boundary.
 * **References, not values.** `sourceorrery://development/database-password`
   is safe to commit, log and paste. Today it resolves inside any process that
   can unlock the vault; per-runtime identity arrives with the broker
@@ -70,42 +70,36 @@ from your application's directory:
 sourceorrery setup
 ```
 
-Six screens take you from a vault to a running program: a vault with a
-strong passphrase (typed against a strength meter, or generated), a first
-database password (typed or generated, never shown), recovery codes and a
-hint, an authenticator app as a second factor, the reveal guard (whether
-`secret get --reveal` must ask for the passphrase and a code again), and
-the manifest. The same steps as commands, which the wizard prints when
-there is no terminal ([First run](docs/getting-started.md)); replace
-`npm start` with the command you normally use to start your application:
+The screens make a vault: its name, this machine's key in the OS
+credential store and a recovery key shown once (it opens the vault
+anywhere else), an optional view check (a password, and an authenticator
+code on top, asked before anyone views the vault or reveals a value; never
+by `run` or your applications), and where it keeps secrets: its own file,
+or HashiCorp Vault, AWS Secrets Manager or Azure Key Vault through a
+connection it holds. Nothing is written until the review confirms. Then,
+as commands ([First run](docs/getting-started.md)); replace `npm start`
+with the command you normally use to start your application:
 
 ```bash
-# 1. Create a vault (key protected by the OS credential store when available)
-sourceorrery vault create development
-
-# 2. Store a secret — interactively, from stdin or a file; never as an argument
+# 1. Store a secret — interactively, from stdin or a file; never as an argument
 sourceorrery secret set database-password --vault development
 
-# 3. Inspect without revealing
+# 2. Inspect without revealing
 sourceorrery secret list --vault development
 sourceorrery secret get database-password --vault development
 
-# 4. Declare what your project needs and run it with secrets injected
+# 3. Declare what your project needs and run it with secrets injected
 sourceorrery init
 sourceorrery check
 sourceorrery run -- npm start      # DATABASE_PASSWORD is set in the child only
-
-# 5. Optional: recovery codes, an authenticator app, and the guard on --reveal
-sourceorrery vault recovery codes --vault development
-sourceorrery vault 2fa enable --vault development
-sourceorrery vault guard --reveal passphrase,second-factor --vault development
 ```
 
-Working headless (WSL, Docker, CI)? Add a passphrase protector to the same
-vault and unlock with `--passphrase-file` or `SOURCEORRERY_PASSPHRASE`:
+Without a terminal, `sourceorrery setup --guide` prints the one command
+that makes the vault. Working headless (WSL, Docker, CI)? Give the same
+vault its recovery key from a file:
 
 ```bash
-sourceorrery vault protector add --kind passphrase --vault development
+export SOURCEORRERY_RECOVERY_KEY_FILE=/run/secrets/development.recovery-key
 ```
 
 `sourceorrery import .env` imports supported
@@ -146,8 +140,8 @@ with SecretReader("development") as reader, reader.get("database-password") as s
 ```
 
 The same calls exist in every language, each with typed errors whose hint
-says what to do (`sourceorrery secret set ...`, which passphrase sources
-were tried, ...). No SDK installs the CLI: create the vault and store its
+says what to do (`sourceorrery secret set ...`, which recovery-key
+sources were tried, ...). No SDK installs the CLI: create the vault and store its
 secrets with the CLI first. An SDK opens the vault file itself, so the CLI
 need not be installed where the application runs.
 
@@ -177,7 +171,7 @@ Three different guarantees, kept separate on purpose
 | Guarantee | Today |
 |-----------|-------|
 | **At-rest protection** — values stored by SourceOrrery are encrypted; metadata output omits them | Yes; input files, application output and copies are outside this boundary |
-| **Access control** — which identities may retrieve which secret | Local only: whoever can unlock the vault |
+| **Access control** — which identities may retrieve which secret | Local: whoever can open the vault. A secret kept at a provider also passes that provider's identity and policy |
 | **Agent isolation** — an untrusted agent running as *your* user cannot impersonate your application | **No.** Requires the authenticated broker and OS isolation (milestone 3) |
 
 Removing `.env` closes the accidental-exposure routes. It does not stop code
@@ -201,7 +195,7 @@ without a checkpoint kept outside the file, so keep the last
 crates/
   sourceorrery-core      contracts: SecretClient, properties, policy, audit, manifest
   sourceorrery-crypto    XChaCha20-Poly1305, Argon2id, envelope key wrapping
-  sourceorrery-storage   encrypted SQLite vault, OS-keyring + passphrase protectors
+  sourceorrery-storage   encrypted SQLite vault: this machine's key + a recovery key, connections
   sourceorrery-cli       the `sourceorrery` binary
   sourceorrery           the read-only client (Rust SDK): unlock order, manifest, hints
   sourceorrery-ffi       stable C ABI (cbindgen header): so_reader_* for SDKs
@@ -220,7 +214,10 @@ they are not SourceOrrery. Read more in
 SourceOrrery 0.2.0 can be installed three ways (step by step in
 [Getting started](https://sourceorrery.ai/getting-started/)):
 
-- **From the package registries.** The CLI: `brew install Netizine/sourceorrery/sourceorrery` (macOS, Linux), `winget install Netizine.SourceOrrery`, `scoop install sourceorrery` (bucket `Netizine/scoop-sourceorrery`) or `cargo install --locked sourceorrery-cli --version 0.2.0`.
+- **From the package registries.** The CLI: `brew install Netizine/sourceorrery/sourceorrery` (macOS, Linux), `scoop install sourceorrery` (bucket `Netizine/scoop-sourceorrery`) or `cargo install --locked sourceorrery-cli --version 0.2.0`.
+  The [WinGet submission](https://github.com/microsoft/winget-pkgs/pull/460455)
+  is awaiting catalog approval; `winget install Netizine.SourceOrrery` becomes
+  available after it is merged.
   The SDKs: `pip install sourceorrery`, `npm install @sourceorreryai/sdk`,
   `cargo add sourceorrery`, `ai.sourceorrery:sourceorrery` on Maven Central,
   `dotnet add package SourceOrrery`,
@@ -244,13 +241,12 @@ bundled SQLite (the Visual Studio Build Tools on Windows, the Xcode
 Command Line Tools on macOS, gcc or clang on Linux) and, on Linux,
 `pkg-config` and `libdbus-1-dev` for the Secret Service.
 
-Until 0.2.0 is published, build `main`. After publication, use
-`git checkout v0.2.0` in place of `git checkout main` for the release source.
+Check out the `v0.2.0` tag to build the published release source.
 
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout main
+git checkout v0.2.0
 python scripts/release/set-version.py 0.2.0 --keep-node-links
 cargo build --release -p sourceorrery-cli -p sourceorrery-ffi   # the CLI and the C ABI, in target/release
 cargo test --workspace
@@ -258,7 +254,7 @@ cargo install --locked --path crates/sourceorrery-cli           # the CLI into ~
 ```
 
 Headless servers without a credential store can build the CLI with
-`--no-default-features` and use passphrase protectors only. Every SDK, the
+`--no-default-features` and open vaults with their recovery keys only. Every SDK, the
 SDK test vault and the conformance harness:
 [docs/building.md](docs/building.md).
 

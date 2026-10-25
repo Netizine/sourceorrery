@@ -1,22 +1,29 @@
 # HashiCorp Vault
 
-`provider = "hashicorp-vault"` serves a [KV version 2](https://developer.hashicorp.com/vault/docs/secrets/kv/kv-v2)
-secrets engine of a Vault server as a SourceOrrery vault. The crate is
+A vault's `hashicorp-vault` [connection](index.md) keeps secrets in a
+[KV version 2](https://developer.hashicorp.com/vault/docs/secrets/kv/kv-v2)
+secrets engine of a Vault server. The crate is
 `sourceorrery-provider-vault`, on by default in the CLI, the `sourceorrery`
 crate, the C ABI and every SDK (Cargo feature `provider-vault`, part of
 `remote`).
 
-```toml
-[vaults.production]
-provider = "hashicorp-vault"
-address = "https://vault.example.com:8200"   # https://; http:// only for localhost; no user info
-mount = "secret"                              # the KV v2 engine's mount path
-namespace = "platform"                        # optional; Vault Enterprise
+```bash
+sourceorrery vault create production --recovery-key-out production.recovery-key \
+  --hashicorp-vault https://vault.example.com:8200 \
+  --hashicorp-vault-mount secret \
+  --hashicorp-vault-namespace platform \
+  --hashicorp-vault-token-file token.txt     # optional: store the token in the vault
 ```
 
-`VAULT_NAMESPACE` supplies the namespace when the table has none, and
-`VAULT_CACERT` a PEM root certificate for a private CA. TLS verification is
-never disabled. The token travels with every request, so `http://` is
+The address is `https://`, or `http://` only for this machine, with no
+user information; the mount is the KV v2 engine's path (default
+`secret`); the namespace is Vault Enterprise's. Without a stored token the
+connection signs in as the Vault CLI does (`VAULT_TOKEN`, `~/.vault-token`).
+
+`VAULT_NAMESPACE` supplies the namespace when the connection has none, and
+`VAULT_CACERT` a PEM root certificate for a private CA, trusted in addition
+to the operating system's certificate store, which the server's certificate
+is verified against otherwise. TLS verification is never disabled. The token travels with every request, so `http://` is
 accepted only for `localhost`, `127.0.0.0/8` or `::1` (a dev server), no
 redirect is ever followed (a 3xx answer is `provider_unavailable`), and a
 proxy named by `HTTP_PROXY` / `HTTPS_PROXY` is honoured as the Vault CLI
@@ -39,8 +46,8 @@ gap 14.
 
 ## Credentials
 
-The manifest holds the address only. The provider takes the first
-credential it finds, in this order:
+A token stored in the connection is used when there is one. Otherwise the
+provider takes the first credential it finds, in this order:
 
 | Source | What it uses |
 |--------|--------------|
@@ -115,7 +122,7 @@ per-version properties in `custom_metadata` ([rotation](../rotation.md)).
 ## Audit trail
 
 The Vault server's audit devices hold the trail; SourceOrrery writes no log
-of its own for a remote vault, and `sourceorrery audit --vault <name>`
+of its own for a provider's secrets, and `sourceorrery audit --vault <name>`
 prints this pointer. With a file audit device enabled on the server (`vault
 audit enable file file_path=/var/log/vault/audit.log`), every operation
 SourceOrrery performs is a request against the mount, under the identity

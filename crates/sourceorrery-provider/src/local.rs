@@ -100,6 +100,11 @@ where
         self.inner.capabilities()
     }
 
+    async fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]> {
+        let name = name.to_owned();
+        self.blocking(move |c| c.capabilities_of(&name)).await
+    }
+
     async fn set_secret(
         &self,
         name: &str,

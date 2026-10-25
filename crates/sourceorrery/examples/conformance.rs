@@ -38,17 +38,14 @@ fn main() -> ExitCode {
     if let Some(home) = kv.get("home") {
         options = options.home(home);
     }
-    if let Some(passphrase) = kv.get("passphrase") {
-        options = options.passphrase(passphrase.as_str());
+    if let Some(key) = kv.get("recovery_key") {
+        options = options.recovery_key(key.as_str());
     }
-    if let Some(file) = kv.get("passphrase_file") {
-        options = options.passphrase_file(file);
+    if let Some(file) = kv.get("recovery_key_file") {
+        options = options.recovery_key_file(file);
     }
     if kv.get("environment").is_some_and(|v| v == "false") {
         options = options.environment(false);
-    }
-    if let Some(manifest) = kv.get("manifest") {
-        options = options.manifest(manifest);
     }
 
     match run(&op, &kv, &vault, &options) {

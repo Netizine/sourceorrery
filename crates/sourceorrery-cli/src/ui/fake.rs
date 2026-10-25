@@ -7,17 +7,19 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use sourceorrery_core::{
-    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, DeletedSecret, Principal, RecoveryLevel,
-    Result, SecretBytes, SecretError, SecretProperties, SetSecretOptions, UpdateSecretProperties,
-    VaultDescriptor, timestamp,
+    AuditEvent, AuditOperation, AuditOutcome, AuditQuery, Capability, ConnectionSettings,
+    DeletedSecret, Principal, RecoveryLevel, Result, SecretBytes, SecretError, SecretProperties,
+    SetSecretOptions, UpdateSecretProperties, VaultDescriptor, timestamp,
 };
 use time::Duration;
 
-use sourceorrery_storage::{AuditVerification, ProtectorInfo};
+use sourceorrery_storage::{
+    AuditVerification, ConnectionInfo, CredentialSource, ProjectLink, SecretStorage, WrapInfo,
+};
 
 use super::app::VaultEntry;
 use super::editor::MetadataEditor;
-use super::source::MetadataSource;
+use super::source::{MetadataSource, ViewSettings};
 
 #[derive(Debug, Default)]
 pub struct Fake {
@@ -44,6 +46,16 @@ pub struct Fake {
     pub disabled: RefCell<BTreeSet<String>>,
     /// Changes, in order: what was asked for, and of a value only its length.
     pub writes: RefCell<Vec<Write>>,
+    /// Connections, each with the names it stores (not in `names`).
+    pub connections: RefCell<Vec<(ConnectionInfo, Vec<&'static str>)>>,
+    /// The connection whose provider fails every listing.
+    pub unreachable: RefCell<Option<String>>,
+    /// Listings at connections.
+    pub listings_at: Cell<usize>,
+    pub projects: RefCell<Vec<ProjectLink>>,
+    pub view: RefCell<ViewSettings>,
+    /// What the storage of a secret at a connection can express.
+    pub remote_capabilities: Cell<&'static [Capability]>,
 }
 
 /// A change the browser made.
@@ -53,6 +65,8 @@ pub enum Write {
     Delete(String),
     Recover(String),
     AddVersion(String, usize, SetSecretOptions),
+    AddSecret(String, usize, SecretStorage),
+    Unlink(String),
 }
 
 /// The fake keeps names as `&'static str`; names the browser adds are
@@ -67,6 +81,52 @@ impl Fake {
             names: RefCell::new(names.to_vec()),
             ..Self::default()
         })
+    }
+
+    /// A HashiCorp Vault connection `c1` storing `names`.
+    pub fn with_connection(names: &[&'static str], at_connection: &[&'static str]) -> Rc<Self> {
+        let fake = Self::with(names);
+        fake.connections.borrow_mut().push((
+            ConnectionInfo {
+                id: "c1".to_owned(),
+                settings: ConnectionSettings::HashicorpVault {
+                    address: "https://vault.example.com:8200".to_owned(),
+                    mount: "secret".to_owned(),
+                    namespace: None,
+                },
+                credentials: CredentialSource::Ambient,
+                created_on: timestamp::now(),
+                last_test: None,
+            },
+            at_connection.to_vec(),
+        ));
+        fake
+    }
+
+    /// A project folder recorded at `path`.
+    pub fn link(&self, id: &str, name: &str, path: &std::path::Path) {
+        self.projects.borrow_mut().push(ProjectLink {
+            id: id.to_owned(),
+            path: path.to_path_buf(),
+            name: name.to_owned(),
+            linked_on: timestamp::now(),
+        });
+    }
+
+    fn stored(&self, id: &str) -> Vec<&'static str> {
+        self.connections
+            .borrow()
+            .iter()
+            .find(|(c, _)| c.id == id)
+            .map(|(_, names)| names.clone())
+            .unwrap_or_default()
+    }
+
+    fn at_a_connection(&self, name: &str) -> bool {
+        self.connections
+            .borrow()
+            .iter()
+            .any(|(_, names)| names.contains(&name))
     }
 
     pub fn vault_entries() -> Vec<VaultEntry> {
@@ -141,7 +201,7 @@ impl MetadataSource for Fake {
                 RecoveryLevel::Recoverable
             },
             retention_days: 90,
-            protectors: vec!["passphrase".into()],
+            protectors: vec!["recovery".into()],
         })
     }
 
@@ -232,13 +292,67 @@ impl MetadataSource for Fake {
         })
     }
 
-    fn protectors(&self) -> Result<Vec<ProtectorInfo>> {
-        Ok(vec![ProtectorInfo {
-            id: "0".repeat(32),
-            label: "passphrase".into(),
-            kind: "passphrase".into(),
+    fn keys(&self) -> Result<Vec<WrapInfo>> {
+        Ok(vec![WrapInfo {
+            id: "0".repeat(16),
+            kind: "recovery".into(),
             created_on: timestamp::now(),
         }])
+    }
+
+    fn secrets_at(&self, id: &str) -> Result<Vec<SecretProperties>> {
+        self.listings_at.set(self.listings_at.get() + 1);
+        if self.unreachable.borrow().as_deref() == Some(id) {
+            return Err(SecretError::ProviderUnavailable {
+                provider: "hashicorp-vault".into(),
+                reason: "connection refused".into(),
+            });
+        }
+        Ok(self
+            .stored(id)
+            .iter()
+            .map(|name| self.props(name, "abcdefabcdefabcdefabcdefabcdefab"))
+            .collect())
+    }
+
+    fn deleted_at(&self, id: &str) -> Result<Vec<DeletedSecret>> {
+        self.listings_at.set(self.listings_at.get() + 1);
+        if self.unreachable.borrow().as_deref() == Some(id) {
+            return Err(SecretError::ProviderUnavailable {
+                provider: "hashicorp-vault".into(),
+                reason: "connection refused".into(),
+            });
+        }
+        Ok(Vec::new())
+    }
+
+    fn connections(&self) -> Result<Vec<ConnectionInfo>> {
+        Ok(self
+            .connections
+            .borrow()
+            .iter()
+            .map(|(c, _)| c.clone())
+            .collect())
+    }
+
+    fn stored_at(&self, id: &str) -> Result<Vec<String>> {
+        Ok(self.stored(id).into_iter().map(str::to_owned).collect())
+    }
+
+    fn view_settings(&self) -> Result<ViewSettings> {
+        Ok(self.view.borrow().clone())
+    }
+
+    fn projects(&self) -> Result<Vec<ProjectLink>> {
+        Ok(self.projects.borrow().clone())
+    }
+
+    fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]> {
+        Ok(if self.at_a_connection(name) {
+            self.remote_capabilities.get()
+        } else {
+            Capability::ALL
+        })
     }
 }
 
@@ -305,5 +419,40 @@ impl MetadataEditor for Fake {
             .borrow_mut()
             .push(Write::AddVersion(name.to_owned(), value.len(), options));
         Ok(self.props(name, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+    }
+
+    fn add_secret(
+        &self,
+        name: &str,
+        value: SecretBytes,
+        _options: SetSecretOptions,
+        storage: &SecretStorage,
+    ) -> Result<SecretProperties> {
+        self.audited(&Cell::new(0))?;
+        match storage {
+            SecretStorage::Vault => self.names.borrow_mut().push(leak(name)),
+            SecretStorage::Connection(id) => {
+                if let Some((_, names)) = self
+                    .connections
+                    .borrow_mut()
+                    .iter_mut()
+                    .find(|(c, _)| c.id == *id)
+                {
+                    names.push(leak(name));
+                }
+            }
+        }
+        self.writes.borrow_mut().push(Write::AddSecret(
+            name.to_owned(),
+            value.len(),
+            storage.clone(),
+        ));
+        Ok(self.props(name, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+    }
+
+    fn unlink_project(&self, id: &str) -> Result<()> {
+        self.projects.borrow_mut().retain(|p| p.id != id);
+        self.writes.borrow_mut().push(Write::Unlink(id.to_owned()));
+        Ok(())
     }
 }

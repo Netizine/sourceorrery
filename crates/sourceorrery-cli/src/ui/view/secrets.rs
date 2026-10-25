@@ -7,11 +7,13 @@ use ratatui::widgets::{Cell, Row, Table, TableState};
 use sourceorrery_core::{AuditEvent, DeletedSecret, SecretProperties, timestamp};
 use time::OffsetDateTime;
 
+use super::overview::short_provider;
 use super::{
     Drawn, Ruled, TABLE_CHROME, dash, label, long_time, row, rows, rule, ruled_table, short_time,
 };
 use crate::output::{self, sanitize};
 use crate::ui::app::{App, Tab};
+use crate::ui::session::Session;
 use crate::ui::theme::Theme;
 
 /// Characters of a version id shown in the list; the id is 32 hex digits.
@@ -43,7 +45,8 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
             Line::from(""),
             Line::from(format!("No secrets in vault '{vault}'.")),
             Line::from(vec![
-                Span::styled("Add one with  ", theme.muted),
+                Span::styled("a", theme.key),
+                Span::styled(" adds one; a script uses  ", theme.muted),
                 Span::styled(
                     format!(" sourceorrery secret set <name> --vault {vault} "),
                     theme.code,
@@ -59,23 +62,34 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
         headings: Row::new([
             "NAME",
             "STATUS",
+            "STORAGE",
             "VERSION",
             "UPDATED UTC",
             "EXPIRES UTC",
+            "PROJECTS",
             "TAGS",
         ]),
         widths: vec![
             Constraint::Length(u16::try_from(name_width).unwrap_or(u16::MAX)),
             Constraint::Length(8),
+            Constraint::Length(9),
             Constraint::Length(u16::try_from(SHORT_VERSION).unwrap_or(u16::MAX)),
             Constraint::Length(16),
             Constraint::Length(16),
+            Constraint::Length(8),
             Constraint::Fill(1),
         ],
         rows: shown
             .iter()
             .enumerate()
-            .map(|(i, p)| secret_row(p, now, theme, selected == Some(i)))
+            .map(|(i, p)| {
+                let session = app.session.as_ref();
+                let storage = session
+                    .and_then(|s| s.connection_of(&p.name))
+                    .map_or("vault", |c| short_provider(c.settings.provider()));
+                let projects = session.map_or(0, |s| s.projects_using(&p.name).len());
+                secret_row(p, storage, projects, now, theme, selected == Some(i))
+            })
             .collect(),
         empty,
         selectable: true,
@@ -103,6 +117,8 @@ pub(super) fn no_match(theme: &Theme) -> Vec<Line<'static>> {
 
 fn secret_row(
     p: &SecretProperties,
+    storage: &'static str,
+    projects: usize,
     now: OffsetDateTime,
     theme: &Theme,
     selected: bool,
@@ -115,6 +131,7 @@ fn secret_row(
             status,
             theme.cell(theme.status(status), selected),
         )),
+        Cell::from(muted(storage.to_owned())),
         Cell::from(muted(
             sanitize(&p.version).chars().take(SHORT_VERSION).collect(),
         )),
@@ -123,6 +140,11 @@ fn secret_row(
             p.expires_on
                 .map_or_else(|| dash(theme, selected), |t| Span::raw(short_time(t))),
         ),
+        Cell::from(if projects == 0 {
+            dash(theme, selected)
+        } else {
+            Span::raw(projects.to_string())
+        }),
         Cell::from(tags(p).map_or_else(|| dash(theme, selected), Span::raw)),
     ])
 }
@@ -174,10 +196,13 @@ pub(super) fn detail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
         frame,
         theme,
         rows(area, 2, area.height),
-        props,
-        status,
-        deleted,
-        now,
+        Fields {
+            p: props,
+            status,
+            deleted,
+            session,
+            now,
+        },
     );
     rule(frame, area, used, theme.rule);
     let mut used = used + 2;
@@ -215,16 +240,46 @@ pub(super) fn detail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
     drawn
 }
 
-/// The field block under a secret's name. Returns the rows it used.
-fn draw_fields(
-    frame: &mut Frame<'_>,
-    theme: &Theme,
-    area: Rect,
-    p: &SecretProperties,
+/// What the field block under a secret's name shows.
+#[derive(Clone, Copy)]
+struct Fields<'a> {
+    p: &'a SecretProperties,
     status: &'static str,
-    deleted: Option<&DeletedSecret>,
+    deleted: Option<&'a DeletedSecret>,
+    session: &'a Session,
     now: OffsetDateTime,
-) -> u16 {
+}
+
+/// Where `name` is kept, in full: the vault file, or a connection's
+/// provider, id and target.
+fn storage_text(session: &Session, name: &str) -> String {
+    let Some(c) = session.connection_of(name) else {
+        return "the vault file".to_owned();
+    };
+    let target = match &c.settings {
+        sourceorrery_core::ConnectionSettings::HashicorpVault { address, mount, .. } => {
+            format!("{address}, mount {mount}")
+        }
+        sourceorrery_core::ConnectionSettings::AwsSecretsManager { region, .. } => region.clone(),
+        sourceorrery_core::ConnectionSettings::AzureKeyVault { vault_url } => vault_url.clone(),
+    };
+    format!(
+        "{} · connection {} · {}",
+        c.settings.provider().display_name(),
+        sanitize(&c.id),
+        sanitize(&target)
+    )
+}
+
+/// The field block under a secret's name. Returns the rows it used.
+fn draw_fields(frame: &mut Frame<'_>, theme: &Theme, area: Rect, fields: Fields<'_>) -> u16 {
+    let Fields {
+        p,
+        status,
+        deleted,
+        session,
+        now,
+    } = fields;
     let key = |text: &'static str| Cell::from(Span::styled(text, theme.muted));
     let time_or_dash = |t: Option<OffsetDateTime>| {
         Cell::from(t.map_or_else(|| dash(theme, false), |t| Span::raw(long_time(t))))
@@ -276,6 +331,21 @@ fn draw_fields(
             Cell::from(purge),
         ]));
     }
+    let projects: Vec<String> = session
+        .projects_using(&p.name)
+        .iter()
+        .map(|project| sanitize(&project.link.name).into_owned())
+        .collect();
+    lines.push(Row::new([
+        key("storage"),
+        Cell::from(storage_text(session, &p.name)),
+        key("projects"),
+        Cell::from(if projects.is_empty() {
+            dash(theme, false)
+        } else {
+            Span::raw(projects.join(", "))
+        }),
+    ]));
     let height = u16::try_from(lines.len()).unwrap_or(0);
     let widths = [
         Constraint::Length(13),

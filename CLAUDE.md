@@ -24,21 +24,43 @@ left open.
   `totp` (RFC 6238 over HMAC-SHA1) and `random::{recovery_code,
   random_passphrase}` live here too; `TotpSecret` is zeroising and redacted
   like every key.
-- `crates/sourceorrery-storage` — encrypted SQLite vault, key protectors,
-  OS keyring access, vault registry (paths).
+- `crates/sourceorrery-storage` — encrypted SQLite vault, its key wraps
+  (this machine's key in a `keystore::CredentialStore`, one recovery key,
+  ADR 0009), the view check (`sqlite/view.rs`: an optional password with
+  an authenticator on top; a check, not encryption), the vault's
+  connections to providers (`sqlite/connections.rs`: settings, credentials
+  sealed under the vault key, the last test; rows tagged and listed in the
+  settings record) and the catalog of secrets a connection stores
+  (`secrets.storage`; local operations refuse such a secret, `Routed`
+  uses `storage_of` / `record_at_connection`), each secret's description
+  (`sqlite/catalog.rs`, in the row tag), the project folders built from
+  the vault (`sqlite/projects.rs`: path and name sealed, a keyed path MAC,
+  listed in the settings record), vault export and import
+  (`sqlite/export.rs`), vault registry (paths).
+  `SOURCEORRERY_KEYRING=off` gives no credential store.
 - `crates/sourceorrery-cli` — the `sourceorrery` binary. `src/ui/` is the
   Ratatui vault browser (`sourceorrery ui`, cargo feature `ui`, on by
-  default). `src/strength.rs` is the passphrase strength estimate (rules,
-  no wordlist: `zxcvbn` would add 3 MB); a typed passphrase below "good"
-  is refused, one from the environment or a file is warned about.
-  `src/ui/setup/` is `sourceorrery setup`, the guided first run (feature
-  `ui`): `wizard` is a state machine over `backend::Backend`, `view` draws
-  it, `backend::Live` does the work through the same storage calls the
-  commands use, and the tests and design snapshots drive it through the
-  fake. Hidden fields are drawn from their length only; the screens show
-  a generated passphrase and the recovery codes once, nothing else that
-  is secret. `commands/setup.rs` prints the same steps as commands when
-  there is no terminal. `skills/` is the only source of the AI-agent skills that
+  default). `src/strength.rs` is the password strength estimate (rules,
+  no wordlist: `zxcvbn` would add 3 MB); a typed password below "good"
+  is refused, one from a file is warned about. `Ctx::check_view` asks the
+  view check before a command views the vault or reveals a value; `run`,
+  `check` and `init` never ask it. The vault subcommands are `create`,
+  `list`, `export`, `import` and `destroy` (ADR 0009): a vault's view
+  check, recovery key and connections change on the setup screens;
+  without them, `vault create` and `vault import` set the password from
+  `--password-file`. `vault create` takes a flag set per provider that adds a
+  connection, and `secret set` / `import` take `--storage`
+  (`commands/connections.rs`; credentials from files only). `init`
+  (`commands/init.rs`) writes or extends `sourceorrery.toml` from the
+  vault's catalog by name (`--all` / `--secret`), editing an existing file
+  in place with `toml_edit`, and records the folder in the vault.
+  `ui/setup/` is the setup wizard of `setup` and `vault create [NAME]`
+  on a terminal (create a vault, or change one after its view check or
+  recovery key, typed on the screen); its review commits everything in
+  one `SqliteVault::change_settings` transaction. `setup --guide`, or no
+  terminal, prints the non-interactive `vault create` instead
+  (`commands/setup.rs`), which makes the vault with `--password-file`
+  and its connections in the same transaction. `skills/` is the only source of the AI-agent skills that
   `init --integration` writes (embedded with `include_str!`; the CLI never
   fetches anything). `integrations/` and `plugins/sourceorrery/` at the
   root are generated from it: after editing a skill run
@@ -56,8 +78,13 @@ left open.
   and the base the remote providers build on (ADR 0008). Adapters pass
   every call and error through unchanged; a provider's logic never lives
   here. Tokio `rt` only; HTTP providers use `reqwest` with `rustls-tls`.
-  `open_remote` dispatches on the manifest's provider behind the Cargo
-  features `provider-*` (`remote` = all), on by default everywhere.
+  `open_connection` dispatches on a connection's provider (`ConnectionSettings`
+  and optional stored `Credentials` from `core::connection`) behind the
+  Cargo features `provider-*` (`remote` = all), on by default everywhere.
+  `Routed` (`src/routed.rs`) is the vault over every storage: a
+  `SecretClient` over a `SqliteVault` that routes by `storage_of` and
+  records each provider call with `record_at_connection`; dispatch only.
+  Capabilities are per secret (`SecretClient::capabilities_of`).
 - `crates/sourceorrery-provider-vault` — HashiCorp Vault KV v2 behind
   `AsyncSecretClient` (`docs/providers/hashicorp-vault.md` is the mapping).
   Policy is the core's; the crate maps paths, versions, `custom_metadata`
@@ -67,13 +94,33 @@ left open.
 - `crates/sourceorrery-provider-aws` — AWS Secrets Manager behind
   `AsyncSecretClient` over the official SDK (`docs/providers/aws-secrets-manager.md`).
   Properties are per secret there, so the lifecycle suite runs with
-  `lifecycle_with(&[], ..)` (no `PerVersionProperties`); its `live` test
-  needs `SOURCEORRERY_AWS_TEST_ENDPOINT` (the `motoserver/moto` container
-  in the `provider-aws` job, `moto_server` locally; LocalStack's image
-  needs a licence token since 2026). A new provider follows the
+  `lifecycle_with(&[ClearableTimeWindow], ..)` (no `PerVersionProperties`);
+  its `live` test needs `SOURCEORRERY_AWS_TEST_ENDPOINT` (LocalStack in the
+  `provider-aws` job and coverage, started by `scripts/ci/localstack.sh`
+  through lstk with the image pinned in `.lstk/config.toml` and the
+  `LOCALSTACK_AUTH_TOKEN` secret; LocalStack refuses to list a deleted
+  secret's versions, so the deletion tests skip only the time comparison
+  there and warn).
+- `crates/sourceorrery-provider-azure` — Azure Key Vault behind
+  `AsyncSecretClient` over the official Azure SDK for Rust
+  (`docs/providers/azure-key-vault.md`). Properties are per version, so the
+  suite runs with `PerVersionProperties`; Key Vault cannot remove a time
+  window, so not `ClearableTimeWindow`. Its own credential chain
+  (`credential.rs`: service principal, workload identity, developer tools,
+  managed identity behind a one-second metadata-endpoint probe) stands in
+  for the `DefaultAzureCredential` the Rust SDK lacks; reserved
+  `sourceorrery:` tags carry precise version times and base64 marking. Its
+  `live` test needs `SOURCEORRERY_AZURE_TEST_ENDPOINT` and creates a vault
+  per scenario through the emulator's Resource Manager (LocalStack for
+  Azure from `.lstk/azure.toml`, port 4567, RBAC enforced, token secret
+  `LOCALSTACK_AZURE_AUTH_TOKEN`; the identity is the emulator's `any-app`).
+  The AWS and Azure emulators cannot run at once: coverage collects
+  `native.sh azure` first. A new provider follows the
   same shape: a crate over core, a feature in `sourceorrery-provider`, a
   `docs/providers/<name>.md`, a CI job in the gate, and a `Capability` in
-  the conformance suite for anything its service cannot express.
+  the conformance suite for anything its service cannot express. A new
+  crate also goes in `PROVIDERS` of `scripts/release/publish-crates.py` for
+  its token-authenticated first publication.
 - `bindings/{python,node,java,dotnet,go,cpp,php}` — the SDKs. Python and
   Node are native extensions over `crates/sourceorrery` (own workspace
   roots, own lock files); the rest call the C ABI. `bindings/README.md` is
@@ -90,7 +137,10 @@ left open.
   judges what it observed. A new read-only behaviour gets a scenario there;
   a new op means a change to every runner.
 - `scripts/ci/fixture-vault.sh` — creates, with the CLI only, the vault
-  every SDK test suite reads; `scripts/release/set-version.py` stamps a
+  every SDK test suite reads; given one provider's `vault create` flags
+  after the home, it also keeps secrets there for the harness's
+  `--remote` scenarios (the provider jobs, credentials stored in the
+  vault). `scripts/release/set-version.py` stamps a
   release version into every manifest.
 
 ## Rules that are not negotiable
@@ -106,16 +156,38 @@ left open.
   copies or holds one. Changes go through `ui::editor::MetadataEditor`,
   which only `ui::app` uses, once `ui::edit` has checked them and the user
   has confirmed; it never gains purge, protector or acknowledgement
-  operations. A new value comes only from `prompt::read_hidden` with the
-  screen suspended and goes straight to the vault. Every metadata read is
-  audited, so the browser reads each thing once, when it is first shown,
-  and again only on an explicit refresh (or after a change); never on
-  movement, search or a timer. It never asks a blocked vault
-  for secrets (each refusal is recorded).
+  operations; its two additions are a new secret in a chosen storage and
+  forgetting a project folder that is gone. A new value comes only from
+  `prompt::read_hidden` with the screen suspended and goes straight to the
+  vault. The browser opens vaults through `Routed`, so a secret a
+  connection stores is listed (one listing per provider, each recorded)
+  and changed at its provider, and `ui::edit` checks a change against the
+  storage's `Capability`s before it is sent; the vault's settings change
+  on the setup screens (`c`, and `n` on the Vaults view), never through
+  the editor. Every metadata read is audited, so the browser reads each
+  thing once, when it is first shown, and again only on an explicit
+  refresh (or after a change); never on movement, search or a timer. A
+  project's manifest on disk is a file read, not a vault read. It never
+  asks a blocked vault for secrets (each refusal is recorded).
+- `init`'s screens (`ui::init`) read a vault's catalog only (names,
+  storage, descriptions). A new secret's value is typed there into a
+  hidden field (a zeroising buffer, drawn as dots from its length) and
+  goes to the vault as `SecretBytes` at `[ Store ]`; no screen shows or
+  reads a value, and nothing is written to the manifest before the
+  review is confirmed.
+- The setup wizard (`ui::setup`) keeps what it collects in memory until
+  the review: typed passwords, recovery keys and credentials in
+  zeroising buffers drawn as dots; the only things it shows are those
+  shown once by design (a generated password, the authenticator key and
+  its QR code until a code verifies it, a new recovery key behind the
+  "written down" tick), and they leave its memory at the commit.
 - `SecretError::code()` strings are append-only.
 - New semantics go in core with a conformance test, not in a backend.
-- Tests use passphrase protectors with `Argon2Params::TESTING`; never touch
-  the real OS credential store in tests.
+- Tests open vaults with their recovery keys (`NoStore`,
+  `--no-keyring`, `SOURCEORRERY_KEYRING=off`) or an in-memory
+  `MemoryStore`, and set view-check passwords with
+  `Argon2Params::TESTING`; never touch the real OS credential store in
+  tests.
 - SDKs are read-only (ADR 0005): no set/update/delete/recover/purge,
   protector or audit calls in any binding, ever. Bindings carry no logic
   beyond "stable code → typed error"; unlock order, manifest semantics and
@@ -137,22 +209,26 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings   # pedantic is on
 cargo test --workspace
 cargo run -p sourceorrery-cli -- --help
-# `ui` design review: every theme and state as HTML in target/ui-snapshots
+# `ui` design review: every theme and state as HTML in target/ui-snapshots,
+# drawn as the made-up user `alex`; then refresh the docs' walkthroughs
 cargo test -p sourceorrery-cli ui::snapshot -- --ignored
+npm --prefix site run walkthroughs
 ```
 
-For manual testing use an isolated home and a passphrase vault:
+For manual testing use an isolated home and a vault that opens with its
+recovery key only:
 
 ```bash
-export SOURCEORRERY_HOME=/tmp/so-home SOURCEORRERY_PASSPHRASE=dev-only
-sourceorrery vault create development --protector passphrase
+export SOURCEORRERY_HOME=/tmp/so-home SOURCEORRERY_KEYRING=off
+sourceorrery vault create development --recovery-key-out /tmp/so-home/dev.key
+export SOURCEORRERY_RECOVERY_KEY_FILE=/tmp/so-home/dev.key
 ```
 
 SDK tests read the shared fixture vault (same thing, scripted):
 
 ```bash
 cargo build --release -p sourceorrery-cli -p sourceorrery-ffi
-eval "$(bash scripts/ci/fixture-vault.sh)"     # exports SOURCEORRERY_HOME, _PASSPHRASE, _TEST_*, _NATIVE_DIR
+eval "$(bash scripts/ci/fixture-vault.sh)"     # exports SOURCEORRERY_HOME, _RECOVERY_KEY, _TEST_*, _NATIVE_DIR
 cd bindings/python && maturin develop --release && python -m pytest   # and so on per binding README
 ```
 
@@ -165,7 +241,9 @@ Docker validates Linux (`rust:1-bookworm` needs `libdbus-1-dev pkg-config`).
 - Rust 2024 edition, `#![forbid(unsafe_code)]` in every crate.
 - Timestamps: RFC 3339 at the edges, Unix nanoseconds (i64) in SQLite.
 - Secret names: letters, digits, hyphens; max 127 (portable to the managed cloud secrets services).
-  Vault names: lowercase, digits, hyphens; max 64.
+  Vault names: letters, digits, hyphens, underscores, not starting with a
+  hyphen; max 64; unique ignoring case (the registry resolves a name to
+  the vault's own spelling).
 - Keep docs in `docs/` in sync with behaviour; `docs/cli.md` is the CLI
   reference, `docs/providers/` the remote providers and
   `docs/enterprise.md` identity, policy and revocation through them.

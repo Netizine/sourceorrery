@@ -67,7 +67,8 @@ pub enum SecretError {
     #[error("permission denied: {0}")]
     PermissionDenied(String),
 
-    /// The vault could not be unlocked (wrong passphrase, missing key, ...).
+    /// The vault could not be opened (no key for this machine, a wrong
+    /// recovery key, ...).
     #[error("vault is locked: {0}")]
     Locked(String),
 
@@ -99,13 +100,13 @@ pub enum SecretError {
     #[error("unsupported operation: {0}")]
     Unsupported(String),
 
-    /// The vault is in an older on-disk format. Opening it is refused until
-    /// the migration is requested explicitly, because the legacy format is
-    /// unauthenticated and a downgraded file could otherwise be laundered
-    /// through the migration.
+    /// The vault file was written by an earlier release, in an on-disk
+    /// format this release does not read. There is no migration: the
+    /// format changed with how a vault is opened and checked, so the vault
+    /// is recreated (the code keeps its old name; codes are append-only).
     #[error(
-        "vault '{name}' uses schema {schema}; run `sourceorrery vault migrate {name}` to upgrade it \
-         (only do this for a file you trust)"
+        "vault '{name}' was written by an earlier release (schema {schema}); this release \
+         cannot open it: recreate the vault with `sourceorrery setup`"
     )]
     MigrationRequired { name: String, schema: u32 },
 
@@ -116,13 +117,15 @@ pub enum SecretError {
     #[error("the file for vault '{requested}' holds the vault '{found}'")]
     VaultMismatch { requested: String, found: String },
 
-    /// The passphrase does not open the backup file. Distinct from
-    /// [`Self::Locked`] (a vault) and from [`Self::Crypto`] (a file that
-    /// was altered): the file's key check failed, nothing else was read.
+    /// The passphrase did not open an encrypted backup file. No operation
+    /// produces it since `vault export` replaced backups (ADR 0009); it
+    /// stays because codes are never taken back.
     #[error("the passphrase does not open this backup")]
     BackupPassphrase,
 
-    /// The backup was written in a newer format than this build reads.
+    /// A backup file was written in a newer format than the build read.
+    /// No operation produces it since `vault export` replaced backups
+    /// (ADR 0009); it stays because codes are never taken back.
     #[error("backup format {version} is newer than this build understands; upgrade sourceorrery")]
     BackupFormat { version: u16 },
 

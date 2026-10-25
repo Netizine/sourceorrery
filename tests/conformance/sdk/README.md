@@ -36,8 +36,8 @@ A runner is a program invoked once per scenario:
 | `load` | `manifest` | `project.name`, `project.count`, `project.names` (sorted, comma-joined), `secret.<ENV>` per resolved entry |
 
 Open options, accepted by every op: `vault` (default `SOURCEORRERY_TEST_VAULT`),
-`home`, `passphrase`, `passphrase_file`, `environment` (`false` ignores the
-`SOURCEORRERY_PASSPHRASE*` variables; default true).
+`home`, `recovery_key`, `recovery_key_file`, `environment` (`false` ignores the
+`SOURCEORRERY_RECOVERY_KEY*` variables; default true).
 
 The runner prints `key<TAB>value` lines on stdout, nothing else:
 
@@ -81,9 +81,10 @@ ones).
 `content_type`; `tags` (subset); `reference`; `descriptor.name`;
 `descriptor.protectors_contains`; `project.name`; `project.count`;
 `project.secrets` (`ENV: value`); `project.absent` (names that must not have
-resolved). `${vault}`, `${home}`, `${passphrase}`, `${manifest}`,
-`${old_version}` are substituted from the fixture environment and
-`${version}` from the observation.
+resolved). `${vault}`, `${home}`, `${recovery_key}`, `${manifest}`,
+`${old_version}` (and, with `--remote`, `${remote_manifest}`) are
+substituted from the fixture environment and `${version}` from the
+observation.
 
 ## Adding a scenario
 
@@ -92,16 +93,20 @@ locally, and let CI run the rest: each `sdk-*` job runs the harness after
 the language's own suite. A behaviour that needs a new runner `op` is a
 change to every runner, which is deliberate: the ops are the SDK surface.
 
-## Remote vaults
+## Secrets kept at a provider
 
-Scenarios with `"requires": "remote"` read a vault that a manifest declares
-in `[vaults.<name>]`, through the `manifest` open option, and run only
-with `--remote`, when `SOURCEORRERY_TEST_REMOTE_VAULT` and
-`SOURCEORRERY_TEST_REMOTE_MANIFEST` name that vault and manifest. The
-provider CI jobs (`provider-vault`) set them up with the CLI and run the
-Rust and C runners; a runner takes part by passing a `manifest=` argument
-through to its SDK's open options. A scenario with `"requires":
+Given one provider's `vault create` flags after the home directory,
+`fixture-vault.sh` creates the `ci` vault with that connection and keeps
+`remote-password` (and, where the provider keeps properties per version,
+`remote-rotated-key`) at the provider with `secret set --storage`. It also
+writes a manifest naming `database-password` and `remote-password` and
+exports it as `SOURCEORRERY_TEST_REMOTE_MANIFEST`. Scenarios with
+`"requires": "remote"` read those secrets through the same vault, with no
+option a local read lacks, and run only with `--remote`. The provider CI
+jobs (`provider-vault`, `provider-aws`, `provider-azure`) make that fixture
+with the connection's credentials stored in the vault and none in the
+environment, and run the Rust and C runners. A scenario with `"requires":
 "remote-per-version"` also needs the provider to keep properties per
-version (HashiCorp Vault does, AWS Secrets Manager does not) and runs
-only with `--remote-per-version` as well.
+version (HashiCorp Vault and Azure Key Vault do, AWS Secrets Manager does
+not) and runs only with `--remote-per-version` as well.
 

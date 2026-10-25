@@ -20,8 +20,8 @@ var vault = kv.GetValueOrDefault("vault") ?? Environment.GetEnvironmentVariable(
 var options = new OpenOptions
 {
     Home = kv.GetValueOrDefault("home"),
-    Passphrase = kv.GetValueOrDefault("passphrase"),
-    PassphraseFile = kv.GetValueOrDefault("passphrase_file"),
+    RecoveryKey = kv.GetValueOrDefault("recovery_key"),
+    RecoveryKeyFile = kv.GetValueOrDefault("recovery_key_file"),
     Environment = kv.GetValueOrDefault("environment") != "false",
 };
 var lines = new List<(string, string)>();

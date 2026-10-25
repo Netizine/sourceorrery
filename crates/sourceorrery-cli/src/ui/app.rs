@@ -1,21 +1,23 @@
 //! Browser state and what each action does to it. There is no terminal in
 //! here, so every behaviour is tested directly. Opening a vault needs the
-//! terminal (the passphrase prompt), so the app only asks for it
-//! ([`Request`]) and the event loop does it.
+//! terminal (the recovery-key and view-check prompts), and so do the setup
+//! screens, so the app only asks for them ([`Request`]) and the event loop
+//! does them.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use ratatui::widgets::TableState;
 use sourceorrery_core::{
-    AuditEvent, DeletedSecret, SecretBytes, SecretError, SecretProperties, SetSecretOptions,
-    timestamp,
+    AuditEvent, Capability, DeletedSecret, SecretBytes, SecretError, SecretProperties,
+    SetSecretOptions, timestamp,
 };
+use sourceorrery_storage::SecretStorage;
 use time::OffsetDateTime;
 
-use super::edit::{Change, Confirm, Dialog, Form};
+use super::edit::{Change, Confirm, Dialog, Form, Kept, StorageChoice};
 use super::search::Query;
-use super::session::Session;
+use super::session::{Project, ProjectStatus, Session};
 use crate::output;
 
 /// The views, in tab order.
@@ -23,15 +25,17 @@ use crate::output;
 pub enum Tab {
     Overview,
     Secrets,
+    Projects,
     Deleted,
     Audit,
     Vaults,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [
+    pub const ALL: [Tab; 6] = [
         Tab::Overview,
         Tab::Secrets,
+        Tab::Projects,
         Tab::Deleted,
         Tab::Audit,
         Tab::Vaults,
@@ -41,6 +45,7 @@ impl Tab {
         match self {
             Tab::Overview => "Overview",
             Tab::Secrets => "Secrets",
+            Tab::Projects => "Projects",
             Tab::Deleted => "Deleted",
             Tab::Audit => "Audit log",
             Tab::Vaults => "Vaults",
@@ -91,6 +96,11 @@ pub enum Action {
     Delete,
     /// Recover the selected deleted secret.
     Recover,
+    /// Change the vault's settings (its view check, recovery key and
+    /// storage) on the setup screens.
+    ChangeVault,
+    /// Forget the selected project, whose folder is gone.
+    Unlink,
     Help,
     Quit,
 }
@@ -109,13 +119,15 @@ pub enum Mode {
 /// Work only the event loop can do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Request {
-    /// Unlock and open this vault (may prompt for a passphrase).
+    /// Open this vault (may prompt for its recovery key and view check).
     Open(String),
     /// List the vaults in the home directory again.
     ListVaults,
     /// Read a new value for this secret at the hidden prompt and hand it
     /// to [`App::write_version`].
     ReadValue(String),
+    /// The setup screens: create a vault (`None`), or change this one.
+    Setup(Option<String>),
 }
 
 /// A vault file in the home directory. Listing needs no unlock.
@@ -148,8 +160,9 @@ pub struct App {
     pub vaults: Vec<VaultEntry>,
     pub session: Option<Session>,
     pub tab: Tab,
-    lists: [ListState; 5],
-    /// The secret whose details are shown, on the Secrets or Deleted view.
+    lists: [ListState; 6],
+    /// The secret whose details are shown, on the Secrets or Deleted view,
+    /// or the project's id on the Projects view.
     pub detail: Option<String>,
     /// Selection in the details' version list.
     pub versions: TableState,
@@ -165,8 +178,9 @@ pub struct App {
     pub locked: Option<Locked>,
     /// A form or confirmation over the views.
     pub dialog: Option<Dialog>,
-    /// A confirmed new version waiting for its value from the hidden prompt.
-    pending_value: Option<(String, SetSecretOptions)>,
+    /// A confirmed new version waiting for its value from the hidden
+    /// prompt, and the storage a new secret is created in.
+    pending_value: Option<(String, SetSecretOptions, Option<SecretStorage>)>,
     /// Changes are refused.
     read_only: bool,
 }
@@ -355,6 +369,19 @@ impl App {
         events.iter().filter(|e| query.event(e)).collect()
     }
 
+    /// Projects the Projects view's filter lets through.
+    pub fn shown_projects(&self) -> Vec<&Project> {
+        let Some(session) = &self.session else {
+            return Vec::new();
+        };
+        let query = self.query(Tab::Projects);
+        session
+            .projects
+            .iter()
+            .filter(|p| query.vault(&format!("{} {}", p.link.name, p.link.path.display())))
+            .collect()
+    }
+
     pub fn shown_vaults(&self) -> Vec<&VaultEntry> {
         let query = self.query(Tab::Vaults);
         self.vaults
@@ -367,6 +394,7 @@ impl App {
         match tab {
             Tab::Overview => 0,
             Tab::Secrets => self.shown_secrets().len(),
+            Tab::Projects => self.shown_projects().len(),
             Tab::Deleted => self.shown_deleted().len(),
             Tab::Audit => self.shown_events().len(),
             Tab::Vaults => self.shown_vaults().len(),
@@ -380,6 +408,7 @@ impl App {
         match tab {
             Tab::Overview => None,
             Tab::Secrets => readable.map(|s| s.secrets.len()),
+            Tab::Projects => readable.map(|s| s.projects.len()),
             Tab::Deleted => readable.and_then(Session::deleted).map(<[_]>::len),
             Tab::Audit => session.and_then(Session::audit).map(<[_]>::len),
             Tab::Vaults => Some(self.vaults.len()),
@@ -398,6 +427,24 @@ impl App {
     pub fn selected_deleted(&self) -> Option<&DeletedSecret> {
         self.selected_index()
             .and_then(|i| self.shown_deleted().get(i).copied())
+    }
+
+    pub fn selected_project(&self) -> Option<&Project> {
+        self.selected_index()
+            .and_then(|i| self.shown_projects().get(i).copied())
+    }
+
+    /// The project whose details are shown.
+    pub fn project_detail(&self) -> Option<&Project> {
+        let id = self
+            .detail
+            .as_deref()
+            .filter(|_| self.tab == Tab::Projects)?;
+        self.session
+            .as_ref()?
+            .projects
+            .iter()
+            .find(|p| p.link.id == id)
     }
 
     pub fn selected_vault(&self) -> Option<&VaultEntry> {
@@ -423,10 +470,21 @@ impl App {
             Action::Help => self.help = true,
             Action::Toggle => self.start_toggle(),
             Action::Edit => self.start_edit(),
+            Action::NewVersion if self.tab == Tab::Vaults => self.start_setup(None),
             Action::NewVersion => self.start_new_version(),
             Action::Add => self.start_add(),
             Action::Delete => self.start_delete(),
             Action::Recover => self.start_recover(),
+            Action::ChangeVault => {
+                let name = match self.tab {
+                    Tab::Vaults => self.selected_vault().map(|v| v.name.clone()),
+                    _ => self.session.as_ref().map(|s| s.vault.name.clone()),
+                };
+                if let Some(name) = name {
+                    self.start_setup(Some(name));
+                }
+            }
+            Action::Unlink => self.start_unlink(),
             Action::Back => self.back(),
             Action::Search => {
                 self.detail = None;
@@ -516,14 +574,15 @@ impl App {
             Tab::Overview => session
                 .load_deleted()
                 .and_then(|()| session.load_audit())
-                .and_then(|()| session.load_protectors())
+                .and_then(|()| session.load_keys())
                 .and_then(|()| match session.verification() {
                     Some(_) => Ok(()),
                     None => session.verify().map(|_| ()),
                 }),
             Tab::Deleted => session.load_deleted(),
             Tab::Audit => session.load_audit(),
-            Tab::Secrets | Tab::Vaults => Ok(()),
+            // The projects are read with the vault.
+            Tab::Secrets | Tab::Projects | Tab::Vaults => Ok(()),
         };
         if let Err(err) = loaded {
             self.message = Some(failure("reading the vault failed", &err));
@@ -558,6 +617,12 @@ impl App {
             Tab::Deleted => {
                 if let Some(name) = self.selected_deleted().map(|d| d.properties.name.clone()) {
                     self.open_detail(name, false);
+                }
+            }
+            Tab::Projects => {
+                // Its manifest's secrets were read with the vault.
+                if let Some(id) = self.selected_project().map(|p| p.link.id.clone()) {
+                    self.detail = Some(id);
                 }
             }
             Tab::Overview | Tab::Audit => {}
@@ -635,6 +700,14 @@ impl App {
         let name = session.vault.name.clone();
         self.load_view();
         if let Some(detail) = self.detail.take() {
+            if self.tab == Tab::Projects {
+                let session = self.session.as_ref();
+                if session.is_some_and(|s| s.projects.iter().any(|p| p.link.id == detail)) {
+                    self.detail = Some(detail);
+                }
+                self.clamp();
+                return Ok(name);
+            }
             let live = self.tab == Tab::Secrets;
             let still_there = match self.tab {
                 Tab::Secrets => self.shown_secrets().iter().any(|p| p.name == detail),
@@ -695,10 +768,47 @@ impl App {
         }
     }
 
+    /// Where `name` is kept, as a form checks a change against it.
+    fn kept(&self, name: &str) -> Kept {
+        let Some(session) = &self.session else {
+            return Kept::default();
+        };
+        Kept {
+            place: session.connection_of(name).map_or_else(
+                || "the vault".to_owned(),
+                |c| c.settings.provider().display_name().to_owned(),
+            ),
+            capabilities: session.capabilities_of(name).unwrap_or(Capability::ALL),
+        }
+    }
+
+    /// `p` is the newest version of its secret.
+    fn is_newest(&self, p: &SecretProperties) -> bool {
+        self.session.as_ref().is_some_and(|s| {
+            s.secrets
+                .iter()
+                .any(|newest| newest.name == p.name && newest.version == p.version)
+        })
+    }
+
     fn start_toggle(&mut self) {
-        if let Some(p) = self.target_version()
-            && self.can_change()
+        let Some(p) = self.target_version() else {
+            return;
+        };
+        let kept = self.kept(&p.name);
+        if !self.is_newest(&p)
+            && !kept
+                .capabilities
+                .contains(&Capability::PerVersionProperties)
         {
+            self.message = Some(Message::Error(format!(
+                "{} keeps `enabled` for the whole secret, not per version: switch the newest \
+                 version",
+                kept.place
+            )));
+            return;
+        }
+        if self.can_change() {
             self.dialog = Some(Dialog::Confirm(Confirm::toggle(&p)));
         }
     }
@@ -707,7 +817,8 @@ impl App {
         if let Some(p) = self.target_version()
             && self.can_change()
         {
-            self.dialog = Some(Dialog::Form(Form::edit(&p)));
+            let form = Form::edit(&p).kept_in(self.kept(&p.name), self.is_newest(&p));
+            self.dialog = Some(Dialog::Form(form));
         }
     }
 
@@ -724,7 +835,8 @@ impl App {
         if let Some(newest) = newest
             && self.can_change()
         {
-            self.dialog = Some(Dialog::Form(Form::new_version(&newest)));
+            let form = Form::new_version(&newest).kept_in(self.kept(&newest.name), true);
+            self.dialog = Some(Dialog::Form(form));
         }
     }
 
@@ -742,7 +854,25 @@ impl App {
             .iter()
             .map(|d| d.properties.name.clone())
             .collect();
-        self.dialog = Some(Dialog::Form(Form::add(live, deleted)));
+        // The vault file, then each connection, as the vault lists them.
+        let mut storages = vec![StorageChoice {
+            label: "SourceOrrery vault".to_owned(),
+            storage: SecretStorage::Vault,
+            kept: Kept::default(),
+        }];
+        storages.extend(session.connections.iter().map(|c| {
+            let provider = c.settings.provider();
+            StorageChoice {
+                label: provider.display_name().to_owned(),
+                storage: SecretStorage::Connection(c.id.clone()),
+                kept: Kept {
+                    place: provider.display_name().to_owned(),
+                    capabilities: provider.capabilities(),
+                },
+            }
+        }));
+        let form = Form::add(live, deleted).storing_in(storages);
+        self.dialog = Some(Dialog::Form(form));
     }
 
     fn start_delete(&mut self) {
@@ -765,6 +895,68 @@ impl App {
                 vault.retention_days,
                 timestamp::now(),
             )));
+        }
+    }
+
+    fn start_unlink(&mut self) {
+        if self.tab != Tab::Projects {
+            return;
+        }
+        let project = self.project_detail().or_else(|| self.selected_project());
+        let Some(project) = project.cloned() else {
+            return;
+        };
+        if project.status != ProjectStatus::Missing {
+            self.message = Some(Message::Error(format!(
+                "project '{}' is still there: only a project whose folder or manifest is gone \
+                 is forgotten here",
+                output::sanitize(&project.link.name)
+            )));
+            return;
+        }
+        if self.can_change() {
+            self.dialog = Some(Dialog::Confirm(Confirm::unlink(&project.link)));
+        }
+    }
+
+    /// The setup screens, for a new vault or the vault `name`.
+    fn start_setup(&mut self, name: Option<String>) {
+        if self.read_only {
+            self.message = Some(Message::Error(
+                "this browser is read-only (--read-only); change vaults with `sourceorrery \
+                 setup`"
+                    .to_owned(),
+            ));
+            return;
+        }
+        self.request = Some(Request::Setup(name));
+    }
+
+    /// The event loop's answer to [`Request::Setup`]: the vault the setup
+    /// screens created or changed, if they did. The vault list is read
+    /// again by then; the open vault, when it is the one changed, is read
+    /// again here.
+    pub fn set_up(&mut self, result: Result<Option<String>, String>) {
+        match result {
+            Ok(None) => {}
+            Ok(Some(name)) => {
+                let open = self.session.as_ref().map(|s| s.vault.name.clone());
+                if open.as_deref() == Some(name.as_str()) {
+                    self.after_change(Ok(format!("changed vault '{name}'")));
+                } else {
+                    self.message = Some(Message::Info(format!(
+                        "set up vault '{name}': Enter on it in Vaults opens it"
+                    )));
+                    if self.tab == Tab::Vaults
+                        && let Some(i) = self.shown_vaults().iter().position(|v| v.name == name)
+                    {
+                        self.select(i);
+                    }
+                }
+            }
+            Err(err) => {
+                self.message = Some(Message::Error(format!("the setup screens failed: {err}")));
+            }
         }
     }
 
@@ -835,12 +1027,19 @@ impl App {
         };
         let editor = session.editor();
         let done = match change {
-            Change::AddVersion { name, options } => {
+            Change::AddVersion {
+                name,
+                options,
+                storage,
+            } => {
                 // The value comes from the hidden prompt, outside the screen.
                 self.request = Some(Request::ReadValue(name.clone()));
-                self.pending_value = Some((name, options));
+                self.pending_value = Some((name, options, storage));
                 return;
             }
+            Change::Unlink { id, name } => editor
+                .unlink_project(&id)
+                .map(|()| format!("forgot project '{}'", output::sanitize(&name))),
             Change::Update {
                 name,
                 version,
@@ -874,7 +1073,7 @@ impl App {
     /// the hidden prompt, which goes straight to the vault and is dropped
     /// (and zeroised) there. The browser keeps nothing of it.
     pub fn write_version(&mut self, value: Result<SecretBytes, String>) {
-        let Some((name, options)) = self.pending_value.take() else {
+        let Some((name, options, storage)) = self.pending_value.take() else {
             return;
         };
         let value = match value {
@@ -889,10 +1088,12 @@ impl App {
         let Some(session) = &self.session else {
             return;
         };
-        let done = session
-            .editor()
-            .add_version(&name, value, options)
-            .map(|p| format!("stored version {} of '{name}'", short(&p.version)));
+        let editor = session.editor();
+        let done = match &storage {
+            Some(storage) => editor.add_secret(&name, value, options, storage),
+            None => editor.add_version(&name, value, options),
+        }
+        .map(|p| format!("stored version {} of '{name}'", short(&p.version)));
         let stored = done.is_ok();
         self.after_change(done);
         if stored
@@ -954,6 +1155,7 @@ pub mod tests {
             Tab::Secrets => app.selected_secret().map(|p| p.name.clone()),
             Tab::Deleted => app.selected_deleted().map(|d| d.properties.name.clone()),
             Tab::Vaults => app.selected_vault().map(|v| v.name.clone()),
+            Tab::Projects => app.selected_project().map(|p| p.link.name.clone()),
             Tab::Overview | Tab::Audit => None,
         }
     }
@@ -983,7 +1185,7 @@ pub mod tests {
         assert_eq!((fake.lists.get(), fake.inspects.get()), (2, 0));
         assert_eq!((fake.audit_reads.get(), fake.verifies.get()), (1, 1));
         let session = app.session.as_ref().unwrap();
-        assert!(session.verification().is_some() && session.protectors().is_some());
+        assert!(session.verification().is_some() && session.keys().is_some());
 
         for tab in Tab::ALL {
             app.update(Action::Show(tab));
@@ -1514,7 +1716,10 @@ pub mod tests {
             Some(Request::ReadValue("new-key".into()))
         );
         app.write_version(Ok(SecretBytes::from("v")));
-        assert!(matches!(&writes(&fake)[..], [Write::AddVersion(n, 1, _)] if n == "new-key"));
+        assert!(matches!(
+            &writes(&fake)[..],
+            [Write::AddSecret(n, 1, SecretStorage::Vault)] if n == "new-key"
+        ));
         assert_eq!(selected(&app).as_deref(), Some("new-key"));
     }
 
@@ -1585,5 +1790,145 @@ pub mod tests {
             "the pending version went with the lock"
         );
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    fn secrets_at_a_connection_are_listed_there_and_one_is_added_there() {
+        let fake = Fake::with_connection(&["local"], &["remote"]);
+        let mut app = on_secrets(&fake);
+        let session = app.session.as_ref().unwrap();
+        let names: Vec<&str> = session.secrets.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["local", "remote"]);
+        assert_eq!(
+            session.storage.get("remote").map(String::as_str),
+            Some("c1")
+        );
+        assert_eq!(
+            fake.listings_at.get(),
+            2,
+            "the secret list and the deleted list, once each, at the connection"
+        );
+
+        app.update(Action::Add);
+        type_in(&mut app, "new-token");
+        app.update(Action::Down);
+        app.update(Action::Input(' '));
+        app.update(Action::Commit);
+        app.update(Action::Commit);
+        assert_eq!(
+            app.take_request(),
+            Some(Request::ReadValue("new-token".to_owned()))
+        );
+        app.write_version(Ok(SecretBytes::from("value")));
+        assert!(matches!(
+            writes(&fake).as_slice(),
+            [Write::AddSecret(name, 5, SecretStorage::Connection(id))]
+                if name == "new-token" && id == "c1"
+        ));
+    }
+
+    #[test]
+    fn a_provider_that_cannot_be_reached_leaves_the_rest_shown() {
+        let fake = Fake::with_connection(&["local"], &["remote"]);
+        *fake.unreachable.borrow_mut() = Some("c1".to_owned());
+        let app = app_with(&fake);
+        let session = app.session.as_ref().unwrap();
+        assert_eq!(session.secrets.len(), 1);
+        assert_eq!(session.unreachable.len(), 1);
+        assert_eq!(session.unreachable[0].code, "provider_unavailable");
+    }
+
+    #[test]
+    fn what_a_storage_cannot_express_is_refused_before_it_is_sent() {
+        let fake = Fake::with_connection(&[], &["remote"]);
+        fake.remote_capabilities.set(&[]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Open);
+        // The older of the two versions, at a storage with properties per
+        // secret.
+        app.update(Action::Down);
+        app.update(Action::Toggle);
+        assert!(app.dialog.is_none());
+        assert!(matches!(&app.message, Some(Message::Error(t)) if t.contains("newest")));
+        app.update(Action::Edit);
+        // The content type.
+        app.update(Action::Down);
+        type_in(&mut app, "x");
+        app.update(Action::Commit);
+        let Some(Dialog::Form(form)) = &app.dialog else {
+            panic!("{:?}", app.dialog);
+        };
+        assert!(
+            form.error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("newest version")
+        );
+        assert!(writes(&fake).is_empty());
+    }
+
+    #[test]
+    fn a_project_that_is_gone_is_forgotten_and_one_that_is_there_is_not() {
+        let fake = Fake::with(&["api-key"]);
+        let found = tempfile::tempdir().unwrap();
+        std::fs::write(
+            found.path().join("sourceorrery.toml"),
+            "[project]\nname = \"shop\"\nvault = \"development\"\n\n[secrets.api-key]\n",
+        )
+        .unwrap();
+        fake.link("p1", "shop", found.path());
+        fake.link("p2", "old-site", &found.path().join("gone"));
+        let mut app = app_with(&fake);
+        assert_eq!(
+            app.session
+                .as_ref()
+                .unwrap()
+                .projects_using("api-key")
+                .len(),
+            1
+        );
+        app.update(Action::Show(Tab::Projects));
+        assert_eq!(app.total(Tab::Projects), Some(2));
+        app.update(Action::Unlink);
+        assert!(app.dialog.is_none(), "shop is still there");
+        app.update(Action::Down);
+        app.update(Action::Unlink);
+        app.update(Action::Commit);
+        assert!(matches!(writes(&fake).as_slice(), [Write::Unlink(id)] if id == "p2"));
+        assert_eq!(app.total(Tab::Projects), Some(1));
+
+        let mut read_only = app_with(&fake).with_read_only(true);
+        fake.link("p3", "older-site", &found.path().join("also-gone"));
+        read_only.update(Action::Refresh);
+        read_only.update(Action::Show(Tab::Projects));
+        read_only.update(Action::Bottom);
+        read_only.update(Action::Unlink);
+        assert!(read_only.dialog.is_none());
+        assert_eq!(writes(&fake).len(), 1);
+    }
+
+    #[test]
+    fn the_setup_screens_are_asked_for_and_their_vault_read_again() {
+        let fake = Fake::with(&["a"]);
+        let mut app = app_with(&fake);
+        app.update(Action::ChangeVault);
+        assert_eq!(
+            app.take_request(),
+            Some(Request::Setup(Some("development".to_owned())))
+        );
+        let lists = fake.lists.get();
+        app.set_up(Ok(Some("development".to_owned())));
+        assert!(fake.lists.get() > lists, "the open vault is read again");
+        assert!(matches!(&app.message, Some(Message::Info(t)) if t.contains("changed")));
+
+        app.update(Action::Show(Tab::Vaults));
+        app.update(Action::NewVersion);
+        assert_eq!(app.take_request(), Some(Request::Setup(None)));
+        app.set_up(Ok(Some("staging".to_owned())));
+        assert_eq!(selected(&app).as_deref(), Some("staging"));
+
+        let mut read_only = app_with(&fake).with_read_only(true);
+        read_only.update(Action::ChangeVault);
+        assert_eq!(read_only.take_request(), None);
     }
 }

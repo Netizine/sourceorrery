@@ -1,6 +1,5 @@
 //! Loading the secrets a `sourceorrery.toml` manifest declares.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use sourceorrery_core::{MANIFEST_FILE_NAME, Manifest, SecretError};
@@ -30,10 +29,11 @@ pub struct ProjectSecret {
 ///
 /// Mirrors `sourceorrery run`: every required secret must resolve or loading
 /// fails before any value is handed out; an optional secret that is missing,
-/// blocked by policy or whose vault does not exist is left out. A vault that
-/// exists but cannot be unlocked fails the load even for optional secrets,
-/// because that is a problem the user must see. A vault the manifest
-/// declares in `[vaults.<name>]` is read from its remote provider.
+/// blocked by policy, or in a vault that does not exist is left out. A vault
+/// that exists but cannot be unlocked fails the load even for optional
+/// secrets, because that is a problem the user must see. Every secret comes
+/// from `[project].vault`, from the vault file or the provider that stores
+/// it.
 #[derive(Debug)]
 pub struct Project {
     name: String,
@@ -62,47 +62,43 @@ impl Project {
             .entries()
             .map_err(|err| Error::new(&err, &Context::default()))?;
 
-        // Remote vaults resolve through this manifest, whatever the options
-        // say and wherever the process runs.
-        let options = OpenOptions {
-            manifest: Some(path.clone()),
-            ..options.clone()
-        };
-        let options = &options;
-
-        let mut readers: BTreeMap<String, SecretReader> = BTreeMap::new();
         let mut secrets = Vec::with_capacity(entries.len());
         let mut missing: Vec<(SecretReference, Error)> = Vec::new();
-        for entry in entries {
-            let vault = entry.reference.vault.clone();
-            if !readers.contains_key(&vault) {
-                match SecretReader::open_with(&vault, options) {
-                    Ok(reader) => {
-                        readers.insert(vault.clone(), reader);
-                    }
-                    Err(err) if err.kind() == ErrorKind::VaultNotFound => {
-                        if entry.required {
-                            missing.push((entry.reference, err));
-                        }
-                        continue;
-                    }
-                    Err(err) => return Err(err),
+        // The vault is opened only when the manifest asks for something.
+        let reader = if entries.is_empty() {
+            None
+        } else {
+            match SecretReader::open_with(&parsed.project.vault, options) {
+                Ok(reader) => Some(reader),
+                Err(err) if err.kind() == ErrorKind::VaultNotFound => {
+                    missing.extend(
+                        entries
+                            .iter()
+                            .filter(|entry| entry.required)
+                            .map(|entry| (entry.reference.clone(), err.clone())),
+                    );
+                    None
+                }
+                Err(err) => return Err(err),
+            }
+        };
+        if let Some(reader) = &reader {
+            for entry in entries {
+                match reader.resolve_reference(&entry.reference) {
+                    Ok(secret) => secrets.push(ProjectSecret {
+                        name: entry.name,
+                        env: entry.env,
+                        reference: entry.reference,
+                        required: entry.required,
+                        properties: secret.properties,
+                        value: secret.value,
+                    }),
+                    Err(err) if entry.required => missing.push((entry.reference, err)),
+                    Err(_) => {}
                 }
             }
-            match readers[&vault].resolve_reference(&entry.reference) {
-                Ok(secret) => secrets.push(ProjectSecret {
-                    name: entry.name,
-                    env: entry.env,
-                    reference: entry.reference,
-                    required: entry.required,
-                    properties: secret.properties,
-                    value: secret.value,
-                }),
-                Err(err) if entry.required => missing.push((entry.reference, err)),
-                Err(_) => {}
-            }
         }
-        drop(readers);
+        drop(reader);
 
         if let Some((first_ref, first)) = missing.first() {
             let message = if missing.len() == 1 {

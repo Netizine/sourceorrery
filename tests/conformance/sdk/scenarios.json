@@ -1,5 +1,5 @@
 {
-  "$comment": "Cross-language SDK conformance scenarios. Every SDK runner executes each scenario against the fixture vault from scripts/ci/fixture-vault.sh and tests/conformance/sdk/harness.py compares what it observed with `expect`. Variables: ${vault} ${home} ${passphrase} ${manifest} ${old_version} come from the SOURCEORRERY_TEST_* / SOURCEORRERY_* environment; scenarios with `requires: remote` use ${remote_vault} and ${remote_manifest} (a vault a manifest declares in [vaults.<name>]) and run only with --remote, in the provider CI jobs; `requires: remote-per-version` also needs the provider to keep properties per version (--remote-per-version). Protocol: tests/conformance/sdk/README.md.",
+  "$comment": "Cross-language SDK conformance scenarios. Every SDK runner executes each scenario against the fixture vault from scripts/ci/fixture-vault.sh and tests/conformance/sdk/harness.py compares what it observed with `expect`. Variables: ${vault} ${home} ${recovery_key} ${manifest} ${old_version} come from the SOURCEORRERY_TEST_* / SOURCEORRERY_* environment; scenarios with `requires: remote` read the secrets the fixture keeps at a provider when fixture-vault.sh is given that provider's connection flags, and ${remote_manifest}, and run only with --remote, in the provider CI jobs; `requires: remote-per-version` also needs the provider to keep properties per version (--remote-per-version). Protocol: tests/conformance/sdk/README.md.",
   "scenarios": [
     {
       "id": "open-unknown-vault",
@@ -13,50 +13,50 @@
       }
     },
     {
-      "id": "open-wrong-passphrase",
-      "about": "A passphrase that does not unlock the vault is `locked`; the hint lists every source that was tried and never echoes the passphrase.",
+      "id": "open-wrong-recovery-key",
+      "about": "A recovery key that does not open the vault is `locked`; the hint lists every source that was tried and never echoes the recovery key.",
       "op": "open",
-      "args": { "passphrase": "wrong-passphrase", "environment": "false" },
+      "args": { "recovery_key": "wrong-recovery-key", "environment": "false" },
       "expect": {
         "outcome": "error",
         "code": "locked",
-        "hint_contains": ["passphrase option: tried", "SOURCEORRERY_PASSPHRASE: not set", "--vault ${vault}"],
-        "message_excludes": ["wrong-passphrase"],
-        "hint_excludes": ["wrong-passphrase"]
+        "hint_contains": ["recovery_key option: tried", "SOURCEORRERY_RECOVERY_KEY: not set", "sourceorrery vault create ${vault}"],
+        "message_excludes": ["wrong-recovery-key"],
+        "hint_excludes": ["wrong-recovery-key"]
       }
     },
     {
       "id": "open-no-source",
-      "about": "No passphrase at all (and no OS-keyring protector) is `locked` too, with every source reported empty.",
+      "about": "No recovery key at all (and no key for this machine) is `locked` too, with every source reported empty.",
       "op": "open",
       "args": { "environment": "false" },
       "expect": {
         "outcome": "error",
         "code": "locked",
-        "hint_contains": ["passphrase option: not given"]
+        "hint_contains": ["recovery_key option: not given"]
       }
     },
     {
       "id": "open-explicit-options",
-      "about": "An explicit home and passphrase open the vault without the environment; the descriptor names the vault and its protectors.",
+      "about": "An explicit home and recovery key open the vault without the environment; the descriptor names the vault and the kinds of key that open it.",
       "op": "open",
-      "args": { "home": "${home}", "passphrase": "${passphrase}", "environment": "false" },
+      "args": { "home": "${home}", "recovery_key": "${recovery_key}", "environment": "false" },
       "expect": {
         "outcome": "ok",
         "descriptor.name": "${vault}",
-        "descriptor.protectors_contains": ["passphrase"]
+        "descriptor.protectors_contains": ["recovery"]
       }
     },
     {
       "id": "open-from-environment",
-      "about": "With no options the vault is unlocked from SOURCEORRERY_PASSPHRASE, like the CLI.",
+      "about": "With no options the vault is opened with SOURCEORRERY_RECOVERY_KEY, like the CLI.",
       "op": "open",
       "args": {},
       "expect": { "outcome": "ok", "descriptor.name": "${vault}" }
     },
     {
       "id": "open-vault-under-another-name",
-      "about": "A copy of the vault filed under another vault's name unlocks with the same passphrase but is refused: a reader asking for one vault never gets another.",
+      "about": "A copy of the vault filed under another vault's name opens with the same recovery key but is refused: a reader asking for one vault never gets another.",
       "op": "open",
       "args": { "vault": "${vault}-copy" },
       "expect": {
@@ -223,51 +223,68 @@
       "id": "load-locked-vault",
       "about": "A vault that exists but cannot be unlocked fails the load even though the manifest has optional entries.",
       "op": "load",
-      "args": { "manifest": "${manifest}", "passphrase": "wrong", "environment": "false" },
+      "args": { "manifest": "${manifest}", "recovery_key": "wrong", "environment": "false" },
       "expect": { "outcome": "error", "code": "locked" }
     },
     {
       "id": "remote-get",
       "requires": "remote",
-      "about": "A vault the manifest declares in `[vaults.<name>]` is read at its remote provider through the same `get`; `manifest` names the manifest to resolve through.",
+      "about": "A secret the vault keeps at a provider connection (`secret set --storage`) is read through the same `get` on the same vault, with its metadata; the reference names the vault, not the provider.",
       "op": "get",
-      "args": { "vault": "${remote_vault}", "manifest": "${remote_manifest}", "name": "database-password" },
+      "args": { "name": "remote-password" },
       "expect": {
         "outcome": "ok",
         "value": "remote-secret-value",
         "enabled": true,
         "content_type": "text/plain",
         "tags": { "env": "remote" },
-        "reference": "sourceorrery://${remote_vault}/database-password/${version}"
+        "reference": "sourceorrery://${vault}/remote-password/${version}"
       }
     },
     {
-      "id": "remote-descriptor",
+      "id": "remote-properties",
       "requires": "remote",
-      "about": "`open` on a remote vault reports the vault's name in its descriptor.",
-      "op": "open",
-      "args": { "vault": "${remote_vault}", "manifest": "${remote_manifest}" },
-      "expect": { "outcome": "ok", "descriptor.name": "${remote_vault}" }
+      "about": "`properties` of a secret kept at a provider describes its newest version as the provider holds it.",
+      "op": "properties",
+      "args": { "name": "remote-password" },
+      "expect": { "outcome": "ok", "enabled": true, "content_type": "text/plain", "tags": { "env": "remote" } }
     },
     {
-      "id": "remote-not-found",
+      "id": "remote-resolve",
       "requires": "remote",
-      "about": "A missing secret in a remote vault is `not_found` with the same hint as a local one.",
-      "op": "get",
-      "args": { "vault": "${remote_vault}", "manifest": "${remote_manifest}", "name": "missing" },
+      "about": "A reference to a secret kept at a provider resolves through the vault like any other.",
+      "op": "resolve",
+      "args": { "reference": "sourceorrery://${vault}/remote-password" },
+      "expect": { "outcome": "ok", "value": "remote-secret-value" }
+    },
+    {
+      "id": "remote-load",
+      "requires": "remote",
+      "about": "A manifest naming a secret in the vault file and one kept at a provider loads both, as `sourceorrery run` does; the manifest names neither place.",
+      "op": "load",
+      "args": { "manifest": "${remote_manifest}" },
       "expect": {
-        "outcome": "error",
-        "code": "not_found",
-        "hint_contains": ["sourceorrery secret set missing --vault ${remote_vault}"]
+        "outcome": "ok",
+        "project.name": "remote-project",
+        "project.count": 2,
+        "project.secrets": { "DATABASE_PASSWORD": "ci-secret-value", "REMOTE_PASSWORD": "remote-secret-value" }
       }
     },
     {
       "id": "remote-disabled-falls-back",
       "requires": "remote-per-version",
-      "about": "Policy is evaluated in the core for a remote vault too: a disabled newest version falls back to the previous one.",
+      "about": "Policy is evaluated in the core for a secret kept at a provider too: a disabled newest version falls back to the previous one.",
       "op": "get",
-      "args": { "vault": "${remote_vault}", "manifest": "${remote_manifest}", "name": "rotated-key" },
+      "args": { "name": "remote-rotated-key" },
       "expect": { "outcome": "ok", "value": "old", "enabled": true }
+    },
+    {
+      "id": "remote-disabled-inspectable",
+      "requires": "remote-per-version",
+      "about": "`properties` applies no policy at a provider either: the disabled newest version is still inspectable.",
+      "op": "properties",
+      "args": { "name": "remote-rotated-key" },
+      "expect": { "outcome": "ok", "enabled": false }
     }
   ]
 }

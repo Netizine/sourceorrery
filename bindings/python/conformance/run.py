@@ -30,8 +30,8 @@ def run(op: str, kv: dict[str, str]) -> list[tuple[str, str]]:
     vault = kv.get("vault") or os.environ.get("SOURCEORRERY_TEST_VAULT", "development")
     options = dict(
         home=kv.get("home"),
-        passphrase=kv.get("passphrase"),
-        passphrase_file=kv.get("passphrase_file"),
+        recovery_key=kv.get("recovery_key"),
+        recovery_key_file=kv.get("recovery_key_file"),
         environment=kv.get("environment") != "false",
     )
     if op == "load":

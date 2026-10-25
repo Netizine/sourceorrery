@@ -44,8 +44,8 @@ int main(int argc, char** argv) {
     }
     so::OpenOptions options;
     options.home = get("home");
-    options.passphrase = get("passphrase");
-    options.passphrase_file = get("passphrase_file");
+    options.recovery_key = get("recovery_key");
+    options.recovery_key_file = get("recovery_key_file");
     options.environment = get("environment") != std::optional<std::string>("false");
 
     try {

@@ -27,13 +27,12 @@
 #![forbid(unsafe_code)]
 
 pub mod audit;
-pub mod backup;
+pub mod connection;
 pub mod error;
 pub mod identity;
 pub mod listing;
 pub mod manifest;
 pub mod policy;
-pub mod remote;
 pub mod rotation;
 pub mod secret;
 pub mod text;
@@ -42,11 +41,7 @@ pub mod traits;
 pub mod vault;
 
 pub use audit::{AuditEvent, AuditOperation, AuditOutcome, AuditQuery};
-pub use backup::{
-    ExportOptions, RESTORED_CREATED_ON_TAG, RESTORED_FROM_TAG, RestoreOptions, RestoreReport,
-    RestoredSecret, SecretSnapshot, SkipReason, SkippedSecret, Snapshot, VaultBackup,
-    VersionSnapshot,
-};
+pub use connection::{ConnectionSettings, Credentials, Provider};
 pub use error::{Result, SecretError};
 pub use identity::{Principal, PrincipalKind};
 pub use listing::{ContinuationToken, ListOptions, Page};
@@ -54,7 +49,6 @@ pub use manifest::{
     MANIFEST_FILE_NAME, Manifest, ProjectSection, RotationSection, SecretRequirement,
 };
 pub use policy::{AccessPolicy, AllowAll, Decision, SoftDeletePolicy};
-pub use remote::{Provider, RemoteVault, VaultConfig};
 pub use secret::{
     DeletedSecret, RecoveryLevel, Secret, SecretBytes, SecretProperties, SecretReference,
     SetSecretOptions, UpdateSecretProperties, validate_secret_name, validate_version_id,
@@ -67,7 +61,7 @@ pub use vault::{VaultDescriptor, validate_vault_name};
 /// Bindings and the broker protocol negotiate against this value, not against
 /// the crate version, so the binding generator can change without changing
 /// the meaning of a secret operation.
-pub const CONTRACT_VERSION: &str = "1";
+pub const CONTRACT_VERSION: &str = "2";
 
 /// URI scheme used by [`SecretReference`] (`sourceorrery://vault/name/version`).
 pub const REFERENCE_SCHEME: &str = "sourceorrery";

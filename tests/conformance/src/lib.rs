@@ -9,71 +9,80 @@
 
 pub mod lifecycle;
 
-use sourceorrery_core::SecretBytes;
-use sourceorrery_crypto::Argon2Params;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
 use sourceorrery_storage::{
-    Acknowledgement, CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase,
-    VaultRegistry,
+    Acknowledgement, CreateVaultOptions, NoStore, SqliteVault, StaticRecoveryKey, VaultRegistry,
 };
 
-/// Passphrase used by every fixture vault.
-pub const FIXTURE_PASSPHRASE: &str = "conformance-passphrase";
-
-/// A temporary home directory holding fixture vaults.
+/// A temporary home directory holding fixture vaults. Its registry has no
+/// credential store, so a fixture never touches the real OS store and every
+/// vault opens with the recovery key it was created with, which the fixture
+/// remembers.
 #[derive(Debug)]
 pub struct Fixture {
     /// Keeps the temporary directory alive.
     pub home: tempfile::TempDir,
     /// Registry rooted in `home`.
     pub registry: VaultRegistry,
+    recovery_keys: Mutex<BTreeMap<String, String>>,
 }
 
 impl Fixture {
     /// Create an empty home.
     pub fn new() -> Self {
         let home = tempfile::tempdir().expect("temp dir");
-        let registry = VaultRegistry::with_root(home.path());
-        Self { home, registry }
+        let registry = VaultRegistry::with_root(home.path()).with_store(Arc::new(NoStore));
+        Self {
+            home,
+            registry,
+            recovery_keys: Mutex::new(BTreeMap::new()),
+        }
     }
 
-    /// Create a passphrase-protected vault with cheap KDF parameters.
+    /// Create a vault, remembering its recovery key.
     pub fn create_vault(&self, name: &str) -> SqliteVault {
         self.create_vault_with(name, CreateVaultOptions::default())
     }
 
     /// Create a vault with explicit options.
     pub fn create_vault_with(&self, name: &str, options: CreateVaultOptions) -> SqliteVault {
-        self.registry
-            .create(
-                name,
-                options,
-                ProtectorSpec::Passphrase {
-                    passphrase: SecretBytes::from(FIXTURE_PASSPHRASE),
-                    params: Argon2Params::TESTING,
-                },
-            )
-            .expect("create vault")
+        let created = self.registry.create(name, options).expect("create vault");
+        self.recovery_keys
+            .lock()
+            .expect("fixture keys")
+            .insert(name.to_owned(), created.recovery_key.to_string());
+        created.vault
     }
 
-    /// Re-open a fixture vault with the fixture passphrase.
+    /// The recovery key of a vault this fixture created.
+    pub fn recovery_key(&self, name: &str) -> String {
+        self.recovery_keys
+            .lock()
+            .expect("fixture keys")
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| panic!("the fixture created no vault named {name}"))
+    }
+
+    /// What opens a fixture vault: its recovery key, once.
+    pub fn unlock(&self, name: &str) -> StaticRecoveryKey {
+        StaticRecoveryKey::new(self.recovery_key(name))
+    }
+
+    /// Re-open a fixture vault with its recovery key.
     pub fn open_vault(&self, name: &str) -> SqliteVault {
         self.registry
-            .open(name, &StaticPassphrase::new(FIXTURE_PASSPHRASE))
+            .open(name, &self.unlock(name))
             .expect("open vault")
     }
 
-    /// Unlock a legacy-schema fixture vault and migrate it forward.
-    pub fn migrate_vault(&self, name: &str) -> SqliteVault {
-        self.registry
-            .migrate(name, &StaticPassphrase::new(FIXTURE_PASSPHRASE))
-            .expect("migrate vault")
-    }
-
-    /// Unlock a fixture vault for audit-log inspection: works on a vault
+    /// Open a fixture vault for audit-log inspection: works on a vault
     /// blocked by an unacknowledged truncation.
     pub fn inspect_vault(&self, name: &str) -> SqliteVault {
         self.registry
-            .open_for_inspection(name, &StaticPassphrase::new(FIXTURE_PASSPHRASE))
+            .open_for_inspection(name, &self.unlock(name))
             .expect("open vault for inspection")
     }
 

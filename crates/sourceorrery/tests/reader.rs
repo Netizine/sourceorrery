@@ -1,24 +1,35 @@
 //! The read-only client against vaults created with the storage crate.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use sourceorrery::{ErrorKind, OpenOptions, Project, SecretBytes, SecretReader};
-use sourceorrery_core::{SecretClient, SetSecretOptions, UpdateSecretProperties};
-use sourceorrery_crypto::Argon2Params;
-use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, VaultRegistry};
+use sourceorrery_core::audit::{AuditOperation, AuditQuery};
+use sourceorrery_core::{
+    ConnectionSettings, Credentials, SecretClient, SetSecretOptions, UpdateSecretProperties,
+};
+use sourceorrery_storage::{
+    CatalogChange, CreateVaultOptions, NoStore, StaticRecoveryKey, VaultRegistry,
+};
 use time::macros::datetime;
 
-const PASSPHRASE: &str = "reader-test-passphrase";
+const WRONG_KEY: &str = "AAAAA-AAAAA-AAAAA-AAAAA-AAAAA";
 const CANARY: &str = "CANARY-value-that-must-not-leak-2c9a";
 
+/// A temporary home whose vaults open with their recovery keys, which it
+/// remembers; it has no credential store, so no test touches the real one.
 struct Home {
     dir: tempfile::TempDir,
+    keys: RefCell<BTreeMap<String, String>>,
 }
 
 impl Home {
     fn new() -> Self {
         Self {
             dir: tempfile::tempdir().expect("temp dir"),
+            keys: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -27,22 +38,29 @@ impl Home {
     }
 
     fn create_vault(&self, name: &str) -> sourceorrery_storage::SqliteVault {
-        VaultRegistry::with_root(self.path())
-            .create(
-                name,
-                CreateVaultOptions::default(),
-                ProtectorSpec::Passphrase {
-                    passphrase: SecretBytes::from(PASSPHRASE),
-                    params: Argon2Params::TESTING,
-                },
-            )
-            .expect("create vault")
+        let created = VaultRegistry::with_root(self.path())
+            .with_store(Arc::new(NoStore))
+            .create(name, CreateVaultOptions::default())
+            .expect("create vault");
+        self.keys
+            .borrow_mut()
+            .insert(name.to_owned(), created.recovery_key.to_string());
+        created.vault
     }
 
+    fn key(&self, name: &str) -> String {
+        self.keys.borrow()[name].clone()
+    }
+
+    /// Options that open `dev`.
     fn options(&self) -> OpenOptions {
+        self.options_for("dev")
+    }
+
+    fn options_for(&self, name: &str) -> OpenOptions {
         OpenOptions::new()
             .home(self.path())
-            .passphrase(PASSPHRASE)
+            .recovery_key(self.key(name))
             .environment(false)
     }
 }
@@ -196,35 +214,37 @@ fn vault_level_failures_explain_what_to_do() {
 
     let wrong = OpenOptions::new()
         .home(home.path())
-        .passphrase("wrong")
+        .recovery_key(WRONG_KEY)
         .environment(false);
     let err = SecretReader::open_with("dev", &wrong).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Locked);
-    assert!(err.hint().contains("passphrase option: tried"), "{err}");
+    assert!(err.hint().contains("recovery_key option: tried"), "{err}");
     assert!(
-        err.hint().contains("SOURCEORRERY_PASSPHRASE: not set"),
+        err.hint().contains("SOURCEORRERY_RECOVERY_KEY: not set"),
         "{err}"
     );
-    assert!(err.hint().contains("--vault dev"), "{err}");
-    assert!(!err.to_string().contains("wrong"), "{err}");
+    assert!(!err.to_string().contains(WRONG_KEY), "{err}");
 
     // No source at all is also `locked`, with every source reported empty.
     let none = OpenOptions::new().home(home.path()).environment(false);
     let err = SecretReader::open_with("dev", &none).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Locked);
-    assert!(err.hint().contains("passphrase option: not given"), "{err}");
+    assert!(
+        err.hint().contains("recovery_key option: not given"),
+        "{err}"
+    );
 
-    // A passphrase file works and is reported as tried.
-    let file = home.path().join("passphrase.txt");
-    std::fs::write(&file, format!("{PASSPHRASE}\n")).unwrap();
+    // A recovery-key file works and is reported as tried.
+    let file = home.path().join("recovery-key.txt");
+    std::fs::write(&file, format!("{}\n", home.key("dev"))).unwrap();
     let from_file = OpenOptions::new()
         .home(home.path())
-        .passphrase_file(&file)
+        .recovery_key_file(&file)
         .environment(false);
     SecretReader::open_with("dev", &from_file).unwrap();
     let bad_file = OpenOptions::new()
         .home(home.path())
-        .passphrase_file(home.path().join("missing.txt"))
+        .recovery_key_file(home.path().join("missing.txt"))
         .environment(false);
     let err = SecretReader::open_with("dev", &bad_file).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Io);
@@ -250,8 +270,7 @@ fn project_load_mirrors_run() {
             "[project]\nname = \"demo\"\nvault = \"dev\"\n\n\
              [secrets.db-password]\n\n\
              [secrets.signing-key]\nenv = \"SIGNING\"\nversion = \"{pinned}\"\n\n\
-             [secrets.optional-thing]\nrequired = false\n\n\
-             [secrets.elsewhere]\nrequired = false\nvault = \"no-such-vault\"\n"
+             [secrets.optional-thing]\nrequired = false\n"
         ),
     )
     .unwrap();
@@ -283,12 +302,34 @@ fn project_load_mirrors_run() {
     // Two missing required secrets are listed together.
     std::fs::write(
         &manifest,
-        "[project]\nname = \"demo\"\nvault = \"dev\"\n\n[secrets.absent]\n\n[secrets.gone]\nvault = \"other\"\n",
+        "[project]\nname = \"demo\"\nvault = \"dev\"\n\n[secrets.absent]\n\n[secrets.gone]\n",
     )
     .unwrap();
     let err = Project::load(Some(&manifest), &home.options()).unwrap_err();
     assert!(err.message().contains("2 required secrets"), "{err}");
-    assert!(err.message().contains("(vault_not_found)"), "{err}");
+    assert!(err.message().contains("(not_found)"), "{err}");
+
+    // A vault that does not exist leaves out what is optional and fails what
+    // is required.
+    std::fs::write(
+        &manifest,
+        "[project]\nname = \"demo\"\nvault = \"other\"\n\n[secrets.maybe]\nrequired = false\n",
+    )
+    .unwrap();
+    let project = Project::load(Some(&manifest), &home.options()).unwrap();
+    assert!(project.secrets().is_empty());
+    std::fs::write(
+        &manifest,
+        "[project]\nname = \"demo\"\nvault = \"other\"\n\n[secrets.maybe]\nrequired = false\n\n\
+         [secrets.needed]\n",
+    )
+    .unwrap();
+    let err = Project::load(Some(&manifest), &home.options()).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::VaultNotFound);
+    assert!(
+        err.message().contains("sourceorrery://other/needed"),
+        "{err}"
+    );
 
     // A vault that exists but cannot be unlocked fails even for optional entries.
     std::fs::write(
@@ -298,7 +339,7 @@ fn project_load_mirrors_run() {
     .unwrap();
     let wrong = OpenOptions::new()
         .home(home.path())
-        .passphrase("wrong")
+        .recovery_key(WRONG_KEY)
         .environment(false);
     let err = Project::load(Some(&manifest), &wrong).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::Locked);
@@ -335,28 +376,8 @@ fn reader_is_shared_between_threads() {
     }
 }
 
-/// A manifest whose `[vaults.<name>]` table makes `name` remote; the other
-/// vaults stay local files.
-fn manifest_with_remote(home: &Home, remote: &str) -> std::path::PathBuf {
-    let dir = home.path().join("project");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("sourceorrery.toml");
-    std::fs::write(
-        &path,
-        format!(
-            "[project]\nname = \"demo\"\nvault = \"dev\"\n\n\
-             [secrets.database-password]\n\n\
-             [secrets.api-key]\nvault = \"{remote}\"\n\n\
-             [vaults.{remote}]\nprovider = \"hashicorp-vault\"\n\
-             address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n"
-        ),
-    )
-    .unwrap();
-    path
-}
-
 #[test]
-fn a_vault_the_manifest_declares_remote_is_opened_at_its_provider() {
+fn a_secret_a_connection_stores_is_read_at_its_provider() {
     let home = Home::new();
     let vault = home.create_vault("dev");
     set(
@@ -365,71 +386,81 @@ fn a_vault_the_manifest_declares_remote_is_opened_at_its_provider() {
         "pw",
         SetSecretOptions::default(),
     );
+    // A connection to a HashiCorp Vault where nothing listens, with a token
+    // stored so the environment's own does not matter, and a secret
+    // catalogued there as a set through it would leave it.
+    let settings = ConnectionSettings::HashicorpVault {
+        address: "http://127.0.0.1:1".to_owned(),
+        mount: "secret".to_owned(),
+        namespace: None,
+    };
+    let token = Credentials::VaultToken(SecretBytes::from("hvs.stored"));
+    let connection = vault.add_connection(&settings, Some(&token)).unwrap().id;
+    vault
+        .record_at_connection(
+            &connection,
+            AuditOperation::SecretSet,
+            Some("api-key"),
+            None,
+            Ok(()),
+            CatalogChange::Add,
+        )
+        .unwrap();
     drop(vault);
-    // A local vault file of the same name must not be reached once the
-    // manifest says the name is remote.
-    let shadow = home.create_vault("prod");
-    set(&shadow, "api-key", CANARY, SetSecretOptions::default());
-    drop(shadow);
-    let manifest = manifest_with_remote(&home, "prod");
 
-    // Without the manifest both names are local files.
-    let reader = SecretReader::open_with("prod", &home.options()).unwrap();
-    assert_eq!(reader.provider(), None);
-    assert_eq!(
-        reader.get("api-key").unwrap().value.expose(),
-        CANARY.as_bytes()
-    );
-
-    // With it, `prod` goes to the HashiCorp Vault provider: without a token
-    // in this environment that is `unauthenticated`; with one (a developer's
-    // VAULT_TOKEN or ~/.vault-token) nothing listens on port 1, so it is
-    // `provider_unavailable`. Either way the local file of that name is not
-    // touched.
-    let options = home.options().manifest(&manifest);
-    let err = SecretReader::open_with("prod", &options).unwrap_err();
-    assert!(
-        matches!(
-            err.kind(),
-            ErrorKind::Unauthenticated | ErrorKind::ProviderUnavailable
-        ),
-        "{err}"
-    );
-    assert!(
-        err.message().contains("hashicorp-vault"),
-        "{}",
-        err.message()
-    );
-    assert!(
-        err.hint().contains("VAULT_TOKEN") || err.hint().contains("[vaults.prod]"),
-        "{}",
-        err.hint()
-    );
-    assert!(!err.to_string().contains(CANARY));
-    // `dev` has no table and is still the local file.
-    let reader = SecretReader::open_with("dev", &options).unwrap();
-    assert_eq!(reader.provider(), None);
+    // The file's own secret needs no provider; the other goes to it.
+    let reader = SecretReader::open_with("dev", &home.options()).unwrap();
     assert_eq!(
         reader.get("database-password").unwrap().value.expose(),
         b"pw"
     );
-
-    // `Project::load` resolves vault names through the manifest it loads,
-    // whatever the options say, so the remote vault fails the load.
-    let err = Project::load(Some(&manifest), &home.options()).unwrap_err();
+    let err = reader.get("api-key").unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::ProviderUnavailable, "{err}");
+    assert!(err.is_transient());
     assert!(
-        matches!(
-            err.kind(),
-            ErrorKind::Unauthenticated | ErrorKind::ProviderUnavailable
-        ),
-        "{err}"
+        err.hint().contains("the connection of vault 'dev'"),
+        "{}",
+        err.hint()
     );
+    assert!(!err.to_string().contains("hvs.stored"), "{err}");
+    drop(reader);
 
-    // An explicit manifest path that cannot be read is a manifest error.
-    let err = SecretReader::open_with(
-        "dev",
-        &home.options().manifest(home.path().join("nope.toml")),
+    // A project that needs it fails; one that does not never contacts it.
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path().join("sourceorrery.toml");
+    std::fs::write(
+        &manifest,
+        "[project]\nname = \"demo\"\nvault = \"dev\"\n\n[secrets.database-password]\n\n\
+         [secrets.api-key]\n",
     )
-    .unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::Manifest);
+    .unwrap();
+    let err = Project::load(Some(&manifest), &home.options()).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::ProviderUnavailable, "{err}");
+    std::fs::write(
+        &manifest,
+        "[project]\nname = \"demo\"\nvault = \"dev\"\n\n[secrets.database-password]\n\n\
+         [secrets.api-key]\nrequired = false\n",
+    )
+    .unwrap();
+    let project = Project::load(Some(&manifest), &home.options()).unwrap();
+    assert_eq!(project.secrets().len(), 1);
+
+    // Each read at the provider is in the vault's own log.
+    let vault = VaultRegistry::with_root(home.path())
+        .with_store(Arc::new(NoStore))
+        .open("dev", &StaticRecoveryKey::new(home.key("dev").as_str()))
+        .unwrap();
+    let failed = vault
+        .audit_events(AuditQuery {
+            operation: Some(AuditOperation::SecretGet),
+            secret_name: Some("api-key".to_owned()),
+            ..AuditQuery::default()
+        })
+        .unwrap();
+    assert!(
+        failed.iter().all(|event| event.detail.as_deref()
+            == Some(&format!("at connection {connection}: provider_unavailable")[..])),
+        "{failed:?}"
+    );
+    assert_eq!(failed.len(), 3);
 }

@@ -43,11 +43,11 @@ func run(op string, args map[string]string) (kv, error) {
 	}
 	opts := &sourceorrery.OpenOptions{
 		Home:              args["home"],
-		PassphraseFile:    args["passphrase_file"],
+		RecoveryKeyFile:   args["recovery_key_file"],
 		IgnoreEnvironment: args["environment"] == "false",
 	}
-	if p, ok := args["passphrase"]; ok {
-		opts.Passphrase = []byte(p)
+	if p, ok := args["recovery_key"]; ok {
+		opts.RecoveryKey = []byte(p)
 	}
 	if op == "load" {
 		project, err := sourceorrery.LoadProject(args["manifest"], opts)

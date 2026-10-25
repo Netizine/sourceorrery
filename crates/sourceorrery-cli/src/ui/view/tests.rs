@@ -43,12 +43,12 @@ fn draws_the_vault_its_views_and_its_secrets() {
     assert!(screen.contains("SourceOrrery"), "{screen}");
     assert!(screen.contains("vault development"), "{screen}");
     assert!(
-        screen.contains("recoverable for 90 days  ·  1 protector"),
+        screen.contains("no view check  ·  storage: SourceOrrery"),
         "{screen}"
     );
     assert!(screen.contains("2 Secrets 2"), "{screen}");
     assert!(
-        screen.contains("3 Deleted 0    4 Audit log 4    5 Vaults 2"),
+        screen.contains("3 Projects 0   4 Deleted 0   5 Audit log 4   6 Vaults 2"),
         "the overview read them all: {screen}"
     );
     assert!(screen.contains("SECRETS  2"), "{screen}");
@@ -133,7 +133,7 @@ fn deleted_secrets_show_their_purge_date() {
     let mut app = app_with(&fake);
     app.update(Action::Show(Tab::Deleted));
     let screen = render(&mut app, 120, 16);
-    assert!(screen.contains("3 Deleted 1"), "{screen}");
+    assert!(screen.contains("4 Deleted 1"), "{screen}");
     assert!(screen.contains("▌ retired-token"), "{screen}");
     assert!(
         screen.contains("88 days") || screen.contains("89 days"),
@@ -193,7 +193,7 @@ fn a_blocked_vault_says_why_and_how_to_unblock() {
     assert!(screen.contains("BLOCKED"), "{screen}");
     assert!(screen.contains("event 42: rows removed after"), "{screen}");
     assert!(
-        screen.contains("2 Secrets    3 Deleted"),
+        screen.contains("2 Secrets   3 Projects   4 Deleted"),
         "nothing was read, so no counts: {screen}"
     );
     assert!(
@@ -223,8 +223,9 @@ fn messages_are_callouts() {
 fn the_help_lists_the_keys_and_what_is_recorded() {
     let (_, mut app) = app(&["a"]);
     app.update(Action::Help);
-    let screen = render(&mut app, 110, 34);
+    let screen = render(&mut app, 110, 46);
     assert!(screen.contains("KEYS"), "{screen}");
+    assert!(screen.contains("on the setup screens"), "{screen}");
     assert!(screen.contains("switch view"), "{screen}");
     assert!(screen.contains("tag:env=prod"), "{screen}");
     assert!(screen.contains("WHAT THE VAULT RECORDS"), "{screen}");
@@ -271,7 +272,7 @@ fn stored_control_characters_are_drawn_escaped() {
 }
 
 #[test]
-fn the_overview_shows_status_expiry_chain_activity_and_protectors() {
+fn the_overview_shows_status_expiry_chain_activity_and_keys() {
     let fake = Fake::with(&["api-key", "database-password"]);
     fake.deleted_names.borrow_mut().push("old");
     let mut app = app_with(&fake);
@@ -300,10 +301,17 @@ fn the_overview_shows_status_expiry_chain_activity_and_protectors() {
         "{screen}"
     );
     assert!(screen.contains("last failed unlock"), "{screen}");
-    assert!(
-        screen.contains("protector       passphrase  passphrase"),
-        "{screen}"
-    );
+    assert!(screen.contains("opens with recovery key"), "{screen}");
+    for text in [
+        "VIEW CHECK",
+        "password  none",
+        "STORAGE  1",
+        "vault      the file · 2 secrets",
+        "PROJECTS  0",
+        "none yet: run",
+    ] {
+        assert!(screen.contains(text), "{text}: {screen}");
+    }
     assert!(screen.contains("v verify chain"), "{screen}");
 }
 

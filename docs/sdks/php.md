@@ -85,18 +85,21 @@ $secret->close();   // zeroises the value
 $reader->close();
 ```
 
-`SecretReader::open($vault)` behaves like the CLI: `SOURCEORRERY_HOME`
-locates the vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`,
-then `SOURCEORRERY_PASSPHRASE_FILE` unlock it.
-`SecretReader::open($vault, new OpenOptions(home: .., passphrase: .., passphraseFile: .., environment: false, manifest: ..))`
-overrides any of that. `manifest` names the `sourceorrery.toml` whose
-`[vaults.<name>]` tables say which vaults are remote and at which provider
-(default: the nearest one above the current directory); a vault with such
-a table is opened at its provider instead of as a local file. Credentials
-come from the provider's own environment, never from the manifest: [HashiCorp
-Vault](../providers/hashicorp-vault.md) takes `VAULT_TOKEN` or the other
-sources it documents, [AWS Secrets Manager](../providers/aws-secrets-manager.md)
-the AWS default credential chain.
+With the default options, `SOURCEORRERY_HOME` locates the vault;
+this machine's key in the OS credential store opens it, else the
+recovery key: an explicit one, `SOURCEORRERY_RECOVERY_KEY`, then a file
+or `SOURCEORRERY_RECOVERY_KEY_FILE`.
+`SecretReader::open($vault, new OpenOptions(home: .., recoveryKey: .., recoveryKeyFile: .., environment: false))`
+overrides any of that. The SDK never prompts and never asks the vault's
+view check.
+
+A secret the vault keeps at a provider
+([HashiCorp Vault](../providers/hashicorp-vault.md),
+[AWS Secrets Manager](../providers/aws-secrets-manager.md),
+[Azure Key Vault](../providers/azure-key-vault.md)) is read there through
+the vault's connection, with the same calls: the connection signs in with
+the credentials it stores, or with the provider's own sign-in on the
+machine. No provider is contacted until a secret it keeps is read.
 
 | Call | Returns |
 |------|---------|
@@ -131,7 +134,7 @@ try {
     $reader = SecretReader::open('development');
     $secret = $reader->get('database-password');
 } catch (VaultLockedException $e) {
-    error_log($e->hint);        // which passphrase sources were tried
+    error_log($e->hint);        // which recovery-key sources were tried
 } catch (SecretNotFoundException $e) {
     error_log($e->hint);        // "Store it with `sourceorrery secret set ...`"
 } catch (SourceOrreryException $e) {
@@ -147,7 +150,7 @@ Classes: `VaultNotFoundException`, `VaultLockedException`,
 `SecretExpiredException`, `IntegrityException`, `UnsupportedException`,
 `InvalidArgumentException`, `InvalidNameException`, `ManifestException`,
 `PermissionDeniedException`, `StorageException`,
-`UnauthenticatedException` (the remote provider has no credentials for
+`UnauthenticatedException` (the provider that stores the secret has no credentials for
 this process), `ProviderUnavailableException` (it could not be reached;
 `isTransient()`). See [the SDK overview](index.md#errors).
 

@@ -45,17 +45,19 @@ Vault files stay on the developer's machine; images never contain them.
 - `docker run --env-file .env ...`: `sourceorrery run -- docker run -e DATABASE_URL -e STRIPE_KEY ...`.
 - `ARG`/`ENV` holding a secret in a `Dockerfile` bakes it into the image:
   remove it and pass the value at run time as above.
-- A container that should read the vault itself needs the SourceOrrery
-  home mounted and a passphrase file: see the headless section of
-  install.md.
+- A container that should read the vault itself needs the vault (an
+  exported copy, `vault export`, or the home mounted) and its recovery
+  key as a file (`SOURCEORRERY_RECOVERY_KEY_FILE`): see the headless
+  section of install.md.
 
 ## CI
 
 CI runners have no developer vault. Leave the CI system's own secret
 store (GitHub Actions secrets, GitLab CI variables) as it is unless the
 user asks to change it; just stop CI from creating or reading `.env`
-files. A pipeline that should use SourceOrrery gets its own vault with a
-passphrase protector: https://sourceorrery.ai/guides/headless/#ci
+files. A pipeline that should use SourceOrrery gets its own vault, opened
+with its recovery key from the CI system's secret store:
+https://sourceorrery.ai/guides/headless/#ci
 
 ## Kubernetes, Terraform, serverless
 
@@ -70,7 +72,7 @@ CONTRIBUTING with:
 
 ```bash
 # Install SourceOrrery: https://sourceorrery.ai/getting-started/
-sourceorrery vault create development
+sourceorrery setup                       # a vault, on screens; keep the recovery key it shows
 sourceorrery secret set database-url     # once per secret in sourceorrery.toml; values are typed at a hidden prompt
 sourceorrery check
 sourceorrery run -- npm start            # or the project's own start command

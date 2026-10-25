@@ -1,7 +1,7 @@
 //! Errors with stable codes and actionable hints.
 //!
 //! The hint is the part a person needs when a read fails in an application
-//! they did not write: which command creates the vault, which passphrase
+//! they did not write: which command creates the vault, which key
 //! sources were tried, why a version was refused. Hints are produced here, in
 //! Rust, so every SDK says the same thing. They never contain a value.
 
@@ -12,7 +12,7 @@ use sourceorrery_core::{Provider, SecretError};
 use sourceorrery_storage::VAULT_FILE_EXTENSION;
 
 use crate::unlock::UnlockReport;
-use crate::{HOME_ENV, PASSPHRASE_ENV, PASSPHRASE_FILE_ENV};
+use crate::{HOME_ENV, RECOVERY_KEY_ENV, RECOVERY_KEY_FILE_ENV};
 
 /// Result alias used throughout the client.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -43,7 +43,8 @@ pub enum ErrorKind {
     InvalidArgument,
     /// `permission_denied`: authenticated but not authorised.
     PermissionDenied,
-    /// `locked`: no protector or passphrase source could unlock the vault.
+    /// `locked`: neither this machine's key nor a recovery-key source could
+    /// open the vault.
     Locked,
     /// `vault_not_found`: no vault file with that name in the home directory.
     VaultNotFound,
@@ -206,9 +207,10 @@ pub(crate) struct Context<'a> {
     pub vault: Option<&'a str>,
     /// Home directory the vault was looked up in.
     pub home: Option<&'a Path>,
-    /// Passphrase sources consulted by `open`.
+    /// Recovery-key sources consulted by `open`.
     pub unlock: Option<&'a UnlockReport>,
-    /// The remote provider serving the vault, when it is remote.
+    /// The provider that stores the secret the call was about, when a
+    /// connection of the vault stores it.
     pub provider: Option<Provider>,
 }
 
@@ -241,18 +243,24 @@ fn mismatch_hint(requested: &str, found: &str, ctx: &Context<'_>) -> String {
     )
 }
 
-/// How a process gets credentials for `provider`: the provider's own
-/// mechanisms, never the manifest.
+/// How a process gets credentials for `provider`: the ones the vault's
+/// connection stores, or the provider's own mechanisms.
 fn credentials_hint(provider: Provider) -> &'static str {
     match provider {
         Provider::HashicorpVault => {
-            "Set VAULT_TOKEN for the identity this process runs as (or run `vault login`); the \
-             manifest holds the server address only, never a token"
+            "Store a token in the vault's HashiCorp Vault connection, or set VAULT_TOKEN for the \
+             identity this process runs as (or run `vault login`) so the connection finds one"
         }
         Provider::AwsSecretsManager => {
-            "Give the process credentials the AWS default chain finds: AWS_ACCESS_KEY_ID and \
-             AWS_SECRET_ACCESS_KEY, AWS_PROFILE, an instance or task role, or a web identity; \
-             the manifest holds the region only"
+            "Store an access key in the vault's AWS Secrets Manager connection, or give the \
+             process credentials the AWS default chain finds: AWS_ACCESS_KEY_ID and \
+             AWS_SECRET_ACCESS_KEY, AWS_PROFILE, an instance or task role, or a web identity"
+        }
+        Provider::AzureKeyVault => {
+            "Store a service principal in the vault's Azure Key Vault connection, or give the \
+             process an Azure identity: the AZURE_TENANT_ID, AZURE_CLIENT_ID and \
+             AZURE_FEDERATED_TOKEN_FILE workload-identity variables, a managed identity, \
+             AZURE_CLIENT_SECRET for a service principal, or `az login`"
         }
     }
 }
@@ -275,38 +283,44 @@ fn permission_hint(provider: Provider) -> &'static str {
              role this process assumes; `aws sts get-caller-identity` shows which identity was \
              refused"
         }
+        Provider::AzureKeyVault => {
+            "The vault does not allow this identity the operation. Assign it the role Key Vault \
+             Secrets User on the vault (Key Vault Secrets Officer to write), or, for a vault that \
+             uses access policies, the Get and List secret permissions; `az account show` shows \
+             which identity the Azure CLI signs in as"
+        }
     }
 }
 
-/// Hints about a remote provider: credentials, reachability, a denied
-/// read, a build without the provider. `None` when the error is not about
-/// one.
+/// Hints about the provider that stores a secret: credentials,
+/// reachability, a denied read, a build without the provider. `None` when
+/// the error is not about one.
 fn remote_hint(err: &SecretError, ctx: &Context<'_>) -> Option<String> {
     match err {
         SecretError::Unsupported(_) => ctx.provider.map(|provider| {
             format!(
-                "This build of SourceOrrery does not include a {} provider. Use a build that \
-                 does, or point the manifest's vault at a local vault file",
+                "This build of SourceOrrery does not include a {} provider, which stores this \
+                 secret. Use a build that does",
                 provider.display_name()
             )
         }),
         SecretError::Unauthenticated { provider, .. } => {
             Some(match Provider::from_name(provider).or(ctx.provider) {
                 Some(provider) => credentials_hint(provider).to_owned(),
-                None => "Give the process credentials for the provider the way its own tools \
-                         expect them; the manifest never holds any"
+                None => "Store credentials in the vault's connection to the provider, or give \
+                         the process credentials the way the provider's own tools expect them"
                     .to_owned(),
             })
         }
         SecretError::PermissionDenied(_) => ctx.provider.map(permission_hint).map(str::to_owned),
         SecretError::ProviderUnavailable { provider, .. } => {
-            let table = ctx
-                .vault
-                .map_or_else(|| "[vaults.<name>]".to_owned(), |v| format!("[vaults.{v}]"));
+            let connection = ctx.vault.map_or_else(
+                || "the vault's connection".to_owned(),
+                |v| format!("the connection of vault '{v}'"),
+            );
             Some(format!(
-                "Check that {provider} is reachable from this machine and that the address in \
-                 the manifest's {table} table is right; the error is transient, so the call can \
-                 be retried"
+                "Check that {provider} is reachable from this machine and that its address in \
+                 {connection} is right; the error is transient, so the call can be retried"
             ))
         }
         _ => None,
@@ -357,26 +371,28 @@ fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
     }
     match err {
         SecretError::VaultNotFound { name } => format!(
-            "Create it with `sourceorrery vault create {name}` (add `--protector passphrase` \
-             for headless use), or check the name.{}",
+            "Create it with `sourceorrery setup` or `sourceorrery vault create {name}`, or \
+             check the name.{}",
             ctx.home_note()
         ),
         SecretError::Locked(_) => {
             let sources = ctx.unlock.map_or_else(
-                || "no passphrase sources were consulted".to_owned(),
+                || "no recovery-key sources were consulted".to_owned(),
                 UnlockReport::describe,
             );
             let vault = ctx.vault.unwrap_or("<name>");
             format!(
-                "The OS credential store was tried first, then the passphrase sources \
-                 ({sources}). Set {PASSPHRASE_ENV} or {PASSPHRASE_FILE_ENV}, pass a passphrase \
-                 when opening, or add a protector this machine can use with \
-                 `sourceorrery vault protector add --kind passphrase --vault {vault}`"
+                "This machine's key in the OS credential store was tried first, then the \
+                 vault's recovery key ({sources}). Where this machine cannot open the vault \
+                 (another machine, a container, CI), set {RECOVERY_KEY_ENV} or \
+                 {RECOVERY_KEY_FILE_ENV}, or pass the recovery key when opening. A lost \
+                 recovery key is replaced on a machine that opens the vault, on the setup \
+                 screens: `sourceorrery vault create {vault}`"
             )
         }
         SecretError::MigrationRequired { name, .. } => format!(
-            "Run `sourceorrery vault migrate {name}` on a copy of the file you trust. SDKs \
-             never migrate a vault on their own because the older format is unauthenticated"
+            "Vault '{name}' was written by an earlier release, which this release cannot read. \
+             Recreate it with `sourceorrery setup` and add its secrets again"
         ),
         SecretError::NotFound { name } => format!(
             "Store it with `sourceorrery secret set {name}{}` (the value is read from stdin or a \
@@ -402,14 +418,13 @@ fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
             ctx.vault_flag()
         ),
         SecretError::Unsupported(_) => format!(
-            "No OS credential store is available here (headless Linux, a container, CI). On a \
-             machine that can unlock the vault, add a passphrase protector with `sourceorrery \
-             vault protector add --kind passphrase{}`, then unlock with {PASSPHRASE_ENV} or \
-             {PASSPHRASE_FILE_ENV}",
-            ctx.vault_flag()
+            "No OS credential store is available here (headless Linux, a container, CI), so \
+             the vault opens with its recovery key: set {RECOVERY_KEY_ENV} or \
+             {RECOVERY_KEY_FILE_ENV}"
         ),
         SecretError::InvalidName { .. } => "Secret names are 1-127 ASCII letters, digits and \
-             hyphens; vault names are 1-64 lowercase letters, digits and hyphens"
+             hyphens; vault names are 1-64 ASCII letters, digits, hyphens and underscores, \
+             not starting with a hyphen"
             .to_owned(),
         SecretError::InvalidArgument(_) => "References look like \
              `sourceorrery://vault/name` or `sourceorrery://vault/name/version`, and a \
@@ -523,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_hints_name_the_credential_source_not_the_manifest() {
+    fn provider_hints_name_the_connection_and_the_credential_source() {
         let err = Error::new(
             &SecretError::Unauthenticated {
                 provider: "hashicorp-vault".into(),
@@ -537,6 +552,25 @@ mod tests {
         assert!(!err.is_transient());
 
         let err = Error::new(
+            &SecretError::Unauthenticated {
+                provider: "azure-key-vault".into(),
+                reason: "no credential".into(),
+            },
+            &Context::default(),
+        );
+        assert!(
+            err.hint().contains("AZURE_FEDERATED_TOKEN_FILE"),
+            "{}",
+            err.hint()
+        );
+        assert!(
+            err.hint().contains("vault's Azure Key Vault connection"),
+            "{}",
+            err.hint()
+        );
+        assert!(!err.hint().contains("manifest"), "{}", err.hint());
+
+        let err = Error::new(
             &SecretError::ProviderUnavailable {
                 provider: "aws-secrets-manager".into(),
                 reason: "connection refused".into(),
@@ -548,7 +582,11 @@ mod tests {
         );
         assert_eq!(err.kind(), ErrorKind::ProviderUnavailable);
         assert!(err.is_transient());
-        assert!(err.hint().contains("[vaults.prod]"), "{}", err.hint());
+        assert!(
+            err.hint().contains("the connection of vault 'prod'"),
+            "{}",
+            err.hint()
+        );
 
         let err = Error::new(
             &SecretError::Unsupported("not built".into()),
@@ -610,6 +648,19 @@ mod tests {
             aws.hint()
         );
 
+        let azure = Error::new(
+            &denied,
+            &Context {
+                provider: Some(Provider::AzureKeyVault),
+                ..Context::default()
+            },
+        );
+        assert!(
+            azure.hint().contains("Key Vault Secrets User"),
+            "{}",
+            azure.hint()
+        );
+
         let local = Error::new(&denied, &Context::default());
         assert_eq!(
             local.hint(),
@@ -620,16 +671,13 @@ mod tests {
     #[test]
     fn locked_hint_lists_the_sources() {
         let report = UnlockReport {
-            supplied: vec![crate::PassphraseSource::Environment],
-            empty: vec![
-                crate::PassphraseSource::Explicit,
-                crate::PassphraseSource::File,
-            ],
+            supplied: vec![crate::KeySource::Environment],
+            empty: vec![crate::KeySource::Explicit, crate::KeySource::File],
             file: None,
             environment: true,
         };
         let err = Error::new(
-            &SecretError::Locked("passphrase: wrong".into()),
+            &SecretError::Locked("recovery key attempt 1 rejected".into()),
             &Context {
                 vault: Some("dev"),
                 home: Some(Path::new("/home/x/so")),
@@ -637,11 +685,12 @@ mod tests {
                 provider: None,
             },
         );
-        assert!(err.hint().contains("SOURCEORRERY_PASSPHRASE: tried"));
-        assert!(err.hint().contains("passphrase option: not given"));
+        assert!(err.hint().contains("SOURCEORRERY_RECOVERY_KEY: tried"));
+        assert!(err.hint().contains("recovery_key option: not given"));
+        assert!(err.hint().contains("SOURCEORRERY_RECOVERY_KEY_FILE"));
         assert!(
             err.hint()
-                .contains("protector add --kind passphrase --vault dev")
+                .contains("on the setup screens: `sourceorrery vault create dev`")
         );
     }
 }
