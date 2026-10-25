@@ -165,3 +165,43 @@ Each entry: commit, what it closes, behaviour and compatibility, tests run
   included. The CLI test that planted a wrap row now expects the refusal.
   clippy `-D warnings` clean for storage.
 * **Not run here:** the language SDK suites (B31).
+
+### B04 and B05 — private key files, and a create that cannot strand a vault
+
+One commit: the CLI's new dependency, the crate and the lock file must
+land together to build.
+
+* **Closes:** SR04 on Windows and Unix as implemented here (B31 runs it on
+  the other platforms and with a second account), SR09.
+* **Changes:** new crate `sourceorrery-os` (ADR 0010): one safe function,
+  `create_private_new`; on Windows `CreateFileW` with `CREATE_NEW`, no
+  sharing, a non-inheritable handle and an explicit descriptor (owner the
+  process's user; protected DACL: full access for that user and `SYSTEM`
+  only), then the volume's `FILE_PERSISTENT_ACLS`, the owner and every ACE
+  read back through the handle; any failure removes the empty file; on
+  Unix `O_EXCL` with `0600`, the mode checked. RAII owners for the token,
+  handles and system buffers; every `unsafe` block documented; the crate
+  denies `unsafe_op_in_unsafe_fn` and `undocumented_unsafe_blocks`. CLAUDE.md
+  names it as the second crate allowed `unsafe`; `publish-crates.py` lists it
+  for its first, token-authenticated publication. `vault create` reserves
+  the key file before the vault exists, writes, flushes and syncs it, and
+  undoes the vault and the file it made when the key cannot be delivered
+  to the file, stdout or the JSON body; the message says "restricted to
+  your account and Windows SYSTEM" (Unix: "readable by you only").
+* **Tests run (Windows):** `sourceorrery-os` 5 tests: the new file grants
+  `SYSTEM` and the user full access and Users, Everyone and Authenticated
+  Users none (computed with `GetEffectiveRightsFromAclW`); the same under a
+  folder that grants Users read (the fixture checked: an ordinary file
+  there is readable by Users); an existing file left byte for byte; a
+  failed check removes the file; the check refuses another owner, an
+  unprotected or missing DACL, an inherited, narrower, extra, missing or
+  deny entry, and a volume without persistent ACLs. CLI:
+  `a_recovery_key_that_cannot_be_delivered_leaves_no_vault` (the review's
+  missing-folder reproduction; stdout closed, plain and JSON; the stated
+  protection), with the existing never-written-over case; all 210 CLI tests
+  pass; release helpers 48. clippy `-D warnings` clean for the crate and the
+  CLI with and without default features.
+* **Not run here:** the Unix branch (no Linux toolchain or image on this
+  machine: CI builds it on Linux and macOS), a real second account opening
+  the file, a FAT volume, write and flush failures (no fault injection for
+  the disk; the code path is the same `?` as the open failure). B31.

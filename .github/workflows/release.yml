@@ -20,7 +20,7 @@ on:
         type: boolean
         default: true
       bootstrap_providers:
-        description: "First-publish the new providers (publish-crates.py PROVIDERS) during this full release using CRATES_BOOTSTRAP_TOKEN"
+        description: "First-publish the crates not yet on crates.io (publish-crates.py PROVIDERS: new providers, sourceorrery-os) during this full release using CRATES_BOOTSTRAP_TOKEN"
         required: true
         type: boolean
         default: false

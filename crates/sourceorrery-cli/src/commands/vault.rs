@@ -3,8 +3,9 @@
 //! check, recovery key and connections change on the setup screens
 //! (`ui::setup`), and its details show in the `ui` browser.
 
+use std::fs::File;
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
 use sourceorrery_core::{RecoveryLevel, SecretClient as _};
@@ -30,41 +31,100 @@ pub fn run(ctx: &Ctx, cmd: &VaultCommand) -> anyhow::Result<()> {
     }
 }
 
-/// Write a recovery key to `path`, readable by the current user only. The
-/// file is created new: an existing one is never overwritten.
-fn write_recovery_key(path: &Path, key: &str) -> anyhow::Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .map_err(|err| anyhow!("cannot create {}: {err}", path.display()))?;
-    file.write_all(key.as_bytes())?;
-    file.write_all(b"\n")?;
-    Ok(())
+/// The file a recovery key goes to, created empty before the vault exists
+/// with permissions only its owner has (ADR 0010): an existing file is
+/// never written over, and a path that cannot be created stops the create
+/// before anything else exists.
+#[derive(Debug)]
+struct KeyFile {
+    path: PathBuf,
+    file: File,
 }
 
-/// Show a recovery key once: into `out` when given, else on stdout (or in
-/// the JSON body).
+impl KeyFile {
+    fn reserve(path: &Path) -> anyhow::Result<Self> {
+        let file = sourceorrery_os::create_private_new(path).map_err(|err| {
+            if err.kind() == std::io::ErrorKind::AlreadyExists {
+                anyhow!(
+                    "{} exists already; the recovery key is never written over a file",
+                    path.display()
+                )
+            } else {
+                anyhow!(
+                    "cannot create {} for the recovery key: {err}",
+                    path.display()
+                )
+            }
+        })?;
+        Ok(Self {
+            path: path.to_owned(),
+            file,
+        })
+    }
+
+    /// Write the key and make sure it reached the disk.
+    fn deliver(&mut self, key: &str) -> anyhow::Result<()> {
+        self.file
+            .write_all(key.as_bytes())
+            .and_then(|()| self.file.write_all(b"\n"))
+            .and_then(|()| self.file.flush())
+            .and_then(|()| self.file.sync_all())
+            .map_err(|err| {
+                anyhow!(
+                    "cannot write the recovery key to {}: {err}",
+                    self.path.display()
+                )
+            })
+    }
+}
+
+/// What a create that fails part-way takes back: the vault it registered
+/// and the key file it reserved, and nothing it did not make itself. Armed
+/// until the recovery key has been delivered.
+struct Undo<'a> {
+    ctx: &'a Ctx,
+    vault: Option<&'a str>,
+    key_file: Option<PathBuf>,
+}
+
+impl Undo<'_> {
+    fn done(mut self) {
+        self.vault = None;
+        self.key_file = None;
+    }
+}
+
+impl Drop for Undo<'_> {
+    fn drop(&mut self) {
+        if let Some(name) = self.vault {
+            // The vault holds nothing yet and nobody has its recovery key.
+            let _ = self.ctx.registry.destroy(name, false);
+        }
+        if let Some(path) = &self.key_file {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Show a recovery key once: into the reserved file when there is one, else
+/// on stdout (or in the JSON body, written by the caller). An error means
+/// the key may not have reached anyone.
 fn show_recovery_key(
     ctx: &Ctx,
     vault: &str,
     key: &str,
-    out: Option<&Path>,
+    out: Option<&mut KeyFile>,
     body: &mut serde_json::Value,
 ) -> anyhow::Result<()> {
-    if let Some(path) = out {
-        write_recovery_key(path, key)?;
-        body["recovery_key_file"] = serde_json::Value::String(path.display().to_string());
+    if let Some(key_file) = out {
+        key_file.deliver(key)?;
+        body["recovery_key_file"] = serde_json::Value::String(key_file.path.display().to_string());
         if !ctx.json() {
             output::note(&format!(
-                "the recovery key of vault '{vault}' is in {} (readable by you only); keep a copy \
-                 apart from this machine and delete the file",
-                path.display()
+                "the recovery key of vault '{vault}' is in {} ({}); keep a copy apart from this \
+                 machine and delete the file",
+                key_file.path.display(),
+                sourceorrery_os::private_file_description()
             ));
         }
         return Ok(());
@@ -148,21 +208,28 @@ fn create(ctx: &Ctx, args: &VaultCreateArgs) -> anyhow::Result<()> {
         retention_days: args.retention_days,
         this_machine: !args.no_keyring,
     };
-    if let Some(path) = &args.recovery_key_out
-        && path.exists()
-    {
-        return Err(anyhow!(
-            "{} exists already; the recovery key is never written over a file",
-            path.display()
-        ));
-    }
     // Read before the vault exists, so a wrong flag or file creates nothing.
     let change = created_settings(ctx, args)?;
+    // Declared first so it is dropped last: the key file is closed and the
+    // vault released before it removes them.
+    let mut undo = Undo {
+        ctx,
+        vault: None,
+        key_file: None,
+    };
+    // The key file too: reserved first, so a path that cannot take the key
+    // leaves no vault without one behind.
+    let mut key_file = args
+        .recovery_key_out
+        .as_deref()
+        .map(KeyFile::reserve)
+        .transpose()?;
+    undo.key_file = key_file.as_ref().map(|reserved| reserved.path.clone());
     let created = ctx.registry.create(name, options)?;
+    undo.vault = Some(name);
     if let Err(err) = created.vault.change_settings(&change) {
         // No half-made vault is left behind: it goes again.
         drop(created);
-        let _ = ctx.registry.destroy(name, false);
         return Err(anyhow!("vault '{name}' was not created: {err}"));
     }
     drop(change);
@@ -180,53 +247,80 @@ fn create(ctx: &Ctx, args: &VaultCreateArgs) -> anyhow::Result<()> {
         "connections": added,
     });
     if !ctx.json() {
-        output::success(&format!(
-            "Vault '{}' created\n  {}",
-            descriptor.name,
-            descriptor
-                .path
-                .as_deref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
-        ));
-        if created.this_machine {
-            eprintln!(
-                "  this machine opens it without asking ({})",
-                ctx.registry.store().name()
-            );
-        } else if !args.no_keyring {
-            output::note(&format!(
-                "{} is not available{}; the vault opens with its recovery key only",
-                ctx.registry.store().name(),
-                ctx.registry
-                    .store()
-                    .unavailable_reason()
-                    .map(|r| format!(" ({r})"))
-                    .unwrap_or_default()
-            ));
-        }
-        if !check.is_none() {
-            eprintln!("  view check: {}", check.describe());
-        }
-        for connection in &added {
-            eprintln!(
-                "  connection {}: {}",
-                connection.id,
-                connections::describe(connection)
-            );
-        }
+        print_created(ctx, args, &descriptor, created.this_machine, check, &added);
     }
-    show_recovery_key(
+    let delivered = show_recovery_key(
         ctx,
         &descriptor.name,
         created.recovery_key.as_str(),
-        args.recovery_key_out.as_deref(),
+        key_file.as_mut(),
         &mut body,
-    )?;
-    if ctx.json() {
-        return output::json(&body);
+    )
+    .and_then(|()| {
+        if ctx.json() {
+            output::json(&body)?;
+            std::io::stdout().flush()?;
+        }
+        Ok(())
+    });
+    if let Err(err) = delivered {
+        // Nobody may have the only key that opens it everywhere: the vault
+        // goes again, with the key file this attempt made.
+        drop(created);
+        drop(key_file);
+        return Err(anyhow!(
+            "vault '{name}' was not created: its recovery key could not be delivered ({err})"
+        ));
     }
+    undo.done();
     Ok(())
+}
+
+/// What `vault create` made, on stderr: the file, how it opens, its view
+/// check and its connections.
+fn print_created(
+    ctx: &Ctx,
+    args: &VaultCreateArgs,
+    descriptor: &sourceorrery_core::VaultDescriptor,
+    this_machine: bool,
+    check: sourceorrery_storage::ViewCheck,
+    added: &[sourceorrery_storage::ConnectionInfo],
+) {
+    output::success(&format!(
+        "Vault '{}' created\n  {}",
+        descriptor.name,
+        descriptor
+            .path
+            .as_deref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    ));
+    if this_machine {
+        eprintln!(
+            "  this machine opens it without asking ({})",
+            ctx.registry.store().name()
+        );
+    } else if !args.no_keyring {
+        output::note(&format!(
+            "{} is not available{}; the vault opens with its recovery key only",
+            ctx.registry.store().name(),
+            ctx.registry
+                .store()
+                .unavailable_reason()
+                .map(|r| format!(" ({r})"))
+                .unwrap_or_default()
+        ));
+    }
+    if !check.is_none() {
+        eprintln!("  view check: {}", check.describe());
+    }
+    for connection in added {
+        eprintln!(
+            "  connection {}: {}",
+            connection.id,
+            connections::describe(connection)
+        );
+    }
 }
 
 /// `vault export`: no view check is asked, since the copy opens with the

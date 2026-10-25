@@ -1,0 +1,42 @@
+[package]
+name = "sourceorrery-os"
+description = "Operating-system file primitives for SourceOrrery: a new file only its creator can open"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+categories = ["filesystem", "os"]
+keywords = ["secrets", "permissions", "acl", "windows"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# Like sourceorrery-ffi, this crate does not inherit the workspace lints:
+# it is the second, narrow place `unsafe` is permitted (ADR 0010), for the
+# Win32 calls that create a file with its permissions already set.
+# Everything else mirrors the workspace table.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Every unsafe block must state the invariant it relies on.
+undocumented_unsafe_blocks = "deny"
+module_name_repetitions = "allow"
+doc_markdown = "allow"

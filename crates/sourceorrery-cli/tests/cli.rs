@@ -2417,3 +2417,62 @@ fn vault_create_sets_the_password_from_a_file_with_the_vault() {
         stderr(&out)
     );
 }
+
+/// SR09 of the 2026-10-25 review: a recovery key that cannot be delivered,
+/// to a file or to stdout, leaves no vault behind that nobody can open.
+#[test]
+fn a_recovery_key_that_cannot_be_delivered_leaves_no_vault() {
+    let env = Env::new();
+    // A key file under a folder that does not exist: nothing is created.
+    let missing = env.keys.path().join("no-such-folder").join("lost.key");
+    let out = env.run(&[
+        "vault",
+        "create",
+        "lost",
+        "--no-keyring",
+        "--recovery-key-out",
+        missing.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("cannot create"), "{}", stderr(&out));
+    assert!(!env.ok(&["vault", "list"]).contains("lost"));
+
+    // The key on stdout, nobody reading it: the vault goes again, in both
+    // the plain and the JSON form.
+    for (name, json) in [("unread", false), ("unread-json", true)] {
+        let mut args = vec!["vault", "create", name, "--no-keyring"];
+        if json {
+            args.extend(["-o", "json"]);
+        }
+        let mut child = env.cmd(&args).spawn().unwrap();
+        drop(child.stdout.take());
+        drop(child.stdin.take());
+        let out = child.wait_with_output().unwrap();
+        assert!(!out.status.success(), "{name}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains("could not be delivered"),
+            "{name}: {}",
+            stderr(&out)
+        );
+        assert!(!env.ok(&["vault", "list"]).contains(name), "{name}");
+    }
+
+    // Delivered to a file: it says exactly what protects it.
+    let key = env.key_file("kept");
+    let out = env.run(&[
+        "vault",
+        "create",
+        "kept",
+        "--no-keyring",
+        "--recovery-key-out",
+        key.to_str().unwrap(),
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let promised = if cfg!(windows) {
+        "restricted to your account and Windows SYSTEM"
+    } else {
+        "readable by you only"
+    };
+    assert!(stderr(&out).contains(promised), "{}", stderr(&out));
+    assert_eq!(env.recovery_key("kept").len(), 29);
+}

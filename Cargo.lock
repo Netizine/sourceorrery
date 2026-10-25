@@ -3270,6 +3270,7 @@ dependencies = [
  "serde_json",
  "sourceorrery-core",
  "sourceorrery-crypto",
+ "sourceorrery-os",
  "sourceorrery-provider",
  "sourceorrery-storage",
  "tempfile",
@@ -3342,6 +3343,14 @@ dependencies = [
  "tempfile",
  "time",
  "zeroize",
+]
+
+[[package]]
+name = "sourceorrery-os"
+version = "0.2.0"
+dependencies = [
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
