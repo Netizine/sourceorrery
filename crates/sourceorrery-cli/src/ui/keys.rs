@@ -13,7 +13,7 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
     }
     if key.kind == KeyEventKind::Repeat
         && mode == Mode::Dialog
-        && matches!(key.code, KeyCode::Char(' ' | 'y' | 'n'))
+        && matches!(key.code, KeyCode::Char(' '))
     {
         return None;
     }
@@ -43,8 +43,11 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
             KeyCode::Enter => Some(Action::Commit),
             KeyCode::PageUp => Some(Action::PageUp),
             KeyCode::PageDown => Some(Action::PageDown),
-            KeyCode::Home => Some(Action::Top),
-            KeyCode::End => Some(Action::Bottom),
+            KeyCode::Left => Some(Action::Text(super::text_input::Edit::Left)),
+            KeyCode::Right => Some(Action::Text(super::text_input::Edit::Right)),
+            KeyCode::Delete => Some(Action::Text(super::text_input::Edit::Delete)),
+            KeyCode::Home => Some(Action::Text(super::text_input::Edit::Home)),
+            KeyCode::End => Some(Action::Text(super::text_input::Edit::End)),
             KeyCode::Backspace => Some(Action::Erase),
             KeyCode::Tab | KeyCode::Down => Some(Action::Down),
             KeyCode::BackTab | KeyCode::Up => Some(Action::Up),
@@ -71,6 +74,7 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
                     | Action::Top
                     | Action::Bottom
                     | Action::Input(_)
+                    | Action::Text(_)
                     | Action::Erase
             )
     })

@@ -81,6 +81,7 @@ impl Step {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    Text(crate::ui::text_input::Edit),
     Scroll(crate::ui::app::Action),
     Input(char),
     Erase,
@@ -203,6 +204,8 @@ pub struct Wizard<B> {
     backend: B,
     pub step: Step,
     pub viewport: std::cell::RefCell<crate::ui::viewport::Viewport>,
+    pub text_cursor: crate::ui::text_input::Cursor,
+    pub cursor_control: Option<Control>,
     focus: usize,
     pub message: Option<Message>,
     quit: bool,
@@ -238,6 +241,8 @@ impl<B: Backend> Wizard<B> {
         Self {
             backend,
             viewport: Default::default(),
+            text_cursor: Default::default(),
+            cursor_control: None,
             step: Step::Vault,
             focus: 0,
             message: None,
@@ -415,7 +420,12 @@ impl<B: Backend> Wizard<B> {
     }
 
     pub fn update(&mut self, action: Action) {
+        self.ensure_cursor();
+        if matches!(action, Action::Input(_) | Action::Erase | Action::Text(_)) {
+            self.viewport.borrow_mut().follow();
+        }
         match action {
+            Action::Text(edit) => self.edit_plain(edit),
             Action::Scroll(action) => self.viewport.borrow_mut().move_by(action),
             Action::Quit => self.quit = true,
             Action::Back => {
@@ -435,6 +445,7 @@ impl<B: Backend> Wizard<B> {
     }
 
     fn go(&mut self, step: Step) {
+        self.cursor_control = None;
         *self.viewport.borrow_mut() = Default::default();
         self.step = step;
         self.focus = 0;
@@ -517,6 +528,61 @@ impl<B: Backend> Wizard<B> {
         });
     }
 
+    fn plain(&self, control: Control) -> Option<&str> {
+        match control {
+            Control::ProjectName => Some(&self.project),
+            Control::ManifestPath => Some(&self.manifest_path),
+            Control::Filter => Some(&self.filter),
+            Control::Name => Some(&self.new_name),
+            Control::Description => Some(&self.description),
+            Control::Env => Some(&self.env),
+            _ => None,
+        }
+    }
+    fn ensure_cursor(&mut self) {
+        let control = self.focused();
+        if self.cursor_control != Some(control)
+            && let Some(text) = self.plain(control)
+        {
+            let cursor = crate::ui::text_input::Cursor::end(text);
+            self.text_cursor = cursor;
+            self.cursor_control = Some(control);
+        }
+    }
+    fn edit_plain(&mut self, edit: crate::ui::text_input::Edit) {
+        if self.plain(self.focused()).is_none() {
+            if !self.focused().is_text() {
+                match edit {
+                    crate::ui::text_input::Edit::Home => self
+                        .viewport
+                        .borrow_mut()
+                        .move_by(crate::ui::app::Action::Top),
+                    crate::ui::text_input::Edit::End => self
+                        .viewport
+                        .borrow_mut()
+                        .move_by(crate::ui::app::Action::Bottom),
+                    _ => {}
+                }
+            }
+            return;
+        }
+        match self.focused() {
+            Control::ProjectName => self.text_cursor.edit(&mut self.project, edit),
+            Control::ManifestPath => self.text_cursor.edit(&mut self.manifest_path, edit),
+            Control::Filter => self.text_cursor.edit(&mut self.filter, edit),
+            Control::Name => self.text_cursor.edit(&mut self.new_name, edit),
+            Control::Description => self.text_cursor.edit(&mut self.description, edit),
+            Control::Env => self.text_cursor.edit(&mut self.env, edit),
+            _ => {}
+        }
+        if self.focused() == Control::Name {
+            self.derive_env();
+        }
+        if self.focused() == Control::Env {
+            self.env_edited = true;
+        }
+    }
+
     fn input(&mut self, c: char) {
         let control = self.focused();
         if control.is_text() {
@@ -526,23 +592,25 @@ impl<B: Backend> Wizard<B> {
             self.message = None;
             match control {
                 Control::ProjectName if self.project.chars().count() < MAX_PROJECT_NAME_LEN => {
-                    self.project.push(c);
+                    self.text_cursor.insert(&mut self.project, c);
                 }
                 Control::ManifestPath if self.manifest_path.len() < MAX_PATH => {
-                    self.manifest_path.push(c);
+                    self.text_cursor.insert(&mut self.manifest_path, c);
                 }
-                Control::Filter if self.filter.len() < MAX_NAME => self.filter.push(c),
+                Control::Filter if self.filter.len() < MAX_NAME => {
+                    self.text_cursor.insert(&mut self.filter, c)
+                }
                 Control::Name if self.new_name.len() < MAX_NAME => {
-                    self.new_name.push(c);
+                    self.text_cursor.insert(&mut self.new_name, c);
                     self.derive_env();
                 }
                 Control::Value if self.value.len() < MAX_TYPED => self.value.push(c),
                 Control::Confirm if self.confirm.len() < MAX_TYPED => self.confirm.push(c),
                 Control::Description if self.description.chars().count() < MAX_DESCRIPTION_LEN => {
-                    self.description.push(c);
+                    self.text_cursor.insert(&mut self.description, c);
                 }
                 Control::Env if self.env.len() < MAX_ENV => {
-                    self.env.push(c);
+                    self.text_cursor.insert(&mut self.env, c);
                     self.env_edited = true;
                 }
                 _ => {}
@@ -560,16 +628,16 @@ impl<B: Backend> Wizard<B> {
     fn erase(&mut self) {
         match self.focused() {
             Control::ProjectName => {
-                self.project.pop();
+                self.text_cursor.erase(&mut self.project);
             }
             Control::ManifestPath => {
-                self.manifest_path.pop();
+                self.text_cursor.erase(&mut self.manifest_path);
             }
             Control::Filter => {
-                self.filter.pop();
+                self.text_cursor.erase(&mut self.filter);
             }
             Control::Name => {
-                self.new_name.pop();
+                self.text_cursor.erase(&mut self.new_name);
                 self.derive_env();
             }
             Control::Value => {
@@ -579,11 +647,11 @@ impl<B: Backend> Wizard<B> {
                 self.confirm.pop();
             }
             Control::Description => {
-                self.description.pop();
+                self.text_cursor.erase(&mut self.description);
             }
             Control::Env => {
                 // Left empty, it is the name's default at [ Store ].
-                self.env.pop();
+                self.text_cursor.erase(&mut self.env);
                 self.env_edited = true;
             }
             _ => {}

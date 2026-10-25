@@ -920,3 +920,27 @@ fn long_unicode_audit_actor_and_detail_are_fully_cached_and_inspectable() {
         reads
     );
 }
+
+#[test]
+fn focused_long_metadata_keeps_cursor_visible_after_horizontal_edit_and_resize() {
+    use crate::ui::text_input::{Cursor, Edit};
+    let (fake, mut app) = app(&["a"]);
+    app.update(Action::Edit);
+    if let Some(Dialog::Form(f)) = app.dialog.as_mut() {
+        f.focus = 2;
+        f.fields[2].value = "env=界e\u{301}".repeat(40);
+        f.fields[2].cursor = Cursor::end(&f.fields[2].value);
+    }
+    for (w, h) in [(80, 24), (60, 18)] {
+        let screen = render(&mut app, w, h);
+        assert!(screen.contains('▌') && screen.contains("Esc cancel"));
+    }
+    app.update(Action::Text(Edit::Home));
+    app.update(Action::Input('q'));
+    if let Some(Dialog::Form(f)) = &app.dialog {
+        assert!(f.fields[2].value.starts_with("qenv="));
+        assert!(f.fields[2].value.ends_with("e\u{301}"));
+    }
+    assert!(!app.should_quit());
+    assert!(fake.writes.borrow().is_empty());
+}

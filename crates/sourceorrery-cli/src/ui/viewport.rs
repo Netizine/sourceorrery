@@ -28,7 +28,14 @@ impl Viewport {
         }
         .min(self.total.saturating_sub(self.page));
     }
+    pub fn follow(&mut self) {
+        self.manual = false;
+    }
+
     pub fn fit(&mut self, total: usize, page: usize, focus: Option<usize>) {
+        if self.page != page.max(1) && focus.is_some() {
+            self.manual = false;
+        }
         self.total = total;
         self.page = page.max(1);
         if focus != self.focus {

@@ -49,6 +49,7 @@ mod snapshot;
 mod sort;
 mod source;
 mod stats;
+mod text_input;
 mod theme;
 mod view;
 mod viewport;

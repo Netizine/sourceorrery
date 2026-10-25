@@ -93,6 +93,7 @@ impl Step {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    Text(crate::ui::text_input::Edit),
     Scroll(crate::ui::app::Action),
     Input(char),
     Erase,
@@ -436,6 +437,8 @@ pub struct Wizard<B> {
     backend: B,
     pub step: Step,
     pub viewport: std::cell::RefCell<crate::ui::viewport::Viewport>,
+    pub text_cursor: crate::ui::text_input::Cursor,
+    pub cursor_control: Option<Control>,
     focus: usize,
     pub message: Option<Message>,
     quit: bool,
@@ -496,6 +499,8 @@ impl<B: Backend> Wizard<B> {
         Self {
             backend,
             viewport: Default::default(),
+            text_cursor: Default::default(),
+            cursor_control: None,
             step: Step::Start,
             focus: 0,
             message: None,
@@ -736,7 +741,12 @@ impl<B: Backend> Wizard<B> {
     }
 
     pub fn update(&mut self, action: Action) {
+        self.ensure_cursor();
+        if matches!(action, Action::Input(_) | Action::Erase | Action::Text(_)) {
+            self.viewport.borrow_mut().follow();
+        }
         match action {
+            Action::Text(edit) => self.edit_plain(edit),
             Action::Scroll(action) => self.viewport.borrow_mut().move_by(action),
             Action::Quit => self.quit = true,
             Action::Back => {
@@ -756,6 +766,7 @@ impl<B: Backend> Wizard<B> {
     }
 
     fn go(&mut self, step: Step) {
+        self.cursor_control = None;
         *self.viewport.borrow_mut() = Default::default();
         self.step = step;
         self.focus = 0;
@@ -832,6 +843,60 @@ impl<B: Backend> Wizard<B> {
         self.go(Step::Start);
     }
 
+    fn plain(&self, control: Control) -> Option<&str> {
+        match control {
+            Control::Name => Some(&self.name),
+            Control::Hint => Some(&self.hint),
+            Control::Form(i, field) if field != Field::Secret => {
+                self.forms.get(i).map(|f| f.text(field))
+            }
+            _ => None,
+        }
+    }
+    fn ensure_cursor(&mut self) {
+        let control = self.focused();
+        if self.cursor_control != Some(control)
+            && let Some(text) = self.plain(control)
+        {
+            let cursor = crate::ui::text_input::Cursor::end(text);
+            self.text_cursor = cursor;
+            self.cursor_control = Some(control);
+        }
+    }
+    fn edit_plain(&mut self, edit: crate::ui::text_input::Edit) {
+        if self.plain(self.focused()).is_none() {
+            if !self.focused().is_text() {
+                match edit {
+                    crate::ui::text_input::Edit::Home => self
+                        .viewport
+                        .borrow_mut()
+                        .move_by(crate::ui::app::Action::Top),
+                    crate::ui::text_input::Edit::End => self
+                        .viewport
+                        .borrow_mut()
+                        .move_by(crate::ui::app::Action::Bottom),
+                    _ => {}
+                }
+            }
+            return;
+        }
+        match self.focused() {
+            Control::Name => self.text_cursor.edit(&mut self.name, edit),
+            Control::Hint => self.text_cursor.edit(&mut self.hint, edit),
+            Control::Form(i, field) if field != Field::Secret => {
+                if let Some(form) = self.forms.get_mut(i) {
+                    if edit == crate::ui::text_input::Edit::Delete {
+                        form.tested = None;
+                    }
+                    if let Some(text) = form.text_mut(field) {
+                        self.text_cursor.edit(text, edit);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn input(&mut self, c: char) {
         let control = self.focused();
         if control.is_text() {
@@ -857,14 +922,14 @@ impl<B: Backend> Wizard<B> {
             Control::UnlockCode if c.is_ascii_digit() && self.unlock_code.len() < 6 => {
                 self.unlock_code.push(c);
             }
-            Control::Name if self.name.len() < 64 => self.name.push(c),
+            Control::Name if self.name.len() < 64 => self.text_cursor.insert(&mut self.name, c),
             Control::Password if room(&self.password) => {
                 self.password.push(c);
                 self.estimate = Some(strength::estimate(&self.password));
             }
             Control::Confirm if room(&self.confirm) => self.confirm.push(c),
             Control::Hint if self.hint.chars().count() < sourceorrery_storage::MAX_HINT_LEN => {
-                self.hint.push(c);
+                self.text_cursor.insert(&mut self.hint, c);
             }
             Control::Code if c.is_ascii_digit() && self.code.len() < 6 => self.code.push(c),
             Control::Form(i, Field::Secret) => {
@@ -881,7 +946,7 @@ impl<B: Backend> Wizard<B> {
                     if let Some(text) = form.text_mut(field)
                         && room(text)
                     {
-                        text.push(c);
+                        self.text_cursor.insert(text, c);
                     }
                 }
             }
@@ -901,7 +966,7 @@ impl<B: Backend> Wizard<B> {
                 self.unlock_code.pop();
             }
             Control::Name => {
-                self.name.pop();
+                self.text_cursor.erase(&mut self.name);
             }
             Control::Password => {
                 self.password.pop();
@@ -912,7 +977,7 @@ impl<B: Backend> Wizard<B> {
                 self.confirm.pop();
             }
             Control::Hint => {
-                self.hint.pop();
+                self.text_cursor.erase(&mut self.hint);
             }
             Control::Code => {
                 self.code.pop();
@@ -923,7 +988,7 @@ impl<B: Backend> Wizard<B> {
                     if field == Field::Secret {
                         form.secret.pop();
                     } else if let Some(text) = form.text_mut(field) {
-                        text.pop();
+                        self.text_cursor.erase(text);
                     }
                 }
             }

@@ -75,6 +75,7 @@ pub enum Action {
     Back,
     Search,
     Input(char),
+    Text(super::text_input::Edit),
     Erase,
     /// Keep the filter and leave the search box.
     Commit,
@@ -610,7 +611,7 @@ impl App {
                 self.list_mut(self.tab).sort = sort;
                 self.restore_selection(self.tab, key);
             }
-            Action::ApplyFilter => {}
+            Action::ApplyFilter | Action::Text(_) => {}
             Action::Toggle => self.start_toggle(),
             Action::Edit => self.start_edit(),
             Action::NewVersion if self.tab == Tab::Vaults => self.start_setup(None),
@@ -1355,6 +1356,9 @@ impl App {
 
     /// One key in an open dialog. Returns the dialog if it stays open.
     fn update_dialog(&mut self, dialog: Dialog, action: Action) -> Option<Dialog> {
+        if matches!(action, Action::Input(_) | Action::Erase | Action::Text(_)) {
+            self.dialog_view.follow();
+        }
         match (dialog, action) {
             (_, Action::Back) => None,
             (dialog, Action::Quit) => {
@@ -1367,6 +1371,7 @@ impl App {
                     Action::Down | Action::NextTab => form.next(),
                     Action::Input(c) => form.input(c),
                     Action::Erase => form.erase(),
+                    Action::Text(edit) => form.edit_text(edit),
                     Action::Commit => {
                         return match form.submit(timestamp::now()) {
                             Ok(confirm) => {
@@ -1385,6 +1390,12 @@ impl App {
             }
             (Dialog::Confirm(mut confirm), action) => {
                 match action {
+                    Action::Text(super::text_input::Edit::Home) => {
+                        self.dialog_view.move_by(Action::Top)
+                    }
+                    Action::Text(super::text_input::Edit::End) => {
+                        self.dialog_view.move_by(Action::Bottom)
+                    }
                     Action::Input(c) => confirm.input(c),
                     Action::Erase => confirm.erase(),
                     Action::Commit => match confirm.ready() {

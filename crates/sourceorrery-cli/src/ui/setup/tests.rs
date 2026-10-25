@@ -879,3 +879,34 @@ fn qr_fits_whole_or_manual_key_stays_reachable_on_short_screens() {
     w.update(Action::Back);
     assert!(w.committed.is_none());
 }
+
+#[test]
+fn hint_cursor_preserves_suffix_while_password_state_stays_hidden_and_unchanged() {
+    use crate::ui::text_input::Edit;
+    let mut w = to_view_check();
+    w.update(Action::Input(' '));
+    press(&mut w, Control::Continue);
+    fill(&mut w, Control::Password, TYPED);
+    let len = w.hidden_len(Control::Password);
+    w.update(Action::Text(Edit::Home));
+    w.update(Action::Text(Edit::Delete));
+    assert_eq!(w.hidden_len(Control::Password), len);
+    fill(&mut w, Control::Hint, "a long ordinary hint suffix");
+    w.update(Action::Text(Edit::Home));
+    w.update(Action::Input('X'));
+    assert_eq!(w.hint, "Xa long ordinary hint suffix");
+    let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+    terminal
+        .draw(|frame| view::draw(frame, &w, &Theme::plain()))
+        .unwrap();
+    let screen: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(ratatui::buffer::Cell::symbol)
+        .collect();
+    assert!(!screen.contains(TYPED));
+    assert!(screen.contains("X▌a long"), "{screen}");
+    assert!(w.committed.is_none());
+}

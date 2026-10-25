@@ -273,6 +273,7 @@ impl FieldKey {
 pub struct Field {
     pub key: FieldKey,
     pub value: String,
+    pub cursor: super::text_input::Cursor,
     /// The value the form started with: unchanged fields change nothing.
     original: String,
 }
@@ -310,6 +311,7 @@ pub struct Form {
 
 fn field(key: FieldKey, value: String) -> Field {
     Field {
+        cursor: super::text_input::Cursor::end(&value),
         key,
         original: value.clone(),
         value,
@@ -468,14 +470,22 @@ impl Form {
             return;
         }
         if !c.is_control() {
-            field.value.push(c);
+            field.cursor.insert(&mut field.value, c);
+        }
+    }
+
+    pub fn edit_text(&mut self, action: super::text_input::Edit) {
+        let field = &mut self.fields[self.focus];
+        if !matches!(field.key, FieldKey::Enabled | FieldKey::Storage) {
+            field.cursor.edit(&mut field.value, action);
+            self.error = None;
         }
     }
 
     pub fn erase(&mut self) {
         let field = &mut self.fields[self.focus];
         if !matches!(field.key, FieldKey::Enabled | FieldKey::Storage) {
-            field.value.pop();
+            field.cursor.erase(&mut field.value);
         }
     }
 
@@ -745,6 +755,30 @@ mod tests {
             Change::Update { update, .. } => update,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn metadata_cursor_edits_beginning_and_middle_without_losing_suffix() {
+        use crate::ui::text_input::Edit;
+        let mut form = Form::edit(&props());
+        form.focus = 2;
+        form.edit_text(Edit::Home);
+        form.input('X');
+        assert_eq!(form.fields[2].value, "Xenv=dev");
+        form.edit_text(Edit::Home);
+        form.edit_text(Edit::Delete);
+        assert_eq!(form.fields[2].value, "env=dev");
+        for _ in 0..4 {
+            form.edit_text(Edit::Right);
+        }
+        form.input('q');
+        assert_eq!(form.fields[2].value, "env=qdev");
+        form.erase();
+        assert_eq!(form.fields[2].value, "env=dev");
+        let before = form.fields[0].value.clone();
+        form.focus = 0;
+        form.edit_text(Edit::Delete);
+        assert_eq!(form.fields[0].value, before);
     }
 
     #[test]

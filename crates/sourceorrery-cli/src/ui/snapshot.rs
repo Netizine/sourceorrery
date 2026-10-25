@@ -697,6 +697,9 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     app.update(Action::Down);
     out.push(("edit-form", draw(&mut app, theme, 26)));
     out.push(("edit-form-60", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Text(super::text_input::Edit::Home));
+    app.update(Action::Input('q'));
+    out.push(("edit-cursor-60", draw_at(&mut app, theme, 60, 18)));
     app.update(Action::Back);
     app.update(Action::Toggle);
     out.push(("confirm-disable", draw(&mut app, theme, 22)));

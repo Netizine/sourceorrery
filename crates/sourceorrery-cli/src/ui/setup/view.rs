@@ -82,7 +82,7 @@ pub fn draw<B: Backend>(frame: &mut Frame<'_>, wizard: &Wizard<B>, theme: &Theme
         frame.render_widget(Paragraph::new(qr), left);
         area = right;
     }
-    let (mut lines, focus_line) = body_lines(wizard, theme);
+    let (mut lines, focus_line) = body_lines(wizard, theme, area.width);
     if !message_below && let Some(message) = &wizard.message {
         lines.push(Line::from(""));
         lines.push(callout_line(message, theme));
@@ -256,6 +256,7 @@ fn qr_lines<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Option<Vec<Line<'s
 fn body_lines<B: Backend>(
     wizard: &Wizard<B>,
     theme: &Theme,
+    width: u16,
 ) -> (Vec<Line<'static>>, Option<usize>) {
     let title = match wizard.step {
         Step::Start => "VAULT".to_owned(),
@@ -297,7 +298,7 @@ fn body_lines<B: Backend>(
         if control == focused {
             focus_line = Some(lines.len());
         }
-        lines.push(control_line(wizard, control, theme));
+        lines.push(control_line(wizard, control, theme, width));
         if let Some(extra) = control_extra(wizard, control, theme) {
             lines.extend(extra);
         }
@@ -811,14 +812,19 @@ fn provider_note<B: Backend>(wizard: &Wizard<B>, provider: Provider) -> &'static
     }
 }
 
-fn control_line<B: Backend>(wizard: &Wizard<B>, control: Control, theme: &Theme) -> Line<'static> {
+fn control_line<B: Backend>(
+    wizard: &Wizard<B>,
+    control: Control,
+    theme: &Theme,
+    width: u16,
+) -> Line<'static> {
     let focused = wizard.focused() == control;
     let mut spans = vec![Span::styled(
         if focused { "▌ " } else { "  " },
         theme.marker,
     )];
     if control.is_text() {
-        text_spans(wizard, control, focused, theme, &mut spans);
+        text_spans(wizard, control, focused, theme, &mut spans, width);
     } else if control.is_toggle() {
         match control {
             Control::Form(i, Field::Source) => source_spans(&wizard.forms[i], theme, &mut spans),
@@ -884,6 +890,7 @@ fn text_spans<B: Backend>(
     focused: bool,
     theme: &Theme,
     spans: &mut Vec<Span<'static>>,
+    width: u16,
 ) {
     let label = match control {
         Control::Form(i, field) => wizard.forms[i].label(field),
@@ -901,10 +908,23 @@ fn text_spans<B: Backend>(
             Control::Form(i, field) => wizard.forms[i].text(field),
             _ => "",
         };
-        sanitize(shown).into_owned()
+        if focused {
+            let end = crate::ui::text_input::Cursor::end(shown);
+            let cursor = if wizard.cursor_control == Some(control) {
+                &wizard.text_cursor
+            } else {
+                &end
+            };
+            cursor.render(
+                shown,
+                width.saturating_sub(u16::try_from(LABEL_WIDTH + 2).unwrap_or(24)),
+            )
+        } else {
+            sanitize(shown).into_owned()
+        }
     };
     spans.push(Span::raw(text));
-    if focused {
+    if focused && control.is_hidden() {
         spans.push(Span::styled("▌", theme.key));
     }
     match control {

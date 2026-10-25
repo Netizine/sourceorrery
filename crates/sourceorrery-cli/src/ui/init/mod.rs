@@ -136,7 +136,10 @@ fn action(key: KeyEvent) -> Option<Action> {
     if key.kind == KeyEventKind::Repeat
         && !matches!(
             key.code,
-            KeyCode::Up
+            KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Delete
+                | KeyCode::Up
                 | KeyCode::Down
                 | KeyCode::PageUp
                 | KeyCode::PageDown
@@ -157,12 +160,15 @@ fn action(key: KeyEvent) -> Option<Action> {
     Some(match key.code {
         KeyCode::PageUp => Action::Scroll(crate::ui::app::Action::PageUp),
         KeyCode::PageDown => Action::Scroll(crate::ui::app::Action::PageDown),
-        KeyCode::Home => Action::Scroll(crate::ui::app::Action::Top),
-        KeyCode::End => Action::Scroll(crate::ui::app::Action::Bottom),
+        KeyCode::Home => Action::Text(crate::ui::text_input::Edit::Home),
+        KeyCode::End => Action::Text(crate::ui::text_input::Edit::End),
         KeyCode::Esc => Action::Back,
         KeyCode::Enter => Action::Enter,
         KeyCode::Tab | KeyCode::Down => Action::Next,
         KeyCode::BackTab | KeyCode::Up => Action::Prev,
+        KeyCode::Left => Action::Text(crate::ui::text_input::Edit::Left),
+        KeyCode::Right => Action::Text(crate::ui::text_input::Edit::Right),
+        KeyCode::Delete => Action::Text(crate::ui::text_input::Edit::Delete),
         KeyCode::Backspace => Action::Erase,
         KeyCode::Char(c) => Action::Input(c),
         _ => return None,

@@ -85,7 +85,7 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 - Status: Done — James’s UI workstream (implemented with Codex).
 - Changes and affected files: new `filters.rs`; `search.rs`, `app.rs`, `menu.rs`, keys and metadata renderers. Facets compile to existing queries with cached counts; same-kind facet replaces its qualifier, typed same-kind OR semantics stay intact. Active queries remain visible; original UTF-8 ranges map case expansions safely; selected match styles remain readable. No upstream source copied.
 - Tests and results: UI suite 155 passed, 1 ignored. Facet/text equivalence, combined/no-result/clear, existing expiry boundaries, Unicode/case-expansion/sanitisation reconstruction and no-extra-read checks pass. Six-look filter fixtures added to snapshot writer.
-- Commits: cached browsing commit (hash recorded next update).
+- Commits: `f913ffe`.
 - Limitations/manual checks: raw advanced query remains available; tag facets omit keys containing whitespace because the existing grammar cannot represent them as one token. Live usability checks unavailable.
 
 ### B10
@@ -93,7 +93,7 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 - Status: Done — James’s UI workstream (implemented with Codex).
 - Changes and affected files: new `sort.rs`; `app.rs`, keys/menu and title indicator. Secrets name/updated/expiry, Audit timestamp ordering use typed values, deterministic identity tie-breaks, missing dates last in both directions. Default is source order (Secrets name ascending, Audit newest first); source records are not reordered.
 - Tests and results: UI suite 155 passed, 1 ignored. Typed time/missing dates/equal updated values, source-order reset, selection survival and zero-read assertions pass; B01 refresh identity regressions remain passing. Sort snapshots added.
-- Commits: cached browsing commit (hash recorded next update).
+- Commits: `f913ffe`.
 - Limitations/manual checks: sort is session-local. No persistent index cache or dependencies added.
 
 ### B11
@@ -101,16 +101,16 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 - Status: Done — James’s UI workstream (implemented with Codex).
 - Changes and affected files: new `inspection.rs`, `view/inspection.rs`; `app.rs`, menu/keys, `view/mod.rs`, tests/fake/snapshots. Explicit `i` cached inspector wraps and scrolls complete metadata while preserving the underlying view; `!` and Actions expose complete safe messages, with a persistent visible route on the callout. Full IDs remain distinct from displayed abbreviations.
 - Tests and results: UI suite 155 passed, 1 ignored. Long tags, project/vault paths, Unicode audit actors and details, hostile controls, long errors, exact query/table/detail return state, zero/tiny areas and zero additional list/inspect/audit/capability reads pass. Inspector fixtures added to all six looks.
-- Commits: cached browsing commit (hash recorded next update).
+- Commits: `f913ffe`.
 - Limitations/manual checks: cached inspection never fetches an absent field; explicit Enter retains the established audited detail load. Live terminal/screen-reader checks unavailable.
 
 ### B12
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Planned
-- Changes and affected files: pending.
-- Tests and results: not run for this batch.
-- Commits: pending.
-- Limitations/manual checks: live terminal, non-Windows terminal and screen-reader checks have not been performed.
+- Status: Done — James’s UI workstream (implemented with Codex).
+- Changes and affected files: new `text_input.rs`; `edit.rs`, app/keys/dialog, setup/init wizard/key/view modules and tests, `viewport.rs`, snapshots. Cursor and horizontal window for metadata and explicitly non-secret wizard fields (including manifest path); Left/Right/Home/End/Delete/Backspace use UTF-8/grapheme boundaries. Combining clusters are single editing units. Focus returns on editing/resize. Hidden value/password/recovery/credential buffers retain their owners and append/pop paths.
+- Tests and results: UI suite 160 passed, 1 ignored. Start/middle/suffix edits, CJK/combining deletion, horizontal cursor/resize, wizard path/hint editing, command isolation, hidden-buffer length/redaction/cancel clearing and existing secret-state tests pass. Cursor snapshot fixture added.
+- Commits: B12 cursor commit (hash recorded next update).
+- Limitations/manual checks: paste support is not introduced; native value prompts unchanged. Live terminal cursor/font behaviour unavailable.
 
 ### B13
 - Owner: James’s UI workstream — implemented with Codex.

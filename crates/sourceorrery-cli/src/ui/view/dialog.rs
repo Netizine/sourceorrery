@@ -25,14 +25,14 @@ pub(super) fn draw(
     let (title, mut lines, focus, action) = match dialog {
         Dialog::Form(form) => (
             form.title.clone(),
-            form_lines(form, theme),
+            form_lines(form, theme, frame.area().width.min(WIDTH).saturating_sub(4)),
             Some(form.focus),
             "Enter review",
         ),
         Dialog::Confirm(confirm) => (
             confirm.title.clone(),
             confirm_lines(confirm, theme),
-            None,
+            confirm.must_type.as_ref().map(|_| confirm.lines.len() + 1),
             "Enter confirm",
         ),
     };
@@ -65,7 +65,7 @@ pub(super) fn draw(
     );
 }
 
-fn form_lines(form: &Form, theme: &Theme) -> Vec<Line<'static>> {
+fn form_lines(form: &Form, theme: &Theme, width: u16) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for (i, field) in form.fields.iter().enumerate() {
         let focused = i == form.focus;
@@ -74,13 +74,21 @@ fn form_lines(form: &Form, theme: &Theme) -> Vec<Line<'static>> {
                 format!("{:<LABEL_WIDTH$}", field.key.label()),
                 theme.cell(theme.muted, focused),
             ),
-            Span::raw(sanitize(&field.value).into_owned()),
+            Span::raw(
+                if focused && !matches!(field.key, FieldKey::Enabled | FieldKey::Storage) {
+                    field.cursor.render(
+                        &field.value,
+                        width.saturating_sub(u16::try_from(LABEL_WIDTH).unwrap_or(15)),
+                    )
+                } else {
+                    crate::ui::viewport::clip(
+                        &sanitize(&field.value),
+                        width.saturating_sub(u16::try_from(LABEL_WIDTH).unwrap_or(15)),
+                    )
+                },
+            ),
         ];
         if focused {
-            // A choice switches with space; only text has a cursor.
-            if !matches!(field.key, FieldKey::Enabled | FieldKey::Storage) {
-                spans.push(Span::styled("▌", theme.cell(theme.key, focused)));
-            }
             spans.push(Span::styled(
                 format!("   {}", field.key.hint()),
                 theme.cell(theme.muted, focused),
