@@ -79,7 +79,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
     }
     draw_footer(frame, app, theme, footer);
     if let Some(open) = &app.dialog {
-        dialog::draw(frame, open, theme);
+        dialog::draw(frame, open, theme, &mut app.dialog_view);
     }
     if app.help {
         draw_help(frame, app, theme);

@@ -30,6 +30,10 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
         Mode::Dialog => match key.code {
             KeyCode::Esc => Some(Action::Back),
             KeyCode::Enter => Some(Action::Commit),
+            KeyCode::PageUp => Some(Action::PageUp),
+            KeyCode::PageDown => Some(Action::PageDown),
+            KeyCode::Home => Some(Action::Top),
+            KeyCode::End => Some(Action::Bottom),
             KeyCode::Backspace => Some(Action::Erase),
             KeyCode::Tab | KeyCode::Down => Some(Action::Down),
             KeyCode::BackTab | KeyCode::Up => Some(Action::Up),

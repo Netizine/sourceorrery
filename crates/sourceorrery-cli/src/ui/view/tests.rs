@@ -524,3 +524,37 @@ fn fifty_project_declarations_are_reachable_without_reads() {
         reads
     );
 }
+
+#[test]
+fn bounded_forms_and_reviews_keep_controls_and_long_targets_reachable() {
+    let (fake, mut app) = app(&["a"]);
+    app.update(Action::Edit);
+    if let Some(Dialog::Form(form)) = app.dialog.as_mut() {
+        form.fields[2].value = "env=word heavy metadata 界e\u{301}, ".repeat(30);
+        form.focus = form.fields.len() - 1;
+        form.error =
+            Some("Check the expiry: word heavy validation detail ".repeat(25) + "END-ERROR");
+    }
+    for (w, h) in [(80, 24), (60, 18)] {
+        let screen = render(&mut app, w, h);
+        assert!(screen.contains("expires"), "{screen}");
+        assert!(screen.contains("Esc cancel"), "{screen}");
+        app.update(Action::Bottom);
+        let screen = render(&mut app, w, h);
+        assert!(screen.contains("END-ERROR"), "{screen}");
+        assert!(screen.contains("Enter review"));
+    }
+    assert!(fake.writes.borrow().is_empty());
+    app.update(Action::Back);
+    app.update(Action::Toggle);
+    if let Some(Dialog::Confirm(c)) = app.dialog.as_mut() {
+        c.lines = vec!["Full confirmation target ".repeat(60) + "END-TARGET"];
+    }
+    render(&mut app, 60, 18);
+    app.update(Action::Bottom);
+    let screen = render(&mut app, 60, 18);
+    assert!(screen.contains("END-TARGET"), "{screen}");
+    assert!(screen.contains("Enter confirm"));
+    app.update(Action::Back);
+    assert!(fake.writes.borrow().is_empty());
+}

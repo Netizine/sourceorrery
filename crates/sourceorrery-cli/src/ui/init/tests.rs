@@ -559,3 +559,22 @@ fn the_live_backend_opens_stores_and_writes_through_the_vault() {
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0].name, "demo");
 }
+
+#[test]
+fn compact_init_follows_focus_and_scrolls_complete_error_without_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut w = Wizard::new(Fake::one_vault(), start(&dir));
+    w.begin(None).unwrap();
+    w.message = Some(Message::Error(
+        "word heavy error 界e\u{301} ".repeat(90) + "END-ERROR",
+    ));
+    for (width, height) in [(80, 24), (60, 18)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let _ = draw(&mut terminal, &w);
+        w.update(Action::Scroll(crate::ui::app::Action::Bottom));
+        let screen = draw(&mut terminal, &w);
+        assert!(screen.contains("END-ERROR"), "{screen}");
+        assert!(screen.contains("Esc"));
+    }
+    assert!(w.saved.is_none());
+}

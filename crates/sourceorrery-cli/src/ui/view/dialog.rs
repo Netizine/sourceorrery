@@ -2,9 +2,9 @@
 //! the site's card colour.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Flex, Layout};
+use ratatui::layout::Margin;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::output::sanitize;
 use crate::ui::edit::{Confirm, Dialog, FieldKey, Form};
@@ -16,37 +16,52 @@ const WIDTH: u16 = 86;
 /// Width of a form's label column.
 const LABEL_WIDTH: usize = 15;
 
-pub(super) fn draw(frame: &mut Frame<'_>, dialog: &Dialog, theme: &Theme) {
-    let (title, lines) = match dialog {
-        Dialog::Form(form) => (form.title.clone(), form_lines(form, theme)),
-        Dialog::Confirm(confirm) => (confirm.title.clone(), confirm_lines(confirm, theme)),
+pub(super) fn draw(
+    frame: &mut Frame<'_>,
+    dialog: &Dialog,
+    theme: &Theme,
+    viewport: &mut crate::ui::viewport::Viewport,
+) {
+    let (title, mut lines, focus, action) = match dialog {
+        Dialog::Form(form) => (
+            form.title.clone(),
+            form_lines(form, theme),
+            Some(form.focus),
+            "Enter review",
+        ),
+        Dialog::Confirm(confirm) => (
+            confirm.title.clone(),
+            confirm_lines(confirm, theme),
+            None,
+            "Enter confirm",
+        ),
     };
-    let width = WIDTH.min(frame.area().width.saturating_sub(4)).max(20);
-    // Inside the border and padding, each line wraps onto as many rows as
-    // its width needs.
-    let inner = usize::from(width.saturating_sub(6)).max(1);
-    let rows: usize = lines
-        .iter()
-        .map(|line| line.width().div_ceil(inner).max(1))
-        .sum();
-    let height = u16::try_from(rows).unwrap_or(u16::MAX).saturating_add(4);
-    let [area] = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .areas(frame.area());
-    let [area] = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .areas(area);
+    lines.pop(); // Controls live in the fixed footer, outside the viewport.
+    let mut area = frame.area().inner(Margin::new(1, 1));
+    area.width = area.width.min(WIDTH);
+    area.x = frame.area().x + frame.area().width.saturating_sub(area.width) / 2;
     let block = Block::bordered()
         .border_style(theme.rule)
         .title(Span::styled(format!(" {title} "), theme.label))
-        .padding(Padding::new(2, 2, 1, 1))
         .style(theme.panel);
+    let inner = block.inner(area);
+    let content = super::rows(inner, 0, inner.height.saturating_sub(1));
+    let focus = crate::ui::viewport::focus_row(&lines, focus, content.width);
+    let lines = crate::ui::viewport::reflow(&lines, content.width);
+    viewport.fit(lines.len(), usize::from(content.height), focus);
     frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
     frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(block),
-        area,
+        Paragraph::new(lines).scroll((u16::try_from(viewport.offset).unwrap_or(u16::MAX), 0)),
+        content,
+    );
+    frame.render_widget(
+        Line::from(format!(
+            "Esc cancel · {action} · PgUp/Dn · {}",
+            viewport.position()
+        ))
+        .style(theme.key),
+        super::rows(inner, inner.height.saturating_sub(1), 1),
     );
 }
 

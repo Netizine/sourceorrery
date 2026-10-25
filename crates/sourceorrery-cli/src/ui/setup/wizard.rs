@@ -93,6 +93,7 @@ impl Step {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    Scroll(crate::ui::app::Action),
     Input(char),
     Erase,
     Next,
@@ -434,6 +435,7 @@ impl Form {
 pub struct Wizard<B> {
     backend: B,
     pub step: Step,
+    pub viewport: std::cell::RefCell<crate::ui::viewport::Viewport>,
     focus: usize,
     pub message: Option<Message>,
     quit: bool,
@@ -493,6 +495,7 @@ impl<B: Backend> Wizard<B> {
     pub fn new(backend: B) -> Self {
         Self {
             backend,
+            viewport: Default::default(),
             step: Step::Start,
             focus: 0,
             message: None,
@@ -734,6 +737,7 @@ impl<B: Backend> Wizard<B> {
 
     pub fn update(&mut self, action: Action) {
         match action {
+            Action::Scroll(action) => self.viewport.borrow_mut().move_by(action),
             Action::Quit => self.quit = true,
             Action::Back => {
                 if self.message.take().is_none() {
@@ -752,6 +756,7 @@ impl<B: Backend> Wizard<B> {
     }
 
     fn go(&mut self, step: Step) {
+        *self.viewport.borrow_mut() = Default::default();
         self.step = step;
         self.focus = 0;
         // A message is about the screen it was given on.

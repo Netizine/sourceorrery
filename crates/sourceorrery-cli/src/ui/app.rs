@@ -183,6 +183,7 @@ pub struct App {
     pub locked: Option<Locked>,
     /// A form or confirmation over the views.
     pub dialog: Option<Dialog>,
+    pub dialog_view: super::viewport::Viewport,
     /// A confirmed new version waiting for its value from the hidden
     /// prompt, and the storage a new secret is created in.
     pending_value: Option<(String, SetSecretOptions, Option<SecretStorage>)>,
@@ -220,6 +221,7 @@ impl App {
             lock_after: None,
             locked: None,
             dialog: None,
+            dialog_view: Default::default(),
             pending_value: None,
             read_only: false,
             selection_lost: false,
@@ -472,10 +474,20 @@ impl App {
             }
             return;
         }
+        if self.dialog.is_some()
+            && matches!(
+                action,
+                Action::PageUp | Action::PageDown | Action::Top | Action::Bottom
+            )
+        {
+            self.dialog_view.move_by(action);
+            return;
+        }
         if let Some(dialog) = self.dialog.take() {
             self.dialog = self.update_dialog(dialog, action);
             return;
         }
+        self.dialog_view = Default::default();
         match action {
             Action::Quit => self.quit = true,
             Action::Help => self.help = true,
@@ -1101,7 +1113,10 @@ impl App {
                     Action::Erase => form.erase(),
                     Action::Commit => {
                         return match form.submit(timestamp::now()) {
-                            Ok(confirm) => Some(Dialog::Confirm(confirm)),
+                            Ok(confirm) => {
+                                self.dialog_view = Default::default();
+                                Some(Dialog::Confirm(confirm))
+                            }
                             Err(err) => {
                                 form.error = Some(err);
                                 Some(Dialog::Form(form))

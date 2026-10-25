@@ -1,4 +1,4 @@
-//! Presentation-only scrolling. Reflow once at grapheme boundaries and draw
+//! Presentation-only scrolling. Reflow once at word/grapheme boundaries and draw
 //! those exact rows without a second widget wrapping policy.
 use super::app::Action;
 use ratatui::{
@@ -66,14 +66,29 @@ pub fn reflow(lines: &[Line<'_>], width: u16) -> Vec<Line<'static>> {
     for line in lines {
         let mut spans = Vec::new();
         let mut used = 0;
-        for g in line.styled_graphemes(Style::default()) {
-            let cells = Span::raw(g.symbol).width();
-            if used + cells > width && !spans.is_empty() {
+        let graphemes: Vec<_> = line.styled_graphemes(Style::default()).collect();
+        let mut start = 0;
+        while start < graphemes.len() {
+            let space = graphemes[start].symbol.chars().all(char::is_whitespace);
+            let end = (start + 1..graphemes.len())
+                .find(|&i| graphemes[i].symbol.chars().all(char::is_whitespace) != space)
+                .unwrap_or(graphemes.len());
+            let token = &graphemes[start..end];
+            let token_width: usize = token.iter().map(|g| Span::raw(g.symbol).width()).sum();
+            if !space && token_width <= width && used + token_width > width && !spans.is_empty() {
                 result.push(Line::from(std::mem::take(&mut spans)));
                 used = 0;
             }
-            spans.push(Span::styled(g.symbol.to_owned(), g.style));
-            used += cells;
+            for g in token {
+                let cells = Span::raw(g.symbol).width();
+                if used + cells > width && !spans.is_empty() {
+                    result.push(Line::from(std::mem::take(&mut spans)));
+                    used = 0;
+                }
+                spans.push(Span::styled(g.symbol.to_owned(), g.style));
+                used += cells;
+            }
+            start = end;
         }
         result.push(Line::from(spans));
     }

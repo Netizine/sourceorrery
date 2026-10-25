@@ -833,3 +833,43 @@ fn the_live_backend_creates_and_changes_a_vault_in_one_transaction() {
     assert_eq!(w.step, Step::ViewCheck, "{:?}", w.message);
     assert_eq!(w.editing.as_ref().unwrap().name, "dev");
 }
+
+#[test]
+fn qr_fits_whole_or_manual_key_stays_reachable_on_short_screens() {
+    let mut w = to_view_check();
+    w.update(Action::Input(' '));
+    focus(&mut w, Control::AskCode);
+    w.update(Action::Input(' '));
+    press(&mut w, Control::Continue);
+    fill(&mut w, Control::Password, TYPED);
+    fill(&mut w, Control::Confirm, TYPED);
+    press(&mut w, Control::Continue);
+    assert_eq!(w.step, Step::Authenticator);
+    for (width, height) in [(80, 24), (60, 18)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        w.update(Action::Scroll(crate::ui::app::Action::Top));
+        let mut seen = String::new();
+        for _ in 0..8 {
+            terminal
+                .draw(|frame| view::draw(frame, &w, &Theme::plain()))
+                .unwrap();
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(ratatui::buffer::Cell::symbol)
+                .collect();
+            if height == 18 {
+                assert!(!screen.contains('█'), "clipped QR must be omitted");
+            }
+            seen.push_str(&screen);
+            w.update(Action::Scroll(crate::ui::app::Action::PageDown));
+        }
+        assert!(seen.contains("Enter this key by hand"), "{seen}");
+        assert!(seen.contains("Esc"));
+        assert!(!seen.contains(TYPED));
+    }
+    w.update(Action::Back);
+    assert!(w.committed.is_none());
+}
