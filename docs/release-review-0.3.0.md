@@ -145,3 +145,36 @@ Python helper could not run because PyYAML is unavailable; the repository's
 metadata/layout checks passed, frontmatter was unchanged and installed
 reference files resolved. No dependency was added, package release run or
 branch push performed.
+
+## LLM documentation publication
+
+The website build now includes a concise `/llms.txt` index,
+`/llms-full.txt` combining 24 essential references, a short product/setup
+overview and clean Markdown companions for all 43 mirrored documentation
+pages. The index covers the CLI, both agent skills, all twelve supported
+agents, every SDK language, provider capabilities, operations and security
+boundaries. Manual setup remains option 1 and AI-assisted setup option 2.
+The CLI installation page remains the source for installation choices.
+
+The text is generated from the same sources as the website, before its
+MDX presentation conversion. Platform instructions and code examples are
+preserved; presentation comments are removed and links are portable.
+Version and release status come from the workspace and changelog. The
+curated full text excludes historical ADRs and the optional roadmap.
+Page headers advertise the index and each mirrored page's Markdown
+companion. Azure Static Web Apps receives explicit Markdown/text MIME
+types with the static deployment output. No new dependency was added.
+
+Validation passed: 35 website tests, including nine text-generation
+regressions; the production site build; all 4,861 internal HTML/Markdown
+references; 50 documentation version checks; and package manifest version
+checks. A local HTTP preview retrieved all 26 same-site index targets and
+all 43 advertised companions, verified discovery on all 47 pages, and
+checked coverage of twelve agents, nine SDK guides and three remote
+provider mappings. The full file contains 24 distinct essential sources.
+The current CLI's help confirmed the setup-selection and dry-run flags.
+No real vault, provider or external analytics service was used.
+
+The files are included in the normal site deployment; no separate package
+release is needed. Live-domain/CDN retrieval and MIME headers await that
+deployment. No branch was pushed and no site or package was published.

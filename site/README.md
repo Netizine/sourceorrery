@@ -80,6 +80,38 @@ themed callouts on the website:
 `:::note`, `:::tip`, `:::caution` and `:::danger` work too. In authored MDX,
 import `src/components/Aside.astro` for the same appearance and local icons.
 
+## Documentation for LLMs and coding agents
+
+The static build includes [`/llms.txt`](https://sourceorrery.ai/llms.txt), a
+concise index following the [llms.txt proposal](https://llmstxt.org/), and
+[`/llms-full.txt`](https://sourceorrery.ai/llms-full.txt), which combines its
+essential references. The index covers setup, the CLI, all twelve agents,
+both skills, every application language, provider mappings and security.
+
+Edit `../docs/llms.txt` for the curated index and `../docs/llms-overview.md`
+for the short product/setup overview. During `npm run sync`,
+`scripts/llms-docs.mjs` generates clean Markdown companions from the same
+pre-MDX text as each mirrored documentation page. For example,
+`/reference/cli/` has `/llms/reference/cli/index.md`. Generated text is
+gitignored under `public/llms/`, alongside `public/llms.txt` and
+`public/llms-full.txt`; edit the original sources. Each sync removes stale
+companions and derives the version and release status from the workspace
+and changelog. Historical ADRs have individual companions but are excluded
+from the curated full text.
+
+Page headers advertise `/llms.txt` with `rel="describedby"`. Mirrored pages
+also advertise their Markdown companion with `rel="alternate"` and
+`type="text/markdown"`. `public/staticwebapp.config.json` supplies explicit
+Markdown/text MIME types on Azure Static Web Apps. These assets need no
+JavaScript, consent choice, account, additional package or separate publish
+step. They are included when the normal site deployment publishes `dist/`.
+
+The Node tests cover formatting, source propagation, version/status,
+portable links, code-fence preservation and stale-file cleanup. The build
+checks same-site Markdown links and HTML fragments as well as HTML links.
+These files help tools retrieve documentation; they do not guarantee
+indexing or model training and do not replace `robots.txt`.
+
 ## Page metadata and links
 
 `src/lib/docs-loader.mjs` wraps Starlight's content loader. Each generated

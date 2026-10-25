@@ -5,6 +5,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { markdownLinks, SITE } from './llms-docs.mjs';
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(siteRoot, 'dist');
@@ -80,6 +81,31 @@ for await (const file of htmlFiles(dist)) {
 		}
 		if (url.hash && url.hash !== '#' && !(await hasFragment(target, url.hash.slice(1)))) {
 			problems.push(`${page} -> ${raw}: no element with id "${url.hash.slice(1)}"`);
+		}
+	}
+}
+
+// The LLM index and text references are build outputs too. Check their
+// same-site absolute links, including HTML fragments, without fetching URLs.
+async function* markdownFiles(dir) {
+	for (const entry of await readdir(dir, { withFileTypes: true })) {
+		const full = path.join(dir, entry.name);
+		if (entry.isDirectory()) yield* markdownFiles(full);
+		else if (entry.name.endsWith('.md')) yield full;
+	}
+}
+const textFiles = [path.join(dist, 'llms.txt'), path.join(dist, 'llms-full.txt')];
+for await (const file of markdownFiles(path.join(dist, 'llms'))) textFiles.push(file);
+for (const file of textFiles) {
+	const page = `/${path.relative(dist, file).split(path.sep).join('/')}`;
+	for (const href of markdownLinks(await readFile(file, 'utf8'))) {
+		const url = new URL(href, SITE + page);
+		if (url.origin !== SITE) continue;
+		checked += 1;
+		const target = await resolvePathname(url.pathname);
+		if (!target) problems.push(`${page} -> ${href}: no file for ${url.pathname}`);
+		else if (url.hash && !(await hasFragment(target, url.hash.slice(1)))) {
+			problems.push(`${page} -> ${href}: no element with id "${url.hash.slice(1)}"`);
 		}
 	}
 }

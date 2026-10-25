@@ -3,6 +3,11 @@ dist/
 # generated types
 .astro/
 
+# Clean Markdown companions generated from ../docs by npm run sync
+/public/llms/
+/public/llms.txt
+/public/llms-full.txt
+
 # dependencies
 node_modules/
 

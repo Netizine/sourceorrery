@@ -15,7 +15,7 @@
     "walkthroughs": "node scripts/sync-walkthroughs.mjs",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "node --test scripts/docs-tooling.test.mjs scripts/analytics-consent.test.mjs scripts/theme-preference.test.mjs"
+    "test": "node --test scripts/docs-tooling.test.mjs scripts/analytics-consent.test.mjs scripts/theme-preference.test.mjs scripts/llms-docs.test.mjs"
   },
   "dependencies": {
     "@astrojs/markdown-satteri": "0.4.4",

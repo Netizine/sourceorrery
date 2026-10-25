@@ -1,0 +1,52 @@
+# SourceOrrery
+
+> SourceOrrery is a local-first secrets platform: an encrypted SQLite vault, a CLI and metadata-only terminal browser, read-only application SDKs, and connections to HashiCorp Vault, AWS Secrets Manager and Azure Key Vault.
+
+Use the CLI to create vaults and set secret values. Application SDKs read existing vaults directly; they do not require a CLI process alongside the application. A local vault is required even when providers hold every secret value.
+
+Setup option 1 is the manual CLI workflow. Option 2 is an AI coding agent using the SourceOrrery skills. Agents configure projects without seeing values, recovery keys or view-check credentials. Skills support twelve coding agents; SDKs cover Python, JavaScript, TypeScript, Rust, Java, .NET, Go, C, C++ and PHP.
+
+The references below are clean Markdown generated from the same sources as the website. The full-text file combines the essential references in this index. Installation choices are maintained on the CLI installation page linked from the overview. Release availability follows the installation guide and release status in the individual references.
+
+## Start here
+
+- [Overview and setup choices](https://sourceorrery.ai/llms/overview.md): What SourceOrrery does, installation, safe project setup and the support matrix.
+- [First run](https://sourceorrery.ai/llms/guides/first-run/index.md): Create a vault privately, add secrets, declare a project and run an application.
+- [CLI reference](https://sourceorrery.ai/llms/reference/cli/index.md): Commands, flags, manifests, environment delivery and exit codes.
+- [AI coding agents](https://sourceorrery.ai/llms/guides/ai-agents/index.md): All twelve integrations, both skills, Claude Code plugin and updates independent of CLI packages.
+- [Error codes](https://sourceorrery.ai/llms/reference/error-codes/index.md): Stable errors generated from the Rust contract, with retry guidance.
+- [Full documentation text](https://sourceorrery.ai/llms-full.txt): Essential references combined for tools with a larger context window.
+
+## Application SDKs
+
+- [SDK overview](https://sourceorrery.ai/llms/sdks/index.md): Read-only operations, CLI provisioning, unlock sources, auditing and setup options.
+- [Python](https://sourceorrery.ai/llms/sdks/python/index.md): PyPI package, guarded values, typed errors and projects.
+- [JavaScript and TypeScript](https://sourceorrery.ai/llms/sdks/javascript/index.md): npm package, Node.js native addon and included types.
+- [Rust](https://sourceorrery.ai/llms/sdks/rust/index.md): The client crate used by the other SDKs.
+- [Java](https://sourceorrery.ai/llms/sdks/java/index.md): Maven Central package and Foreign Function and Memory API.
+- [.NET](https://sourceorrery.ai/llms/sdks/dotnet/index.md): NuGet package and native interop.
+- [Go](https://sourceorrery.ai/llms/sdks/go/index.md): Go module, cgo and native library requirements.
+- [C](https://sourceorrery.ai/llms/sdks/c/index.md): Read-only application entry points in the C ABI.
+- [C++](https://sourceorrery.ai/llms/sdks/cpp/index.md): C++17 header-only wrapper over the C ABI.
+- [PHP](https://sourceorrery.ai/llms/sdks/php/index.md): Composer package, FFI and native library requirements.
+
+## Storage and operations
+
+- [Providers](https://sourceorrery.ai/llms/providers/index.md): A local catalog with per-secret local or remote storage.
+- [HashiCorp Vault](https://sourceorrery.ai/llms/providers/hashicorp-vault/index.md): KV v2 mapping, authentication, versions and capabilities.
+- [AWS Secrets Manager](https://sourceorrery.ai/llms/providers/aws-secrets-manager/index.md): Credential chain, per-secret properties and rotation limits.
+- [Azure Key Vault](https://sourceorrery.ai/llms/providers/azure-key-vault/index.md): Identity, per-version properties and time-window limits.
+- [Rotation](https://sourceorrery.ai/llms/guides/rotation/index.md): Issue, validate, activate and retire; provider capability requirements.
+- [Vault files, export and import](https://sourceorrery.ai/llms/guides/upgrading/index.md): Supported format, encrypted transfers and restore limits.
+- [Enterprise identities](https://sourceorrery.ai/llms/guides/enterprise/index.md): Provider policy, workload identity and revocation boundaries.
+
+## Design and security
+
+- [Architecture](https://sourceorrery.ai/llms/architecture/index.md): Components, keys, local vault ownership and SDK boundaries.
+- [Threat model](https://sourceorrery.ai/llms/security/threat-model/index.md): At-rest protection, view checks, process access and the limits of agent isolation.
+
+## Optional
+
+- [Roadmap](https://sourceorrery.ai/llms/roadmap/index.md): Planned capabilities, including the future local broker; these are not current features.
+- [Source repository](https://github.com/Netizine/sourceorrery): Code, integration folders and release history.
+- [Maintainer](https://www.linkedin.com/in/jmelvin/): James Melvin.

@@ -1,7 +1,12 @@
 ---
 import DefaultHead from '@astrojs/starlight/components/Head.astro';
 import consent from '../lib/analytics-consent.js?raw';
+import { llmsPath } from '../lib/llms-path.mjs';
+const { entry } = Astro.locals.starlightRoute;
+const markdown = entry.data.sourceFile ? llmsPath(Astro.url.pathname) : undefined;
 ---
 
 <DefaultHead />
+<link rel="describedby" href="/llms.txt" type="text/plain" />
+{markdown && <link rel="alternate" href={markdown} type="text/markdown" />}
 <script is:inline set:html={consent} />
