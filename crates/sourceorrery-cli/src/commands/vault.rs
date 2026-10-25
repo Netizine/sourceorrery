@@ -263,6 +263,11 @@ fn create(ctx: &Ctx, args: &VaultCreateArgs) -> anyhow::Result<()> {
         }
         Ok(())
     });
+    // The JSON body held a copy of the key; wipe it before it drops. What
+    // the standard library's stdout buffer held is outside the guarantee.
+    if let Some(serde_json::Value::String(copy)) = body.get_mut("recovery_key") {
+        zeroize::Zeroize::zeroize(copy);
+    }
     if let Err(err) = delivered {
         // Nobody may have the only key that opens it everywhere: the vault
         // goes again, with the key file this attempt made.

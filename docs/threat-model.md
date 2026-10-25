@@ -85,7 +85,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | KDF residue | Argon2's working memory and output buffer are caller-owned and zeroised when the derivation ends |
 | Secure deletion on purge | SQLite `secure_delete = ON` |
 | File permissions | `0700` dir / `0600` file on Unix; profile ACLs on Windows |
-| Memory hygiene | `zeroize` on `SecretBytes`, `SymmetricKey`, decrypted buffers |
+| Memory hygiene | `zeroize` on `SecretBytes`, `SymmetricKey`, decrypted buffers. The CLI reads a value, a password or a recovery key from a file or stdin, and a `.env` value, into buffers wiped on drop that grow by moving into a new buffer and wiping the old, so neither a reallocation nor a failed read leaves a copy in freed memory, and moves them into `SecretBytes` without one (`cli::plain`). Copies the terminal, the OS, the standard library's stdout buffer, `rpassword` or another program make are outside this |
 | Authenticated vault settings | HMAC over schema, name, recovery level, retention, the view check and the connections and projects, verified on every unlock and checked against the newest settings checkpoint on the audit chain |
 | A vault is only served under its own name | Opening by name compares the requested name with the authenticated name in the file, once the settings verify; a mismatch is refused with `vault_mismatch` and recorded as `vault_open` / `failure` in that file's log (`storage::registry`, `storage::sqlite`) |
 | Format bound into key wrapping | The wrapped vault key's AAD names the schema; a rolled-back marker cannot unwrap as legacy |

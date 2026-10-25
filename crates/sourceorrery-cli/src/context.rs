@@ -267,9 +267,10 @@ fn password_from_env() -> Option<SecretBytes> {
 }
 
 /// A secret from a file, trailing newlines removed; an empty file is an
-/// error. `what` names it in messages.
+/// error. `what` names it in messages. Read into a wiped buffer
+/// ([`crate::plain`]) and moved into the result.
 pub(crate) fn read_secret_file(path: &Path, what: &str) -> anyhow::Result<SecretBytes> {
-    let mut bytes = std::fs::read(path)
+    let mut bytes = crate::plain::read_file(path)
         .with_context(|| format!("cannot read {what} file {}", path.display()))?;
     while bytes.last().is_some_and(|b| *b == b'\n' || *b == b'\r') {
         bytes.pop();
@@ -277,7 +278,7 @@ pub(crate) fn read_secret_file(path: &Path, what: &str) -> anyhow::Result<Secret
     if bytes.is_empty() {
         return Err(anyhow!("{what} file {} is empty", path.display()));
     }
-    Ok(SecretBytes::new(bytes))
+    Ok(crate::plain::into_secret(bytes))
 }
 
 /// An authenticator code from `--code` or `SOURCEORRERY_TOTP`: good for a

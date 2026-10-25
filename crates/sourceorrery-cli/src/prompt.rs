@@ -1,17 +1,20 @@
 //! Interactive input that never echoes secrets and never touches stdout.
 
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 
 use anyhow::{Context as _, anyhow};
 use sourceorrery_core::SecretBytes;
+use zeroize::Zeroizing;
 
 use crate::cli::SecretSetArgs;
-use crate::output;
+use crate::{output, plain};
 
 /// Prompt on stderr and read a line without echo. The prompt may name the
 /// vault as its file reports it, before anything in the file is verified,
-/// so it is sanitised like every other line of output.
+/// so it is sanitised like every other line of output. The line moves into
+/// the result without a copy; what the terminal and `rpassword` held while
+/// reading it is theirs.
 pub fn read_hidden(prompt: &str) -> anyhow::Result<SecretBytes> {
     let mut stderr = std::io::stderr();
     stderr.write_all(output::sanitize(prompt).as_bytes())?;
@@ -27,7 +30,9 @@ pub fn read_line(prompt: &str) -> anyhow::Result<String> {
     let mut stderr = std::io::stderr();
     stderr.write_all(output::sanitize(prompt).as_bytes())?;
     stderr.flush()?;
-    let mut answer = String::new();
+    // An authenticator code is a credential while it lasts: the line read
+    // is wiped once the trimmed answer is taken from it.
+    let mut answer = Zeroizing::new(String::new());
     std::io::stdin()
         .read_line(&mut answer)
         .context("failed to read input")?;
@@ -84,21 +89,20 @@ pub fn read_secret_value(args: &SecretSetArgs) -> anyhow::Result<SecretBytes> {
 }
 
 /// Obtain a value from `source`: the file, else stdin when asked for or
-/// piped, else a hidden prompt.
+/// piped, else a hidden prompt. File and stdin are read into wiped buffers
+/// ([`plain`]): no partial read or reallocation leaves a copy behind.
 pub fn read_value(source: &ValueSource<'_>) -> anyhow::Result<SecretBytes> {
     let value = if let Some(path) = source.from_file {
         let bytes =
-            std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
-        SecretBytes::new(bytes)
+            plain::read_file(path).with_context(|| format!("cannot read {}", path.display()))?;
+        plain::into_secret(bytes)
     } else if source.stdin || !std::io::stdin().is_terminal() {
-        let mut bytes = Vec::new();
-        std::io::stdin()
-            .read_to_end(&mut bytes)
+        let mut bytes = plain::read_to_end(std::io::stdin().lock(), 0)
             .context("failed to read secret value from stdin")?;
         if !source.keep_trailing_newline {
             strip_trailing_newline(&mut bytes);
         }
-        SecretBytes::new(bytes)
+        plain::into_secret(bytes)
     } else {
         let first = read_hidden("Enter secret value: ")?;
         if source.confirm {

@@ -722,3 +722,36 @@ One commit: the checks and the new write order share the tag plan.
   crate's 22 tests pass; clippy clean.
 * **Not run here:** a slow body against the 60-second timeout (too long for
   a unit test; the timeout is reqwest's own).
+
+### B20 — fewer plaintext copies in the CLI's input
+
+* **Closes:** REC07, the CLI part (B21 the providers).
+* **Inventory:** the hidden prompt (`rpassword`'s `String`, moved into
+  `SecretBytes`: no copy here); a value from a file (`std::fs::read`) or
+  stdin (`read_to_end` into a growing `Vec`: every reallocation freed a
+  copy unwiped, and a failed read dropped the partial value unwiped); a
+  password or recovery key from a file (`context::read_secret_file`, the
+  same); a quoted `.env` value (a buffer the size of the rest of the file,
+  then `shrink_to_fit`, which reallocated and freed the large one unwiped;
+  an unclosed quote dropped the partial value); `import`'s whole file
+  (already zeroised); a typed authenticator code (`read_line`'s `String`);
+  the recovery key in `vault create`'s JSON body (a `serde_json` string,
+  dropped unwiped).
+* **Changes:** `cli::plain`: `push` grows a wiped buffer by moving it into
+  a new one and wiping the old; `read_to_end` and `read_file` read into
+  such a buffer in 8 KiB chunks (sized from the file's length when known),
+  wiping the partial read on failure; `into_secret` moves a buffer into
+  `SecretBytes` without a copy. `prompt::read_value` and
+  `context::read_secret_file` use them; the `.env` parser builds quoted
+  values with `push`; `read_line` reads into a wiped `String`; `vault
+  create` wipes the key's copy in its JSON body after printing it. The
+  threat model's memory-hygiene row names what stays outside (the
+  terminal, the OS, stdout's own buffer, `rpassword`, other programs).
+* **Tests run:** `plain` unit tests 3 (growth keeps every byte in order; an
+  interrupted read is retried and a broken one reported; a file is read
+  whole with a buffer sized from it, no growth, and moved into
+  `SecretBytes` at the same address). The existing input tests pass
+  unchanged (trailing newlines kept or stripped, empty values refused, the
+  `.env` forms, escapes and errors that never carry a value, stdin and
+  `--from-file`): CLI 214 tests. clippy clean. No claim is made about
+  memory the program does not own.

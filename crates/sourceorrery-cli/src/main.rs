@@ -9,6 +9,7 @@ mod context;
 mod dotenv;
 mod integrations;
 mod output;
+mod plain;
 mod prompt;
 #[cfg(feature = "ui")]
 mod qr;
