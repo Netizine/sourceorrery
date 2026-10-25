@@ -35,6 +35,8 @@ pub struct Fake {
     /// `secret_inspect` reads: version lists.
     pub inspects: Cell<usize>,
     pub capability_reads: Cell<usize>,
+    pub audit_actor: Option<Principal>,
+    pub audit_detail: Option<String>,
     /// Audit-log reads (not audited by the vault).
     pub audit_reads: Cell<usize>,
     /// Chain verifications (not audited).
@@ -270,6 +272,14 @@ impl MetadataSource for Fake {
             detail: Some("locked".into()),
             ..event(id, AuditOperation::VaultOpen, None)
         });
+        for event in &mut events {
+            if let Some(actor) = &self.audit_actor {
+                event.actor = actor.clone();
+            }
+            if let Some(detail) = &self.audit_detail {
+                event.detail = Some(detail.clone());
+            }
+        }
         events.reverse();
         Ok(events
             .into_iter()

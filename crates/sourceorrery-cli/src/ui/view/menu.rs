@@ -30,7 +30,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, menu: &mut Menu, theme: &Theme) {
                 selected,
             );
             let mut lines = vec![Line::from(vec![
-                Span::styled(item.label.clone(), style),
+                Span::styled(crate::output::sanitize(&item.label).into_owned(), style),
                 Span::styled(
                     format!("  {}", item.shortcut),
                     theme.cell(theme.key, selected),
@@ -38,7 +38,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, menu: &mut Menu, theme: &Theme) {
             ])];
             if let Some(reason) = &item.reason {
                 lines.push(Line::from(Span::styled(
-                    format!("  Unavailable: {reason}"),
+                    format!("  Unavailable: {}", crate::output::sanitize(reason)),
                     style,
                 )));
             }

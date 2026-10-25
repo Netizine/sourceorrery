@@ -115,6 +115,7 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
                     theme,
                     selected == Some(i),
                     &columns,
+                    &app.list(Tab::Secrets).query,
                 )
             })
             .collect(),
@@ -150,11 +151,17 @@ fn secret_row(
     theme: &Theme,
     selected: bool,
     columns: &Columns,
+    query: &str,
 ) -> Row<'static> {
     let status = output::status(p, now);
     let muted = |text: String| Span::styled(text, theme.cell(theme.muted, selected));
     columns.row([
-        Cell::from(columns.text(0, &p.name)),
+        Cell::from(super::highlighted(
+            &columns.text(0, &p.name),
+            query,
+            theme,
+            selected,
+        )),
         Cell::from(Span::styled(
             status,
             theme.cell(theme.status(status), selected),
@@ -173,9 +180,10 @@ fn secret_row(
         } else {
             Span::raw(projects.to_string())
         }),
-        Cell::from(
-            tags(p).map_or_else(|| dash(theme, selected), |t| Span::raw(columns.text(7, &t))),
-        ),
+        Cell::from(tags(p).map_or_else(
+            || Line::from(dash(theme, selected)),
+            |t| super::highlighted(&columns.text(7, &t), query, theme, selected),
+        )),
     ])
 }
 

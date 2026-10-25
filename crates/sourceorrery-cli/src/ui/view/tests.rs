@@ -729,3 +729,194 @@ fn read_only_menu_discloses_reasons_and_overview_does_not_open_empty_search() {
     assert!(fake.writes.borrow().is_empty());
     assert!(app.dialog.is_none());
 }
+
+#[test]
+fn cached_inspection_reads_complete_metadata_and_restores_exact_state() {
+    use crate::ui::session::{Project, ProjectStatus};
+    let (fake, mut app) = app(&["a", "b"]);
+    app.session.as_mut().unwrap().secrets[0]
+        .tags
+        .insert("note".into(), "界e\u{301} ".repeat(90) + "\u{1b}END-TAG");
+    app.apply_query("status:enabled".into());
+    render(&mut app, 80, 24);
+    let before = (
+        app.list(Tab::Secrets).query.clone(),
+        app.list(Tab::Secrets).table,
+        app.detail.clone(),
+    );
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+        fake.capability_reads.get(),
+    );
+    app.update(Action::Inspect);
+    let mut seen = String::new();
+    for _ in 0..30 {
+        seen.push_str(&render(&mut app, 60, 18));
+        app.update(Action::PageDown);
+    }
+    assert!(seen.contains("END-TAG"), "{seen}");
+    assert!(!seen.contains('\u{1b}'));
+    assert!(seen.contains(r"\u{1b}"));
+    app.update(Action::Back);
+    assert_eq!(
+        (
+            app.list(Tab::Secrets).query.clone(),
+            app.list(Tab::Secrets).table,
+            app.detail.clone()
+        ),
+        before
+    );
+    // Long project paths and errors have the same cached inspection route.
+    app.session.as_mut().unwrap().projects.push(Project {
+        link: sourceorrery_storage::ProjectLink {
+            id: "p".into(),
+            name: "project".into(),
+            path: std::path::PathBuf::from("/界/e\u{301}/".repeat(60) + "END-PATH"),
+            linked_on: sourceorrery_core::timestamp::now(),
+        },
+        status: ProjectStatus::Unreadable("safe manifest error".into()),
+    });
+    app.update(Action::Show(Tab::Projects));
+    app.update(Action::Inspect);
+    render(&mut app, 80, 24);
+    app.update(Action::Bottom);
+    assert!(render(&mut app, 80, 24).contains("END-PATH"));
+    app.update(Action::Back);
+    app.message = Some(Message::Error(
+        "safe provider failure ".repeat(90) + "END-ERROR",
+    ));
+    assert!(render(&mut app, 80, 24).contains("! details"));
+    app.update(Action::ErrorDetails);
+    render(&mut app, 80, 24);
+    app.update(Action::Bottom);
+    assert!(render(&mut app, 80, 24).contains("END-ERROR"));
+    app.update(Action::Back);
+    app.update(Action::Show(Tab::Vaults));
+    app.vaults[0].path = std::path::PathBuf::from("/synthetic/".repeat(60) + "END-VAULT");
+    app.update(Action::Inspect);
+    render(&mut app, 60, 18);
+    app.update(Action::Bottom);
+    let screen = render(&mut app, 60, 18);
+    assert!(
+        screen
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '│')
+            .collect::<String>()
+            .contains("END-VAULT"),
+        "{screen}"
+    );
+    app.update(Action::Back);
+    app.update(Action::Show(Tab::Audit));
+    app.update(Action::Inspect);
+    assert!(
+        app.inspection
+            .as_ref()
+            .unwrap()
+            .lines
+            .iter()
+            .any(|s| s.starts_with("Actor:"))
+    );
+    app.update(Action::Back);
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get(),
+            fake.capability_reads.get()
+        ),
+        reads
+    );
+}
+
+#[test]
+fn highlighted_spans_reconstruct_sanitised_metadata_in_every_selection_style() {
+    use crate::cli::UiTheme;
+    let raw = "İstanbul 界e\u{301}\u{1b}b";
+    for choice in [UiTheme::Dark, UiTheme::Light, UiTheme::Terminal] {
+        for color in [true, false] {
+            for selected in [true, false] {
+                let theme = Theme::new(choice, color, true);
+                let line = highlighted(raw, "i b", &theme, selected);
+                assert_eq!(
+                    line.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>(),
+                    output::sanitize(raw)
+                );
+                for span in line.spans.iter().filter(|s| {
+                    s.style
+                        .add_modifier
+                        .contains(ratatui::style::Modifier::UNDERLINED)
+                }) {
+                    if selected && theme.selected.fg.is_some() {
+                        assert_eq!(span.style.fg, theme.selected.fg);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_and_tiny_render_areas_are_safe_and_cancel_still_works() {
+    let (_, mut app) = app(&["a"]);
+    for (w, h) in [(0, 0), (1, 1), (20, 6)] {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        for tab in Tab::ALL {
+            app.update(Action::Show(tab));
+            terminal
+                .draw(|frame| draw(frame, &mut app, &Theme::plain()))
+                .unwrap();
+        }
+        for action in [Action::Help, Action::Actions, Action::Inspect] {
+            app.update(action);
+            terminal
+                .draw(|frame| draw(frame, &mut app, &Theme::plain()))
+                .unwrap();
+            app.update(Action::Back);
+        }
+    }
+}
+
+#[test]
+fn long_unicode_audit_actor_and_detail_are_fully_cached_and_inspectable() {
+    let fake = Rc::new(Fake {
+        audit_actor: Some(sourceorrery_core::Principal::new(
+            sourceorrery_core::PrincipalKind::Workload,
+            "界e\u{301}".repeat(120) + "END-ACTOR",
+        )),
+        audit_detail: Some("safe cached detail ".repeat(80) + "END-DETAIL"),
+        ..Fake::default()
+    });
+    let mut app = app_with(&fake);
+    app.update(Action::Show(Tab::Audit));
+    assert!(render(&mut app, 160, 24).contains('…'));
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    app.update(Action::Inspect);
+    let mut seen = String::new();
+    for _ in 0..30 {
+        seen.push_str(&render(&mut app, 80, 24));
+        app.update(Action::PageDown);
+    }
+    let seen = seen
+        .chars()
+        .filter(|c| !c.is_whitespace() && !matches!(c, '│' | '┌' | '┐' | '└' | '┘' | '─'))
+        .collect::<String>();
+    assert!(seen.contains("END-ACTOR") && seen.contains("END-DETAIL"));
+    app.update(Action::Back);
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
+}

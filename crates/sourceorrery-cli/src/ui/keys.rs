@@ -21,6 +21,12 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
         return (key.code == KeyCode::Char('c')).then_some(Action::Quit);
     }
     let action = match mode {
+        Mode::Inspector => movement(key.code).or_else(|| match key.code {
+            KeyCode::Esc => Some(Action::Back),
+            KeyCode::Char('q') => Some(Action::Quit),
+            KeyCode::Char('L') => Some(Action::Lock),
+            _ => None,
+        }),
         Mode::Menu => movement(key.code).or_else(|| match key.code {
             KeyCode::Esc | KeyCode::F(2) => Some(Action::Back),
             KeyCode::Enter => Some(Action::Commit),
@@ -85,6 +91,10 @@ fn movement(code: KeyCode) -> Option<Action> {
 fn command(code: KeyCode) -> Option<Action> {
     Some(match code {
         KeyCode::F(2) => Action::Actions,
+        KeyCode::Char('i') => Action::Inspect,
+        KeyCode::Char('!') => Action::ErrorDetails,
+        KeyCode::Char('f') => Action::Filters,
+        KeyCode::Char('s') => Action::Sort,
         KeyCode::Char('k') => Action::Up,
         KeyCode::Char('j') => Action::Down,
         KeyCode::Char('g') => Action::Top,

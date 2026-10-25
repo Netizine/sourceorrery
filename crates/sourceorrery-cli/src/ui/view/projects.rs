@@ -78,8 +78,18 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
             let is_selected = selected == Some(i);
             let secrets = p.secrets().len();
             columns.row([
-                Cell::from(columns.text(0, &p.link.path.display().to_string())),
-                Cell::from(columns.text(1, &p.link.name)),
+                Cell::from(super::highlighted(
+                    &columns.text(0, &p.link.path.display().to_string()),
+                    &app.list(Tab::Projects).query,
+                    theme,
+                    is_selected,
+                )),
+                Cell::from(super::highlighted(
+                    &columns.text(1, &p.link.name),
+                    &app.list(Tab::Projects).query,
+                    theme,
+                    is_selected,
+                )),
                 Cell::from(if secrets == 0 {
                     dash(theme, is_selected)
                 } else {

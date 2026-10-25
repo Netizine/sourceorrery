@@ -103,6 +103,12 @@ pub enum Action {
     Unlink,
     Help,
     Actions,
+    Inspect,
+    ErrorDetails,
+    Filters,
+    ApplyFilter,
+    Sort,
+    SetSort(super::sort::Sort),
     Quit,
 }
 
@@ -111,6 +117,7 @@ pub enum Action {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Menu,
+    Inspector,
     Normal,
     Search,
     Help,
@@ -153,6 +160,7 @@ pub enum Message {
 pub struct ListState {
     pub table: TableState,
     pub query: String,
+    pub sort: super::sort::Sort,
     /// Rows the view showed at the last draw: the step of PageUp/PageDown.
     pub page: usize,
     initialized: bool,
@@ -174,6 +182,7 @@ pub struct App {
     pub editing: bool,
     pub help: bool,
     pub menu: Option<super::menu::Menu>,
+    pub inspection: Option<super::inspection::Inspection>,
     pub help_view: super::viewport::Viewport,
     pub declarations: TableState,
     pub declaration_page: usize,
@@ -217,6 +226,7 @@ impl App {
             editing: false,
             help: false,
             menu: None,
+            inspection: None,
             help_view: Default::default(),
             declarations: TableState::default(),
             declaration_page: 1,
@@ -278,6 +288,7 @@ impl App {
         self.editing = false;
         self.help = false;
         self.menu = None;
+        self.inspection = None;
         self.dialog = None;
         self.pending_value = None;
         self.message = Some(Message::Info(format!(
@@ -334,6 +345,8 @@ impl App {
     pub fn mode(&self) -> Mode {
         if self.help {
             Mode::Help
+        } else if self.inspection.is_some() {
+            Mode::Inspector
         } else if self.menu.is_some() {
             Mode::Menu
         } else if self.dialog.is_some() {
@@ -363,11 +376,13 @@ impl App {
             return Vec::new();
         };
         let (query, now) = (self.query(Tab::Secrets), timestamp::now());
-        session
+        let mut shown: Vec<_> = session
             .secrets
             .iter()
             .filter(|p| query.secret(p, output::status(p, now), now))
-            .collect()
+            .collect();
+        shown.sort_by(|a, b| self.list(Tab::Secrets).sort.secret(a, b));
+        shown
     }
 
     /// Deleted secrets the Deleted view's filter lets through.
@@ -388,7 +403,9 @@ impl App {
             return Vec::new();
         };
         let query = self.query(Tab::Audit);
-        events.iter().filter(|e| query.event(e)).collect()
+        let mut shown: Vec<_> = events.iter().filter(|e| query.event(e)).collect();
+        shown.sort_by(|a, b| self.list(Tab::Audit).sort.event(a, b));
+        shown
     }
 
     /// Projects the Projects view's filter lets through.
@@ -410,6 +427,40 @@ impl App {
             .iter()
             .filter(|v| query.vault(&v.name))
             .collect()
+    }
+
+    pub fn apply_query(&mut self, query: String) {
+        let key = self.selected_key(self.tab);
+        self.list_mut(self.tab).query = query;
+        self.detail = None;
+        self.restore_selection(self.tab, key);
+    }
+    pub fn count_query(&self, raw: &str) -> usize {
+        let Some(s) = &self.session else {
+            return 0;
+        };
+        let q = Query::parse(raw);
+        let now = timestamp::now();
+        match self.tab {
+            Tab::Secrets => s
+                .secrets
+                .iter()
+                .filter(|p| q.secret(p, output::status(p, now), now))
+                .count(),
+            Tab::Deleted => s
+                .deleted()
+                .unwrap_or_default()
+                .iter()
+                .filter(|d| q.secret(&d.properties, "deleted", now))
+                .count(),
+            Tab::Audit => s
+                .audit()
+                .unwrap_or_default()
+                .iter()
+                .filter(|e| q.event(e))
+                .count(),
+            _ => 0,
+        }
     }
 
     fn shown_len(&self, tab: Tab) -> usize {
@@ -475,6 +526,18 @@ impl App {
     }
 
     pub fn update(&mut self, action: Action) {
+        if let Some(mut inspection) = self.inspection.take() {
+            match action {
+                Action::Back => {}
+                Action::Quit => self.quit = true,
+                Action::Lock => self.lock(false),
+                action => {
+                    inspection.viewport.move_by(action);
+                    self.inspection = Some(inspection);
+                }
+            }
+            return;
+        }
         if let Some(mut menu) = self.menu.take() {
             match action {
                 Action::Back | Action::Actions => {}
@@ -484,6 +547,8 @@ impl App {
                         if let Some(reason) = self.unavailable(item.action) {
                             self.message = Some(Message::Error(reason));
                             self.menu = Some(menu);
+                        } else if let Some(query) = &item.query {
+                            self.apply_query(query.clone());
                         } else {
                             self.update(item.action);
                         }
@@ -523,6 +588,29 @@ impl App {
             Action::Quit => self.quit = true,
             Action::Help => self.help = true,
             Action::Actions => self.menu = Some(super::menu::Menu::actions(self)),
+            Action::Inspect => self.inspection = super::inspection::Inspection::metadata(self),
+            Action::ErrorDetails => {
+                self.inspection = self
+                    .message
+                    .as_ref()
+                    .map(super::inspection::Inspection::message)
+            }
+            Action::Filters => {
+                if self.unavailable(action).is_none() {
+                    self.menu = Some(super::menu::Menu::filters(self));
+                }
+            }
+            Action::Sort => {
+                if self.unavailable(action).is_none() {
+                    self.menu = Some(super::menu::Menu::sorts(self));
+                }
+            }
+            Action::SetSort(sort) => {
+                let key = self.selected_key(self.tab);
+                self.list_mut(self.tab).sort = sort;
+                self.restore_selection(self.tab, key);
+            }
+            Action::ApplyFilter => {}
             Action::Toggle => self.start_toggle(),
             Action::Edit => self.start_edit(),
             Action::NewVersion if self.tab == Tab::Vaults => self.start_setup(None),
@@ -934,6 +1022,14 @@ impl App {
             return Some(reason.into());
         }
         match action {
+            Action::Inspect if super::inspection::Inspection::metadata(self).is_none() => none(),
+            Action::ErrorDetails if self.message.is_none() => Some("No message to inspect".into()),
+            Action::Filters if !matches!(self.tab, Tab::Secrets | Tab::Deleted | Tab::Audit) => {
+                wrong()
+            }
+            Action::Sort | Action::SetSort(_) if !matches!(self.tab, Tab::Secrets | Tab::Audit) => {
+                wrong()
+            }
             Action::Edit | Action::Toggle | Action::NewVersion if self.tab != Tab::Vaults => {
                 if let Some(reason) = self.change_unavailable() {
                     return Some(reason.into());
@@ -1034,6 +1130,19 @@ impl App {
                 .get(self.versions.selected()?)
                 .cloned(),
             None => self.selected_secret().cloned(),
+        }
+    }
+
+    pub fn inspected_version(&self) -> Option<&SecretProperties> {
+        match &self.detail {
+            Some(name) => self
+                .session
+                .as_ref()?
+                .detail(name)?
+                .versions
+                .as_ref()?
+                .get(self.versions.selected()?),
+            None => self.selected_secret(),
         }
     }
 
@@ -1479,6 +1588,129 @@ pub mod tests {
         for c in text.chars() {
             app.update(Action::Input(c));
         }
+    }
+
+    #[test]
+    fn facets_and_text_queries_are_identical_compose_and_read_nothing() {
+        let fake = Fake::with(&["alpha-key", "bravo-key"]);
+        fake.disabled.borrow_mut().insert("bravo-key".into());
+        let mut app = on_secrets(&fake);
+        let reads = (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get(),
+            fake.capability_reads.get(),
+        );
+        app.update(Action::Filters);
+        let menu = app.menu.as_ref().unwrap();
+        let index = menu
+            .items
+            .iter()
+            .position(|i| i.label.starts_with("Disabled"))
+            .unwrap();
+        let query = menu.items[index].query.clone().unwrap();
+        app.menu.as_mut().unwrap().state.select(Some(index));
+        app.update(Action::Commit);
+        assert_eq!(app.list(Tab::Secrets).query, query);
+        assert_eq!(app.shown_secrets().len(), 1);
+        assert_eq!(app.shown_secrets()[0].name, "bravo-key");
+        assert_eq!(
+            app.count_query("status:disabled"),
+            app.shown_secrets().len()
+        );
+        app.apply_query("alpha status:disabled".into());
+        assert!(app.shown_secrets().is_empty());
+        app.update(Action::Filters);
+        app.update(Action::Top);
+        app.update(Action::Commit);
+        assert!(app.list(Tab::Secrets).query.is_empty());
+        assert_eq!(app.shown_secrets().len(), 2);
+        assert_eq!(
+            (
+                fake.lists.get(),
+                fake.inspects.get(),
+                fake.audit_reads.get(),
+                fake.capability_reads.get()
+            ),
+            reads
+        );
+    }
+
+    #[test]
+    fn typed_sorts_keep_selection_and_source_order_with_missing_dates_last() {
+        use super::super::sort::Sort;
+        let fake = Fake::with(&["a", "b", "c"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Down);
+        let reads = (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get(),
+        );
+        for p in &mut app.session.as_mut().unwrap().secrets {
+            p.expires_on = match p.name.as_str() {
+                "a" => Some(OffsetDateTime::from_unix_timestamp(10).unwrap()),
+                "b" => None,
+                _ => Some(OffsetDateTime::from_unix_timestamp(2).unwrap()),
+            };
+            p.updated_on = OffsetDateTime::UNIX_EPOCH;
+        }
+        app.update(Action::SetSort(Sort::ExpiryAsc));
+        assert_eq!(
+            app.shown_secrets()
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["c", "a", "b"]
+        );
+        assert_eq!(app.selected_secret().unwrap().name, "b");
+        app.update(Action::SetSort(Sort::ExpiryDesc));
+        assert_eq!(
+            app.shown_secrets()
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "c", "b"]
+        );
+        app.update(Action::SetSort(Sort::UpdatedDesc));
+        assert_eq!(
+            app.shown_secrets()
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+        app.update(Action::SetSort(Sort::NameDesc));
+        assert_eq!(app.selected_secret().unwrap().name, "b");
+        app.update(Action::SetSort(Sort::Default));
+        assert_eq!(
+            app.session
+                .as_ref()
+                .unwrap()
+                .secrets
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+        assert_eq!(
+            (
+                fake.lists.get(),
+                fake.inspects.get(),
+                fake.audit_reads.get()
+            ),
+            reads
+        );
+        app.update(Action::Show(Tab::Audit));
+        let selected = app.selected_key(Tab::Audit);
+        app.update(Action::SetSort(Sort::TimeAsc));
+        assert_eq!(app.selected_key(Tab::Audit), selected);
+        let events = app.shown_events();
+        assert!(
+            events
+                .windows(2)
+                .all(|w| w[0].occurred_on <= w[1].occurred_on)
+        );
     }
 
     #[test]

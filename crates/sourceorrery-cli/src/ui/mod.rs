@@ -36,7 +36,9 @@ mod edit;
 mod editor;
 #[cfg(test)]
 mod fake;
+mod filters;
 pub(crate) mod init;
+mod inspection;
 mod keys;
 mod menu;
 mod search;
@@ -44,6 +46,7 @@ mod session;
 pub(crate) mod setup;
 #[cfg(test)]
 mod snapshot;
+mod sort;
 mod source;
 mod stats;
 mod theme;

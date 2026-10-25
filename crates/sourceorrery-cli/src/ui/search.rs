@@ -61,6 +61,40 @@ impl Query {
         query
     }
 
+    /// Matching ranges in the ORIGINAL sanitised text. Case expansion is mapped
+    /// back to each original scalar, never reused as a UTF-8 byte offset.
+    pub fn ranges(&self, text: &str) -> Vec<std::ops::Range<usize>> {
+        let mut folded = String::new();
+        let mut original = Vec::new();
+        for (start, c) in text.char_indices() {
+            let end = start + c.len_utf8();
+            for lower in c.to_lowercase() {
+                folded.push(lower);
+                original.extend(std::iter::repeat_n((start, end), lower.len_utf8()));
+            }
+        }
+        let mut ranges = Vec::new();
+        for word in &self.words {
+            for (start, matched) in folded.match_indices(word) {
+                if !matched.is_empty() {
+                    ranges.push(original[start].0..original[start + matched.len() - 1].1);
+                }
+            }
+        }
+        ranges.sort_by_key(|r| r.start);
+        let mut merged: Vec<std::ops::Range<usize>> = Vec::new();
+        for range in ranges {
+            if let Some(last) = merged.last_mut()
+                && range.start <= last.end
+            {
+                last.end = last.end.max(range.end);
+            } else {
+                merged.push(range);
+            }
+        }
+        merged
+    }
+
     fn has_event_qualifiers(&self) -> bool {
         !(self.ops.is_empty()
             && self.outcomes.is_empty()
@@ -197,6 +231,29 @@ mod tests {
 
     fn matches(query: &str, p: &SecretProperties, status: &str) -> bool {
         Query::parse(query).secret(p, status, timestamp::now())
+    }
+
+    #[test]
+    fn unicode_expansion_offsets_reconstruct_original_display_text() {
+        for (query, text) in [
+            ("i", "İstanbul 界e\u{301}"),
+            ("σ", "Σίσυφος"),
+            ("界", "界界"),
+            ("b", "a\\u{1b}b"),
+        ] {
+            let q = Query::parse(query);
+            let ranges = q.ranges(text);
+            let mut result = String::new();
+            let mut pos = 0;
+            for r in ranges {
+                assert!(text.is_char_boundary(r.start) && text.is_char_boundary(r.end));
+                result.push_str(&text[pos..r.start]);
+                result.push_str(&text[r.clone()]);
+                pos = r.end;
+            }
+            result.push_str(&text[pos..]);
+            assert_eq!(result, text);
+        }
     }
 
     #[test]

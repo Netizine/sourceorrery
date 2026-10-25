@@ -10,6 +10,7 @@
 
 mod columns;
 mod dialog;
+mod inspection;
 mod lists;
 mod menu;
 mod overview;
@@ -78,10 +79,19 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
 
     if let Some(text) = &app.message {
         frame.render_widget(callout(text, theme), message);
+        let route = Rect {
+            x: message.right().saturating_sub(10),
+            width: message.width.min(10),
+            ..message
+        };
+        frame.render_widget(Paragraph::new(" ! details").style(theme.key), route);
     }
     draw_footer(frame, app, theme, footer);
     if let Some(open) = &app.dialog {
         dialog::draw(frame, open, theme, &mut app.dialog_view);
+    }
+    if let Some(inspection) = &mut app.inspection {
+        inspection::draw(frame, inspection, theme);
     }
     if let Some(menu) = &mut app.menu {
         menu::draw(frame, menu, theme);
@@ -410,6 +420,12 @@ fn label(title: &str, app: &App, tab: Tab, shown: usize, theme: &Theme) -> Line<
         Span::styled(title.to_uppercase(), theme.label),
         Span::styled(count, theme.muted),
     ];
+    if list.sort != super::sort::Sort::Default {
+        spans.push(Span::styled(
+            format!(" · {}", list.sort.title()),
+            theme.muted,
+        ));
+    }
     if filtered {
         spans.push(Span::styled("    / ", theme.key));
         spans.push(Span::styled(
@@ -420,6 +436,25 @@ fn label(title: &str, app: &App, tab: Tab, shown: usize, theme: &Theme) -> Line<
             spans.push(Span::styled("▌", theme.key));
         }
     }
+    Line::from(spans)
+}
+
+pub(super) fn highlighted(text: &str, query: &str, theme: &Theme, selected: bool) -> Line<'static> {
+    let text = output::sanitize(text);
+    let ranges = super::search::Query::parse(query).ranges(&text);
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    for range in ranges {
+        spans.push(Span::raw(text[pos..range.start].to_owned()));
+        spans.push(Span::styled(
+            text[range.clone()].to_owned(),
+            theme.cell(theme.search_match, selected).add_modifier(
+                ratatui::style::Modifier::BOLD | ratatui::style::Modifier::UNDERLINED,
+            ),
+        ));
+        pos = range.end;
+    }
+    spans.push(Span::raw(text[pos..].to_owned()));
     Line::from(spans)
 }
 
@@ -487,7 +522,7 @@ fn callout(message: &Message, theme: &Theme) -> Paragraph<'static> {
     let line = Line::from(vec![
         Span::styled(" ▌", style.bar),
         Span::styled(format!(" {title} "), style.title),
-        Span::raw(format!(" {}", output::sanitize(text))),
+        Span::raw(format!(" {} · ! details", output::sanitize(text))),
     ]);
     Paragraph::new(line).style(style.panel)
 }

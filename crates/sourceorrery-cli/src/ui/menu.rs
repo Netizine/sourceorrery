@@ -8,6 +8,7 @@ pub struct Item {
     pub shortcut: &'static str,
     pub action: Action,
     pub reason: Option<String>,
+    pub query: Option<String>,
 }
 #[derive(Debug)]
 pub struct Menu {
@@ -19,7 +20,11 @@ pub struct Menu {
 impl Menu {
     pub fn actions(app: &App) -> Self {
         let items = [
-            ("Open details", "Enter", Action::Open),
+            ("Inspect cached metadata", "i", Action::Inspect),
+            ("Full message details", "!", Action::ErrorDetails),
+            ("Open details (audited if uncached)", "Enter", Action::Open),
+            ("Filter…", "f", Action::Filters),
+            ("Sort…", "s", Action::Sort),
             ("Edit metadata", "e", Action::Edit),
             ("Enable / disable version", "Space", Action::Toggle),
             ("New version / vault", "n", Action::NewVersion),
@@ -39,9 +44,60 @@ impl Menu {
             shortcut,
             action,
             reason: app.unavailable(action),
+            query: None,
         })
         .collect();
         Self::new("Actions", items)
+    }
+    pub fn filters(app: &App) -> Self {
+        let items = super::filters::choices(app)
+            .into_iter()
+            .map(|(label, query)| Item {
+                label: format!("{label} — {} matching cached rows", app.count_query(&query)),
+                shortcut: "",
+                action: Action::ApplyFilter,
+                reason: None,
+                query: Some(query),
+            })
+            .collect();
+        Self::new("Filters — same-kind facets replace; words AND", items)
+    }
+    pub fn sorts(app: &App) -> Self {
+        use super::sort::Sort;
+        let sorts: &[Sort] = if app.tab == super::app::Tab::Audit {
+            &[Sort::Default, Sort::TimeAsc, Sort::TimeDesc]
+        } else {
+            &[
+                Sort::Default,
+                Sort::NameAsc,
+                Sort::NameDesc,
+                Sort::UpdatedAsc,
+                Sort::UpdatedDesc,
+                Sort::ExpiryAsc,
+                Sort::ExpiryDesc,
+            ]
+        };
+        Self::new(
+            "Sort — missing dates last",
+            sorts
+                .iter()
+                .map(|sort| Item {
+                    label: if *sort == Sort::Default {
+                        if app.tab == super::app::Tab::Audit {
+                            "Default — newest first".into()
+                        } else {
+                            "Default — name ascending".into()
+                        }
+                    } else {
+                        sort.title().into()
+                    },
+                    shortcut: "",
+                    action: Action::SetSort(*sort),
+                    reason: None,
+                    query: None,
+                })
+                .collect(),
+        )
     }
     pub fn new(title: &'static str, items: Vec<Item>) -> Self {
         let selected = (!items.is_empty()).then_some(0);

@@ -50,11 +50,11 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 
 ### B05
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: In progress
+- Status: Done — James’s UI workstream (implemented with Codex).
 - Changes and affected files: `view/columns.rs`, `secrets.rs`, `lists.rs`, `projects.rs`, `view/mod.rs`, `viewport.rs`, `init/view.rs`, `view/tests.rs`. One selected specification drives headings/widths/cells; priority columns and grapheme-safe ellipses, actual table ranges, display-cell path/actor sizing. Version table responds to width.
 - Tests and results: UI suite 143 passed, 1 ignored; 60/80/100/120/160-column tests, Unicode clipping, filtered counts and zero-read navigation regressions pass. Generated six-look snapshots and inspected selected rows.
 - Commits: `851cc61`.
-- Limitations/manual checks: cached full-field access for every clipped list field is completed in dependent B11; B05 remains In progress until that acceptance check passes. Live-terminal checks unavailable.
+- Limitations/manual checks: B11 now passes full cached tags/path/actor/detail inspection and exact-return tests for clipped fields. Live-terminal checks unavailable.
 
 ### B06
 - Owner: James’s UI workstream — implemented with Codex.
@@ -77,32 +77,32 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 - Status: Done — James’s UI workstream (implemented with Codex).
 - Changes and affected files: `menu.rs`, `view/menu.rs`, `app.rs`, `keys.rs`, `session.rs`, `fake.rs`, `view/mod.rs`, `view/secrets.rs`, tests. Flat F2 menu uses typed shortcut actions, cached pure availability, bounded scrolling, disabled reasons and execution revalidation. Footer/empty guidance reuse availability. Overview search explains the proper tabs. Capability evidence for an older version is captured only during explicit detail opening; existing live checks still run when starting/submitting a mutation.
 - Tests and results: UI suite 146 passed, 1 ignored. Menu/key equivalence, fresh Enter, compact/resize/long reasons, read-only/empty states, stale target rejection and zero list/inspect/audit/capability calls during menu navigation pass. Existing blocked/provider and confirmation tests pass.
-- Commits: B08 Actions commit (hash recorded next update).
+- Commits: `ee6bc65`.
 - Limitations/manual checks: F2 physical availability in supported terminal emulators has not been manually checked. No write occurs from menu navigation.
 
 ### B09
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Planned
-- Changes and affected files: pending.
-- Tests and results: not run for this batch.
-- Commits: pending.
-- Limitations/manual checks: live terminal, non-Windows terminal and screen-reader checks have not been performed.
+- Status: Done — James’s UI workstream (implemented with Codex).
+- Changes and affected files: new `filters.rs`; `search.rs`, `app.rs`, `menu.rs`, keys and metadata renderers. Facets compile to existing queries with cached counts; same-kind facet replaces its qualifier, typed same-kind OR semantics stay intact. Active queries remain visible; original UTF-8 ranges map case expansions safely; selected match styles remain readable. No upstream source copied.
+- Tests and results: UI suite 155 passed, 1 ignored. Facet/text equivalence, combined/no-result/clear, existing expiry boundaries, Unicode/case-expansion/sanitisation reconstruction and no-extra-read checks pass. Six-look filter fixtures added to snapshot writer.
+- Commits: cached browsing commit (hash recorded next update).
+- Limitations/manual checks: raw advanced query remains available; tag facets omit keys containing whitespace because the existing grammar cannot represent them as one token. Live usability checks unavailable.
 
 ### B10
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Planned
-- Changes and affected files: pending.
-- Tests and results: not run for this batch.
-- Commits: pending.
-- Limitations/manual checks: live terminal, non-Windows terminal and screen-reader checks have not been performed.
+- Status: Done — James’s UI workstream (implemented with Codex).
+- Changes and affected files: new `sort.rs`; `app.rs`, keys/menu and title indicator. Secrets name/updated/expiry, Audit timestamp ordering use typed values, deterministic identity tie-breaks, missing dates last in both directions. Default is source order (Secrets name ascending, Audit newest first); source records are not reordered.
+- Tests and results: UI suite 155 passed, 1 ignored. Typed time/missing dates/equal updated values, source-order reset, selection survival and zero-read assertions pass; B01 refresh identity regressions remain passing. Sort snapshots added.
+- Commits: cached browsing commit (hash recorded next update).
+- Limitations/manual checks: sort is session-local. No persistent index cache or dependencies added.
 
 ### B11
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Planned
-- Changes and affected files: pending.
-- Tests and results: not run for this batch.
-- Commits: pending.
-- Limitations/manual checks: live terminal, non-Windows terminal and screen-reader checks have not been performed.
+- Status: Done — James’s UI workstream (implemented with Codex).
+- Changes and affected files: new `inspection.rs`, `view/inspection.rs`; `app.rs`, menu/keys, `view/mod.rs`, tests/fake/snapshots. Explicit `i` cached inspector wraps and scrolls complete metadata while preserving the underlying view; `!` and Actions expose complete safe messages, with a persistent visible route on the callout. Full IDs remain distinct from displayed abbreviations.
+- Tests and results: UI suite 155 passed, 1 ignored. Long tags, project/vault paths, Unicode audit actors and details, hostile controls, long errors, exact query/table/detail return state, zero/tiny areas and zero additional list/inspect/audit/capability reads pass. Inspector fixtures added to all six looks.
+- Commits: cached browsing commit (hash recorded next update).
+- Limitations/manual checks: cached inspection never fetches an absent field; explicit Enter retains the established audited detail load. Live terminal/screen-reader checks unavailable.
 
 ### B12
 - Owner: James’s UI workstream — implemented with Codex.

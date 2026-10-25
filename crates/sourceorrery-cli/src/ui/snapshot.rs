@@ -654,6 +654,7 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     show(&mut app, vault);
     out.push(("overview", draw(&mut app, theme, 40)));
     out.push(("overview-80", draw_at(&mut app, theme, 80, 24)));
+    let _ = draw_at(&mut app, theme, 60, 18);
     app.update(Action::Bottom);
     out.push(("overview-60-end", draw_at(&mut app, theme, 60, 18)));
     app.update(Action::Top);
@@ -679,6 +680,18 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     out.push(("secrets", draw(&mut app, theme, 18)));
     out.push(("secrets-80", draw_at(&mut app, theme, 80, 24)));
     out.push(("secrets-60", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Actions);
+    out.push(("actions-60", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Back);
+    app.update(Action::Filters);
+    out.push(("filters-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Back);
+    app.update(Action::Sort);
+    out.push(("sort-60", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Back);
+    app.update(Action::Inspect);
+    out.push(("inspector-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Back);
     app.update(Action::Edit);
     app.update(Action::Down);
     app.update(Action::Down);
@@ -712,6 +725,7 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     app.update(Action::Help);
     out.push(("help", draw(&mut app, theme, 46)));
     out.push(("help-80", draw_at(&mut app, theme, 80, 24)));
+    let _ = draw_at(&mut app, theme, 60, 18);
     app.update(Action::Bottom);
     out.push(("help-60-end", draw_at(&mut app, theme, 60, 18)));
     app.update(Action::Help);

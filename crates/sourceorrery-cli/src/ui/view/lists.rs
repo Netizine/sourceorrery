@@ -162,6 +162,7 @@ pub(super) fn audit(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
                     selected == Some(i),
                     true,
                     Some(&columns),
+                    &app.list(Tab::Audit).query,
                 ))
             })
             .collect(),
@@ -179,7 +180,7 @@ pub(super) fn event_cells(
     selected: bool,
     full: bool,
 ) -> Row<'static> {
-    Row::new(event_cell_values(e, theme, selected, full, None))
+    Row::new(event_cell_values(e, theme, selected, full, None, ""))
 }
 
 fn event_cell_values(
@@ -188,6 +189,7 @@ fn event_cell_values(
     selected: bool,
     full: bool,
     columns: Option<&Columns>,
+    query: &str,
 ) -> Vec<Cell<'static>> {
     let outcome = match e.outcome {
         AuditOutcome::Success => Style::new(),
@@ -210,9 +212,11 @@ fn event_cell_values(
     }
     cells.push(Cell::from(long_time(e.occurred_on)));
     let actor = e.actor.to_string();
-    cells.push(Cell::from(columns.map_or_else(
-        || sanitize(&actor).into_owned(),
-        |c| c.text(2, &actor),
+    cells.push(Cell::from(super::highlighted(
+        &columns.map_or_else(|| sanitize(&actor).into_owned(), |c| c.text(2, &actor)),
+        query,
+        theme,
+        selected,
     )));
     cells.push(Cell::from(e.operation.as_str()));
     if full {
@@ -281,7 +285,12 @@ pub(super) fn vaults(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
                 dash(theme, is_selected)
             };
             columns.row([
-                Cell::from(columns.text(0, &v.name)),
+                Cell::from(super::highlighted(
+                    &columns.text(0, &v.name),
+                    &app.list(Tab::Vaults).query,
+                    theme,
+                    is_selected,
+                )),
                 Cell::from(state),
                 Cell::from(
                     v.size
