@@ -716,7 +716,7 @@ jobs:
         id: emulator
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
-          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          FORK: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') }}
         run: bash scripts/ci/localstack.sh select aws
       - name: Start LocalStack (lstk returns once it is ready)
         if: steps.emulator.outputs.available == 'true'
@@ -783,7 +783,7 @@ jobs:
         id: emulator
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AZURE_AUTH_TOKEN }}
-          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          FORK: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') }}
         run: bash scripts/ci/localstack.sh select azure
       - name: Start LocalStack for Azure (lstk returns once it is ready)
         if: steps.emulator.outputs.available == 'true'

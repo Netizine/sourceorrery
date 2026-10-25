@@ -43,10 +43,14 @@ required. Without `SONAR_TOKEN`, the
 workflow still generates coverage artifacts and explicitly warns that no
 Sonar analysis was uploaded.
 
-Fork pull requests do not receive the private package or Sonar secrets, so
-this workflow skips them. The normal CI remains separate; coverage runs
-after a trusted merge. Do not use `pull_request_target` to execute a fork's
-code with repository secrets.
+Pull requests from forks and from Dependabot do not receive the Sonar and
+LocalStack secrets, so this workflow skips them; the CI's emulator jobs
+skip their tests on them with a warning. The normal CI remains separate;
+coverage runs after a trusted merge. Do not use `pull_request_target` to
+execute a fork's code with repository secrets. Dependabot has one secret
+of its own, `FONTAWESOME_NPM_AUTH_TOKEN` (Settings → Secrets and variables
+→ Dependabot), so it can update and build the site, whose Font Awesome Kit
+comes from a private registry.
 
 ## What each report measures
 
