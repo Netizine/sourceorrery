@@ -1119,3 +1119,76 @@ One commit: the checks and the new write order share the tag plan.
   rule); the Azure live suite (CI); a second Windows account against SR04's
   files; real AWS, Azure and HashiCorp services (emulators and a dev server
   only); the release workflow on its new runners (a hosted dry run).
+
+### B32 — the candidate rehearsed locally, and the recommendation
+
+* **Candidate:** branch `security-remediation`, source commit 1472a86 for
+  the checks below (32 commits over `main`'s 18138d3, six of them the UI
+  work of a parallel session); version **0.3.0** in every manifest
+  (`set-version.py 0.3.0 --check`), vault schema **5**, C ABI
+  (`SO_ABI_VERSION`) **2**, contract **"2"**. Nothing was tagged, pushed,
+  uploaded or deployed.
+* **Inventory the release workflow builds from it** (unchanged but for the
+  Linux runners): the CLI and C ABI archives for six targets (Windows,
+  macOS and Linux glibc, x64 and arm64) with SBOMs, the Python wheels and
+  sdist, the npm package and its six platform packages, the NuGet package,
+  the Maven jar, nine crates, the Go module tag, the Packagist tag, the
+  Homebrew, Scoop and WinGet manifests, and `SHA256SUMS`, each file with a
+  build provenance attestation.
+* **Rehearsal artifacts built here** (not release files; built from the
+  working tree, with the UI session's then-uncommitted changes present):
+  `sourceorrery.exe` 21,216,256 bytes
+  `3192809b89c4ad23446e1ce97cb3dd887e2c4050f50945a87da0977daaa613f1`;
+  `sourceorrery_ffi.dll` 16,202,752 bytes
+  `21b048e21e73dd79772383382606650784a915d725fa00bb209a3c9c30b739c0`
+  (x86_64-pc-windows-msvc); built on Ubuntu 22.04, `sourceorrery`
+  22,335,160 bytes
+  `11ca121d9226b9ffc8e0a49955c3a42ebb25f6f35c6e29b333123adb53bba7ae` and
+  `libsourceorrery_ffi.so` 17,871,392 bytes
+  `19c02164fccd52e101f1066518d71c4beb33cfebdf3b3b415c8befdbea864113`
+  (x86_64-unknown-linux-gnu, glibc 2.34).
+* **Checks over the committed tree** (a clean worktree at 1472a86, stable
+  Rust 1.99.1): `cargo fmt --all --check` clean; every package's tests
+  pass, 598 in all (core 53, crypto 28, storage 78, CLI 247, os 5,
+  provider 19, AWS 20, conformance 63, Azure 18, Vault 24, client 19, C ABI
+  24; one ignored), the C ABI header and integration drift tests among
+  them. **`cargo clippy --workspace --all-targets -- -D warnings` fails**:
+  28 findings, all in `crates/sourceorrery-cli/src/ui/` from the UI
+  session's commits (`default_trait_access`, `semicolon_if_nothing_returned`,
+  `too_many_lines` and others); none in what this remediation changed,
+  whose crates are clippy-clean on their own.
+* **Rehearsed with the candidate CLI:** the first run of getting started
+  (version 0.3.0; vault with its recovery key in a file; `secret set` from
+  stdin; listing without the value; reveal; `init --all` writing a
+  value-free manifest; `check`; `run` giving the child the value; `audit
+  --verify`; `vault export`, `vault import` into another home, opened with
+  the recovery key): 12 checks pass. The upgrade from 0.2.0 (`docs/upgrading.md`)
+  with the 0.2.0 release CLI: 41 checks pass. Old schemas are refused
+  without a byte changing (B24, again here). The release's documentation
+  step in a disposable worktree: with the CHANGELOG heading dated,
+  `docs-version.py --check --expect 0.3.0` refuses until the pages are
+  stamped, then passes with every "not released yet" note gone.
+  `abi_mismatch` for a 0.2.0 C ABI library under the current .NET SDK.
+* **Release helpers, dry:** all 96 Python helper tests pass;
+  `check-release-validation.py --warn-only` refuses 1472a86 (GitHub does
+  not know the commit), as it must before a push and a full CI run;
+  `verify-release-artifacts.py` was exercised live in B27. The dependency
+  audit passes on every graph (the three reviewed zbus notices). The site
+  builds (46 pages) and its 4133 internal links resolve.
+* **Recommendation: no-go for a release from this commit; go for pushing
+  the branch and running CI.** Before a 0.3.0 tag:
+  1. the UI session's 28 clippy findings fixed (CI's `clippy` job fails on
+     them);
+  2. the branch pushed and `ci.yml` green in full, every job, including the
+     new `msrv` job, the `sdk-*` jobs on Linux and macOS, `keyring`, and
+     the provider jobs with `SOURCEORRERY_LIVE_REQUIRED` (the owed items of
+     B28 and B31);
+  3. a hosted dry run of `release.yml` from `main` (the first on the Ubuntu
+     22.04 runners), with its packages tried as `docs/release.md` step 2
+     says;
+  4. the items that need people or other machines: a second Windows
+     account against SR04's files, a Mac, real provider services if their
+     claims are to be more than emulator-tested.
+  Every SR and REC item has its regression or verification named in this
+  ledger; none is marked closed here, because the hosted runs above are
+  part of their evidence.
