@@ -19,6 +19,9 @@ use FFI\CData;
  * connect(password: $secret->value->expose());
  * $secret->close();   // zeroises the value
  * ```
+ *
+ * A reader is the one owner of its native handle: it cannot be cloned or
+ * serialised, and `close()` frees the handle once. Share the one object.
  */
 final class SecretReader
 {
@@ -139,6 +142,27 @@ final class SecretReader
     public function __destruct()
     {
         $this->close();
+    }
+
+    /**
+     * Refused: two objects would own one native handle, and the first to
+     * close it would leave the other holding a freed one.
+     */
+    public function __clone()
+    {
+        // The copy owns nothing, even if PHP destroys it after this throws.
+        $this->handle = null;
+        throw new \LogicException('SecretReader cannot be cloned; share the one reader instead');
+    }
+
+    public function __serialize(): array
+    {
+        throw new \LogicException('SecretReader cannot be serialised; open the vault where it is needed');
+    }
+
+    public function __unserialize(array $data): void
+    {
+        throw new \LogicException('SecretReader cannot be unserialised');
     }
 
     private function require(): CData

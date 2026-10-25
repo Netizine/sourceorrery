@@ -108,7 +108,7 @@ machine. No provider is contacted until a secret it keeps is read.
 | `$reader->properties($name, $version = null)` | `SecretProperties` (policy not applied) |
 | `$reader->resolve('sourceorrery://development/database-password')` | `Secret` |
 | `$reader->descriptor()` | array describing the vault (no values) |
-| `$reader->close()` | releases the vault; the destructor does the same |
+| `$reader->close()` | releases the vault; the destructor does the same. A reader is the one owner of its native handle: `clone` and `serialize()` refuse, so share the object |
 
 `$secret->properties` (`vault`, `name`, `version`, `enabled`,
 `contentType`, `tags`, `notBefore`, `expiresOn`, `createdOn`, `updatedOn`

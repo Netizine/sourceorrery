@@ -421,3 +421,74 @@ One commit: the checks and the new write order share the tag plan.
   the shared helper: passes, reporting the dev server.
 * **Not run here:** the real AWS service (LocalStack only, as in CI);
   concurrent writers on AWS, which the design does not cover.
+
+### B12 — PHP readers have one native owner
+
+* **Closes:** SR05 in the code (execution with PHP FFI: below).
+* **Changes:** `SecretReader::__clone` refuses, and first drops the
+  handle from the copy, so the copy owns nothing even if PHP destroys it
+  after `__clone` throws; `__serialize` / `__unserialize` refuse.
+  `SecretValue::__clone` drops its bytes from the copy the same way (it
+  refused already, but a destroyed copy could have freed the original's
+  bytes). `Project` holds no native handle (its values are `SecretValue`s,
+  shared by reference); nothing to change there. Guide: a reader is the one
+  owner of its handle.
+* **Tests added (`bindings/php/tests/run.php`):** a refused clone of a
+  reader and of a value, with a collection after it and the original still
+  reading; a refused `serialize()` of a reader; a failed read followed by a
+  good one; every call after close refused, `descriptor()` included;
+  repeated close; the destructor after close.
+* **Tests run:** PHP 8.2.35 (Debian bookworm, FFI) in a `node:24-bookworm`
+  container, against a Linux release build of the CLI and the C ABI from
+  this tree and the fixture vault `scripts/ci/fixture-vault.sh` made with
+  it: `bindings/php/tests/run.php`, "PHP SDK: all checks passed". The same
+  run made the fixture's recovery-key file with `--recovery-key-out` on
+  Linux, reported "readable by you only": B04's Unix branch executed.
+
+### B13 — .NET values stay alive through their callbacks
+
+* **Closes:** SR06.
+* **Changes:** `SecretValue` counts the callbacks running in `Use` and
+  holds no lock while one runs. `Dispose` (from any thread, from inside a
+  callback, or through the owning `Secret` or `Project`) marks disposal
+  requested: every new use throws `ObjectDisposedException` and
+  `IsClosed` is true at once, and the buffer is freed exactly once, by
+  `Dispose` when no callback runs or by the last callback to return.
+  `Dispose` never waits. The finalizer frees an unreachable value; a
+  running callback keeps its value reachable. An internal constructor takes
+  the release function, so tests can instrument the free.
+* **Tests run:** `SecretValueLifetimeTests`, 7 tests over test-owned
+  buffers and an instrumented release (no native library, no freed memory
+  read): disposal inside the callback, nested callbacks, a callback that
+  throws (also after disposing), a dispose from another thread forced with
+  events while a callback runs (it returns at once, the free waits), the
+  owning `Secret` disposed inside the callback, repeated dispose, and the
+  finalizer over 2000 abandoned values plus a collection during a callback.
+  All 7 pass (`dotnet test`, .NET 10, Windows). Against the old logic (its
+  free routed through the same probe): the four in-callback cases fail
+  (freed while the callback ran) and the cross-thread case deadlocks (the
+  old `Use` held the lock through the callback).
+
+### B14 — Java readers are held for the whole native call
+
+* **Closes:** SR07.
+* **Changes:** `ai.sourceorrery.internal.Guarded`: every call holds a
+  read lock for its whole native call (any number of platform or virtual
+  threads at once); `close()` refuses new calls at once, takes the write
+  lock (so it waits for the running calls), frees once; a call cannot close
+  its own handle. `SecretReader` routes `get`, `properties`, `resolve` and
+  `descriptor` through it. Guide: what `close()` waits for.
+* **Tests run:** `GuardedTest`, 5 tests with a fake handle and latches
+  (close queued on the lock behind four running calls, checked through the
+  lock rather than by sleeping: nothing freed until they return, new calls
+  refused, freed once; sixteen calls inside at the same moment; a failed
+  call releases the lock; close from inside a call refused; calls racing
+  close never see the handle freed). With the existing extraction tests: 9
+  pass (`javac` and the JUnit 6.1.3 launcher against the local Maven
+  repository, JDK 27, since Maven is not installed here). `ReaderTest`
+  gains `everyCallAfterCloseIsRefused` and `closeWhileReadsRunWaitsForThem`
+  (eight virtual threads reading while the reader closes).
+* **Integration (Windows):** a release build of the CLI and the C ABI and
+  the fixture vault: `dotnet test` of the solution, 22 passed (7 new);
+  Java `ReaderTest`, `GuardedTest` and the extraction tests against the
+  native library, 25 passed, none skipped.

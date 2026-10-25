@@ -166,6 +166,54 @@ class ReaderTest {
     }
 
     @Test
+    void everyCallAfterCloseIsRefused() {
+        SecretReader reader = openReader();
+        assertThrows(SecretNotFoundException.class, () -> reader.get("missing"));
+        assertEquals(LATEST, reader.get("database-password").value().exposeText());
+        reader.close();
+        assertThrows(IllegalStateException.class, () -> reader.get("database-password"));
+        assertThrows(IllegalStateException.class, () -> reader.get("database-password", oldVersion));
+        assertThrows(IllegalStateException.class, () -> reader.properties("database-password"));
+        assertThrows(IllegalStateException.class, () -> reader.resolve("sourceorrery://" + vault + "/database-password"));
+        assertThrows(IllegalStateException.class, reader::descriptor);
+        reader.close();
+    }
+
+    @Test
+    void closeWhileReadsRunWaitsForThem() throws Exception {
+        SecretReader reader = openReader();
+        java.util.concurrent.CountDownLatch reading = new java.util.concurrent.CountDownLatch(8);
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<Integer>> readers = new java.util.ArrayList<>();
+            for (int t = 0; t < 8; t++) {
+                readers.add(pool.submit(() -> {
+                    int reads = 0;
+                    reading.countDown();
+                    while (true) {
+                        try (Secret secret = reader.get("database-password")) {
+                            if (!LATEST.equals(secret.value().exposeText())) {
+                                return -1;
+                            }
+                            reader.properties("database-password");
+                            reader.descriptor();
+                            reads++;
+                        } catch (IllegalStateException closed) {
+                            return reads;
+                        }
+                    }
+                }));
+            }
+            reading.await();
+            reader.close();
+            for (Future<Integer> result : readers) {
+                // Every call either read the right value or was refused cleanly.
+                assertTrue(result.get() >= 0);
+            }
+        }
+        assertTrue(reader.isClosed());
+    }
+
+    @Test
     void secretValuesDoNotLeak() {
         try (SecretReader reader = openReader()) {
             Secret secret = reader.get("database-password");

@@ -103,6 +103,8 @@ try {
     check(false, 'clone must refuse');
 } catch (LogicException) {
 }
+gc_collect_cycles();
+check($secret->value->expose() === LATEST, 'the value survives a refused clone');
 $secret->close();
 check($secret->value->isClosed() && $secret->value->length() === 0, 'closed');
 try {
@@ -157,6 +159,23 @@ check($locked !== null && !str_contains($locked->getMessage(), 'wrong-recovery-k
 $explicit = SecretReader::open($vault, new OpenOptions(home: $home, recoveryKey: $recoveryKey, environment: false));
 $descriptor = $explicit->descriptor();
 check($descriptor['name'] === $vault && in_array('recovery', $descriptor['protectors'], true), 'descriptor');
+// One native owner per reader: a clone or a serialisation is refused, and
+// the original reads on and closes its handle once.
+try {
+    $copy = clone $explicit;
+    check(false, 'reader clone must refuse');
+} catch (LogicException) {
+}
+gc_collect_cycles();
+check(!$explicit->isClosed(), 'the reader is open after a refused clone');
+check($explicit->get('database-password')->value->expose() === LATEST, 'the reader reads after a refused clone');
+try {
+    serialize($explicit);
+    check(false, 'reader serialize must refuse');
+} catch (LogicException) {
+}
+expectThrow(fn() => $explicit->get('missing'), SecretNotFoundException::class, 'not_found');
+check($explicit->get('database-password')->value->expose() === LATEST, 'the reader reads after a failed read');
 $explicit->close();
 check($explicit->isClosed(), 'reader closed');
 try {
@@ -164,7 +183,14 @@ try {
     check(false, 'closed reader must refuse');
 } catch (LogicException) {
 }
+try {
+    $explicit->descriptor();
+    check(false, 'closed reader must refuse every call');
+} catch (LogicException) {
+}
 $explicit->close();
+unset($explicit); // the destructor after close frees nothing again
+gc_collect_cycles();
 
 $project = Project::load($manifest);
 check($project->name === 'ci-project', 'project name');

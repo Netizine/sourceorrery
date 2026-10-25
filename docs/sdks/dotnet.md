@@ -119,6 +119,12 @@ value.Dispose();                         // zeroise; Expose() throws ObjectDispo
 value.ToString();                        // "[REDACTED]"
 ```
 
+Disposing a value, from another thread or from inside its own `Use`
+callback (directly, or by disposing the `Secret` or `Project` that owns
+it), refuses every later use at once, but the native bytes are zeroised
+and freed only when the callbacks already running have returned: a span is
+never left pointing at freed memory. `Dispose` never waits.
+
 ## Errors
 
 Every failure is a `SourceOrreryException` or a subclass, with `Code`,
@@ -162,7 +168,9 @@ does and throws the first required secret's exception if one cannot be read.
 
 ## Threads
 
-A `SecretReader` may be shared between threads.
+A `SecretReader` may be shared between threads; `Dispose` waits for the
+calls already running. A `SecretValue` may be used from several threads,
+and disposed while a callback runs (above).
 
 ## Building from source
 

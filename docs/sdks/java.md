@@ -163,7 +163,10 @@ does and throws the first required secret's exception if one cannot be read.
 
 ## Threads
 
-A `SecretReader` may be shared between platform or virtual threads.
+A `SecretReader` may be shared between platform or virtual threads, which
+read at the same time. `close()` waits for the calls already running, then
+frees the native reader once; a call made after `close()` was called throws
+`IllegalStateException`, and `close()` from inside a call is refused.
 
 ## Building from source
 

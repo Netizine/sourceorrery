@@ -149,6 +149,18 @@ is in `docs/security-remediation-validation.md`).
   server's no longer reports an `updated_on` earlier than the version's
   `created_on`.
 
+* PHP SDK: a `SecretReader` can no longer be cloned or serialised; a clone
+  shared the native handle, and closing either freed the other's. A refused
+  clone of a reader or a value owns nothing, whatever PHP does with it.
+* .NET SDK: a `SecretValue` disposed inside its own `Use` callback (directly
+  or through its `Secret` or `Project`) freed the bytes the callback's span
+  still pointed at. Disposal now refuses new uses at once and frees the
+  bytes, once, when the last running callback returns; no lock is held
+  while a callback runs.
+* Java SDK: `SecretReader.close()` could free the native reader while a
+  call on another thread was still using it. Every call now holds the
+  reader for its whole native call, and `close()` waits for them; a call
+  after `close()` throws `IllegalStateException`.
 * .NET SDK: `SecretReader.Dispose` waits for a call already running on
   another thread instead of closing the native reader under it, and a
   reader or value that becomes unreachable during a call can no longer be
