@@ -66,68 +66,45 @@ SourceOrrery takes a different line:
 
 ## Quick start
 
-Install the [CLI](https://sourceorrery.ai/getting-started/) first, then,
-from your application's directory:
+Install the [CLI](https://sourceorrery.ai/getting-started/#install), then choose a setup option from your
+application's directory.
+
+### Option 1: Set up with the CLI
+
+Run `sourceorrery setup` in your own terminal and choose `development`
+as the vault name. Keep the recovery key privately; the optional view
+check and provider connections are configured on the same screens.
 
 ```bash
 sourceorrery setup
-```
-
-The screens make a vault: its name, this machine's key in the OS
-credential store and a recovery key shown once (it opens the vault
-anywhere else), an optional view check (a password, and an authenticator
-code on top, asked before anyone views the vault or reveals a value; never
-by `run` or your applications), and where it keeps secrets: its own file,
-or HashiCorp Vault, AWS Secrets Manager or Azure Key Vault through a
-connection it holds. Nothing is written until the review confirms. Then,
-as commands ([First run](docs/getting-started.md)); replace `npm start`
-with the command you normally use to start your application:
-
-```bash
-# 1. Store a secret — interactively, from stdin or a file; never as an argument
 sourceorrery secret set database-password --vault development
-
-# 2. Inspect without revealing
-sourceorrery secret list --vault development
-sourceorrery secret get database-password --vault development
-
-# 3. Declare what your project needs and run it with secrets injected
-sourceorrery init
+sourceorrery init development --all
 sourceorrery check
-sourceorrery run -- npm start      # DATABASE_PASSWORD is set in the child only
+sourceorrery run -- npm start
 ```
 
-Without a terminal, `sourceorrery setup --guide` prints the one command
-that makes the vault. Working headless (WSL, Docker, CI)? Give the same
-vault its recovery key from a file:
+Values are typed at hidden prompts. An existing `.env` file can be moved
+with `sourceorrery import .env`, which reports names without showing
+values and leaves the original file for you to review.
+[First run](docs/getting-started.md) covers the steps and headless access.
+
+### Option 2: Set up with an AI coding agent
 
 ```bash
-export SOURCEORRERY_RECOVERY_KEY_FILE=/run/secrets/development.recovery-key
+sourceorrery init --integration all
 ```
 
-`sourceorrery import .env` imports supported
-entries into the vault and declares them in `sourceorrery.toml`, printing
-key names only. It leaves the original file in place; existing secrets and
-empty values are skipped by default. See [docs/cli.md](docs/cli.md) for every
-command.
+Use your existing coding agent and ask: "Set up SourceOrrery for this
+project without showing secret values." Replace `all` with your agent's
+name to install only its skills. The agent handles the manifest, code and
+launch commands; you create vaults and enter values privately.
+The [agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+also covers updating skills from the repository independently of the CLI.
 
-## AI coding agents
-
-`sourceorrery init --integration <agent>` installs two skills that let an
-AI coding agent set SourceOrrery up and migrate a project off `.env` files,
-code included, with instructions to keep values out of its context. They are compiled
-into the CLI (it makes no network requests) and written where each agent
-looks:
-
-```bash
-sourceorrery init --integration claude    # gemini, copilot, antigravity, cline, codex,
-                                          # cursor, hermes, kilocode, kimi, kiro, opencode, all
-```
-
-The repository is also a Claude Code plugin marketplace
-(`/plugin marketplace add Netizine/sourceorrery`), and
-[integrations/](integrations/README.md) holds the skills per agent for
-copying by hand. Guide: [docs/ai-agents.md](docs/ai-agents.md).
+The skills support twelve agents, including Claude Code, Codex and Cursor.
+The [integration folders](integrations/README.md) and Claude Code plugin
+provide the current repository skill text; the CLI installs its bundled
+snapshot without a network request. [Full agent guide](docs/ai-agents.md).
 
 ## Reading secrets from code
 

@@ -64,6 +64,16 @@ How the packages are published and how to check them:
 > The SDK then opens the vault file directly;
 > it does not need a CLI process running alongside your application.
 
+### Setup choices
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [The agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+   works with an existing CLI installation.
+
 Every SDK reads a vault that already exists, so the first steps are the
 CLI's:
 

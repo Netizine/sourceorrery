@@ -14,6 +14,16 @@ The website's install page puts Homebrew and WinGet before manual downloads,
 Cargo and source builds. Website analytics are optional and covered by the
 [privacy page](privacy.md); they are not part of the CLI or SDKs.
 
+## Setup options
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [The agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+   works with an existing CLI installation.
+
 ## Current guidance and historical records
 
 The [roadmap](roadmap.md) separates implemented features from future work.

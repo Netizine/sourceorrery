@@ -1,8 +1,18 @@
 # .NET
 
 > [!NOTE]
-> This SDK is read-only. Use the [SourceOrrery CLI](https://sourceorrery.ai/getting-started/#install)
-> to create vaults and set secret values. Installing the SDK does not install the CLI.
+> SDKs are read-only. The CLI creates vaults and sets secret values;
+> applications do not need a CLI process running alongside them.
+
+## Project setup options
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [The agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+   works with an existing CLI installation.
 
 ## Install
 

@@ -19,9 +19,8 @@ required = false
 purpose = "Payments sandbox"
 env = "STRIPE_KEY"
 
-# Pinned to one version and resolved from a different vault.
+# Pinned to one version in the project's vault. The id is illustrative.
 [secrets.signing-key]
 required = true
 purpose = "Signs outbound webhooks"
-vault = "shared-tooling"
 version = "0123456789abcdef0123456789abcdef"

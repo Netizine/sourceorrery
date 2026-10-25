@@ -103,3 +103,45 @@ with blessing disabled), 26 website tests, formatting and production site
 build passed. All 4,142 internal references resolved. Fifty current guide
 stamps and every package manifest matched 0.3.0. No package was published
 and no branch was pushed by this follow-up.
+
+## Agent setup and maintained skills
+
+Forty-seven onboarding, SDK and package pages present manual CLI setup as
+option 1 and AI-assisted setup as option 2. The agent route installs skills
+with `sourceorrery init --integration all` (or one selected agent), then
+lets the agent configure the manifest, application code and launch
+commands. Vault creation, recovery keys and new values remain private user
+steps. Installation copy uses the ready-install assumption; package
+versions and publication history are unchanged.
+
+Both skills and all their references were reviewed against the current
+CLI and SDK interfaces. The maintained repository/plugin copies were
+regenerated. They can be copied into projects independently of CLI package
+updates; an installed CLI continues to write its own bundled snapshot.
+The agent guide now explains that distinction and no longer suggests a
+CLI rebuild for a skill-text update.
+
+Corrections include explicit vault selection, unsupported-format guidance,
+unknown provider-write outcomes, review before deleting imported files,
+excluding tracked env files from code searches, and browser/edge/static
+runtime limits. The public example manifest no longer uses the removed
+per-secret vault field, and its walkthrough no longer prints injected
+values.
+
+Validation passed: nine integration tests with blessing disabled, three
+skill metadata/layout tests, 66 release-helper tests and 26 website tests.
+The production site built with 4,206 internal references resolving.
+An isolated CLI check installed all twelve agent layouts without a vault,
+manifest or usable recovery-key file, and a second run was unchanged.
+Both documented search commands excluded root and nested tracked env
+files in a key-name-only fixture. The corrected example parsed and reported
+the expected unavailable-vault statuses. No real user vault or provider
+was opened.
+
+Desktop getting-started, agent-guide and SDK screenshots plus the 390px
+layout were inspected. Browser requests were served from the local build;
+there were no page errors or external requests. The optional skill-creator
+Python helper could not run because PyYAML is unavailable; the repository's
+metadata/layout checks passed, frontmatter was unchanged and installed
+reference files resolved. No dependency was added, package release run or
+branch push performed.

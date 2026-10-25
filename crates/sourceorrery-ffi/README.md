@@ -23,6 +23,16 @@ This crate is published so that the library can be built from crates.io
 for a platform the release does not cover, and so that a binding for
 another language can be built on it.
 
+## Project setup options
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [The agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+   works with an existing CLI installation.
+
 ## What is in it
 
 * `so_reader_*` and `so_project_*`, **read-only**: open a vault the way the

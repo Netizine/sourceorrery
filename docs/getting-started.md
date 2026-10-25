@@ -19,6 +19,27 @@ without a terminal (`sourceorrery setup --guide` prints it).
 > generated, the authenticator key (with its QR code) until the app has
 > proved it has it, and the recovery key, behind a "written down" tick.
 
+## Choose a setup path
+
+### Option 1: Set up with the CLI
+
+Follow the manual walkthrough below, starting with [a vault](#1-a-vault).
+You create the vault, enter values, select the project secrets and run the
+application from your own terminal.
+
+### Option 2: Set up with an AI coding agent
+
+```bash
+sourceorrery init --integration all
+```
+
+Use your existing coding agent and ask: "Set up SourceOrrery for this
+project without showing secret values." Replace `all` with your agent's
+name to install only its skills. The agent handles the manifest, code and
+launch commands; you create vaults and enter values privately.
+The [agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+also covers updating skills from the repository independently of the CLI.
+
 ## 1. A vault
 
 A vault is one encrypted file in your home directory. It holds your

@@ -49,7 +49,6 @@ NOTED = (
     "README.md",
     "docs/building.md",
     "docs/supply-chain.md",
-    "docs/ai-agents.md",
     "docs/sdks/index.md",
     "docs/sdks/python.md",
     "docs/sdks/javascript.md",
@@ -65,6 +64,7 @@ NOTED = (
 )
 # Pages that carry the version only.
 VERSION_ONLY = (
+    "docs/ai-agents.md",
     "crates/sourceorrery-cli/README.md",
     "crates/sourceorrery/README.md",
     "crates/sourceorrery-core/README.md",

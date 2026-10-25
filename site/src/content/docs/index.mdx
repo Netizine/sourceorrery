@@ -68,7 +68,9 @@ needs. Read them through an SDK, or inject them into a child process at launch.
   </FeatureCard>
 </div>
 
-## Start with the CLI
+## Setup options
+
+### Option 1: Set up with the CLI
 
 [Install SourceOrrery](/getting-started/#install), then run these commands in
 your project directory. The secret prompt is hidden; values are never command-line arguments.
@@ -100,6 +102,19 @@ sourceorrery run -- npm start
 The child process can read and disclose its environment, so run code you trust.
 The [getting started guide](/getting-started/) covers unlocking, verification
 and working without an OS credential store.
+
+### Option 2: Set up with an AI coding agent
+
+```bash
+sourceorrery init --integration all
+```
+
+Use your existing coding agent and ask: "Set up SourceOrrery for this
+project without showing secret values." Replace `all` with your agent's
+name to install only its skills. The agent handles the manifest, code and
+launch commands; you create vaults and enter values privately.
+The [agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+also covers updating skills from the repository independently of the CLI.
 
 ## Use your language
 

@@ -12,7 +12,20 @@ below reads:
   the code, scripts, Docker and CI files that read them, and remove the
   plaintext.
 
-Both tell the agent never to read, print or write a secret value.
+Both tell the agent never to read, print or write a secret value. This is
+**option 2** in the setup guides: the CLI installs the skills, then the
+agent helps configure the project while the user handles keys and values
+privately. It installs instructions for your agent, not the agent itself.
+
+## Setup choices
+
+1. **Option 1: Set up with the CLI.** Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install),
+   then create the vault and set its secret values in your own terminal.
+2. **Option 2: Set up with an AI coding agent.** Run
+   `sourceorrery init --integration all`, then ask your agent to set up
+   SourceOrrery for the project without showing values. You keep vault
+   keys and new values private. [The agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+   works with an existing CLI installation.
 
 ## Installing them
 
@@ -25,9 +38,11 @@ sourceorrery init --integration claude      # or gemini, copilot, antigravity, c
 sourceorrery init --integration claude,cursor --scope user   # for every project on this machine
 ```
 
-In a project that already has `sourceorrery.toml`, the manifest is kept and
-only the skills are installed; run it again after upgrading the CLI to
-update them. Skills a user wrote under the same name are never overwritten.
+Without a secret selection, this installs skills before a vault or
+manifest exists and keeps an existing manifest. `--all` or `--secret NAME`
+also writes or extends the manifest from the selected vault. Running the
+command again writes the snapshot bundled with that CLI; user-authored
+skills under the same name are preserved.
 
 | Agent | `--integration` | Project directory | `--scope user` directory |
 |-------|-----------------|-------------------|--------------------------|
@@ -49,10 +64,13 @@ managed directory an organisation deploys to every machine
 (`/etc/claude-code/.claude/skills` for Claude Code, `/etc/codex/skills` for
 Codex).
 
-## Without the CLI
+## Current skills without a CLI rebuild
 
-Each directory here holds exactly what `sourceorrery init --integration
-<agent>` writes into a project, so the skills can be copied by hand:
+Each directory here holds the current files in the layout that
+`sourceorrery init --integration <agent>` writes. Copy them into the
+matching project directory to use this repository's skill text with an
+existing CLI. Include references and agent metadata, review replacements
+and keep unrelated or user-authored files. For a new Cursor skill folder:
 
 ```bash
 cp -r integrations/cursor/.cursor/skills/* <your project>/.cursor/skills/

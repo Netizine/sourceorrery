@@ -32,6 +32,25 @@ Check `sourceorrery --version` before following it. The authenticated
 local broker remains on the [roadmap](/roadmap/).
 </Aside>
 
+## Choose a setup path
+
+### Option 1: Set up with the CLI
+
+[Install the CLI](#install), then follow [the manual project setup](#set-up-a-project).
+
+### Option 2: Set up with an AI coding agent
+
+```bash
+sourceorrery init --integration all
+```
+
+Use your existing coding agent and ask: "Set up SourceOrrery for this
+project without showing secret values." Replace `all` with your agent's
+name to install only its skills. The agent handles the manifest, code and
+launch commands; you create vaults and enter values privately.
+The [agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+also covers updating skills from the repository independently of the CLI.
+
 ## Install
 
 There are three ways to install 0.3.0: the published packages, the files
@@ -40,7 +59,7 @@ on the GitHub release, or a build from source.
 | Your starting point | Recommended route |
 |---------------------|-------------------|
 | macOS or Linux with Homebrew | [Homebrew](#with-a-package-manager): no Rust toolchain needed |
-| Windows | [WinGet](#with-a-package-manager), with Scoop while catalog approval is pending |
+| Windows | [WinGet](#with-a-package-manager): no Rust toolchain needed |
 | No supported package manager | [Prebuilt release download](#from-the-github-release) |
 | Rust and a C compiler already installed | [Cargo](#from-the-package-registries) |
 | Contributing or changing the implementation | [Build from source](#from-source) |
@@ -54,15 +73,13 @@ it installs is the released file.
 <Tabs syncKey="os">
 <TabItem label="Windows">
 
-WinGet is the default Windows route once its catalog entry is approved:
+With WinGet:
 
 ```powershell
 winget install --id Netizine.SourceOrrery --exact
 ```
 
-The [catalog submission](https://github.com/microsoft/winget-pkgs/pull/460455)
-is still open. Until it is approved, use [Scoop](https://scoop.sh) or the
-prebuilt download below:
+Alternatively, use [Scoop](https://scoop.sh) or the prebuilt download below:
 
 ```powershell
 scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery

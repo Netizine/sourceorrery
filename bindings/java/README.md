@@ -23,6 +23,8 @@ Documentation: [the Java guide](https://sourceorrery.ai/sdks/java/) ·
 
 ## Before you start: the CLI
 
+### Option 1: Set up with the CLI
+
 This SDK is read-only. Use the separately installed `sourceorrery` CLI to
 create vaults and set secret values. Maven does not install the CLI. Follow
 the [CLI installation guide](https://sourceorrery.ai/getting-started/#install), then:
@@ -34,6 +36,19 @@ sourceorrery secret set database-password --vault development   # typed at a hid
 
 The CLI does not have to be installed where your application runs: this
 library opens the vault file itself.
+
+### Option 2: Set up with an AI coding agent
+
+```bash
+sourceorrery init --integration all
+```
+
+Use your existing coding agent and ask: "Set up SourceOrrery for this
+project without showing secret values." Replace `all` with your agent's
+name to install only its skills. The agent handles the manifest, code and
+launch commands; you create vaults and enter values privately.
+The [agent setup guide](https://sourceorrery.ai/guides/ai-agents/)
+also covers updating skills from the repository independently of the CLI.
 
 ## Install
 
