@@ -88,8 +88,8 @@ use self::rows::{
     query_secret_names, query_secret_rows, select_version, stored_elsewhere,
 };
 use self::schema::{
-    Meta, SCHEMA, ViewState, begin_write, crypto, db, nanos, open_connection, opt_nanos, read_meta,
-    recovery_id, value_aad, write_settings_tag,
+    AUDIT_INDEXES, Meta, SCHEMA, ViewState, begin_write, crypto, db, nanos, open_connection,
+    opt_nanos, read_meta, recovery_id, value_aad, write_settings_tag,
 };
 use self::wraps::{
     new_recovery_wrap, new_this_machine_wrap, read_wraps, recovery_wrap_for, try_recovery_key,
@@ -268,6 +268,7 @@ impl SqliteVault {
         let mut conn = open_connection(path)?;
         restrict_permissions(path, 0o600)?;
         conn.execute_batch(SCHEMA).map_err(db)?;
+        conn.execute_batch(AUDIT_INDEXES).map_err(db)?;
         // Everything that makes the file a vault lands in one transaction:
         // a crash leaves an empty database, never a vault without its
         // keys, its settings tag or its first audit row.
@@ -480,6 +481,9 @@ impl SqliteVault {
         with_recovery_key: bool,
     ) -> Result<Self> {
         let metadata_key = integrity::derive_metadata_key(&dek);
+        // Unlocked: a file written before an index existed gets it now,
+        // before the checks below use it.
+        conn.execute_batch(AUDIT_INDEXES).map_err(db)?;
         let head_stale = Self::refuse_if_truncated(
             &conn,
             &metadata_key,

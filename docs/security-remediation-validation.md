@@ -951,3 +951,75 @@ One commit: the checks and the new write order share the tag plan.
   on this branch (CI; no C compiler here); the Azure live suite; macOS and
   Linux runs of everything marked local; a second Windows account against
   SR04's files.
+
+### B29 — what grows with a vault's history, measured
+
+* **Closes:** REC08's scalability part (B06, B07 and B18 consolidated the
+  state transitions; every write still enters through `begin` or
+  `begin_view_check`, the three exceptions being the acknowledgement of a
+  truncation, the purge right after the unlock's own check, and a new or
+  exported file, each with its reason in the code).
+* **Harness:** `crates/sourceorrery-provider/examples/scale.rs` builds a
+  vault of N secrets and at least M audit events (reads, each recording
+  one) and times what the CLI and the SDKs do: unlock, read, properties,
+  listings, versions, the audit queries (newest, a follow poll, all),
+  verification, export, the same through `Routed`, and four handles
+  reading at once. Synthetic values, recovery key, no credential store.
+  Machine: Intel Core i7-8650U (4 cores, 8 threads), 16 GB, Samsung NVMe
+  SSD, Windows 11 Pro, NTFS; release build; median of 15 runs (5 for the
+  whole-log operations). History varied at 10 secrets (1,000, 10,000 and
+  100,000 events), secrets varied at 20,000 events (1,000 and 10,000).
+* **Found:** every operation counted the keyed audit rows with a scan of
+  the whole table three times (the gate's chain-head check, the append's,
+  and the head written after it), so a read grew with its own history: 13
+  ms at 1,000 events, 16 at 10,000, **91 at 100,000**; listings 128 ms, four
+  handles 98 ms each. A partial index `audit_keyed` alone halved that (50
+  ms) but, with no table statistics, the planner then chose it for the
+  truncation, settings and checkpoint checks it does not serve (the
+  truncation check, part of every operation, scanned every keyed row: 59
+  ms). Running `ANALYZE` fixed the choice in a probe, but a plan that
+  depends on statistics is not one to rely on.
+* **Changed:** the audit indexes are one idempotent set, created with the
+  schema and again at every unlock (a schema 5 file written before
+  `audit_keyed` existed, or with an index dropped, has them all before the
+  checks run; no index holds authenticated state). Each per-operation
+  check names its index with `INDEXED BY` (the count and the newest keyed
+  row `audit_keyed`, the acknowledgements and truncations
+  `audit_verifications`, the newest settings checkpoint `audit_settings`,
+  the checkpoints `audit_checkpoints`); the attempts query, read by
+  `audit` only, scans the table (`NOT INDEXED`). No check is skipped: the
+  counts, the walk at unlock and every audit row are as before.
+* **Results** (median ms; before → after at the same file):
+
+  | | 1k events | 10k | 100k | 1,000 secrets, 20k | 10,000 secrets, 20k |
+  |---|---|---|---|---|---|
+  | open | 21 → 21 | 63 → 68 | 524 → 553 | 162 → 90 | 118 → 101 |
+  | get_secret | 13 → 13 | 16 → 17 | 91 → 22 | 28 → 14 | 28 → 15 |
+  | list every secret | 14 → 15 | 18 → 15 | 128 → 18 | 55 → 33 | 173 → 180 |
+  | Routed get_secret | 13 → 15 | 17 → 15 | 96 → 20 | 32 → 13 | 28 → 14 |
+  | 4 handles, a read each | 13 → 14 | 17 → 15 | 98 → 21 | 27 → 14 | 28 → 15 |
+  | follow poll | 0.25 → 0.17 | 0.84 → 0.77 | 26 → 27 | 5.0 → 4.1 | 9.0 → 5.2 |
+  | verify the chain | 6 → 7 | 49 → 50 | 536 → 520 | 107 → 82 | 98 → 94 |
+
+  (The 1k and 10k "before" columns are the first run's, made with the same
+  pre-fix binary on fixtures built the same way.)
+* **Budgets, for that machine:** to 100,000 events and 10,000 secrets, a
+  read within 25 ms, an unlock within a second, a listing of 10,000 secrets
+  within 250 ms; `docs/architecture.md` ("How costs grow") records them
+  with what each grows with. They are not enforced in CI (timings on shared
+  runners are not comparable); the harness is how to check them.
+* **Left, measured and explained:** the walk at unlock (about 5 µs an
+  event since the newest acknowledgement; it is the check that finds a row
+  replaced inside the log, and verifying from a later point would skip
+  authenticating those rows, a decision of its own); a follow poll scans by
+  time (27 ms at 100,000 events, once per interval of at least a second; an
+  id cursor would make it incremental, a change to `AuditQuery`); the keyed
+  count is linear in the index (about 2 ms per 100,000, three per
+  operation; one per write transaction would do); a read's floor is the
+  audit commit in rollback-journal mode (about 12 ms here), which WAL would
+  lower at the cost of files beside the vault, a format decision.
+* **Tests run:** `every_check_reads_its_index_not_the_whole_log` (the head
+  check's statements read `audit_keyed`; every audit index dropped, then
+  an unlock: all five back, reads and listings work, the chain intact); it
+  **fails without the index** (the plan names no index). Storage, provider,
+  conformance and CLI suites; clippy clean for storage and provider.

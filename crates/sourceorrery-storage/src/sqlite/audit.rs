@@ -144,7 +144,7 @@ pub(super) fn unresolved_attempts(
 ) -> Result<Vec<ChainRow>> {
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {CHAIN_COLUMNS} FROM audit_events
+            "SELECT {CHAIN_COLUMNS} FROM audit_events NOT INDEXED
              WHERE keyed = 1 AND detail LIKE '{AT_CONNECTION}%'
              ORDER BY id"
         ))
@@ -390,13 +390,16 @@ pub(super) fn write_head(
 }
 
 /// Rows flagged as written with the metadata key.
+/// The two statements of the chain-head check every append makes; the
+/// partial index `audit_keyed` answers both (see `schema::AUDIT_INDEXES`).
+pub(super) const KEYED_COUNT_SQL: &str =
+    "SELECT COUNT(*) FROM audit_events INDEXED BY audit_keyed WHERE keyed = 1";
+pub(super) const LAST_KEYED_SQL: &str = "SELECT id, hash FROM audit_events INDEXED BY audit_keyed
+     WHERE keyed = 1 ORDER BY id DESC LIMIT 1";
+
 pub(super) fn keyed_count(conn: &Connection) -> Result<u64> {
     let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM audit_events WHERE keyed = 1",
-            [],
-            |row| row.get(0),
-        )
+        .query_row(KEYED_COUNT_SQL, [], |row| row.get(0))
         .map_err(db)?;
     Ok(u64::try_from(count).unwrap_or_default())
 }
@@ -420,7 +423,7 @@ pub(super) fn chain_problem(
     // The newest authentic acknowledgement, if any: the walk starts after it.
     let mut acks = conn
         .prepare(&format!(
-            "SELECT {CHAIN_COLUMNS} FROM audit_events
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_verifications
              WHERE operation = '{}' AND outcome = '{}' AND keyed = 1
              ORDER BY id DESC",
             AuditOperation::AuditVerify.as_str(),
@@ -476,16 +479,12 @@ pub(super) fn read_head(conn: &Connection) -> Result<Option<String>> {
 
 /// `(id, hash)` of the newest row written with the metadata key.
 pub(super) fn last_keyed_row(conn: &Connection) -> Result<Option<(i64, Vec<u8>)>> {
-    conn.query_row(
-        "SELECT id, hash FROM audit_events WHERE keyed = 1 ORDER BY id DESC LIMIT 1",
-        [],
-        |row| {
-            Ok((
-                row.get(0)?,
-                row.get::<_, Option<Vec<u8>>>(1)?.unwrap_or_default(),
-            ))
-        },
-    )
+    conn.query_row(LAST_KEYED_SQL, [], |row| {
+        Ok((
+            row.get(0)?,
+            row.get::<_, Option<Vec<u8>>>(1)?.unwrap_or_default(),
+        ))
+    })
     .optional()
     .map_err(db)
 }
@@ -559,7 +558,7 @@ pub(super) fn unacknowledged_truncations(
     // applies; it is a fixed label, not input.
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {CHAIN_COLUMNS} FROM audit_events
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_verifications
              WHERE operation = '{}' AND keyed = 1
              ORDER BY id",
             AuditOperation::AuditVerify.as_str()
@@ -643,7 +642,7 @@ pub(super) fn settings_problem(
     let newest = conn
         .query_row(
             &format!(
-                "SELECT {CHAIN_COLUMNS} FROM audit_events
+                "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_settings
                  WHERE settings_tag IS NOT NULL AND keyed = 1
                  ORDER BY id DESC LIMIT 1"
             ),
@@ -735,7 +734,7 @@ fn read_checkpoints(
 ) -> Result<Vec<ChainRow>> {
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {CHAIN_COLUMNS} FROM audit_events
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_checkpoints
              WHERE secret_name = ?1 AND keyed = 1
                AND (state_tag IS NOT NULL OR version_tag IS NOT NULL)
              ORDER BY id"
@@ -825,7 +824,7 @@ pub(super) fn vault_checkpoints(
 ) -> Result<BTreeMap<String, SecretCheckpoints>> {
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {CHAIN_COLUMNS} FROM audit_events
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_checkpoints
              WHERE secret_name IS NOT NULL AND keyed = 1
                AND (state_tag IS NOT NULL OR version_tag IS NOT NULL)
              ORDER BY id"

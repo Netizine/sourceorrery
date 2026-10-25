@@ -270,6 +270,37 @@ Headless Linux servers often have no Secret Service daemon. There the vault
 opens with its recovery key, provisioned from a file or the environment —
 never a silent fallback to plaintext or an unprotected vault.
 
+### How costs grow
+
+Every read records an audit row, so a vault's history grows with its use.
+Measured with `crates/sourceorrery-provider/examples/scale.rs` on one
+machine (Intel Core i7-8650U, 4 cores, NVMe SSD, Windows 11, release
+build), median milliseconds of 15 runs (5 for the whole-log operations),
+10 secrets unless stated:
+
+| Operation | 1,000 events | 10,000 | 100,000 | What it grows with |
+|---|---|---|---|---|
+| Open (unlock) | 21 | 68 | 553 | every event since the newest acknowledgement: the walk at unlock verifies each one (about 5 µs) |
+| Read: `get`, `properties`, through `Routed` | 13 | 15 | 20–22 | the audit row it commits (about 12 ms of it), and the count of keyed rows the chain-head check takes (about 2 ms per 100,000 events) |
+| List every secret | 15 | 15 | 18 | the secrets, not the history: 33 ms for 1,000 secrets, 180 ms for 10,000 |
+| Newest 100 audit events | 0.25 | 0.24 | 0.25 | nothing |
+| `audit export --follow`, one poll | 0.2 | 0.8 | 27 | every event: each poll looks for newer ones by time |
+| Every event; `audit --verify` | 2; 7 | 14; 50 | 173; 520 | every event, by design |
+| `vault export` | 58 | 105 | 558 | the file's size |
+| A read with four handles reading at once | 14 | 15 | 21 | as a read: writers take turns, and none waited out the 5 s busy timeout |
+
+On that machine the vault is tested to 100,000 events and 10,000 secrets;
+a read stays within 25 ms there, an unlock within a second, and a listing
+of 10,000 secrets within 250 ms. Other machines differ, mostly in what a
+durable commit costs. Before the `audit_keyed` index, every operation
+counted the keyed rows with a scan of the whole log, three times: a read
+took 91 ms at 100,000 events and a listing 128 ms. That index, and each
+check naming the index it reads ([vault format](vault-format.md)), removed
+the scans.
+What still grows with the history is deliberate or measured: the walk at
+unlock is the check that finds a row replaced inside the log, and starting
+it later would skip authenticating those rows.
+
 ## 6. CLI (`sourceorrery-cli`)
 
 `clap` for the command surface, `rpassword` for hidden input, `owo-colors`

@@ -322,6 +322,80 @@ fn listing_cost_does_not_grow_with_the_number_of_secrets() {
     assert!(large_live <= 20, "a listing ran {large_live} statements");
 }
 
+/// The audit log's indexes. The chain-head check every append makes, and
+/// so every operation, counts the keyed rows and finds the newest of them;
+/// without `audit_keyed` each is a scan of the whole log, and a read got
+/// slower as its own audit rows accumulated (B29: 91 ms a read at 100,000
+/// events, against 13 ms at 1,000). With it, and no table statistics, the
+/// planner took it for the truncation, settings and checkpoint checks too,
+/// which it does not serve; so each check names its index. Every index is
+/// created again at unlock when it is missing, and the operations work.
+#[test]
+fn every_check_reads_its_index_not_the_whole_log() {
+    const INDEXES: [&str; 5] = [
+        "audit_events_by_secret",
+        "audit_checkpoints",
+        "audit_verifications",
+        "audit_settings",
+        "audit_keyed",
+    ];
+    fn plan(conn: &rusqlite::Connection, sql: &str) -> Vec<String> {
+        conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+    fn present(conn: &rusqlite::Connection) -> Vec<String> {
+        conn.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'audit_%'")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (path, vault, key) = create(&dir);
+    vault
+        .set_secret("db", SecretBytes::from("v"), SetSecretOptions::default())
+        .unwrap();
+    {
+        let conn = vault.conn.lock().unwrap();
+        for sql in [audit::KEYED_COUNT_SQL, audit::LAST_KEYED_SQL] {
+            let steps = plan(&conn, sql);
+            assert!(
+                steps.iter().any(|step| step.contains("audit_keyed")),
+                "{sql}: {steps:?}"
+            );
+        }
+    }
+    drop(vault);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for index in INDEXES {
+        conn.execute_batch(&format!("DROP INDEX {index}")).unwrap();
+    }
+    assert_eq!(present(&conn), Vec::<String>::new());
+    drop(conn);
+    let vault = reopen(&path, &key);
+    assert_eq!(vault.get_secret("db", None).unwrap().value.expose(), b"v");
+    assert_eq!(vault.list_properties_of_secrets().unwrap().len(), 1);
+    drop(vault);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let mut found = present(&conn);
+    found.sort_unstable();
+    let mut wanted: Vec<String> = INDEXES.iter().map(|&name| name.to_owned()).collect();
+    wanted.sort_unstable();
+    assert_eq!(found, wanted, "every index is created again at unlock");
+    drop(conn);
+    assert!(
+        reopen(&path, &key)
+            .verify_audit_chain()
+            .unwrap()
+            .is_intact()
+    );
+}
+
 mod view_check {
     //! The view check: password, hint, authenticator, the wait after
     //! repeated wrong answers, and the recovery key that passes it.

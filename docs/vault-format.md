@@ -130,7 +130,11 @@ either row checkpoint column is set, so finding a secret's checkpoints does
 not scan its reads. Index `audit_verifications` on `id` covers the
 `audit_verify` rows (truncations and acknowledgements), which every unlock
 and operation consults. Index `audit_settings` on `id` covers the rows that
-carry a settings checkpoint, so the newest is found without a scan.
+carry a settings checkpoint, so the newest is found without a scan. Index
+`audit_keyed` on `id` covers the keyed rows, for the chain-head check every
+append makes (their count and the newest of them); a schema 5 file written
+before it existed gets it when it is next unlocked. No index holds state
+the format authenticates.
 
 ## Key hierarchy
 

@@ -175,6 +175,21 @@ CREATE TABLE IF NOT EXISTS audit_events (
     version_tag BLOB,
     settings_tag BLOB
 );
+";
+
+/// The audit log's indexes, created with the schema and again at every
+/// unlock: they hold no state the format authenticates, so a file missing
+/// one (written before it existed, or with one dropped) is valid and has
+/// them all again before the checks use them. The checks name their index
+/// (`INDEXED BY`), so no plan depends on table statistics; without that,
+/// the planner took `audit_keyed` for queries it does not serve and the
+/// truncation check of every operation scanned every keyed row.
+///
+/// `audit_keyed` serves the chain-head check every append makes: the count
+/// of keyed rows (the head records it, so keyed rows removed from inside the
+/// log are caught) and the newest keyed row, each a scan of the whole log
+/// without it.
+pub(super) const AUDIT_INDEXES: &str = "
 CREATE INDEX IF NOT EXISTS audit_events_by_secret ON audit_events(secret_name, id DESC);
 CREATE INDEX IF NOT EXISTS audit_checkpoints ON audit_events(secret_name, id)
     WHERE state_tag IS NOT NULL OR version_tag IS NOT NULL;
@@ -182,6 +197,7 @@ CREATE INDEX IF NOT EXISTS audit_verifications ON audit_events(id)
     WHERE operation = 'audit_verify';
 CREATE INDEX IF NOT EXISTS audit_settings ON audit_events(id)
     WHERE settings_tag IS NOT NULL;
+CREATE INDEX IF NOT EXISTS audit_keyed ON audit_events(id) WHERE keyed = 1;
 ";
 
 pub(super) fn open_connection(path: &Path) -> Result<Connection> {

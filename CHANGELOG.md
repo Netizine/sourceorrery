@@ -157,6 +157,12 @@ is in `docs/security-remediation-validation.md`).
 
 ### Fixed
 
+* Every operation counted the vault's keyed audit rows with a scan of the
+  whole log, three times, so reads slowed as their own audit rows
+  accumulated (91 ms a read at 100,000 events on a laptop, 22 ms now; a
+  listing 128 ms, 18 now). An index serves the count, each check names the
+  index it reads, and a vault gets the indexes it lacks when it is
+  unlocked. `docs/architecture.md` records what still grows, and why.
 * HashiCorp Vault: a reply is read chunk by chunk and stopped at its 8 MiB
   cap; one without a declared length used to be buffered whole first.
 * HashiCorp Vault: an update made on a machine whose clock trails the Vault
