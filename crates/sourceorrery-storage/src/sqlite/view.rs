@@ -226,6 +226,22 @@ impl SqliteVault {
             .map_err(|_| storage("view-check state poisoned"))
     }
 
+    /// The view-check state as the file holds it now, verified, and
+    /// remembered for this handle (SR11 of the 2026-10-25 review): another
+    /// process may have set, replaced or cleared the check, enrolled or
+    /// removed an authenticator, or counted wrong answers since this handle
+    /// opened the vault. One read transaction, so the snapshot is
+    /// consistent; nothing is written.
+    fn current_view_state(&self) -> Result<ViewState> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(db)?;
+        let state = self.stored_view_state(&tx)?;
+        drop(tx);
+        drop(conn);
+        self.remember(state.clone())?;
+        Ok(state)
+    }
+
     pub(super) fn remember(&self, state: ViewState) -> Result<()> {
         *self
             .view
@@ -329,9 +345,10 @@ impl SqliteVault {
         aead::open(&self.dek, aad.as_bytes(), &ciphertext).map_err(crypto)
     }
 
-    /// What viewing this vault asks for.
+    /// What viewing this vault asks for now, as the file holds it (not as
+    /// it was when this handle opened the vault).
     pub fn view_check(&self) -> Result<ViewCheck> {
-        let state = self.view_state()?;
+        let state = self.current_view_state()?;
         let authenticator = state
             .second_factor
             .as_deref()
@@ -350,9 +367,9 @@ impl SqliteVault {
         self.opened_with_recovery_key
     }
 
-    /// The password hint, shown at the password prompt.
+    /// The password hint, shown at the password prompt: the current one.
     pub fn password_hint(&self) -> Result<Option<String>> {
-        let Some(raw) = self.view_state()?.password_hint else {
+        let Some(raw) = self.current_view_state()?.password_hint else {
             return Ok(None);
         };
         let plain = self.unseal("password-hint", &raw)?;
@@ -361,9 +378,9 @@ impl SqliteVault {
             .map_err(|_| storage("corrupt password hint"))
     }
 
-    /// The authenticator enrolment, without its secret.
+    /// The authenticator enrolment, without its secret: the current one.
     pub fn authenticator(&self) -> Result<Option<SecondFactorInfo>> {
-        self.view_state()?
+        self.current_view_state()?
             .second_factor
             .as_deref()
             .map(|raw| {
@@ -672,6 +689,8 @@ impl SqliteVault {
     /// is refused unweighed until its wait is over. Every outcome is audited
     /// under `guard`, in one transaction with the count it changes.
     pub fn check_view(&self, answers: &ViewAnswers, now: OffsetDateTime) -> Result<()> {
+        // The current state decides, read without a write lock; a check set
+        // in between is caught by the transaction below, which reads again.
         if self.view_check()?.is_none() {
             return Ok(());
         }

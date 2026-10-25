@@ -149,6 +149,9 @@ is in `docs/security-remediation-validation.md`).
   server's no longer reports an `updated_on` earlier than the version's
   `created_on`.
 
+* The view check is decided on the vault's current settings: a password
+  or an authenticator another process set after a handle opened the vault
+  is asked for, and the prompts follow.
 * `run`: an optional secret that does not resolve leaves its variable
   absent in the child. A value of that name in `run`'s own environment
   used to pass through, where the program could take it for the vault's.

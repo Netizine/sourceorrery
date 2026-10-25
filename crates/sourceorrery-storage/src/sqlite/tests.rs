@@ -429,6 +429,97 @@ mod view_check {
         assert!(!text.contains(PASSWORD));
     }
 
+    /// SR11 of the 2026-10-25 review: a handle opened before another
+    /// process changed the view check asks, and weighs, what the vault asks
+    /// now, not what it asked when the handle opened.
+    #[test]
+    fn a_handle_follows_the_view_check_another_process_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dev.sorvault");
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let created =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), store.clone())
+                .unwrap();
+        let recovery_key = created.recovery_key.as_str().to_owned();
+        let first = created.vault;
+        let other = SqliteVault::open(&path, store.clone(), &NoInteraction).unwrap();
+        let by_recovery_key = reopen(&path, &recovery_key);
+        let now = timestamp::now();
+        assert!(first.view_check().unwrap().is_none());
+
+        // Set elsewhere: asked here, with the hint.
+        other
+            .set_password(
+                &SecretBytes::from(PASSWORD),
+                Some("the long one"),
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        assert_eq!(first.view_check().unwrap().describe(), "password");
+        assert_eq!(
+            first.password_hint().unwrap().as_deref(),
+            Some("the long one")
+        );
+        let err = first.check_view(&answers(None, None), now).unwrap_err();
+        assert_eq!(err.code(), "permission_denied");
+        first
+            .check_view(&answers(Some(PASSWORD), None), now)
+            .unwrap();
+        // The recovery key that opened a handle still passes it (documented).
+        by_recovery_key
+            .check_view(&ViewAnswers::default(), now)
+            .unwrap();
+
+        // Replaced elsewhere: the old password no longer passes here.
+        other
+            .set_password(
+                &SecretBytes::from("another long password"),
+                None,
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        assert!(first.password_hint().unwrap().is_none());
+        let err = first
+            .check_view(&answers(Some(PASSWORD), None), now)
+            .unwrap_err();
+        assert_eq!(err.code(), "permission_denied");
+        first
+            .check_view(&answers(Some("another long password"), None), now)
+            .unwrap();
+
+        // An authenticator enrolled and verified elsewhere is asked for.
+        let unix = u64::try_from(now.unix_timestamp()).unwrap();
+        let secret = other.enrol_authenticator().unwrap();
+        assert!(
+            other
+                .verify_authenticator(&secret.code_at(unix), now)
+                .unwrap()
+        );
+        assert!(first.view_check().unwrap().authenticator);
+        assert!(first.authenticator().unwrap().unwrap().verified);
+        let err = first
+            .check_view(&answers(Some("another long password"), None), now)
+            .unwrap_err();
+        assert!(err.to_string().contains("authenticator"), "{err}");
+        other.remove_authenticator().unwrap();
+        assert!(!first.view_check().unwrap().authenticator);
+        assert!(first.authenticator().unwrap().is_none());
+
+        // Wrong answers counted elsewhere make this handle wait too.
+        for _ in 0..FREE_FAILURES {
+            let _ = other.check_view(&answers(Some("wrong"), None), now);
+        }
+        let err = first
+            .check_view(&answers(Some("another long password"), None), now)
+            .unwrap_err();
+        assert!(err.to_string().contains("try again"), "{err}");
+
+        // Cleared elsewhere: nothing is asked here.
+        other.clear_view_check().unwrap();
+        assert!(first.view_check().unwrap().is_none());
+        first.check_view(&ViewAnswers::default(), now).unwrap();
+    }
+
     #[test]
     fn a_hint_must_not_give_the_password_away() {
         let dir = tempfile::tempdir().unwrap();

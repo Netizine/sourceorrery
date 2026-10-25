@@ -650,3 +650,23 @@ One commit: the checks and the new write order share the tag plan.
   variables never reach the child, the exit status passes whole).
 * **Not run here:** the Unix spelling of the test (`sh -c`; CI runs it on
   Linux and macOS).
+
+### B17 — the view check asks what the vault asks now
+
+* **Closes:** SR11.
+* **Changes:** `view_check()`, `password_hint()` and `authenticator()`
+  read the view-check state as the file holds it now (one read
+  transaction, through the verified settings record) and remember it for
+  the handle, instead of the state cached when the handle opened. So
+  `check_view` no longer returns early on a check another process set
+  after this handle opened, and the CLI's prompts (which ask what
+  `view_check()` says) agree with the decision. The documented exceptions
+  stay: a handle the recovery key opened passes, and `run`, `check`,
+  `init` and the SDKs never ask. A tampered record is refused as before.
+* **Tests run:** `a_handle_follows_the_view_check_another_process_changes`
+  (two handles: a password set, replaced and cleared elsewhere; an
+  authenticator enrolled, verified and removed elsewhere; wrong answers
+  counted elsewhere make this handle wait; the recovery-key handle passes).
+  It **fails without the fix** (the second handle reported `none` after the
+  password was set). Storage 76 tests; clippy clean. Same-user isolation is
+  not claimed: the view check is a check, not encryption (ADR 0009).
