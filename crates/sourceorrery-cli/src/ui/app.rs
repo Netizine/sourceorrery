@@ -102,6 +102,7 @@ pub enum Action {
     /// Forget the selected project, whose folder is gone.
     Unlink,
     Help,
+    Actions,
     Quit,
 }
 
@@ -109,6 +110,7 @@ pub enum Action {
 /// close the help.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
+    Menu,
     Normal,
     Search,
     Help,
@@ -171,6 +173,7 @@ pub struct App {
     /// Keys go to the search box.
     pub editing: bool,
     pub help: bool,
+    pub menu: Option<super::menu::Menu>,
     pub help_view: super::viewport::Viewport,
     pub declarations: TableState,
     pub declaration_page: usize,
@@ -213,6 +216,7 @@ impl App {
             versions: TableState::default(),
             editing: false,
             help: false,
+            menu: None,
             help_view: Default::default(),
             declarations: TableState::default(),
             declaration_page: 1,
@@ -273,6 +277,7 @@ impl App {
         self.detail = None;
         self.editing = false;
         self.help = false;
+        self.menu = None;
         self.dialog = None;
         self.pending_value = None;
         self.message = Some(Message::Info(format!(
@@ -329,6 +334,8 @@ impl App {
     pub fn mode(&self) -> Mode {
         if self.help {
             Mode::Help
+        } else if self.menu.is_some() {
+            Mode::Menu
         } else if self.dialog.is_some() {
             Mode::Dialog
         } else if self.editing {
@@ -468,6 +475,28 @@ impl App {
     }
 
     pub fn update(&mut self, action: Action) {
+        if let Some(mut menu) = self.menu.take() {
+            match action {
+                Action::Back | Action::Actions => {}
+                Action::Quit => self.quit = true,
+                Action::Commit => {
+                    if let Some(item) = menu.state.selected().and_then(|i| menu.items.get(i)) {
+                        if let Some(reason) = self.unavailable(item.action) {
+                            self.message = Some(Message::Error(reason));
+                            self.menu = Some(menu);
+                        } else {
+                            self.update(item.action);
+                        }
+                    }
+                }
+                action => {
+                    menu.move_by(action);
+                    self.menu = Some(menu);
+                }
+            }
+            return;
+        }
+
         if self.help {
             match action {
                 Action::Help | Action::Back => self.help = false,
@@ -493,6 +522,7 @@ impl App {
         match action {
             Action::Quit => self.quit = true,
             Action::Help => self.help = true,
+            Action::Actions => self.menu = Some(super::menu::Menu::actions(self)),
             Action::Toggle => self.start_toggle(),
             Action::Edit => self.start_edit(),
             Action::NewVersion if self.tab == Tab::Vaults => self.start_setup(None),
@@ -512,6 +542,12 @@ impl App {
             Action::Unlink => self.start_unlink(),
             Action::Back => self.back(),
             Action::Search => {
+                if self.tab == Tab::Overview {
+                    self.message = Some(Message::Info(
+                        "Choose Secrets or Audit to search cached metadata.".into(),
+                    ));
+                    return;
+                }
                 self.detail = None;
                 self.editing = true;
             }
@@ -858,7 +894,15 @@ impl App {
 
     /// May this browser change the vault now? Says why not.
     fn can_change(&mut self) -> bool {
-        let why = if self.read_only {
+        let why = self.change_unavailable();
+        if let Some(why) = why {
+            self.message = Some(Message::Error(why.to_owned()));
+        }
+        why.is_none()
+    }
+
+    fn change_unavailable(&self) -> Option<&'static str> {
+        if self.read_only {
             Some(
                 "this browser is read-only (--read-only); change secrets with `sourceorrery secret`",
             )
@@ -870,11 +914,108 @@ impl App {
             )
         } else {
             None
-        };
-        if let Some(why) = why {
-            self.message = Some(Message::Error(why.to_owned()));
         }
-        why.is_none()
+    }
+
+    /// Pure cached availability. Execution retains all existing form/provider checks.
+    pub fn unavailable(&self, action: Action) -> Option<String> {
+        let wrong = || Some("Unavailable on this view".to_owned());
+        let none = || Some("No selection; navigate to select an object".to_owned());
+        if matches!(
+            action,
+            Action::Edit
+                | Action::Toggle
+                | Action::Delete
+                | Action::Recover
+                | Action::Unlink
+                | Action::Add
+        ) && let Some(reason) = self.change_unavailable()
+        {
+            return Some(reason.into());
+        }
+        match action {
+            Action::Edit | Action::Toggle | Action::NewVersion if self.tab != Tab::Vaults => {
+                if let Some(reason) = self.change_unavailable() {
+                    return Some(reason.into());
+                }
+                let Some(p) = self.target_version() else {
+                    return none();
+                };
+                if action == Action::Toggle
+                    && !self.is_newest(&p)
+                    && !self
+                        .session
+                        .as_ref()
+                        .map_or(Capability::ALL, |s| s.cached_capabilities(&p.name))
+                        .contains(&Capability::PerVersionProperties)
+                {
+                    return Some("Provider cannot change an older version's properties; select the newest version".into());
+                }
+                None
+            }
+            Action::Delete => {
+                if self.tab != Tab::Secrets {
+                    wrong()
+                } else if self.detail.is_none() && self.selected_secret().is_none() {
+                    none()
+                } else {
+                    None
+                }
+            }
+            Action::Recover => {
+                if self.tab != Tab::Deleted {
+                    wrong()
+                } else if self.detail.is_none() && self.selected_deleted().is_none() {
+                    none()
+                } else {
+                    None
+                }
+            }
+            Action::Add => {
+                if matches!(self.tab, Tab::Secrets | Tab::Overview) {
+                    None
+                } else {
+                    wrong()
+                }
+            }
+            Action::Unlink => match self.project_detail().or_else(|| {
+                self.selected_project()
+                    .filter(|_| self.tab == Tab::Projects)
+            }) {
+                Some(p) if p.status == ProjectStatus::Missing => None,
+                Some(_) => {
+                    Some("Only a project whose folder or manifest is gone can be forgotten".into())
+                }
+                None => none(),
+            },
+            Action::NewVersion => self.read_only.then(|| "This browser is read-only".into()),
+            Action::ChangeVault => {
+                if self.read_only {
+                    Some("This browser is read-only".into())
+                } else if self.tab == Tab::Vaults && self.selected_vault().is_none()
+                    || self.tab != Tab::Vaults && self.session.is_none()
+                {
+                    none()
+                } else {
+                    None
+                }
+            }
+            Action::Open => match self.tab {
+                Tab::Secrets if self.selected_secret().is_some() => None,
+                Tab::Deleted if self.selected_deleted().is_some() => None,
+                Tab::Projects if self.selected_project().is_some() => None,
+                Tab::Vaults if self.selected_vault().is_some() => None,
+                Tab::Overview if self.locked.is_some() => None,
+                _ => none(),
+            },
+            Action::Refresh if self.session.is_none() && self.tab != Tab::Vaults => {
+                Some("No vault is open".into())
+            }
+            Action::Lock | Action::Verify if self.session.is_none() => {
+                Some("No vault is open".into())
+            }
+            _ => None,
+        }
     }
 
     /// The version a change applies to: the one selected in the details,

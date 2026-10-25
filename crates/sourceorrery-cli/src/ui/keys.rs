@@ -21,6 +21,11 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
         return (key.code == KeyCode::Char('c')).then_some(Action::Quit);
     }
     let action = match mode {
+        Mode::Menu => movement(key.code).or_else(|| match key.code {
+            KeyCode::Esc | KeyCode::F(2) => Some(Action::Back),
+            KeyCode::Enter => Some(Action::Commit),
+            _ => None,
+        }),
         Mode::Help => movement(key.code).or_else(|| match key.code {
             KeyCode::Char('?') => Some(Action::Help),
             KeyCode::Esc | KeyCode::Enter => Some(Action::Back),
@@ -79,6 +84,7 @@ fn movement(code: KeyCode) -> Option<Action> {
 
 fn command(code: KeyCode) -> Option<Action> {
     Some(match code {
+        KeyCode::F(2) => Action::Actions,
         KeyCode::Char('k') => Action::Up,
         KeyCode::Char('j') => Action::Down,
         KeyCode::Char('g') => Action::Top,
@@ -130,6 +136,29 @@ mod tests {
 
     fn normal(code: KeyCode) -> Option<Action> {
         press(code, Mode::Normal)
+    }
+
+    #[test]
+    fn actions_advertise_the_same_typed_actions_as_shortcuts() {
+        use crate::ui::{app::tests::app_with, fake::Fake, menu::Menu};
+        let fake = Fake::with(&["a"]);
+        let app = app_with(&fake);
+        for item in Menu::actions(&app).items {
+            let code = match item.shortcut {
+                "Enter" => KeyCode::Enter,
+                "Space" => KeyCode::Char(' '),
+                text => KeyCode::Char(text.chars().next().unwrap()),
+            };
+            assert_eq!(normal(code), Some(item.action));
+        }
+        assert_eq!(normal(KeyCode::F(2)), Some(Action::Actions));
+        assert_eq!(
+            action(
+                key(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Repeat),
+                Mode::Menu
+            ),
+            None
+        );
     }
 
     #[test]

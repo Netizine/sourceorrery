@@ -60,7 +60,10 @@ fn draws_the_vault_its_views_and_its_secrets() {
         "full version reachable in details"
     );
     assert!(screen.contains("Enter details"), "{screen}");
-    assert!(screen.contains(REASSURANCE.trim_end()), "{screen}");
+    assert!(
+        render(&mut app, 160, 24).contains(REASSURANCE.trim_end()),
+        "reassurance fits after the action hints at wide sizes"
+    );
 }
 
 #[test]
@@ -649,4 +652,80 @@ fn compact_overview_reaches_every_section_and_resize_keeps_active_tab_and_state(
         ),
         reads
     );
+}
+
+#[test]
+fn actions_menu_is_bounded_pure_and_revalidates_before_execution() {
+    let (fake, mut app) = app(&["a"]);
+    app.update(Action::Open);
+    app.update(Action::Down);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+        fake.capability_reads.get(),
+    );
+    app.update(Action::Actions);
+    for (w, h) in [(80, 24), (60, 18), (120, 40)] {
+        for a in [
+            Action::Top,
+            Action::Down,
+            Action::PageDown,
+            Action::Bottom,
+            Action::PageUp,
+        ] {
+            app.update(a);
+            let screen = render(&mut app, w, h);
+            assert!(screen.contains("Esc back"), "{screen}");
+        }
+    }
+    assert!(fake.writes.borrow().is_empty());
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get(),
+            fake.capability_reads.get()
+        ),
+        reads
+    );
+    // Availability is checked again after the menu was constructed.
+    let edit = app
+        .menu
+        .as_ref()
+        .unwrap()
+        .items
+        .iter()
+        .position(|i| i.action == Action::Edit)
+        .unwrap();
+    app.menu.as_mut().unwrap().state.select(Some(edit));
+    app.session.as_mut().unwrap().secrets.clear();
+    app.versions.select(None);
+    app.update(Action::Commit);
+    assert!(app.dialog.is_none());
+    assert!(app.menu.is_some());
+    app.update(Action::Back);
+    assert_eq!(app.detail.as_deref(), Some("a"));
+}
+
+#[test]
+fn read_only_menu_discloses_reasons_and_overview_does_not_open_empty_search() {
+    let fake = Fake::with(&[]);
+    let mut app = app_with(&fake).with_read_only(true);
+    app.update(Action::Search);
+    assert!(!app.editing);
+    app.update(Action::Show(Tab::Secrets));
+    assert!(!render(&mut app, 80, 24).contains("a adds one"));
+    app.update(Action::Actions);
+    let menu = app.menu.as_ref().unwrap();
+    assert!(
+        menu.items
+            .iter()
+            .filter(|i| matches!(i.action, Action::Edit | Action::Add | Action::Delete))
+            .all(|i| i.reason.as_ref().is_some_and(|s| s.contains("read-only")))
+    );
+    app.update(Action::Down);
+    app.update(Action::Commit);
+    assert!(fake.writes.borrow().is_empty());
+    assert!(app.dialog.is_none());
 }

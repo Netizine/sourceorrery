@@ -68,8 +68,22 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
             Line::from(""),
             Line::from(format!("No secrets in vault '{vault}'.")),
             Line::from(vec![
-                Span::styled("a", theme.key),
-                Span::styled(" adds one; a script uses  ", theme.muted),
+                Span::styled(
+                    if app.unavailable(crate::ui::app::Action::Add).is_none() {
+                        "a"
+                    } else {
+                        "Read-only: CLI"
+                    },
+                    theme.key,
+                ),
+                Span::styled(
+                    if app.unavailable(crate::ui::app::Action::Add).is_none() {
+                        " adds one; a script uses  "
+                    } else {
+                        " can store secrets:  "
+                    },
+                    theme.muted,
+                ),
                 Span::styled(
                     format!(" sourceorrery secret set <name> --vault {vault} "),
                     theme.code,

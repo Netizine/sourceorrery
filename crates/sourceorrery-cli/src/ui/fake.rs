@@ -34,6 +34,7 @@ pub struct Fake {
     pub lists: Cell<usize>,
     /// `secret_inspect` reads: version lists.
     pub inspects: Cell<usize>,
+    pub capability_reads: Cell<usize>,
     /// Audit-log reads (not audited by the vault).
     pub audit_reads: Cell<usize>,
     /// Chain verifications (not audited).
@@ -352,6 +353,7 @@ impl MetadataSource for Fake {
     }
 
     fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]> {
+        self.capability_reads.set(self.capability_reads.get() + 1);
         Ok(if self.at_a_connection(name) {
             self.remote_capabilities.get()
         } else {

@@ -3,7 +3,6 @@ use crate::output::sanitize;
 use crate::ui::viewport::clip;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    text::Span,
     widgets::{Cell, Row},
 };
 
@@ -64,6 +63,7 @@ impl Columns {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::text::Span;
     #[test]
     fn overflow_keeps_graphemes_and_distinguishes_absent_data() {
         assert_eq!(clip("界e\u{301}abc", 4), "界e\u{301}…");

@@ -11,6 +11,7 @@
 mod columns;
 mod dialog;
 mod lists;
+mod menu;
 mod overview;
 mod projects;
 mod secrets;
@@ -81,6 +82,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
     draw_footer(frame, app, theme, footer);
     if let Some(open) = &app.dialog {
         dialog::draw(frame, open, theme, &mut app.dialog_view);
+    }
+    if let Some(menu) = &mut app.menu {
+        menu::draw(frame, menu, theme);
     }
     if app.help {
         draw_help(frame, app, theme);
@@ -212,7 +216,14 @@ fn header_bar(app: &App, theme: &Theme, width: u16) -> Paragraph<'static> {
         return Paragraph::new(Line::from(vec![
             Span::styled(" SourceOrrery  vault ", theme.title),
             Span::styled(name, theme.vault),
-            Span::styled(format!(" · {state}"), theme.key),
+            Span::styled(
+                if state.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {state}")
+                },
+                theme.key,
+            ),
         ]))
         .style(theme.bar);
     }
@@ -641,7 +652,22 @@ fn draw_footer(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let mut pairs = all.to_vec();
     let normal = app.mode() == crate::ui::app::Mode::Normal;
     if normal {
-        // F2 is wired in B08; leave the space budget for it now.
+        pairs.retain(|(key, _)| {
+            use crate::ui::app::Action;
+            let action = match *key {
+                "e" => Some(Action::Edit),
+                "d" => Some(Action::Delete),
+                "space" => Some(Action::Toggle),
+                "u" => Some(Action::Recover),
+                "x" => Some(Action::Unlink),
+                "a" => Some(Action::Add),
+                "c" => Some(Action::ChangeVault),
+                "Enter" => Some(Action::Open),
+                _ => None,
+            };
+            action.is_none_or(|a| app.unavailable(a).is_none())
+        });
+        pairs.insert(0, ("F2", "Actions"));
         pairs.retain(|(key, _)| !matches!(*key, "?" | "q" | "Esc"));
         pairs.push(("?", "help"));
         pairs.push((

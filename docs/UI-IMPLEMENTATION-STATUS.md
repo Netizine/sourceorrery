@@ -53,7 +53,7 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 - Status: In progress
 - Changes and affected files: `view/columns.rs`, `secrets.rs`, `lists.rs`, `projects.rs`, `view/mod.rs`, `viewport.rs`, `init/view.rs`, `view/tests.rs`. One selected specification drives headings/widths/cells; priority columns and grapheme-safe ellipses, actual table ranges, display-cell path/actor sizing. Version table responds to width.
 - Tests and results: UI suite 143 passed, 1 ignored; 60/80/100/120/160-column tests, Unicode clipping, filtered counts and zero-read navigation regressions pass. Generated six-look snapshots and inspected selected rows.
-- Commits: responsive-layout commit (hash recorded next update).
+- Commits: `851cc61`.
 - Limitations/manual checks: cached full-field access for every clipped list field is completed in dependent B11; B05 remains In progress until that acceptance check passes. Live-terminal checks unavailable.
 
 ### B06
@@ -61,7 +61,7 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 - Status: Done — James’s UI workstream (implemented with Codex).
 - Changes and affected files: `app.rs`, `view/mod.rs`, `view/overview.rs`, `view/tests.rs`, `snapshot.rs`. Responsive tabs retain the active view, header prioritises vault/state, footer budgets complete hints. Compact overview stacks/scrolls audit/expiry before activity and retains summary/daily activity data. Wide layout retained.
 - Tests and results: UI suite 143 passed, 1 ignored; all compact overview sections reachable at 80×24, resize/all tabs/read-only/zero-read matrix passes. Snapshot writer passed; visually inspected compact overview, help and forms as reconstructed terminal-cell PNGs.
-- Commits: responsive-layout commit (hash recorded next update).
+- Commits: `851cc61`.
 - Limitations/manual checks: F2 Actions hint arrives with B08. Native terminal and screen-reader checks unavailable.
 
 ### B07
@@ -69,16 +69,16 @@ This record covers UI changes only; Claude owns the concurrent security remediat
 - Status: Done — James’s UI workstream (implemented with Codex).
 - Changes and affected files: `theme.rs`, selected/focused renderers, `view/tests.rs`, `snapshot.rs`. Readable selected foreground, distinct underlined focus, match/disabled roles, adjusted meaningful paper colours and callout titles; terminal/native/no-colour/indexed modes retained.
 - Tests and results: UI suite 143 passed, 1 ignored. Actual RGB and indexed palette semantic combinations meet 4.5:1 target; reverse and no-colour contracts pass. Snapshot writer passed; six looks visually inspected in `target/ui-snapshots/codex-six-looks.png` and compact screens in `codex-compact-review.png` (generated/ignored output).
-- Commits: responsive-layout commit (hash recorded next update).
+- Commits: `851cc61`.
 - Limitations/manual checks: PNGs are reconstructions of Ratatui TestBackend cells, not live terminal screenshots. User-controlled terminal colours need manual checks; no universal contrast claim.
 
 ### B08
 - Owner: James’s UI workstream — implemented with Codex.
-- Status: Planned
-- Changes and affected files: pending.
-- Tests and results: not run for this batch.
-- Commits: pending.
-- Limitations/manual checks: live terminal, non-Windows terminal and screen-reader checks have not been performed.
+- Status: Done — James’s UI workstream (implemented with Codex).
+- Changes and affected files: `menu.rs`, `view/menu.rs`, `app.rs`, `keys.rs`, `session.rs`, `fake.rs`, `view/mod.rs`, `view/secrets.rs`, tests. Flat F2 menu uses typed shortcut actions, cached pure availability, bounded scrolling, disabled reasons and execution revalidation. Footer/empty guidance reuse availability. Overview search explains the proper tabs. Capability evidence for an older version is captured only during explicit detail opening; existing live checks still run when starting/submitting a mutation.
+- Tests and results: UI suite 146 passed, 1 ignored. Menu/key equivalence, fresh Enter, compact/resize/long reasons, read-only/empty states, stale target rejection and zero list/inspect/audit/capability calls during menu navigation pass. Existing blocked/provider and confirmation tests pass.
+- Commits: B08 Actions commit (hash recorded next update).
+- Limitations/manual checks: F2 physical availability in supported terminal emulators has not been manually checked. No write occurs from menu navigation.
 
 ### B09
 - Owner: James’s UI workstream — implemented with Codex.

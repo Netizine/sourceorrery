@@ -38,6 +38,7 @@ mod editor;
 mod fake;
 pub(crate) mod init;
 mod keys;
+mod menu;
 mod search;
 mod session;
 pub(crate) mod setup;
