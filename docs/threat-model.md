@@ -69,6 +69,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | Values encrypted individually, bound to vault/name/version | `sourceorrery-crypto::aead`, `storage::sqlite` |
 | Vault key never on disk in the clear | Envelope encryption: one wrap under a key in the OS credential store (this machine), one under the recovery key (`storage::sqlite::wraps`) |
 | Recovery key strength | 125 random bits in five groups from an alphabet without look-alikes, shown once; its key-encryption key is HKDF over it with a per-wrap salt. Replacing it removes the old wrap in the same transaction |
+| A replaced recovery key stops working in the file | The key wraps are listed in the authenticated settings record and checkpointed on the audit chain, so an old wrap row put back, with or without the old record, is refused at open (ADR 0010). Replacing the key does not change the vault key: see gap 10 |
 | No value in arguments | CLI has no `--value` |
 | No value in logs, errors, audit, Debug | `SecretBytes` design + conformance tests |
 | No value serialisable by accident | `SecretBytes` has no `Serialize` |
@@ -88,7 +89,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | Authenticated vault settings | HMAC over schema, name, recovery level, retention, the view check and the connections and projects, verified on every unlock and checked against the newest settings checkpoint on the audit chain |
 | A vault is only served under its own name | Opening by name compares the requested name with the authenticated name in the file, once the settings verify; a mismatch is refused with `vault_mismatch` and recorded as `vault_open` / `failure` in that file's log (`storage::registry`, `storage::sqlite`) |
 | Format bound into key wrapping | The wrapped vault key's AAD names the schema; a rolled-back marker cannot unwrap as legacy |
-| Earlier formats refused | Files from earlier releases (schemas 1–3) are not read (`migration_required`); such a vault is recreated |
+| Earlier formats refused | Files from earlier releases and development builds (schemas 1–4) are not read (`migration_required`) and are left unchanged; such a vault is recreated |
 | Audit history must exist | An existing vault with no rows and no head is a detected truncation, never a fresh start |
 | Resource ceilings before authentication | Argon2 parameters from the file (the view check's password hash) are capped (1 GiB, 64 passes, 16 lanes); the recovery key is tried at most three times per open |
 | Keyring entries deleted only when provably this vault's | Account must match the vault's own identity and no sibling vault may reference it; `--keep-os-key` opts out |
@@ -104,7 +105,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | Values guarded in every language | A value stays in native memory until the application closes it and is zeroised then (`so_bytes_free`, `SecretBytes`); the wrapper prints as `[REDACTED]` and refuses serialisation where the language allows; bytes leave only through an explicit call (`docs/sdks`) |
 | Same behaviour in every SDK | One scenario list, judged by one harness, runs against every SDK in CI on Ubuntu, Windows and macOS (`tests/conformance/sdk`) |
 | A second check before a person sees a value | The view check: an optional password (salted Argon2id), with a hint and an authenticator code on top of it, asked by `ui`, `secret list`, `secret get`, `secret versions`, `audit` and `audit export`, and before the setup screens change a vault. The hash, the hint and the TOTP key (with the last accepted step, so a code is never accepted twice) are sealed under the vault key and covered by the authenticated settings record, whose tag every change records on the audit chain, so a file edit cannot switch the check off, not even by putting back an older authentic copy of the whole record (gap 6). After five wrong answers each further attempt waits, 30 seconds doubling to 15 minutes. `run`, `check`, `init` and the SDKs are untouched: the check is for the moments a person or an agent at the CLI asks to look, not a boundary (`storage::sqlite::view`, `cli::context`) |
-| A vault is not lost with this machine | The recovery key opens the vault anywhere, passes the view check, and is replaced on the setup screens (the old one stops working in the same transaction). `vault export` writes a copy that opens with it alone, without this machine's key or the view check |
+| A vault is not lost with this machine | The recovery key opens the vault anywhere, passes the view check, and is replaced on the setup screens (the old one stops working in this file in the same transaction). `vault export` writes a copy that opens with it alone, without this machine's key or the view check |
 | Typed passwords rated before they are accepted | A password typed on the setup screens must rate "good" on a rule-based estimate (common passwords, dictionary-style words, repeats, sequences, years, short lengths; no wordlist shipped), or the screens generate one from the OS random source, shown once; one a script supplies in a file is warned about (`cli::strength`). The setup and `init` screens draw hidden fields as dots from their length, hold them in zeroising buffers and write nothing before their review confirms (`cli::ui::setup`, `cli::ui::init`) |
 | Manifest discovery bounded | Without an explicit path, `sourceorrery.toml` is looked for in the working directory and its parents only up to the repository (`.git`), the home directory, and, on Unix, no further than directories and files owned by the home directory's owner. A manifest decides which vault a name means, so one planted in `/tmp` or a shared parent is never picked up (`core::manifest::Manifest::discover`). Where a secret is kept is the vault's record, never the manifest's |
 | Clear text only to the local machine | A connection's `address` or `endpoint_url` must be `https://`, or `http://` to `localhost`, `127.0.0.0/8` or `::1`, checked before the connection is stored; the Vault client follows no redirect and uses no proxy for a loopback address, so a credential never travels to another host (`core::connection`, `sourceorrery-provider-vault::http`) |
@@ -203,7 +204,17 @@ treated as secrets. Users are told not to put sensitive information in them.
     opens it.** `vault export` writes every value the vault keeps, sealed
     as in the vault; no OS credential store is involved, so the copy opens
     wherever its recovery key is. Keep the copy and the key apart, and
-    keep the copy where the vault's threat model allows.
+    keep the copy where the vault's threat model allows. **A replaced
+    recovery key is not a new vault key.** Replacing the key makes this
+    file refuse the old one (ADR 0010), but the vault key does not change:
+    whoever holds the old key and any copy from before the replacement (an
+    export, a backup, the file itself) can derive the vault key and decrypt
+    that copy, and newer ciphertext of this file too, with their own tools.
+    When a key, a copy or a machine may be compromised, rotate the affected
+    credentials at their issuers, store the new values in a new vault
+    (`sourceorrery setup`, which makes a new vault key), and destroy the old
+    vault; `vault export` and `vault import` keep the same vault key and are
+    never compromise recovery.
 11. **The view check is for people, not against a process.** It is
     satisfied by `SOURCEORRERY_PASSWORD` (or `--password-file`) and
     `SOURCEORRERY_TOTP` (or `--code`), so anything that runs as you and

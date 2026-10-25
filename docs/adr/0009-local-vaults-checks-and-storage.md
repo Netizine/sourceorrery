@@ -291,6 +291,11 @@ writes a consistent copy of the file with SQLite's online backup.
 
 ## Schema 4 (outline)
 
+> **Superseded in part by [ADR 0010](0010-authenticated-key-wraps-and-private-files.md):**
+> the key wraps join the authenticated settings record and the format
+> becomes schema 5; replacing the recovery key makes the file refuse the
+> old key but does not change the vault key.
+
 `docs/vault-format.md` is rewritten with the code. New records use
 `sourceorrery/v4/…` domains and AADs; record encodings that do not change
 keep theirs. Schema 4 is not released until the whole change is, so the

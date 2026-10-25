@@ -7,8 +7,10 @@ uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 **Breaking: vaults from earlier releases are not read.** A vault file of
-schema 1, 2 or 3 is refused with `migration_required`, never rewritten:
-recreate it with `sourceorrery setup` and set its secrets again (ADR 0009).
+schema 1 to 4 (schema 4: development builds of `main`) is refused with
+`migration_required`, never rewritten: recreate it with `sourceorrery
+setup` and set its secrets again (ADR 0009, ADR 0010). The format is
+schema 5.
 How a vault opens, what it asks and where it keeps secrets change
 together, so the CLI, the Rust API, the C ABI's open options and every
 SDK's open options change with them (ADR 0007: a minor release;

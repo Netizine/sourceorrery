@@ -91,3 +91,13 @@ Rules that follow:
   review.
 * `CONTRACT_VERSION` stays `"1"` through the listing additions of this
   release: new operations are compatible.
+
+## Amendment — 2026-10-25
+
+The vault-file rule above ("a new schema, read only after an explicit
+migration") was set aside once, for the next release, by
+[ADR 0009](0009-local-vaults-checks-and-storage.md): earlier files are
+refused with `migration_required` and recreated. [ADR 0010](0010-authenticated-key-wraps-and-private-files.md)
+moves that release's format from schema 4 to schema 5 before it ships,
+under the same exception, rather than redefining schema 4 in place. The C
+ABI and `CONTRACT_VERSION` are not affected by that change.

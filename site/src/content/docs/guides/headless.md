@@ -63,7 +63,10 @@ sourceorrery vault create ci --no-keyring --recovery-key-out ci.recovery-key
 
 A lost recovery key is replaced on a machine that still opens the vault,
 on the setup screens (`sourceorrery vault create development`, or `c` in
-`sourceorrery ui`); the old one stops working at once.
+`sourceorrery ui`); the old one stops working in this file at once. A new
+recovery key is not a new vault key, though: an old copy of the vault still
+opens with the old key. If a key or a copy may be compromised, rotate the
+exposed credentials and move to a new vault ([threat model](/security/threat-model/)).
 
 ## WSL
 

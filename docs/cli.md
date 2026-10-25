@@ -51,7 +51,7 @@ filled in, and the name of a vault that exists opens it for changes.
 | View check | Whether viewing the vault asks for a password, and an authenticator code on top of it ([below](#the-view-check)). |
 | Password | Typed twice with a strength meter (it must rate "good"), or generated and shown once behind a "written down" tick; an optional hint, refused if it gives the password away. |
 | Authenticator | A QR code beside the key, the code field and the buttons, so it fits 80×24. A code from the app is checked before moving on; three wrong ones make a new key. |
-| Recovery key | Shown once, behind a "written down" tick. When changing a vault it is kept unless a new one is asked for, and the old one then stops working. |
+| Recovery key | Shown once, behind a "written down" tick. When changing a vault it is kept unless a new one is asked for, and the old one then stops working in this file. A new recovery key is not a new vault key: an old copy of the vault still opens with the old key. After a compromise, rotate the exposed credentials and move to a new vault instead ([threat model](threat-model.md), gap 10). |
 | Storage | The SourceOrrery vault (always) and HashiCorp Vault, AWS Secrets Manager and Azure Key Vault; a provider not built into this binary is shown as unavailable. |
 | Connections | One form per provider ticked: its address, region or URL, and its credentials, either this machine's sign-in (the provider's own environment, CLI login or workload identity) or stored in the vault, sealed. **Test connection** makes one metadata call. |
 | Review | Everything above. **Create vault** or **Save changes** makes it all in one transaction: nothing is written before it, and a part the vault refuses leaves everything as it was. |
@@ -198,7 +198,7 @@ Newest first, with each event's id. `audit` and `audit export` ask the
 | `vault_create`, `vault_open` | Creating the vault; each open (a failed one with outcome `failure`, detail `locked`). |
 | `secret_set`, `secret_get`, `secret_list`, `secret_inspect`, `secret_update`, `secret_delete`, `secret_recover`, `secret_purge` | The secret operations; `secret_inspect` is a metadata read (properties, versions, a deleted secret's details). A call to a provider is recorded the same way, by the vault, with the provider's outcome. |
 | `guard` | The view check: an answer passed or refused (`denied`), and each change to it (password set or changed, check cleared, authenticator enrolled and verified or removed). |
-| `protector_add` | The recovery key replaced, or this machine's key added (on `vault import`). |
+| `protector_add` | The recovery key replaced, or this machine's key added. Its event checkpoints the new set of key wraps. |
 | `vault_change` | A connection added, changed or removed, and a change of settings refused as a whole (`failure`). |
 | `connection_test` | A connection tested (`success`, or `failure` with the error code). |
 | `vault_export`, `vault_import` | The vault exported (in the copy's own log) or imported. |
