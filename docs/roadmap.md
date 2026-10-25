@@ -89,7 +89,8 @@ release; see the [release procedure](release.md).
 ## Next release: local vaults, one set of checks, storage per secret
 
 [ADR 0009](adr/0009-local-vaults-checks-and-storage.md). Vaults from earlier
-releases are not read: recreate them and set their secrets again.
+releases are not read and are left unchanged: [Upgrading](upgrading.md)
+keeps each file for the release that wrote it and moves its secrets.
 
 - [x] A vault opens with this machine's key in the OS credential store, else its recovery key (`SOURCEORRERY_RECOVERY_KEY`, `--recovery-key-file`, a prompt); passphrases, protectors and recovery codes are gone
 - [x] The view check: an optional password (rated as it is typed, or generated) with a hint and an authenticator code on top, asked before anyone views the vault or reveals a value; `run`, `check`, `init` and the SDKs never ask it ([CLI reference](cli.md#the-view-check), [threat model](threat-model.md))

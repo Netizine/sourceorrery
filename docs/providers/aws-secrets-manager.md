@@ -148,17 +148,23 @@ exactly as for a local vault.
   `deleted_on` sentinel above.
 * **Listing costs one request per secret**, after the `ListSecrets` pages.
   The paged methods cut pages out of that listing.
-* **No audit log of SourceOrrery's own.** `audit_events` is `unsupported`;
-  `sourceorrery audit --vault <name>` points at CloudTrail (below) and
-  `audit export` refuses.
+* **Two audit trails.** The vault's own log records every call
+  SourceOrrery makes at the connection, with its outcome and, for a
+  change, the attempt recorded before it was sent
+  ([providers](index.md#when-a-changes-result-is-not-known)):
+  `sourceorrery audit` shows it and `audit export` sends it on, like any
+  local event. The provider's own trail (below) records what it served,
+  including to clients other than SourceOrrery. The provider client itself
+  keeps no log (`audit_events` is `unsupported` on it).
 * **Two writers can race.** Nothing locks a secret between the describe
   and the writes that follow it, and the service has no conditional write:
   the publication above holds for one writer at a time per secret.
 
 ## Audit trail
 
-AWS CloudTrail holds the trail; SourceOrrery writes no log of its own for a
-provider's secrets, and `sourceorrery audit --vault <name>` prints this pointer.
+AWS CloudTrail holds the provider's trail, beside the vault's own log of
+each call (above); `sourceorrery audit` prints this pointer for every
+connection that stores a secret.
 Secrets Manager's API calls are management events, recorded by default
 with the identity the process authenticated as: a read is
 `GetSecretValue` (preceded by `DescribeSecret` and `ListSecretVersionIds`

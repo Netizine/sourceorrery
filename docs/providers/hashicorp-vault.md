@@ -152,9 +152,14 @@ as for a local vault.
   `updated_on` of a changed version is the client's.
 * **Listing costs one request per secret**, after one `LIST`. The paged
   methods cut pages out of that listing.
-* **No audit log of SourceOrrery's own.** `audit_events` is `unsupported`;
-  `sourceorrery audit --vault <name>` points at the server's audit devices
-  (below) and `audit export` refuses.
+* **Two audit trails.** The vault's own log records every call
+  SourceOrrery makes at the connection, with its outcome and, for a
+  change, the attempt recorded before it was sent
+  ([providers](index.md#when-a-changes-result-is-not-known)):
+  `sourceorrery audit` shows it and `audit export` sends it on, like any
+  local event. The provider's own trail (below) records what it served,
+  including to clients other than SourceOrrery. The provider client itself
+  keeps no log (`audit_events` is `unsupported` on it).
 * **Two writers are told apart.** A data write uses Vault's
   check-and-set, so two writers never write the same version number; the
   one that loses is refused with `invalid_argument` and writes nothing.
@@ -165,9 +170,9 @@ per-version properties in `custom_metadata` ([rotation](../rotation.md)).
 
 ## Audit trail
 
-The Vault server's audit devices hold the trail; SourceOrrery writes no log
-of its own for a provider's secrets, and `sourceorrery audit --vault <name>`
-prints this pointer. With a file audit device enabled on the server (`vault
+The Vault server's audit devices hold the provider's trail, beside the
+vault's own log of each call (above); `sourceorrery audit` prints this
+pointer for every connection that stores a secret. With a file audit device enabled on the server (`vault
 audit enable file file_path=/var/log/vault/audit.log`), every operation
 SourceOrrery performs is a request against the mount, under the identity
 the process logged in as: a read is `read` on `<mount>/data/<name>` (with

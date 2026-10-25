@@ -1,4 +1,4 @@
-# Vault file format (schema version 4)
+# Vault file format (schema version 5)
 
 A vault is a single SQLite database, `<home>/vaults/<name>.sorvault`, created
 with `PRAGMA foreign_keys = ON`, `PRAGMA secure_delete = ON` and a 5 s busy
@@ -403,8 +403,10 @@ truncation is still a truncation. The check is read-only.
 clear error. An **older** one (schemas 1–4: earlier releases, and development
 builds before the key wraps were authenticated) is refused with
 `migration_required`, without the file being changed: those files are not
-read, and such a vault is recreated (`sourceorrery setup`) and its secrets
-set again. The
+read, nothing is written to them or beside them, and `vault export`,
+`vault destroy` and `vault create` refuse them too. The file is kept for
+the release that wrote it, and the vault is recreated and its secrets set
+again from it: [Upgrading](upgrading.md) is the tested procedure. The
 wrapping AAD names the format, so a file whose marker was edited to
 another number cannot be opened as that format either.
 

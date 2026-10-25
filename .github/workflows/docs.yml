@@ -12,12 +12,18 @@ on:
       - "site/**"
       - "docs/**"
       - "crates/sourceorrery-core/src/error.rs"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "scripts/release/docs-version.py"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "site/**"
       - "docs/**"
       - "crates/sourceorrery-core/src/error.rs"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "scripts/release/docs-version.py"
       - ".github/workflows/docs.yml"
 
 permissions:
@@ -35,6 +41,12 @@ jobs:
         with:
           # Dates on generated pages come from their source files' Git history.
           fetch-depth: 0
+
+      # SR12: every install page names the workspace version, and says so
+      # while it is not released. Needs no token, so forks run it too.
+      - name: The install pages name the workspace version
+        working-directory: .
+        run: python3 scripts/release/docs-version.py --check
 
       # The site uses the licensed Font Awesome Pro kit (its own icons and
       # the duotone set), installed from Font Awesome's registry with the

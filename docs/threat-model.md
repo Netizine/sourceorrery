@@ -89,7 +89,7 @@ treated as secrets. Users are told not to put sensitive information in them.
 | Authenticated vault settings | HMAC over schema, name, recovery level, retention, the view check and the connections and projects, verified on every unlock and checked against the newest settings checkpoint on the audit chain |
 | A vault is only served under its own name | Opening by name compares the requested name with the authenticated name in the file, once the settings verify; a mismatch is refused with `vault_mismatch` and recorded as `vault_open` / `failure` in that file's log (`storage::registry`, `storage::sqlite`) |
 | Format bound into key wrapping | The wrapped vault key's AAD names the schema; a rolled-back marker cannot unwrap as legacy |
-| Earlier formats refused | Files from earlier releases and development builds (schemas 1–4) are not read (`migration_required`) and are left unchanged; such a vault is recreated |
+| Earlier formats refused | Files from earlier releases and development builds (schemas 1–4) are not read (`migration_required`) and are left unchanged; such a vault is recreated and its secrets set again from the old file with the release that wrote it ([Upgrading](upgrading.md)) |
 | Audit history must exist | An existing vault with no rows and no head is a detected truncation, never a fresh start |
 | Resource ceilings before authentication | Argon2 parameters from the file (the view check's password hash) are capped (1 GiB, 64 passes, 16 lanes); the recovery key is tried at most three times per open |
 | Keyring entries deleted only when provably this vault's | Account must match the vault's own identity and no sibling vault may reference it; `--keep-os-key` opts out |

@@ -18,7 +18,7 @@ saying what to do. No message ever contains a secret value.
 | `deleted_conflict` | Storing a name that is soft-deleted | Recover it, or (ask the user) purge it first |
 | `invalid_name` | Secret names: letters, digits, hyphens, at most 127 | Rename, e.g. `database_url` → `database-url` |
 | `manifest` | `sourceorrery.toml` is missing or invalid | Fix the file; `sourceorrery check` validates it. A `value` key is never allowed |
-| `migration_required` | The vault file is from an earlier release, which this one cannot read | Tell the user: they recreate the vault (`sourceorrery setup`) and set its secrets again |
+| `migration_required` | The vault file is from an earlier release, which this one cannot read; it was left unchanged | Stop and tell the user. Moving its secrets is theirs to do, by the documentation's Upgrading guide: it reveals each value, which you never do. Never delete, move or destroy the file |
 | `vault_mismatch` | The file for one vault holds another vault (renamed, copied or swapped) | Tell the user; never work around it. Moving the file back or bringing in an exported copy is their call |
 | `crypto` | The vault file failed an integrity check, or its audit log was truncated | Stop and tell the user. Do not run `audit --acknowledge` yourself |
 

@@ -25,9 +25,15 @@ does not require a 0.2.1 release.
    change `CONTRACT_VERSION`. The `semver` job of the workflow checks the
    Rust API against crates.io for the version you type and fails the run
    when a bigger bump is needed. Update `CHANGELOG.md`: move the
-   `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading and
-   commit to `main`, then push the complete release candidate once. A Git
-   push makes that commit available to Actions; it does not start a release.
+   `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading.
+   With the repository at that version
+   (`python scripts/release/set-version.py X.Y.Z --keep-node-links`), run
+   `python scripts/release/docs-version.py`: every install page then names
+   X.Y.Z and no longer says it is unreleased. The workflow refuses a real
+   release whose documentation does not (`docs-version.py --check --expect
+   X.Y.Z`). Commit to `main`, then push the complete release candidate
+   once. A Git push makes that commit available to Actions; it does not
+   start a release.
 2. In GitHub, open *Actions → Release → Run workflow*, enter the version
    (`X.Y.Z`, no `v`) and leave **dry_run** ticked. Leave **bootstrap_providers**
    unticked for ordinary releases; the initial 0.2.0 publication is recorded below.
@@ -41,14 +47,12 @@ does not require a 0.2.1 release.
    `vX.Y.Z` on the chosen commit, the GitHub Release with every archive and
    package and `SHA256SUMS`, then the publish jobs run (or are skipped,
    see below).
-4. Check the registries and update the version in the repository for the
-   next cycle if you keep a development version there (the workflow stamps
-   the manifests itself from the version you typed; the committed version
-   does not have to match).
-5. Point the install instructions at the new release: the download links
-   in `site/src/content/docs/getting-started.mdx` and `docs/sdks/*.md`, and
-   the examples in `docs/building.md` and `docs/supply-chain.md`, name the
-   version in every file name and tag.
+4. Check the registries. When work on the next version starts, bump the
+   repository to it (`set-version.py X.Y.Z --keep-node-links`) and run
+   `docs-version.py`: the install pages name the new version and say it is
+   not released yet, with a link to the current release's documentation at
+   its tag. CI checks the pages against the workspace version on every
+   change (`docs-version.py --check`).
 
 The workflow refuses a version that is not semver and, outside a dry run,
 a tag that already exists. It also refuses a real release that is not

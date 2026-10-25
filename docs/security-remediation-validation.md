@@ -817,3 +817,79 @@ One commit: the checks and the new write order share the tag plan.
   byte appended to a file, refused by its digest; the v0.1.4 commit given
   instead, refused by the attestation ("expected SourceRepositoryDigest …").
   The workflow parses; it was not dispatched.
+
+### B24 — documentation that matches the release it installs
+
+* **Closes:** SR12 for the documentation; its install and first-read
+  examples are run against the stamped candidate in B32.
+* **One version, one release status.** The repository is bumped to
+  **0.3.0** with `set-version.py --keep-node-links` (manifests and lock
+  files only), so a build of this branch reports the version whose format
+  it writes: as 0.2.0 it refused 0.2.0's own vaults as "an earlier
+  release". `scripts/release/docs-version.py` stamps that workspace version
+  into a fixed list of 32 install pages (README, `docs/building.md`,
+  `supply-chain.md`, `ai-agents.md`, `coverage.md`, every SDK page, the
+  site's getting-started and home pages, every binding and npm platform
+  README): every SourceOrrery version in them (a CHANGELOG release, or the
+  workspace version) becomes the workspace version, in links, tags,
+  package versions and labels. History sentences that named other releases
+  were rewritten; the registry install commands are pinned
+  (`pip install sourceorrery==0.3.0`, `npm install @sourceorreryai/sdk@0.3.0`,
+  `cargo add sourceorrery@0.3.0`, …; the Rust page's `sourceorrery = "0.1"`
+  could not have resolved). Released or not comes from `CHANGELOG.md`: while
+  no `## [0.3.0] - date` heading exists, 16 entry pages carry a generated
+  note ("SourceOrrery 0.3.0 is not released yet", the current release and
+  its documentation at its tag, and the upgrade guide), and the site header
+  says `0.3.0 · unreleased` on every page (`site/src/lib/release-version.mjs`,
+  the same two sources; it read `site/package.json` before). Moving the
+  CHANGELOG entries under the release heading clears both.
+* **Enforced:** `docs-version.py --check` in the docs workflow (with no
+  token, so forks run it; README and CHANGELOG added to its paths) and in
+  CI's release-scripts job, whose unit test also checks the repository; the
+  release workflow refuses a real run whose documentation does not name the
+  release as released (`--check --expect X.Y.Z`; a dry run warns).
+  `docs/release.md` steps 1 and 4 replace the manual "point the install
+  instructions at the new release".
+* **Upgrading from 0.2.0** (`docs/upgrading.md`, on the site under Guides):
+  keep the 0.2.0 CLI, move the file into a home of its own (0.2.0 reads it
+  with `--home`; its credential-store entry is named after the vault id),
+  create the new vault, pipe each value from 0.2.0's `secret get --reveal
+  --raw` into `secret set --stdin --keep-trailing-newline`, set metadata
+  again with `secret update`, check, and retire the old vault with 0.2.0's
+  `vault destroy` when nothing needs it. A remote vault (`[vaults.*]`) moves
+  the same way into a connection pointed elsewhere. Compromise response
+  stays separate (threat model, gap 10). The `migration_required` message,
+  the SDK hint and the agent skill's row now say the file is unchanged and
+  is kept; before, the message said "recreate the vault with
+  `sourceorrery setup`", which then failed with "already exists" while the
+  old file was in place, and the skill now tells the agent to stop: the
+  move reveals values.
+* **Tests run:** the procedure, with the 0.2.0 Windows release CLI
+  (downloaded and verified with `gh attestation verify` for the v0.2.0
+  commit) and this branch's CLI, isolated home, credential store off,
+  synthetic values compared by SHA-256: 41 checks pass. This release refuses
+  the 0.2.0 file (schema 3) for `secret list`, `secret get --reveal`, `run`,
+  `check`, `vault destroy`, `vault export` and `vault create`, with
+  `migration_required`, and the home is byte-for-byte unchanged with no key
+  or export file written. 0.2.0 reads the moved file; Git Bash, PowerShell
+  7.6 (program to program) and cmd.exe pipes carry three values (one a
+  PEM-style value ending in a line break, one secret whose newest version is
+  disabled) byte for byte; a PowerShell 7 function in between, and Windows
+  PowerShell 5.1, turn each value into CRLF lines, as the guide warns; a
+  wrong 0.2.0 passphrase stops the loop with nothing stored; content type,
+  tags and expiry match after `secret update`; 0.2.0's `vault destroy`
+  removes the kept file. **Live** remote route against a Vault 2.2.1 dev
+  server: a 0.2.0 remote vault at `secret/` into a connection at `next/`,
+  both values byte for byte, 0.2.0's copies untouched. The conformance test
+  for earlier schemas now covers schema 4 and checks the file byte for
+  byte and the message's way out. `docs_version_test.py`, 9 tests; site
+  tooling, 12 tests (MDX comment conversion; the header version); the site
+  builds (46 pages) and its 4128 internal links resolve; integrations
+  regenerated with `SOURCEORRERY_BLESS=1`.
+* **Also in this batch:** the provider guides' "no audit log of
+  SourceOrrery's own" bullet is replaced: the vault's own log records every
+  provider call (ADR 0011), beside the provider's trail. The vault-format
+  page is titled schema 5 (it said 4) and its site description says 5 (it
+  said 3).
+* **Not run here:** the install commands themselves (0.3.0 is not
+  published; B32), and the remote route for AWS and Azure.

@@ -28,7 +28,7 @@ This library only reads. Vaults are created, and secrets stored, with the
 once on the machine where you manage secrets, from the
 [GitHub release](https://github.com/Netizine/sourceorrery/releases/latest)
 (Windows, macOS and Linux, x64 and arm64) or with
-`cargo install --locked sourceorrery-cli --version 0.2.0`
+`cargo install --locked sourceorrery-cli --version 0.3.0`
 ([step by step](https://sourceorrery.ai/getting-started/#install)), then:
 
 ```bash
@@ -45,7 +45,7 @@ library opens the vault file itself.
 <dependency>
   <groupId>ai.sourceorrery</groupId>
   <artifactId>sourceorrery</artifactId>
-  <version>0.2.0</version>
+  <version>0.3.0</version>
 </dependency>
 ```
 

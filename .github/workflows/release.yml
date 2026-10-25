@@ -102,6 +102,24 @@ jobs:
             fi
             python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA"
           fi
+      # SR12: the install pages of a release name it, and only it, and no
+      # longer say it is unreleased (the CHANGELOG heading names it). A dry
+      # run reports instead of stopping.
+      - name: The documentation names this release
+        env:
+          VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if python3 scripts/release/docs-version.py --check --expect "$VERSION"; then
+            exit 0
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::warning title=docs version::the documentation does not name the release $VERSION; a real run stops here"
+          else
+            echo "::error title=docs version::stamp the documentation for $VERSION (docs/release.md, step 1) and commit it"
+            exit 1
+          fi
       - name: Require the first-publication credential before building a real release
         if: ${{ inputs.bootstrap_providers && !inputs.dry_run }}
         env:

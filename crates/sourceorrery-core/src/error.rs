@@ -104,9 +104,12 @@ pub enum SecretError {
     /// format this release does not read. There is no migration: the
     /// format changed with how a vault is opened and checked, so the vault
     /// is recreated (the code keeps its old name; codes are append-only).
+    /// The file is left as it is, for the release that wrote it.
     #[error(
         "vault '{name}' was written by an earlier release (schema {schema}); this release \
-         cannot open it: recreate the vault with `sourceorrery setup`"
+         cannot read it and has not changed it: keep the file for that release by moving it \
+         out of the vaults folder, then recreate the vault with `sourceorrery setup` and set \
+         its secrets from the old file (the Upgrading guide)"
     )]
     MigrationRequired { name: String, schema: u32 },
 

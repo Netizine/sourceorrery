@@ -401,8 +401,10 @@ fn hint_for(err: &SecretError, ctx: &Context<'_>) -> String {
             )
         }
         SecretError::MigrationRequired { name, .. } => format!(
-            "Vault '{name}' was written by an earlier release, which this release cannot read. \
-             Recreate it with `sourceorrery setup` and add its secrets again"
+            "Vault '{name}' was written by an earlier release, which this release cannot read; \
+             its file is left unchanged. Keep the file for that release, recreate the vault \
+             with this release's `sourceorrery setup` and set its secrets from the old file \
+             (the Upgrading guide)"
         ),
         SecretError::NotFound { name } => format!(
             "Store it with `sourceorrery secret set {name}{}` (the value is read from stdin or a \

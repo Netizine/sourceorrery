@@ -19,6 +19,7 @@
 import { access, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { htmlCommentsToMdx } from '../src/lib/mdx-comments.mjs';
 import { walkthroughs } from '../src/lib/walkthroughs.mjs';
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -64,6 +65,11 @@ const PAGES = {
 		description:
 			'The first run: a vault on the setup screens (its recovery key, an optional view check, its storage), its secrets, a project manifest written from the vault, and run.',
 	},
+	'docs/upgrading.md': {
+		dest: 'guides/upgrading.md',
+		description:
+			'Moving a vault made by SourceOrrery 0.2.0 to 0.3.0: keep the old file where 0.2.0 reads it, create a new vault, and set each secret from the old one through a pipe, for local and remote vaults.',
+	},
 	'docs/ai-agents.md': {
 		dest: 'guides/ai-agents.md',
 		description:
@@ -82,7 +88,7 @@ const PAGES = {
 	'docs/vault-format.md': {
 		dest: 'reference/vault-format.md',
 		description:
-			'Schema version 3 of the encrypted SQLite vault file: tables, key hierarchy, integrity tags, the audit chain, what is and is not encrypted, and compatibility rules.',
+			'Schema version 5 of the encrypted SQLite vault file: tables, key hierarchy, the authenticated settings and key wraps, integrity tags, the audit chain, what is and is not encrypted, and compatibility rules.',
 	},
 	'docs/roadmap.md': {
 		dest: 'roadmap.md',
@@ -292,7 +298,7 @@ async function syncPage(source, page) {
 		...(tabs ? ["import { Tabs, TabItem } from '@astrojs/starlight/components';"] : []),
 		...(walkthrough ? [`import Walkthrough from '${component}';`] : []),
 		...(mdx ? [''] : []),
-		rewritten.trimEnd(),
+		(mdx ? htmlCommentsToMdx(rewritten) : rewritten).trimEnd(),
 		'',
 	].join('\n');
 

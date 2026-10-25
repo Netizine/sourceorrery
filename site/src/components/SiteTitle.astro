@@ -1,13 +1,15 @@
 ---
 import FAIcon from './FAIcon.astro';
 import BrandText from './BrandText.astro';
-import packageInfo from '../../package.json';
 
 const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
+// The version these pages describe (astro.config.mjs reads it from the
+// workspace); until its release every page says so.
+const { version, released } = __SO_RELEASE__;
 ---
 
 <a href={siteTitleHref} class="site-title sl-flex">
 	<FAIcon name="sourceorrery" family="kit" class="so-site-emblem" />
 	<span translate="no"><BrandText text={siteTitle} /></span>
-	<span class="so-site-label">{packageInfo.version}</span>
+	<span class="so-site-label">{released ? version : `${version} · unreleased`}</span>
 </a>

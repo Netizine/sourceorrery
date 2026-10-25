@@ -6,6 +6,7 @@
 /security/review.md
 /security/supply-chain.md
 /guides/first-run.mdx
+/guides/upgrading.mdx
 /guides/ai-agents.md
 /guides/building-from-source.mdx
 /reference/cli.mdx
@@ -37,5 +38,7 @@
 /decisions/0007-versioning-and-compatibility.md
 /decisions/0008-remote-providers.md
 /decisions/0009-local-vaults-checks-and-storage.md
+/decisions/0010-authenticated-key-wraps-and-private-files.md
+/decisions/0011-provider-writes-fail-closed.md
 /decisions/index.md
 /reference/error-codes.md

@@ -1,17 +1,24 @@
 // @ts-check
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { satteri } from '@astrojs/markdown-satteri';
 import { externalLinks } from './plugins/external-links.mjs';
 import { githubAlerts, calloutIcons } from './plugins/github-alerts.mjs';
 import { brandHeadings } from './plugins/brand-headings.mjs';
+import { releaseVersion } from './src/lib/release-version.mjs';
 
 const SITE_URL = 'https://sourceorrery.ai';
 const GITHUB_URL = 'https://github.com/Netizine/sourceorrery';
+// The version the pages describe, shown in the header (SiteTitle.astro).
+const RELEASE = releaseVersion(fileURLToPath(new URL('..', import.meta.url)));
 
 // https://astro.build/config
 export default defineConfig({
 	site: SITE_URL,
+	vite: {
+		define: { __SO_RELEASE__: JSON.stringify(RELEASE) },
+	},
 	markdown: {
 		// Every link that leaves the site opens in a new tab. Links in page
 		// chrome (the GitHub icon, "Edit page", the hero) get the same
@@ -97,6 +104,7 @@ export default defineConfig({
 						{ label: 'First run: the set-up wizard', slug: 'guides/first-run' },
 						{ label: 'Headless: WSL, Docker, CI', slug: 'guides/headless' },
 						{ label: 'AI coding agents', slug: 'guides/ai-agents' },
+						{ label: 'Upgrading from 0.2.0', slug: 'guides/upgrading' },
 						{ label: 'Building from source', slug: 'guides/building-from-source' },
 						{ label: 'Rotating a secret', slug: 'guides/rotation' },
 						{ label: 'Enterprise: identity, policy, revocation', slug: 'guides/enterprise' },
