@@ -107,7 +107,9 @@ pub fn decode_value<S: BuildHasher>(
     if !is_base64(tags) {
         return Ok(SecretBytes::new(text.into_bytes()));
     }
-    let bytes = STANDARD.decode(text.as_bytes()).map_err(|_| {
+    // The base64 text is the value too: held so that it is wiped as it drops.
+    let text = SecretBytes::from_string(text);
+    let bytes = STANDARD.decode(text.expose()).map_err(|_| {
         SecretError::Storage("a value marked as base64 does not decode as base64".to_owned())
     });
     drop(text);

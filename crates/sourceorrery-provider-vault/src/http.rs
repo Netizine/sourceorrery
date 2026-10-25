@@ -135,18 +135,18 @@ impl Transport {
             request = request.header("X-Vault-Token", token.expose());
         }
         if let Some(body) = body {
-            request = if merge {
-                let bytes = serde_json::to_vec(body)
-                    .map_err(|err| SecretError::Storage(err.to_string()))?;
-                request
-                    .header(
-                        reqwest::header::CONTENT_TYPE,
-                        "application/merge-patch+json",
-                    )
-                    .body(bytes)
+            // Serialised into a wiping buffer that reqwest takes as the body's
+            // owner: the copy of a value it carries is wiped once the request
+            // is done with it. What hyper and rustls copy is theirs.
+            let bytes = bytes::Bytes::from_owner(crate::kv::to_wiped_json(body)?);
+            let content_type = if merge {
+                "application/merge-patch+json"
             } else {
-                request.json(body)
+                "application/json"
             };
+            request = request
+                .header(reqwest::header::CONTENT_TYPE, content_type)
+                .body(reqwest::Body::from(bytes));
         }
         tracing::debug!(path, "vault request");
         let response = request.send().await.map_err(unavailable)?;

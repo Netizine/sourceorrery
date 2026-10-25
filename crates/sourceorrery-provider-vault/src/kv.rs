@@ -25,6 +25,7 @@
 //!   metadata, and with it every version.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,7 @@ use sourceorrery_core::{
 };
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use zeroize::{Zeroize, Zeroizing};
 
 /// `custom_metadata` key prefix of a version's properties.
 pub const PROPERTIES_PREFIX: &str = "sourceorrery.v";
@@ -441,7 +443,49 @@ fn parse_props(text: &str, key: &str) -> Result<VersionProps> {
     })
 }
 
-/// The KV data object that stores `value`.
+/// Wipe every string in `value`, nested ones included: the copies of a
+/// secret a JSON document held, before it is dropped.
+pub fn wipe(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => text.zeroize(),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(wipe),
+        serde_json::Value::Object(map) => map.values_mut().for_each(wipe),
+        _ => {}
+    }
+}
+
+/// A writer into a buffer that is wiped on drop and, when it grows, moves
+/// into a new buffer and wipes the old: serialised JSON that carries a value
+/// leaves no copy in freed memory.
+struct Wiped(Zeroizing<Vec<u8>>);
+
+impl Write for Wiped {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let needed = self.0.len() + bytes.len();
+        if needed > self.0.capacity() {
+            let capacity = needed.max(self.0.capacity().saturating_mul(2)).max(256);
+            let mut grown = Zeroizing::new(Vec::with_capacity(capacity));
+            grown.extend_from_slice(&self.0);
+            self.0 = grown;
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// `value` serialised as JSON into a wiping buffer.
+pub fn to_wiped_json(value: &serde_json::Value) -> Result<Zeroizing<Vec<u8>>> {
+    let mut out = Wiped(Zeroizing::new(Vec::new()));
+    serde_json::to_writer(&mut out, value).map_err(|err| SecretError::Storage(err.to_string()))?;
+    Ok(out.0)
+}
+
+/// The KV data object that stores `value`. It holds a copy of the value:
+/// the caller [`wipe`]s it once the request is sent.
 pub fn encode_value(value: &SecretBytes) -> serde_json::Value {
     match std::str::from_utf8(value.expose()) {
         Ok(text) if !text.contains('\0') => serde_json::json!({ "value": text }),
@@ -461,22 +505,48 @@ pub fn decode_value(
         return Ok((SecretBytes::new(text.into_bytes()), None));
     }
     if let Some(serde_json::Value::String(text)) = data.remove("value_base64") {
+        let mut text = Zeroizing::new(text);
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(text.as_bytes())
             .map_err(|_| {
                 SecretError::Storage(format!("the value_base64 field of '{name}' is not base64"))
-            })?;
-        return Ok((SecretBytes::new(bytes), None));
+            });
+        text.zeroize();
+        return Ok((SecretBytes::new(bytes?), None));
     }
-    let json = serde_json::to_vec(&serde_json::Value::Object(data)).map_err(|err| {
+    // An object another client wrote is the value whole: serialised into a
+    // wiping buffer, and the parsed fields wiped once copied.
+    let mut object = serde_json::Value::Object(data);
+    let json = to_wiped_json(&object);
+    wipe(&mut object);
+    let mut json = json.map_err(|err| {
         SecretError::Storage(format!("cannot serialise the fields of '{name}': {err}"))
     })?;
-    Ok((SecretBytes::new(json), Some("application/json")))
+    Ok((
+        SecretBytes::new(std::mem::take(&mut *json)),
+        Some("application/json"),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_copies_of_a_value_are_serialised_and_wiped() {
+        let mut document = serde_json::json!({
+            "data": { "value": "s3cret", "list": ["s3cret", { "deep": "s3cret" }] },
+            "options": { "cas": 1 },
+        });
+        let bytes = to_wiped_json(&document).unwrap();
+        assert_eq!(
+            &bytes[..],
+            br#"{"data":{"list":["s3cret",{"deep":"s3cret"}],"value":"s3cret"},"options":{"cas":1}}"#
+        );
+        wipe(&mut document);
+        assert!(!document.to_string().contains("s3cret"), "{document}");
+        assert_eq!(document["options"]["cas"], 1, "numbers stay");
+    }
 
     #[test]
     fn values_round_trip_as_text_base64_or_whole_objects() {

@@ -755,3 +755,32 @@ One commit: the checks and the new write order share the tag plan.
   `.env` forms, escapes and errors that never carry a value, stdin and
   `--from-file`): CLI 214 tests. clippy clean. No claim is made about
   memory the program does not own.
+
+### B21 — fewer plaintext copies in the provider adapters
+
+* **Closes:** REC07, the provider part.
+* **Inventory:** HashiCorp Vault: a write built the value into a
+  `serde_json::Value` and reqwest serialised it into its own buffer, both
+  dropped unwiped; a read moved the value `String` (no copy), but a base64
+  value's text and a foreign object's parsed fields were dropped unwiped,
+  and the object was serialised with `to_vec` (growth copies). AWS: a read
+  copied `secret_string` / `secret_binary` out of the SDK's answer; a write
+  hands the value to the SDK (its request owns it). Azure: a read moved the
+  value; a base64 value's text was dropped unwiped; a write hands the value
+  to the SDK. Credentials go into each SDK's credential types, which own
+  them.
+* **Changes:** Vault: `kv::to_wiped_json` serialises into a buffer wiped on
+  drop that grows the wiping way; the transport sends every body from such
+  a buffer as `Bytes::from_owner`, so reqwest frees it by wiping (new direct
+  dependency `bytes`, already in the lock file); `write_data` wipes its JSON
+  document after the request in every outcome; `decode_value` wipes the
+  base64 text and the foreign object's fields. AWS: `read_value` moves the
+  value out of the answer. Azure: the base64 text is held so it is wiped.
+  The threat model's memory row states what the SDKs, hyper and rustls own.
+* **Tests run:** `kv` unit test `json_copies_of_a_value_are_serialised_and_wiped`
+  (nested strings serialised, then wiped; numbers kept); every provider test
+  passes: Vault 23 (the publication model and the transport tests included,
+  the B10 semantics unchanged), AWS 19 (the publication model included),
+  Azure 17; the Vault live suite against the dev server passes. clippy clean.
+* **Not run here:** the Azure live suite (its emulator; CI runs it). No
+  allocation trace was taken: the change is reviewed by ownership.

@@ -494,7 +494,7 @@ impl AwsClient {
 
     /// Read one version's value.
     async fn read_value(&self, name: &str, version: &str) -> Result<SecretBytes> {
-        let output = self
+        let mut output = self
             .client
             .get_secret_value()
             .secret_id(self.secret_id(name))
@@ -510,11 +510,13 @@ impl AwsClient {
                 }
                 other => other,
             })?;
-        if let Some(text) = output.secret_string() {
-            return Ok(SecretBytes::new(text.as_bytes().to_vec()));
+        // Moved out of the SDK's answer, not copied; the SDK's own buffers
+        // (the response body it parsed) are its own.
+        if let Some(text) = output.secret_string.take() {
+            return Ok(SecretBytes::from_string(text));
         }
-        if let Some(blob) = output.secret_binary() {
-            return Ok(SecretBytes::new(blob.as_ref().to_vec()));
+        if let Some(blob) = output.secret_binary.take() {
+            return Ok(SecretBytes::new(blob.into_inner()));
         }
         Err(SecretError::Storage(format!(
             "version {version} of '{name}' holds neither a string nor binary value"

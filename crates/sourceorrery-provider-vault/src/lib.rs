@@ -382,14 +382,14 @@ impl VaultClient {
     ) -> Result<WriteResponse> {
         let next = current + 1;
         let path = self.path("data", name);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "data": kv::encode_value(&value),
             "options": { "cas": current },
         });
         drop(value);
         let err = match self.send(Method::POST, &path, Some(&body)).await {
             Ok(reply) if reply.status.is_success() => {
-                drop(body);
+                kv::wipe(&mut body);
                 return reply.json(&path).map_err(|err| {
                     unknown(format!(
                         "version {next} of '{name}' was written, but the answer could not be \
@@ -412,7 +412,7 @@ impl VaultClient {
             Ok(reply) => default_error(&path, reply.status, &reply.vault_errors()),
             Err(err) => err,
         };
-        drop(body);
+        kv::wipe(&mut body);
         Err(self.failed_write(name, next, intent, err).await)
     }
 
