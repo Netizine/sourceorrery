@@ -548,6 +548,53 @@ mod view_check {
                 .code(),
             "invalid_argument"
         );
+        // SR14: each refusal is recorded once, by its code alone.
+        let events = guard_events(&vault);
+        assert_eq!(
+            events,
+            vec![(AuditOutcome::Failure, "invalid_argument".to_owned()); 5],
+            "four hints and an empty password"
+        );
+    }
+
+    /// SR14 of the 2026-10-25 review: every attempt to change the view
+    /// check ends in exactly one recorded outcome, and none carries the
+    /// rejected input.
+    #[test]
+    fn every_view_check_change_is_recorded_once_and_never_its_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_path, vault, _key) = create(&dir);
+        let mut too_much = Argon2Params::MAX;
+        too_much.memory_kib += 1;
+        let err = vault
+            .set_password(&SecretBytes::from(PASSWORD), None, too_much)
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_argument");
+        let err = vault.enrol_authenticator().unwrap_err();
+        assert_eq!(err.code(), "invalid_argument", "no password yet");
+        let err = vault
+            .verify_authenticator("123456", timestamp::now())
+            .unwrap_err();
+        assert_eq!(err.code(), "invalid_argument", "nothing enrolled");
+        vault
+            .set_password(
+                &SecretBytes::from(PASSWORD),
+                Some("the long one"),
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        let err = vault.remove_authenticator().unwrap_err();
+        assert_eq!(err.code(), "invalid_argument");
+        let events = guard_events(&vault);
+        let mut expected = vec![(AuditOutcome::Failure, "invalid_argument".to_owned())];
+        expected.push((AuditOutcome::Success, "password set".to_owned()));
+        expected.extend(vec![
+            (AuditOutcome::Failure, "invalid_argument".to_owned());
+            3
+        ]);
+        assert_eq!(events, expected, "newest first");
+        let text = format!("{events:?}");
+        assert!(!text.contains(PASSWORD) && !text.contains("the long one"));
     }
 
     #[test]

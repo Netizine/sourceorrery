@@ -197,7 +197,7 @@ Newest first, with each event's id. `audit` and `audit export` ask the
 |-----------|--------------|
 | `vault_create`, `vault_open` | Creating the vault; each open (a failed one with outcome `failure`, detail `locked`). |
 | `secret_set`, `secret_get`, `secret_list`, `secret_inspect`, `secret_update`, `secret_delete`, `secret_recover`, `secret_purge` | The secret operations; `secret_inspect` is a metadata read (properties, versions, a deleted secret's details). A call to a provider is recorded the same way, by the vault, with the provider's outcome. |
-| `guard` | The view check: an answer passed or refused (`denied`), and each change to it (password set or changed, check cleared, authenticator enrolled and verified or removed). |
+| `guard` | The view check: an answer passed or refused (`denied`), each change to it (password set or changed, check cleared, authenticator enrolled and verified or removed), and each change refused (`failure`, the error code only: never the password or hint it was given). |
 | `protector_add` | The recovery key replaced, or this machine's key added. Its event checkpoints the new set of key wraps. |
 | `vault_change` | A connection added, changed or removed, and a change of settings refused as a whole (`failure`). |
 | `connection_test` | A connection tested (`success`, or `failure` with the error code). |

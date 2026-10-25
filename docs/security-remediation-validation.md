@@ -670,3 +670,33 @@ One commit: the checks and the new write order share the tag plan.
   It **fails without the fix** (the second handle reported `none` after the
   password was set). Storage 76 tests; clippy clean. Same-user isolation is
   not claimed: the view check is a check, not encryption (ADR 0009).
+
+### B18 — every refused settings change is recorded once
+
+* **Closes:** SR14.
+* **Inventory of the settings mutators:** connections (add, settings,
+  credentials, test, remove), projects (link, unlink), descriptions,
+  `change_settings`, recovery-key replacement and import all complete
+  through one transaction helper that records a refusal (`fail`); the view
+  check did not: `set_password` validated before its transaction (an empty
+  password, a hint that gives the password away, Argon2 work factors past
+  the limits), `enrol_authenticator` prepared its record before it,
+  `verify_authenticator` and `check_view` returned early on a record they
+  could not parse or weigh.
+* **Changes:** `refuse_view_change`: a refusal before the transaction is
+  recorded in its own transaction that passes the usual gate (one `guard` /
+  `failure` event, the error code as its detail); Argon2 still runs before
+  the write lock is taken, and the change is applied to the state as stored
+  when it commits. The early returns in `verify_authenticator` and
+  `check_view` go through `fail`. An audit write that fails is returned,
+  never reported as recorded. `docs/cli.md`'s `guard` row says so.
+* **Tests run:** `a_hint_must_not_give_the_password_away` now asserts one
+  `failure` per refusal (four hints, an empty password);
+  `every_view_check_change_is_recorded_once_and_never_its_input` (work
+  factors past the limits, an enrolment without a password, a verification
+  with nothing enrolled, a removal with nothing enrolled, around a
+  successful set: five events, in order, none carrying the password or the
+  hint). Both **fail without the fix** (no event for the hint refusals;
+  four events instead of five). Storage 77 tests; clippy clean.
+* **Not run here:** an audit-storage failure (no fault injection for
+  SQLite writes; the error is returned by the same `?` as any write).

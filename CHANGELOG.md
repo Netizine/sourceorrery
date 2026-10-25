@@ -149,6 +149,10 @@ is in `docs/security-remediation-validation.md`).
   server's no longer reports an `updated_on` earlier than the version's
   `created_on`.
 
+* A refused change of the view check (an empty password, a hint that gives
+  it away, work factors past the limits, an authenticator step refused for
+  a corrupt record) is recorded in the audit log like every refused
+  operation, by its code alone.
 * The view check is decided on the vault's current settings: a password
   or an authenticator another process set after a handle opened the vault
   is asked for, and the prompts follow.

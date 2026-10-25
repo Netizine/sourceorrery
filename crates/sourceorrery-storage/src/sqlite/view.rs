@@ -311,6 +311,20 @@ impl SqliteVault {
         Ok(state)
     }
 
+    /// Record a change of the view check refused before its transaction
+    /// began (an empty password, a hint that gives it away, work factors
+    /// past the limits, a failure preparing it) and return the refusal:
+    /// one `guard` / `failure` event whose detail is the error's code,
+    /// never the rejected input, as any refused operation is recorded
+    /// (SR14 of the 2026-10-25 review). The preparation (Argon2 above all)
+    /// runs before the write lock is taken; the change itself is applied
+    /// to the state as stored when it commits.
+    fn refuse_view_change<T>(&self, err: SecretError) -> Result<T> {
+        let mut conn = self.lock()?;
+        let tx = self.begin(&mut conn, AuditOperation::Guard)?;
+        self.fail(tx, AuditOperation::Guard, None, None, err)
+    }
+
     fn seal(&self, kind: &str, plaintext: &[u8]) -> Result<String> {
         self.seal_bound(&aad(kind, &self.meta.id), plaintext)
     }
@@ -404,7 +418,10 @@ impl SqliteVault {
         hint: Option<&str>,
         params: Argon2Params,
     ) -> Result<()> {
-        let (sealed_password, sealed_hint) = self.seal_password(password, hint, params)?;
+        let (sealed_password, sealed_hint) = match self.seal_password(password, hint, params) {
+            Ok(sealed) => sealed,
+            Err(err) => return self.refuse_view_change(err),
+        };
         let changed = self.view_state()?.password.is_some();
         self.change_view(
             if changed {
@@ -544,20 +561,26 @@ impl SqliteVault {
     /// accepted one code. A verified enrolment must be removed first; an
     /// unverified one is replaced.
     pub fn enrol_authenticator(&self) -> Result<TotpSecret> {
-        let secret = TotpSecret::generate().map_err(crypto)?;
-        let sealed = aead::seal(
-            &self.dek,
-            aad("second-factor", &self.meta.id).as_bytes(),
-            secret.expose(),
-        )
-        .map_err(crypto)?;
-        let raw = encode(&SecondFactorRecord {
-            nonce: hex::encode(sealed.nonce),
-            ciphertext: hex::encode(&sealed.bytes),
-            enrolled_on: nanos(timestamp::now())?,
-            verified: false,
-            last_counter: None,
-        })?;
+        let prepared = TotpSecret::generate().map_err(crypto).and_then(|secret| {
+            let sealed = aead::seal(
+                &self.dek,
+                aad("second-factor", &self.meta.id).as_bytes(),
+                secret.expose(),
+            )
+            .map_err(crypto)?;
+            let raw = encode(&SecondFactorRecord {
+                nonce: hex::encode(sealed.nonce),
+                ciphertext: hex::encode(&sealed.bytes),
+                enrolled_on: nanos(timestamp::now())?,
+                verified: false,
+                last_counter: None,
+            })?;
+            Ok((secret, raw))
+        });
+        let (secret, raw) = match prepared {
+            Ok(prepared) => prepared,
+            Err(err) => return self.refuse_view_change(err),
+        };
         self.change_view("authenticator enrolled (unverified)", |state| {
             if state.password.is_none() {
                 return Err(SecretError::InvalidArgument(
@@ -629,8 +652,13 @@ impl SqliteVault {
                 ),
             );
         };
-        let mut record: SecondFactorRecord = parse(&raw, "second factor")?;
-        let Some(counter) = self.accept_code(&record, code, now)? else {
+        let checked = parse::<SecondFactorRecord>(&raw, "second factor")
+            .and_then(|record| Ok((self.accept_code(&record, code, now)?, record)));
+        let (accepted, mut record) = match checked {
+            Ok(checked) => checked,
+            Err(err) => return self.fail(tx, AuditOperation::Guard, None, None, err),
+        };
+        let Some(counter) = accepted else {
             self.audit(
                 &tx,
                 AuditOperation::Guard,
@@ -709,12 +737,19 @@ impl SqliteVault {
             self.remember(state)?;
             return Ok(());
         }
-        let mut failures: CheckFailures = state
+        let failures = state
             .check_failures
             .as_deref()
-            .map(|raw| parse(raw, "check failures"))
-            .transpose()?
-            .unwrap_or_default();
+            .map(|raw| parse::<CheckFailures>(raw, "check failures"))
+            .transpose()
+            .and_then(|failures| {
+                let failures = failures.unwrap_or_default();
+                Ok((failures, wait_secs(failures, now)?))
+            });
+        let (mut failures, wait) = match failures {
+            Ok(failures) => failures,
+            Err(err) => return self.fail(tx, AuditOperation::Guard, None, None, err),
+        };
 
         let verdict = if self.opened_with_recovery_key {
             Verdict::Passed("view check passed: opened with the recovery key")
@@ -724,7 +759,7 @@ impl SqliteVault {
             } else {
                 Verdict::Refused("incorrect recovery key")
             }
-        } else if let Some(wait) = wait_secs(failures, now)? {
+        } else if let Some(wait) = wait {
             self.audit(
                 &tx,
                 AuditOperation::Guard,
@@ -739,7 +774,10 @@ impl SqliteVault {
                  recovery key)"
             )));
         } else {
-            self.weigh(&mut state, answers, now)?
+            match self.weigh(&mut state, answers, now) {
+                Ok(verdict) => verdict,
+                Err(err) => return self.fail(tx, AuditOperation::Guard, None, None, err),
+            }
         };
 
         let result = match verdict {
