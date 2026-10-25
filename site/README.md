@@ -5,7 +5,7 @@ The public site is deployed separately; local changes do not publish it.
 
 ## Work on the documentation
 
-Use Node **22.19+** (or Node 24 LTS). Set `FONTAWESOME_NPM_AUTH_TOKEN` in your
+Use Node **22.22+** (or Node 24 LTS). Set `FONTAWESOME_NPM_AUTH_TOKEN` in your
 process environment using your secret manager before installing dependencies.
 The checked-in `.npmrc` contains registry scopes and an environment-variable
 placeholder only. Never replace it with a real token or commit credentials.
@@ -20,7 +20,8 @@ npm run dev -- --background
 `npm run build` syncs documentation, produces the static site, indexes search,
 and checks every internal page, asset and fragment link. The focused tests
 cover Git metadata, reading estimates, callouts and external links in Markdown
-and MDX. Manage the background dev server with `npx astro dev status`,
+and MDX, consent and theme preferences when storage is unavailable.
+Manage the background dev server with `npx astro dev status`,
 `npx astro dev logs` and `npx astro dev stop`.
 
 Stop the dev server before building: dev and build share Expressive Code's
@@ -124,10 +125,21 @@ To refresh the kit after editing it, authenticate through the environment,
 run `npm update @awesome.me/kit-515c69ad68`, review the new revision and run the
 tests/build again. Do not commit `node_modules` or credentials.
 
-The website uses no analytics, tracking cookies or third-party asset requests.
-Theme and platform-tab preferences stay in browser storage. Keep the original
-homepage privacy promise intact. External websites are visited only when the
-reader follows a link.
+The website offers optional Microsoft Clarity analytics to guide documentation
+and feature priorities. `Head.astro` includes the local consent controller;
+it injects project `z20sc8puam` only after explicit permission and only on
+`sourceorrery.ai` / `www.sourceorrery.ai`. No tag, preconnect or cookieless
+collection is requested before permission or after a stored refusal.
+Advertising consent is always denied. GPC and Do Not Track keep analytics off.
+The footer exposes Privacy choices on every page. Revocation saves refusal,
+stops the collector and reloads, removing its listeners; other open tabs
+respond to the storage change. Theme/tab preferences and the analytics choice
+are local browser storage. The CLI and SDKs contain no website analytics.
+
+Before deploying, enable Consent Mode in the Clarity project and review its
+masking and retention settings. Automated browser checks stub the vendor
+script; they never send test visits to the live project. Run `npm test` and
+`npm run build` after changing the consent controller or privacy text.
 
 Native cross-document view transitions provide a short fade in supporting
 browsers and respect reduced-motion preferences. Standard navigation remains

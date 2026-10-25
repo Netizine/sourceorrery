@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -12,6 +13,38 @@ import { releaseVersion } from '../src/lib/release-version.mjs';
 
 const siteRoot = path.resolve(import.meta.dirname, '..');
 const repoRoot = path.resolve(siteRoot, '..');
+
+test('the architecture graphic names the workspace build and current trust boundaries', () => {
+	const { version } = releaseVersion(repoRoot);
+	const svg = readFileSync(path.join(siteRoot, 'src/assets/sourceorrery-architecture.svg'), 'utf8');
+	assert.ok(svg.includes(`SourceOrrery ${version} architecture`));
+	for (const label of ['Read-only application SDKs', 'AWS Secrets Manager', 'Azure Key Vault', 'HashiCorp Vault KV v2', 'Recovery key', 'view check']) assert.ok(svg.includes(label), label);
+	const schema = readFileSync(path.join(repoRoot, 'crates/sourceorrery-storage/src/lib.rs'), 'utf8').match(/SCHEMA_VERSION: u32 = (\d+)/)[1];
+	assert.ok(svg.includes(`schema ${schema}`));
+	assert.ok(svg.includes('No daemon, local IPC service or same-user isolation'));
+});
+
+test('ready-to-run installation precedes Cargo and source builds', () => {
+	const page = readFileSync(path.join(siteRoot, 'src/content/docs/getting-started.mdx'), 'utf8');
+	const headings = ['### With a package manager', '### From the GitHub release', '### From the package registries', '### From source'];
+	const positions = headings.map((heading) => page.indexOf(heading));
+	assert.ok(positions.every((position) => position >= 0));
+	assert.deepEqual([...positions].sort((a, b) => a - b), positions);
+	assert.ok(page.includes('winget install --id Netizine.SourceOrrery --exact'));
+	assert.ok(page.includes('brew install Netizine/sourceorrery/sourceorrery'));
+});
+
+test('all pages retain privacy controls and the head uses the consent gate', () => {
+	const head = readFileSync(path.join(siteRoot, 'src/components/Head.astro'), 'utf8');
+	const footer = readFileSync(path.join(siteRoot, 'src/components/Footer.astro'), 'utf8');
+	assert.ok(head.includes('analytics-consent.js?raw'));
+	assert.ok(head.includes('<DefaultHead />'));
+	assert.ok(footer.includes('<PrivacyBanner />'));
+	assert.ok(footer.includes('data-privacy-settings'));
+	assert.ok(footer.includes('href="/privacy/"'));
+	assert.ok(!footer.includes('no cookie banner'));
+	assert.ok(footer.includes('https://www.linkedin.com/in/jmelvin/'));
+});
 
 test('Git timestamps query the source path as an argument, preserving spaces and shell characters', async () => {
 	const source = 'docs/example $(literal).md';

@@ -102,6 +102,36 @@ export const walkthroughs = {
 					'Every secret with its status, where it is kept, its newest version and the projects that use it. No screen ever shows a value.',
 			},
 			{
+				state: 'actions-60',
+				title: 'Actions at a compact size',
+				caption: 'F2 shows available actions and explains unavailable ones. Moving through the menu reads no additional vault or provider data.',
+			},
+			{
+				state: 'filters-80',
+				title: 'Filter cached metadata',
+				caption: 'f offers status, expiry and tag categories with counts. The same query syntax remains available with /.',
+			},
+			{
+				state: 'sort-60',
+				title: 'Sort without losing the target',
+				caption: 's sorts typed names or dates. Missing dates stay last and selection follows the same secret.',
+			},
+			{
+				state: 'inspector-80',
+				title: 'Complete cached details',
+				caption: 'i wraps and scrolls full cached metadata, then returns to the same row. Enter still performs the explicit detail load when needed.',
+			},
+			{
+				state: 'theme-preview-80',
+				title: 'Reversible theme preview',
+				caption: 't previews Dark, Light or Terminal for this session. Enter applies; Esc restores the prior choice. No-colour mode remains respected.',
+			},
+			{
+				state: 'idle-warning-80',
+				title: 'Idle-lock warning',
+				caption: 'The last 30 seconds show a countdown. Display ticks do not read metadata or prolong the session; blocking provider work must finish before locking resumes.',
+			},
+			{
 				state: 'detail',
 				title: 'A secret',
 				caption: "Its versions and metadata. e edits a version's metadata; n stores a new version from a hidden prompt.",

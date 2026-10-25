@@ -35,6 +35,10 @@ const BLOB_URL = `${REPO_URL}/blob/main/`;
  * the one derived from the first paragraph.
  */
 const PAGES = {
+	'docs/privacy.md': {
+		dest: 'privacy.md',
+		description: 'Optional website analytics, the complete opt-out, browser preferences and contact details.',
+	},
 	'docs/why-sourceorrery.md': {
 		dest: 'why-sourceorrery.md',
 		description:
@@ -53,7 +57,7 @@ const PAGES = {
 	'docs/security-review.md': {
 		dest: 'security/review.md',
 		description:
-			'The engineering pass of the milestone 4 security review: every threat-model claim checked against the code, what was found and fixed, what holds, and what is still untested.',
+			'Security review status for 0.3.0: the current design, recorded engineering evidence, outstanding platform and release acceptance, and the boundaries that remain.',
 	},
 	'docs/supply-chain.md': {
 		dest: 'security/supply-chain.md',
@@ -68,7 +72,7 @@ const PAGES = {
 	'docs/upgrading.md': {
 		dest: 'guides/upgrading.md',
 		description:
-			'Moving a vault made by SourceOrrery 0.2.0 to 0.3.0: keep the old file where 0.2.0 reads it, create a new vault, and set each secret from the old one through a pipe, for local and remote vaults.',
+			'Supported vault files in 0.3.0, consistent encrypted exports, verified imports and restore limits. No legacy format conversion or migration layer.',
 	},
 	'docs/ai-agents.md': {
 		dest: 'guides/ai-agents.md',
@@ -108,17 +112,17 @@ const PAGES = {
 	'docs/providers/hashicorp-vault.md': {
 		dest: 'providers/hashicorp-vault.md',
 		description:
-			'The HashiCorp Vault provider: a KV version 2 mount as a SourceOrrery vault, the credential sources it tries, how names, versions, properties and deletion map onto KV, and what differs from a local vault.',
+			'The HashiCorp Vault provider: a local vault connection to a KV version 2 mount, the credential sources it tries, how names, versions, properties and deletion map onto KV, and what differs from a local vault.',
 	},
 	'docs/providers/aws-secrets-manager.md': {
 		dest: 'providers/aws-secrets-manager.md',
 		description:
-			'The AWS Secrets Manager provider: secrets under a prefix as a SourceOrrery vault, the default credential chain, how versions, tags and deletion map onto the service, and what differs from a local vault.',
+			'The AWS Secrets Manager provider: a local vault connection to secrets under a prefix, the default credential chain, how versions, tags and deletion map onto the service, and what differs from a local vault.',
 	},
 	'docs/providers/azure-key-vault.md': {
 		dest: 'providers/azure-key-vault.md',
 		description:
-			'The Azure Key Vault provider: one key vault as a SourceOrrery vault, the identities it signs in with, how versions, attributes, tags and soft delete map onto Key Vault, and what differs from a local vault.',
+			'The Azure Key Vault provider: a local vault connection to an Azure key vault, the identities it signs in with, how versions, attributes, tags and soft delete map onto Key Vault, and what differs from a local vault.',
 	},
 	'docs/rotation.md': {
 		dest: 'guides/rotation.md',

@@ -49,11 +49,35 @@
 	},
 	"overview": {
 		"cols": 120,
-		"rows": 32
+		"rows": 40
 	},
 	"secrets": {
 		"cols": 120,
 		"rows": 18
+	},
+	"actions-60": {
+		"cols": 60,
+		"rows": 18
+	},
+	"filters-80": {
+		"cols": 80,
+		"rows": 24
+	},
+	"sort-60": {
+		"cols": 60,
+		"rows": 18
+	},
+	"inspector-80": {
+		"cols": 80,
+		"rows": 24
+	},
+	"theme-preview-80": {
+		"cols": 80,
+		"rows": 24
+	},
+	"idle-warning-80": {
+		"cols": 80,
+		"rows": 24
 	},
 	"detail": {
 		"cols": 120,

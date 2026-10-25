@@ -1,7 +1,7 @@
 {
   "name": "sourceorrery-site",
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
     "predev": "npm run sync",
@@ -15,7 +15,7 @@
     "walkthroughs": "node scripts/sync-walkthroughs.mjs",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "node --test scripts/docs-tooling.test.mjs"
+    "test": "node --test scripts/docs-tooling.test.mjs scripts/analytics-consent.test.mjs scripts/theme-preference.test.mjs"
   },
   "dependencies": {
     "@astrojs/markdown-satteri": "0.4.4",
@@ -29,7 +29,7 @@
   },
   "private": true,
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.22.0"
   },
   "overrides": {
     "postcss-selector-parser": "^7.1.6"
