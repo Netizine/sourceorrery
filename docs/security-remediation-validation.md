@@ -492,3 +492,47 @@ One commit: the checks and the new write order share the tag plan.
   the fixture vault: `dotnet test` of the solution, 22 passed (7 new);
   Java `ReaderTest`, `GuardedTest` and the extraction tests against the
   native library, 25 passed, none skipped.
+
+### B22 — every dependency graph audited
+
+* **Closes:** REC03's audit coverage (B30 exercises any upgrade).
+* **Inventory (2026-10-25):** three Cargo lock files (root, Python
+  extension, Node extension); four npm lock files (`site`, `bindings/node`,
+  `scripts/coverage`, `scripts/ci/lstk`); two hash-pinned Python
+  requirement files and `bindings/python/pyproject.toml` (no runtime
+  dependencies); the Maven `pom.xml` (test and plugin dependencies); six
+  `.csproj` files (one with test packages); `go.mod`, `composer.json`, the
+  C++ CMake build and the six npm platform packages, all without
+  third-party dependencies.
+* **Changes:** `scripts/ci/dependency-audit.py` (cargo-audit, `npm audit
+  --package-lock-only`, the OSV.dev query API for PyPI, Maven and NuGet
+  pins; a graph that must stay dependency-free is checked to stay so;
+  every tracked lock file and package manifest must be covered); a
+  vulnerability, a failed scanner, an unreadable answer, a missing or an
+  uncovered graph fails; an unreviewed maintenance notice is a warning, and
+  fails with `--strict`. The `audit` CI job (`dependency audit`) runs it
+  with cargo-audit 0.22.2 and Node 24; its unit tests run in the scripts
+  job. Dependabot gains `scripts/coverage` for npm and pip.
+  `docs/supply-chain.md`: the inventory, the policy, the reviewed notices.
+* **Maintenance notices (not vulnerabilities):** RUSTSEC-2026-0370
+  (`zvariant`), -0371 (`zbus_names`), -0372 (`zvariant_derive`), in all
+  three Cargo graphs, through `sourceorrery-storage` →
+  `zbus-secret-service-keyring-store` 1.0.1 → `secret-service` 5.2.0 →
+  `zbus` 5.19 (the Linux credential store). Upstream:
+  z-galaxy/zbus#2043, merged into `zbus` 6. Removed by `secret-service` on
+  `zbus` 6; revisit on that release. No upgrade is made here: none exists.
+* **Tests run:** live, 2026-10-25: all 20 graphs pass (Rust: no
+  vulnerabilities, the three reviewed notices; npm: 0 of 360, 154, 55 and
+  7 dependencies vulnerable, the site's audited without the icon token;
+  PyPI 7 and 13 pins, Maven 9 and NuGet 4 references clean). The OSV path
+  flags known-vulnerable pins in all three ecosystems (Jinja2 2.4.1, Log4j
+  2.14.1, Newtonsoft.Json 12.0.1). `dependency_audit_test.py`, 12 tests with
+  faked scanners: a vulnerable Cargo lock, a cargo-audit that cannot fetch
+  its database, npm not installed, npm vulnerabilities and npm errors, OSV
+  findings and an unreachable OSV, reviewed versus unreviewed notices
+  (strict and not), uncovered lock files and manifests, dependency-free
+  npm packages, graphs that gain dependencies, a listed graph that
+  disappears, the parsers.
+* **Not covered:** the transitive Maven and NuGet graphs (direct references
+  only; their resolution needs Maven and the .NET SDK, and Dependabot
+  follows them); GitHub Actions (pinned by SHA; Dependabot and zizmor).

@@ -17,8 +17,8 @@ itself.
 * **Checks matched to the change.** Code changes trigger formatting,
   Clippy with warnings as errors, tests on Ubuntu, Windows and macOS,
   SDK tests and the cross-language conformance harness against a real
-  vault, and `cargo audit` against the RustSec advisory database. The `CI`
-  gate aggregates those jobs. Documentation-only changes may skip the
+  vault, and an audit of every dependency graph
+  ([below](#dependency-audit)). The `CI` gate aggregates those jobs. Documentation-only changes may skip the
   native builds; the documentation workflow builds and link-checks the site.
 * **One workflow, one commit, every package.** A release is cut by
   dispatching `.github/workflows/release.yml` by hand, never by pushing a
@@ -30,6 +30,32 @@ itself.
   against the committed `Cargo.lock` (the Python and Node extensions have
   lock files of their own) and with `npm ci` against `package-lock.json`.
   A dependency changes only in a commit that changes a lock file.
+* <a id="dependency-audit"></a>**Every dependency graph audited.** The
+  `dependency audit` CI job runs `scripts/ci/dependency-audit.py` over
+  each graph resolved on its own, and fails on a known vulnerability, on
+  a scanner or advisory service that fails (an unavailable scan is never
+  a pass), and on a lock file or package manifest under version control
+  that its inventory does not cover:
+
+  | Graph | Checked with |
+  |---|---|
+  | `Cargo.lock`, `bindings/python/Cargo.lock`, `bindings/node/Cargo.lock` | `cargo audit` (RustSec) |
+  | `package-lock.json` of `site/`, `bindings/node/`, `scripts/coverage/`, `scripts/ci/lstk/` | `npm audit --package-lock-only` (no install; the site's private icon registry is not needed) |
+  | `bindings/python/ci-requirements.txt`, `scripts/coverage/requirements.txt` (hash-pinned) | the OSV.dev API, every pin |
+  | `bindings/python/pyproject.toml` | no runtime dependencies; its build requirement is pinned above |
+  | `bindings/java/pom.xml` | the OSV.dev API, direct dependencies and plugins (the transitive graph needs Maven; Dependabot follows it) |
+  | the `.csproj` files | the OSV.dev API, direct package references (the transitive graph needs the .NET SDK; Dependabot follows it) |
+  | `bindings/go/go.mod`, `composer.json`, `bindings/cpp/CMakeLists.txt`, the npm platform packages | no third-party dependency; the audit fails if one appears |
+
+  A **maintenance notice** (RustSec's "unmaintained") is not a
+  vulnerability and is not fixed by calling it one. Each one is reviewed in
+  the script's `REVIEWED` table with an owner by role, the upstream issue,
+  the upgrade that removes it and what makes it due again; an unreviewed
+  notice is a warning in CI and fails a release (`--strict`). Reviewed now:
+
+  | Advisories | Through | Owner | Upstream | Removed by | Revisit |
+  |---|---|---|---|---|---|
+  | RUSTSEC-2026-0370 (`zvariant`), -0371 (`zbus_names`), -0372 (`zvariant_derive`) | `sourceorrery-storage` → `zbus-secret-service-keyring-store` 1.0.1 → `secret-service` 5.2.0 → `zbus` 5.19 (the Linux credential store) | maintainer of the storage keystore | [z-galaxy/zbus#2043](https://github.com/z-galaxy/zbus/issues/2043): merged into `zbus` 6 | `secret-service` and the keyring store on `zbus` 6 | their release on `zbus` 6 (a Dependabot cargo update); the upgrade gets the Linux keyring smoke test and the MSRV build |
 * **Pinned actions, automated updates.** Every third-party GitHub Action
   the workflows use is referenced by the full commit SHA of a release,
   with the version as a comment, so a moved or compromised tag cannot

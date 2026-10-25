@@ -464,13 +464,18 @@ jobs:
       - run: cargo doc --workspace --no-deps --locked
 
   audit:
-    name: cargo audit
+    name: dependency audit
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    # cargo-audit itself, as rustsec/audit-check ran it: a vulnerability in
-    # Cargo.lock fails the job, a warning (unmaintained, yanked) is printed.
-    # The action still runs on Node 20.
+    # Every dependency graph (scripts/ci/dependency-audit.py, its inventory
+    # in docs/supply-chain.md): cargo-audit for the three Cargo.lock files,
+    # npm audit for the four package-lock.json files (lock file only: no
+    # install, no private registry), the OSV.dev API for the pinned Python
+    # requirements and the Maven and NuGet references. A vulnerability, a
+    # scanner that fails or a lock file the inventory does not cover fails
+    # the job; a maintenance warning not reviewed there is a warning here
+    # and fails a release (--strict).
     permissions:
       contents: read
     steps:
@@ -478,7 +483,10 @@ jobs:
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-audit@0.22.2
-      - run: cargo audit
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: python3 scripts/ci/dependency-audit.py
 
   # Workflow hygiene: zizmor fails on an unpinned third-party action, on a
   # `run:` step that expands an expression, and on the other high-severity
@@ -515,6 +523,7 @@ jobs:
       - run: python3 -m unittest -v scripts/release/test_publish_crates.py
       - run: python3 -m unittest -v scripts/ci/abi_check_test.py
       - run: python3 -m unittest -v scripts/ci/azure_vault_test.py
+      - run: python3 -m unittest -v scripts/ci/dependency_audit_test.py
 
   # ADR 0007: the library built from this commit must still pass the
   # conformance contract of the latest release: its C runner, compiled

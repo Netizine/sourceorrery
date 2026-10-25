@@ -49,6 +49,7 @@ updates:
       - /bindings/node
       - /site
       - /scripts/ci/lstk
+      - /scripts/coverage
     registries:
       - fontawesome
     schedule:
@@ -60,7 +61,9 @@ updates:
         update-types: ["minor", "patch"]
 
   - package-ecosystem: pip
-    directory: /bindings/python
+    directories:
+      - /bindings/python
+      - /scripts/coverage
     schedule:
       interval: weekly
       day: monday
