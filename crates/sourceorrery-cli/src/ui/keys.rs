@@ -11,16 +11,22 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
     if key.kind == KeyEventKind::Release {
         return None;
     }
+    if key.kind == KeyEventKind::Repeat
+        && mode == Mode::Dialog
+        && matches!(key.code, KeyCode::Char(' ' | 'y' | 'n'))
+    {
+        return None;
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return (key.code == KeyCode::Char('c')).then_some(Action::Quit);
     }
-    match mode {
-        Mode::Help => match key.code {
+    let action = match mode {
+        Mode::Help => movement(key.code).or_else(|| match key.code {
             KeyCode::Char('?') => Some(Action::Help),
             KeyCode::Esc | KeyCode::Enter => Some(Action::Back),
             KeyCode::Char('q') => Some(Action::Quit),
             _ => None,
-        },
+        }),
         Mode::Dialog => match key.code {
             KeyCode::Esc => Some(Action::Back),
             KeyCode::Enter => Some(Action::Commit),
@@ -38,7 +44,21 @@ pub fn action(key: KeyEvent, mode: Mode) -> Option<Action> {
             code => movement(code),
         },
         Mode::Normal => movement(key.code).or_else(|| command(key.code)),
-    }
+    };
+    action.filter(|action| {
+        key.kind == KeyEventKind::Press
+            || matches!(
+                action,
+                Action::Up
+                    | Action::Down
+                    | Action::PageUp
+                    | Action::PageDown
+                    | Action::Top
+                    | Action::Bottom
+                    | Action::Input(_)
+                    | Action::Erase
+            )
+    })
 }
 
 fn movement(code: KeyCode) -> Option<Action> {
@@ -106,6 +126,47 @@ mod tests {
 
     fn normal(code: KeyCode) -> Option<Action> {
         press(code, Mode::Normal)
+    }
+
+    #[test]
+    fn held_enter_cannot_commit_review() {
+        use crate::ui::{app::tests::app_with, fake::Fake};
+        let fake = Fake::with(&["a"]);
+        let mut app = app_with(&fake);
+        app.update(Action::Show(Tab::Secrets));
+        app.update(Action::Edit);
+        app.update(Action::Down);
+        app.update(Action::Input('x'));
+        for kind in [
+            KeyEventKind::Press,
+            KeyEventKind::Repeat,
+            KeyEventKind::Repeat,
+            KeyEventKind::Release,
+        ] {
+            if let Some(a) = action(key(KeyCode::Enter, KeyModifiers::NONE, kind), app.mode()) {
+                app.update(a);
+            }
+        }
+        assert!(fake.writes.borrow().is_empty());
+        assert_eq!(app.mode(), Mode::Dialog);
+        for kind in [
+            KeyEventKind::Repeat,
+            KeyEventKind::Repeat,
+            KeyEventKind::Release,
+        ] {
+            assert_eq!(
+                action(key(KeyCode::Enter, KeyModifiers::NONE, kind), app.mode()),
+                None
+            );
+        }
+        app.update(
+            action(
+                key(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Press),
+                app.mode(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(fake.writes.borrow().len(), 1);
     }
 
     #[test]

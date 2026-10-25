@@ -440,3 +440,87 @@ fn change_keys_show_only_where_changes_are_possible() {
         "{screen}"
     );
 }
+
+#[test]
+fn help_is_scrollable_at_ordinary_and_compact_sizes_without_reads() {
+    let (fake, mut app) = app(&["a"]);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    app.update(Action::Help);
+    for (w, h) in [(80, 24), (60, 18)] {
+        app.update(Action::Top);
+        let first = render(&mut app, w, h);
+        assert!(first.contains("CURRENT VIEW"), "{first}");
+        assert!(first.contains("Esc close"), "{first}");
+        let mut seen = first;
+        for _ in 0..10 {
+            app.update(Action::PageDown);
+            seen.push_str(&render(&mut app, w, h));
+        }
+        assert!(seen.contains("WHAT THE VAULT RECORDS"), "{seen}");
+        assert!(seen.contains("SEARCH"));
+        app.update(Action::Bottom);
+        assert!(render(&mut app, w, h).contains("Esc close"));
+    }
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
+    app.update(Action::Back);
+    assert!(!app.help);
+}
+
+#[test]
+fn fifty_project_declarations_are_reachable_without_reads() {
+    use crate::ui::session::{Project, ProjectStatus};
+    let (fake, mut app) = app(&["a"]);
+    let project = Project {
+        link: sourceorrery_storage::ProjectLink {
+            id: "project-id".into(),
+            name: "fixture".into(),
+            path: "/synthetic/界/e\u{301}".into(),
+            linked_on: sourceorrery_core::timestamp::now(),
+        },
+        status: ProjectStatus::Found {
+            vault: "development".into(),
+            secrets: (0..50).map(|i| format!("declared-{i:02}")).collect(),
+        },
+    };
+    app.session.as_mut().unwrap().projects.push(project);
+    app.update(Action::Show(Tab::Projects));
+    app.update(Action::Open);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    let mut seen = String::new();
+    for _ in 0..50 {
+        seen.push_str(&render(&mut app, 80, 24));
+        app.update(Action::Down);
+    }
+    for i in 0..50 {
+        assert!(seen.contains(&format!("declared-{i:02}")));
+    }
+    assert!(seen.contains("of 50"));
+    app.update(Action::Top);
+    app.update(Action::PageDown);
+    assert!(app.declarations.selected().unwrap() > 0);
+    app.update(Action::Back);
+    assert_eq!(app.selected_project().unwrap().link.id, "project-id");
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
+}

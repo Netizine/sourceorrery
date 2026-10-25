@@ -47,6 +47,7 @@ mod source;
 mod stats;
 mod theme;
 mod view;
+mod viewport;
 
 use std::io::{IsTerminal, Write as _};
 use std::time::{Duration, Instant};

@@ -133,6 +133,17 @@ fn action(key: KeyEvent) -> Option<Action> {
     if key.kind == KeyEventKind::Release {
         return None;
     }
+    if key.kind == KeyEventKind::Repeat
+        && !matches!(
+            key.code,
+            KeyCode::Up | KeyCode::Down | KeyCode::Backspace | KeyCode::Char(_)
+        )
+    {
+        return None;
+    }
+    if key.kind == KeyEventKind::Repeat && key.code == KeyCode::Char(' ') {
+        return None;
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return (key.code == KeyCode::Char('c')).then_some(Action::Quit);
     }
@@ -145,4 +156,38 @@ fn action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char(c) => Action::Input(c),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+    #[test]
+    fn review_and_commit_require_fresh_presses() {
+        for code in [KeyCode::Enter, KeyCode::Char(' '), KeyCode::Esc] {
+            assert!(
+                action(KeyEvent::new_with_kind(
+                    code,
+                    KeyModifiers::NONE,
+                    KeyEventKind::Repeat
+                ))
+                .is_none()
+            );
+            assert!(
+                action(KeyEvent::new_with_kind(
+                    code,
+                    KeyModifiers::NONE,
+                    KeyEventKind::Press
+                ))
+                .is_some()
+            );
+        }
+        assert!(
+            action(KeyEvent::new_with_kind(
+                KeyCode::Down,
+                KeyModifiers::NONE,
+                KeyEventKind::Repeat
+            ))
+            .is_some()
+        );
+    }
 }

@@ -56,6 +56,7 @@ pub struct Fake {
     pub view: RefCell<ViewSettings>,
     /// What the storage of a secret at a connection can express.
     pub remote_capabilities: Cell<&'static [Capability]>,
+    pub version_ids: RefCell<Option<Vec<String>>>,
 }
 
 /// A change the browser made.
@@ -229,6 +230,9 @@ impl MetadataSource for Fake {
 
     fn versions(&self, name: &str) -> Result<Vec<SecretProperties>> {
         self.audited(&self.inspects)?;
+        if let Some(ids) = self.version_ids.borrow().as_ref() {
+            return Ok(ids.iter().map(|id| self.props(name, id)).collect());
+        }
         Ok(vec![
             self.props(name, "0123456789abcdef0123456789abcdef"),
             self.props(name, "fedcba9876543210fedcba9876543210"),

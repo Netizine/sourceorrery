@@ -153,6 +153,8 @@ pub struct ListState {
     pub query: String,
     /// Rows the view showed at the last draw: the step of PageUp/PageDown.
     pub page: usize,
+    initialized: bool,
+    pending_selection: Option<String>,
 }
 
 #[derive(Debug)]
@@ -169,6 +171,9 @@ pub struct App {
     /// Keys go to the search box.
     pub editing: bool,
     pub help: bool,
+    pub help_view: super::viewport::Viewport,
+    pub declarations: TableState,
+    pub declaration_page: usize,
     pub message: Option<Message>,
     request: Option<Request>,
     quit: bool,
@@ -183,6 +188,7 @@ pub struct App {
     pending_value: Option<(String, SetSecretOptions, Option<SecretStorage>)>,
     /// Changes are refused.
     read_only: bool,
+    selection_lost: bool,
 }
 
 /// A vault the browser locked: its handle and key are gone.
@@ -205,6 +211,9 @@ impl App {
             versions: TableState::default(),
             editing: false,
             help: false,
+            help_view: Default::default(),
+            declarations: TableState::default(),
+            declaration_page: 1,
             message: None,
             request: None,
             quit: false,
@@ -213,6 +222,7 @@ impl App {
             dialog: None,
             pending_value: None,
             read_only: false,
+            selection_lost: false,
         };
         app.clamp();
         app
@@ -299,8 +309,9 @@ impl App {
     }
 
     pub fn set_vaults(&mut self, vaults: Vec<VaultEntry>) {
+        let key = self.selected_key(Tab::Vaults);
         self.vaults = vaults;
-        self.clamp();
+        self.restore_selection(Tab::Vaults, key);
     }
 
     pub fn should_quit(&self) -> bool {
@@ -457,7 +468,7 @@ impl App {
             match action {
                 Action::Help | Action::Back => self.help = false,
                 Action::Quit => self.quit = true,
-                _ => {}
+                action => self.help_view.move_by(action),
             }
             return;
         }
@@ -491,12 +502,14 @@ impl App {
                 self.editing = true;
             }
             Action::Input(c) => {
+                let key = self.selected_key(self.tab);
                 self.list_mut(self.tab).query.push(c);
-                self.select(0);
+                self.restore_selection(self.tab, key);
             }
             Action::Erase => {
+                let key = self.selected_key(self.tab);
                 self.list_mut(self.tab).query.pop();
-                self.select(0);
+                self.restore_selection(self.tab, key);
             }
             Action::Commit => self.editing = false,
             Action::NextTab => self.show(Tab::ALL[(self.tab.index() + 1) % Tab::ALL.len()]),
@@ -518,8 +531,16 @@ impl App {
     }
 
     fn move_by(&mut self, action: Action) {
-        let page = self.list(self.tab).page.max(1);
-        let (table, len) = if let Some(name) = &self.detail {
+        let page = if self.tab == Tab::Projects && self.detail.is_some() {
+            self.declaration_page
+        } else {
+            self.list(self.tab).page
+        }
+        .max(1);
+        let (table, len) = if self.tab == Tab::Projects && self.detail.is_some() {
+            let len = self.project_detail().map_or(0, |p| p.secrets().len());
+            (&mut self.declarations, len)
+        } else if let Some(name) = &self.detail {
             let len = self
                 .session
                 .as_ref()
@@ -533,6 +554,7 @@ impl App {
         };
         let current = table.selected().unwrap_or(0);
         let target = match action {
+            Action::Down if table.selected().is_none() => 0,
             Action::Up => current.saturating_sub(1),
             Action::Down => current.saturating_add(1),
             Action::PageUp => current.saturating_sub(page),
@@ -553,8 +575,63 @@ impl App {
 
     /// Keep the selection inside the current view.
     fn clamp(&mut self) {
-        let current = self.selected_index().unwrap_or(0);
-        self.select(current);
+        if !self.list(self.tab).initialized {
+            self.select(0);
+            self.list_mut(self.tab).initialized = true;
+        } else if let Some(current) = self.selected_index() {
+            if current >= self.shown_len(self.tab) {
+                self.list_mut(self.tab).table.select(None);
+            }
+        }
+    }
+
+    /// Full cached identities, never rendered/abbreviated labels.
+    fn row_keys(&self, tab: Tab) -> Vec<String> {
+        match tab {
+            Tab::Overview => Vec::new(),
+            Tab::Secrets => self
+                .shown_secrets()
+                .iter()
+                .map(|p| format!("{}\0{}", p.vault, p.name))
+                .collect(),
+            Tab::Deleted => self
+                .shown_deleted()
+                .iter()
+                .map(|d| format!("{}\0{}", d.properties.vault, d.properties.name))
+                .collect(),
+            Tab::Projects => self
+                .shown_projects()
+                .iter()
+                .map(|p| p.link.id.clone())
+                .collect(),
+            Tab::Audit => self
+                .shown_events()
+                .iter()
+                .map(|e| e.id.to_string())
+                .collect(),
+            Tab::Vaults => self
+                .shown_vaults()
+                .iter()
+                .map(|v| format!("{}\0{}", v.name, v.path.display()))
+                .collect(),
+        }
+    }
+
+    fn selected_key(&self, tab: Tab) -> Option<String> {
+        self.row_keys(tab)
+            .get(self.list(tab).table.selected()?)
+            .cloned()
+    }
+
+    fn restore_selection(&mut self, tab: Tab, key: Option<String>) {
+        let index = key
+            .as_ref()
+            .and_then(|key| self.row_keys(tab).iter().position(|k| k == key));
+        if key.is_some() && index.is_none() {
+            self.selection_lost = true;
+            self.message = Some(Message::Info("Selection cleared: the selected object is no longer visible; navigate to select a target.".into()));
+        }
+        self.list_mut(tab).table.select(index);
     }
 
     fn show(&mut self, tab: Tab) {
@@ -562,6 +639,9 @@ impl App {
         self.detail = None;
         self.editing = false;
         self.load_view();
+        if let Some(key) = self.list_mut(tab).pending_selection.take() {
+            self.restore_selection(tab, Some(key));
+        }
         self.clamp();
     }
 
@@ -623,6 +703,7 @@ impl App {
                 // Its manifest's secrets were read with the vault.
                 if let Some(id) = self.selected_project().map(|p| p.link.id.clone()) {
                     self.detail = Some(id);
+                    self.declarations = TableState::default().with_selected(Some(0));
                 }
             }
             Tab::Overview | Tab::Audit => {}
@@ -662,15 +743,16 @@ impl App {
     }
 
     fn back(&mut self) {
+        let key = self.selected_key(self.tab);
         if self.editing {
             self.editing = false;
             self.list_mut(self.tab).query.clear();
-            self.select(0);
+            self.restore_selection(self.tab, key);
         } else if self.detail.is_some() {
             self.detail = None;
         } else if !self.list(self.tab).query.is_empty() {
             self.list_mut(self.tab).query.clear();
-            self.select(0);
+            self.restore_selection(self.tab, key);
         }
     }
 
@@ -680,7 +762,10 @@ impl App {
             return;
         }
         match self.reread() {
-            Ok(name) => self.message = Some(Message::Info(format!("reloaded vault '{name}'"))),
+            Ok(name) if !self.selection_lost => {
+                self.message = Some(Message::Info(format!("reloaded vault '{name}'")))
+            }
+            Ok(_) => {}
             Err(err) => {
                 self.message = Some(failure(
                     "refresh failed; showing what was read before",
@@ -693,12 +778,25 @@ impl App {
     /// Read the vault again: the list, the current view, the open details
     /// (with the same version selected). Returns the vault's name.
     fn reread(&mut self) -> Result<String, SecretError> {
+        let keys = Tab::ALL.map(|tab| self.selected_key(tab));
+        let version = self
+            .target_version()
+            .filter(|_| self.detail.is_some())
+            .map(|p| p.version);
+        self.selection_lost = false;
         let Some(session) = &mut self.session else {
             return Ok(String::new());
         };
         session.reload()?;
         let name = session.vault.name.clone();
         self.load_view();
+        for (tab, key) in Tab::ALL.into_iter().zip(keys) {
+            if self.total(tab).is_none() && matches!(tab, Tab::Audit | Tab::Deleted) {
+                self.list_mut(tab).pending_selection = key;
+            } else {
+                self.restore_selection(tab, key);
+            }
+        }
         if let Some(detail) = self.detail.take() {
             if self.tab == Tab::Projects {
                 let session = self.session.as_ref();
@@ -717,9 +815,21 @@ impl App {
                     .any(|d| d.properties.name == detail),
             };
             if still_there {
-                let version = self.versions.selected();
                 self.open_detail(detail, live);
-                self.versions.select(version);
+                let index = version.as_ref().and_then(|id| {
+                    self.session
+                        .as_ref()?
+                        .detail(self.detail.as_deref()?)?
+                        .versions
+                        .as_ref()?
+                        .iter()
+                        .position(|p| p.version == *id)
+                });
+                self.versions.select(index);
+                if version.is_some() && index.is_none() {
+                    self.selection_lost = true;
+                    self.message = Some(Message::Info("Selection cleared: the selected version disappeared; navigate to select a target.".into()));
+                }
             }
         }
         self.clamp();
@@ -762,7 +872,7 @@ impl App {
                 .detail(name)?
                 .versions
                 .as_ref()?
-                .get(self.versions.selected().unwrap_or(0))
+                .get(self.versions.selected()?)
                 .cloned(),
             None => self.selected_secret().cloned(),
         }
@@ -1022,6 +1132,13 @@ impl App {
 
     /// Make a confirmed change, then read the vault again.
     fn carry_out(&mut self, change: Change) {
+        if !self.can_change() {
+            return;
+        }
+        if !self.change_target_exists(&change) {
+            self.message = Some(Message::Error("The confirmed target is no longer available. Reopen the action and review it again.".into()));
+            return;
+        }
         let Some(session) = &self.session else {
             return;
         };
@@ -1067,6 +1184,41 @@ impl App {
             }
         };
         self.after_change(done);
+    }
+
+    fn change_target_exists(&self, change: &Change) -> bool {
+        let Some(s) = &self.session else {
+            return false;
+        };
+        match change {
+            Change::Update { name, version, .. } => s
+                .secrets
+                .iter()
+                .chain(
+                    s.detail(name)
+                        .and_then(|d| d.versions.as_ref())
+                        .into_iter()
+                        .flatten(),
+                )
+                .any(|p| p.name == *name && p.version == *version),
+            Change::Delete { name } => s.secrets.iter().any(|p| p.name == *name),
+            Change::Recover { name } => s
+                .deleted()
+                .unwrap_or_default()
+                .iter()
+                .any(|p| p.properties.name == *name),
+            Change::Unlink { id, .. } => s
+                .projects
+                .iter()
+                .any(|p| p.link.id == *id && p.status == ProjectStatus::Missing),
+            Change::AddVersion { name, storage, .. } => {
+                if storage.is_some() {
+                    !s.secrets.iter().any(|p| p.name == *name)
+                } else {
+                    s.secrets.iter().any(|p| p.name == *name)
+                }
+            }
+        }
     }
 
     /// The event loop's answer to [`Request::ReadValue`]: the value read at
@@ -1165,6 +1317,64 @@ pub mod tests {
         for c in text.chars() {
             app.update(Action::Input(c));
         }
+    }
+
+    #[test]
+    fn refresh_preserves_full_version_identity_and_removal_clears_target() {
+        let fake = Fake::with(&["a", "b"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Open);
+        app.update(Action::Down);
+        let id = app.target_version().unwrap().version;
+        *fake.version_ids.borrow_mut() = Some(vec![
+            "new-version".into(),
+            "0123456789abcdef0123456789abcdef".into(),
+            id.clone(),
+        ]);
+        app.update(Action::Refresh);
+        assert_eq!(app.target_version().unwrap().version, id);
+        assert_eq!(app.versions.selected(), Some(2));
+        *fake.version_ids.borrow_mut() = Some(vec!["new-version".into()]);
+        app.update(Action::Refresh);
+        assert_eq!(app.versions.selected(), None);
+        app.update(Action::Edit);
+        app.update(Action::Toggle);
+        assert!(app.dialog.is_none());
+        assert!(fake.writes.borrow().is_empty());
+    }
+
+    #[test]
+    fn reordering_and_filtering_use_identity_and_never_pick_a_neighbour() {
+        let fake = Fake::with(&["alpha-key", "bravo-key", "charlie-key"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Down);
+        *fake.names.borrow_mut() = vec!["charlie-key", "alpha-key", "bravo-key"];
+        app.update(Action::Refresh);
+        assert_eq!(selected(&app).as_deref(), Some("bravo-key"));
+        let reads = fake.lists.get();
+        type_text(&mut app, "alpha");
+        assert_eq!(selected(&app), None);
+        app.update(Action::Commit);
+        app.update(Action::Edit);
+        app.clamp();
+        assert_eq!(selected(&app), None);
+        assert!(app.dialog.is_none());
+        app.update(Action::Down);
+        assert_eq!(selected(&app).as_deref(), Some("alpha-key"));
+        assert_eq!(fake.lists.get(), reads);
+    }
+
+    #[test]
+    fn confirmation_rechecks_its_typed_target_without_reading() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Toggle);
+        app.session.as_mut().unwrap().secrets.clear();
+        let reads = fake.lists.get();
+        app.update(Action::Commit);
+        assert!(fake.writes.borrow().is_empty());
+        assert_eq!(fake.lists.get(), reads);
+        assert!(matches!(app.message, Some(Message::Error(_))));
     }
 
     #[test]
@@ -1314,7 +1524,7 @@ pub mod tests {
         app.update(Action::Commit);
         assert_eq!(app.mode(), Mode::Normal);
         app.update(Action::Down);
-        assert_eq!(selected(&app).as_deref(), Some("database-password"));
+        assert_eq!(selected(&app).as_deref(), Some("api-key"));
         app.update(Action::Back);
         assert_eq!(app.shown_secrets().len(), 3, "Esc clears the filter");
         assert_eq!(fake.lists.get(), 2, "searching reads nothing");

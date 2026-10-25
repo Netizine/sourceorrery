@@ -15,7 +15,7 @@ mod projects;
 mod secrets;
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Flex, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::Style;
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
@@ -63,7 +63,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
 
     let drawn = draw_body(frame, app, theme, body.inner(Margin::new(2, 0)));
     if let Some(drawn) = drawn {
-        if app.detail.is_some() {
+        if app.detail.is_some() && app.tab == Tab::Projects {
+            app.declarations = drawn.table;
+            app.declaration_page = drawn.page;
+        } else if app.detail.is_some() {
             app.versions = drawn.table;
         } else {
             app.list_mut(app.tab).table = drawn.table;
@@ -105,10 +108,7 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Opt
             draw_blocked(frame, session, theme, area);
             None
         }
-        Tab::Projects if app.detail.is_some() => {
-            projects::detail(frame, app, theme, area);
-            None
-        }
+        Tab::Projects if app.detail.is_some() => projects::detail(frame, app, theme, area),
         Tab::Projects => Some(projects::list(frame, app, theme, area)),
         Tab::Secrets | Tab::Deleted if app.detail.is_some() => {
             secrets::detail(frame, app, theme, area)
@@ -316,6 +316,21 @@ fn ruled_table(
     // The headings' bottom margin carries the thin rule.
     rule(frame, area, 3, theme.header_rule);
     rule(frame, area, 4 + shown, theme.rule);
+    if count > shown {
+        let first = state.offset().min(usize::from(count));
+        let range = format!(
+            " {}–{} of {} ",
+            first + 1,
+            (first + usize::from(shown)).min(usize::from(count)),
+            count
+        );
+        frame.render_widget(
+            Paragraph::new(range)
+                .alignment(Alignment::Right)
+                .style(theme.muted),
+            row(area, 4 + shown),
+        );
+    }
     (TABLE_CHROME + shown, shown)
 }
 
@@ -619,7 +634,7 @@ const HELP_CHANGES: [(&str, &str); 9] = [
     ("n  (Vaults)", "a new vault on the setup screens"),
 ];
 
-fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
+fn draw_help(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
     let mut lines: Vec<Line<'_>> = HELP_KEYS
         .iter()
         .map(|(keys, what)| {
@@ -673,20 +688,36 @@ fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     lines.push(Line::from(
         "and a project's manifest on disk read nothing of the vault.",
     ));
-    let height = u16::try_from(lines.len()).unwrap_or(0) + 4;
-    let [area] = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .areas(frame.area());
-    let [area] = Layout::horizontal([Constraint::Length(70)])
-        .flex(Flex::Center)
-        .areas(area);
+    lines.insert(0, Line::from(format!("CURRENT VIEW — {}", app.tab.title())));
+    for (key, description) in view_hints(
+        app,
+        !app.is_read_only() && app.session.as_ref().is_some_and(|s| !s.is_blocked()),
+    ) {
+        lines.insert(1, Line::from(format!("{key}  {description}")));
+    }
+    let area = frame.area().inner(Margin::new(1, 1));
     let block = Block::bordered()
         .border_style(theme.rule)
         .title(Span::styled(" KEYS ", theme.label))
-        .padding(Padding::new(2, 2, 1, 1))
         .style(theme.panel);
+    let inner = block.inner(area);
+    let content = rows(inner, 0, inner.height.saturating_sub(1));
+    let lines = crate::ui::viewport::reflow(&lines, content.width);
+    app.help_view
+        .fit(lines.len(), usize::from(content.height), None);
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(lines).scroll((u16::try_from(app.help_view.offset).unwrap_or(u16::MAX), 0)),
+        content,
+    );
+    frame.render_widget(
+        Line::from(format!(
+            "Esc close · ↑↓ PgUp/PgDn Home/End · {}",
+            app.help_view.position()
+        )),
+        rows(inner, inner.height.saturating_sub(1), 1),
+    );
 }
 
 /// Row `offset` of `area`, or nothing when it is outside.

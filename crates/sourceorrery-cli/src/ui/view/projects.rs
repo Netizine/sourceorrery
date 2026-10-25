@@ -6,7 +6,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Cell, Row, TableState};
+use ratatui::widgets::{Cell, Row};
 
 use super::secrets::no_match;
 use super::{Drawn, Ruled, dash, label, long_time, row, rows, rule, ruled_table, short_time};
@@ -131,9 +131,9 @@ fn resolves(session: &Session, name: &str) -> (&'static str, &'static str) {
 
 /// A project's details: where it is, what its manifest declares and how
 /// each resolves.
-pub(super) fn detail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+pub(super) fn detail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Option<Drawn> {
     let (Some(session), Some(project)) = (app.session.as_ref(), app.project_detail()) else {
-        return;
+        return None;
     };
     let title = Line::from(vec![
         Span::styled(sanitize(&project.link.name).into_owned(), theme.vault),
@@ -208,14 +208,19 @@ pub(super) fn detail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
             "The manifest declares no secret, or could not be read.",
             theme.muted,
         ))],
-        selectable: false,
+        selectable: true,
     };
-    ruled_table(
+    let mut state = app.declarations;
+    let (_, page) = ruled_table(
         frame,
         rows(area, used + 1, area.height.saturating_sub(used + 1)),
         theme,
         table,
-        &mut TableState::default(),
+        &mut state,
         None,
     );
+    Some(Drawn {
+        table: state,
+        page: usize::from(page).max(1),
+    })
 }
