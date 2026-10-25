@@ -3377,6 +3377,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-secretsmanager",
+ "serde_json",
  "sourceorrery-conformance",
  "sourceorrery-core",
  "sourceorrery-provider",

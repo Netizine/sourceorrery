@@ -360,3 +360,64 @@ land together to build.
   and no leftover intent.
 * **Not run here:** a Vault policy without `patch` against the live server
   (the model covers the refusal); Vault Enterprise namespaces.
+
+### B09 and B11 — AWS input checked first, and fail-closed publication
+
+One commit: the checks and the new write order share the tag plan.
+
+* **Closes:** REC06; SR02 for AWS Secrets Manager (one writer at a time per
+  secret, as ADR 0011 states).
+* **Limits used (verified 2026-10-25):** the Secrets Manager user guide
+  ("Tagging secrets": 50 tags a secret, keys 1 to 128 and values 0 to 256
+  characters, `aws:` reserved, case-sensitive), the API reference (`Tag`:
+  key 1..128, value 0..256) and AWS's general tagging reference, whose
+  allowed set (letters, digits, spaces, `_ . : / = + - @`) includes the
+  colon that Secrets Manager's own page leaves out and that `aws:` keys and
+  every timestamp here use; `aws:` tags do not count against the 50. Value
+  limit 65,536 bytes.
+* **Changes:** `mapping::check_user_tags` (length, characters, `aws:` and
+  `sourceorrery:` refused in any case), `check_content_type` (stored as a
+  tag value), `check_value`, `check_tag_count` over the most tags held at
+  once; all run before any request that writes, in `set_secret` and
+  `update_secret_properties`. `SecretProps::meet` and
+  `at_least_as_strict_as`; `TagPlan` (stale non-policy tags removed first,
+  wanted tags written, stale policy tags removed last; AWS's own tags never
+  touched) with `peak` and `states`. `set_secret` of an existing secret:
+  narrow to the meet, `PutSecretValue`, then the plan; a refused put undoes
+  the narrowing; a lost answer or a failed plan step is `outcome_unknown`;
+  the read of the new version's creation time afterwards is best effort.
+  `update_secret_properties` runs the plan; a failure after a step landed
+  is `outcome_unknown`. `from_tags` no longer takes `aws:` tags for user
+  tags (they were written back, which AWS refuses). Live tests: a shared
+  `sourceorrery_conformance::live::target` says what each suite ran against
+  (an emulator or dev server on this machine, or a service) and fails a
+  suite that would skip when `SOURCEORRERY_LIVE_REQUIRED=true`, which the
+  Vault job sets always and the AWS and Azure jobs set when their emulator
+  is up.
+* **Tests run:** mapping unit tests 10 (new:
+  `user_tags_content_types_and_values_are_checked_before_any_request`,
+  `the_meet_is_the_stricter_policy_of_both`,
+  `a_tag_plan_never_loosens_below_its_target_and_keeps_aws_tags`, every
+  pair of five policies). `tests/publication.rs`, a model of Secrets
+  Manager's JSON protocol on a loopback port, snapshotting the tags and
+  the current version after every change:
+  `a_new_version_is_never_current_under_a_looser_policy` (three
+  transitions, each with no fault and with tag, put and untag requests
+  refused, failed or applied with an unreadable answer: the new version is
+  current only under a policy at least as strict as asked, the old one
+  before that only under one at least as strict as it had, a write that
+  landed is never a refusal, a refused write leaves the old policy);
+  `an_update_never_passes_through_a_looser_policy`;
+  `invalid_input_sends_nothing_that_writes` (reserved keys, a bad
+  character, 51 tags, 48 that with the properties exceed 50, an oversized
+  value, a content type with `;`: zero writing requests; a valid write
+  keeps an `aws:` tag and does not count it). All three **fail without the
+  fix** (the old `lib.rs`: "the new version under enabled after
+  PutSecretValue" with no fault at all, "enabled, no window after
+  UntagResource" for the update, writes sent for invalid input). clippy
+  `-D warnings` clean. **Live:** LocalStack 2026.10.0 (the pinned image,
+  started with lstk): the 6 live tests pass, the lifecycle suite with the
+  new scenario directly and through `Routed`. Vault live suite again with
+  the shared helper: passes, reporting the dev server.
+* **Not run here:** the real AWS service (LocalStack only, as in CI);
+  concurrent writers on AWS, which the design does not cover.

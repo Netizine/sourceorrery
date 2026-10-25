@@ -659,6 +659,8 @@ jobs:
     env:
       SOURCEORRERY_VAULT_TEST_ADDR: http://127.0.0.1:8200
       VAULT_TOKEN: root
+      # The server always runs here: a live test cannot pass unrun.
+      SOURCEORRERY_LIVE_REQUIRED: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Wait for the dev server
@@ -726,7 +728,11 @@ jobs:
       - uses: ./.github/actions/sdk-fixture
       - name: Lifecycle conformance (without per-version properties) and the provider's own tests
         # --show-output prints the warning a test gives for an emulator
-        # divergence (tests/live.rs) as a workflow annotation.
+        # divergence (tests/live.rs) as a workflow annotation, and what the
+        # live tests ran against. With the emulator up they cannot pass
+        # without running.
+        env:
+          SOURCEORRERY_LIVE_REQUIRED: ${{ steps.emulator.outputs.available }}
         run: cargo test --locked -p sourceorrery-provider-aws -- --show-output
       - name: Secrets the vault keeps at the emulator, through the CLI and the SDK harness
         if: steps.emulator.outputs.available == 'true'
@@ -792,6 +798,9 @@ jobs:
         run: bash scripts/ci/localstack.sh start azure
       - uses: ./.github/actions/sdk-fixture
       - name: Lifecycle conformance (with per-version properties) and the provider's own tests
+        # With the emulator up the live tests cannot pass without running.
+        env:
+          SOURCEORRERY_LIVE_REQUIRED: ${{ steps.emulator.outputs.available }}
         run: cargo test --locked -p sourceorrery-provider-azure -- --show-output
       - name: Secrets the vault keeps at the emulator, through the CLI and the SDK harness
         if: steps.emulator.outputs.available == 'true'

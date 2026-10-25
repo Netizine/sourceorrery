@@ -29,7 +29,7 @@ use sourceorrery_storage::{CreateVaultOptions, NoStore, SecretStorage, SqliteVau
 const ENDPOINT_ENV: &str = "SOURCEORRERY_AWS_TEST_ENDPOINT";
 
 fn endpoint() -> Option<String> {
-    std::env::var(ENDPOINT_ENV).ok().filter(|e| !e.is_empty())
+    sourceorrery_conformance::live::target(ENDPOINT_ENV)
 }
 
 fn region() -> String {

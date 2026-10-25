@@ -22,7 +22,7 @@ use sourceorrery_storage::{CreateVaultOptions, NoStore, SecretStorage, SqliteVau
 const ADDR_ENV: &str = "SOURCEORRERY_VAULT_TEST_ADDR";
 
 fn server() -> Option<(String, String)> {
-    let address = std::env::var(ADDR_ENV).ok().filter(|a| !a.is_empty())?;
+    let address = sourceorrery_conformance::live::target(ADDR_ENV)?;
     let token = std::env::var("VAULT_TOKEN").unwrap_or_else(|_| "root".to_owned());
     Some((address, token))
 }

@@ -133,6 +133,15 @@ is in `docs/security-remediation-validation.md`).
   never drop each other's, and the one that loses a version number is
   refused and writes nothing. A writing token needs the `patch` capability
   on `<mount>/metadata/*` (`docs/providers/hashicorp-vault.md`).
+* **AWS Secrets Manager: the same, for one writer at a time.** A new
+  version was made current before its tags; now the tags are first
+  narrowed to the stricter of the old and new policy, then the value is
+  put, then the tags reach the new properties in an order that never
+  loosens below them (an update used to remove stale tags first, which
+  could enable a secret for a moment). Tags, content types and values the
+  service would refuse are refused before any write, `aws:` and
+  `sourceorrery:` keys included, and AWS's own `aws:` tags are no longer
+  taken for user tags and written back.
 
 ### Fixed
 

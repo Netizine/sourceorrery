@@ -31,10 +31,7 @@ const SUBSCRIPTION: &str = "00000000-0000-0000-0000-000000000000";
 const RESOURCE_GROUP: &str = "rg-sourceorrery-tests";
 
 fn endpoint() -> Option<String> {
-    std::env::var(ENDPOINT_ENV)
-        .ok()
-        .filter(|e| !e.is_empty())
-        .map(|e| e.trim_end_matches('/').to_owned())
+    sourceorrery_conformance::live::target(ENDPOINT_ENV)
 }
 
 fn var(name: &str) -> String {

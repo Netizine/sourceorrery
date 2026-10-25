@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod lifecycle;
+pub mod live;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
