@@ -12,8 +12,8 @@ same five things and nothing more:
 | **Load a project** | every secret a `sourceorrery.toml` declares, resolved like `sourceorrery run`: required secrets must resolve, optional ones that cannot are left out. |
 
 There is no `set`, `update`, `delete`, `recover` or `purge`, no key,
-check or connection management and no audit management in any SDK. Writing is the CLI's job; a library
-that cannot write cannot be tricked into writing
+check or connection management and no audit management in any SDK. Use the CLI
+to create vaults and set secret values
 ([ADR 0005](../adr/0005-read-only-sdks.md)).
 
 > [!IMPORTANT]
@@ -59,7 +59,9 @@ How the packages are published and how to check them:
 
 > [!NOTE]
 > Installing an SDK does not install the CLI or create a vault. Provision
-> the vault with the CLI first. The SDK then opens the vault file directly;
+> the vault and set secret values with the
+> [CLI](https://sourceorrery.ai/getting-started/#install) first.
+> The SDK then opens the vault file directly;
 > it does not need a CLI process running alongside your application.
 
 Every SDK reads a vault that already exists, so the first steps are the

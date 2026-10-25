@@ -80,3 +80,26 @@ platform, physical key-repeat/F2, screen-reader, authenticator-scanning and
 first-use acceptance. The conditional path picker, asynchronous loading
 and Milestone 3 remain deferred. No branch was pushed, release dispatched
 or website deployed during this review.
+
+## Package documentation follow-up
+
+Package READMEs, registry descriptions and application API introductions
+now direct readers to the [CLI installation guide](https://sourceorrery.ai/getting-started/#install).
+The application SDKs are read-only; the CLI creates vaults and sets secret
+values, while applications do not need a CLI process alongside them.
+Installation choices and availability are maintained on the website rather
+than repeated in registry pages. The npm release generator and embedded
+agent references use the same link.
+
+Validation checked 27 package/registry/archive README surfaces and all ten
+SDK guide pages. Offline package listings included the README for all 11
+publishable Cargo crates, and seven offline npm pack dry runs included the
+updated README. All six native npm READMEs matched their generator.
+Registry descriptions, README packaging paths and API documentation were
+checked; executable code and public declarations were unchanged.
+
+The 66 release-helper tests, nine integration tests (after regeneration,
+with blessing disabled), 26 website tests, formatting and production site
+build passed. All 4,142 internal references resolved. Fifty current guide
+stamps and every package manifest matched 0.3.0. No package was published
+and no branch was pushed by this follow-up.

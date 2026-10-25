@@ -16,8 +16,8 @@ Secrets belong to the runtime, not the repository.
   archives on the
   [GitHub releases](https://github.com/Netizine/sourceorrery/releases/latest)
   page.
-* To create vaults and store secrets, install the CLI:
-  `cargo install --locked sourceorrery-cli`.
+* Use the separately installed CLI to create vaults and set secret values:
+  [CLI installation guide](https://sourceorrery.ai/getting-started/#install).
 
 This crate is published so that the library can be built from crates.io
 for a platform the release does not cover, and so that a binding for
@@ -27,8 +27,8 @@ another language can be built on it.
 
 * `so_reader_*` and `so_project_*`, **read-only**: open a vault the way the
   CLI does, read values and metadata, resolve `sourceorrery://` references,
-  load a `sourceorrery.toml`. Every shipped SDK links only these, so an
-  application built on them cannot write to a vault.
+  load a `sourceorrery.toml`. These are the application SDKs' public
+  read-only surface; write-capable tooling entry points remain separate.
 * `so_vault_*` and `so_secret_*`: the full lifecycle, for tooling that
   administers vaults.
 * Values in caller-owned buffers that `so_bytes_free` zeroises; errors as a

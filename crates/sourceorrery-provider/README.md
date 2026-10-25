@@ -9,8 +9,8 @@ crate makes every backend serve both.
 
 **You probably want another crate.** To read secrets from an application,
 use [`sourceorrery`](https://crates.io/crates/sourceorrery), the read-only
-client. To create vaults and store secrets, install the CLI:
-`cargo install --locked sourceorrery-cli`.
+client. Use the separately installed CLI to create vaults and set secret
+values: [CLI installation guide](https://sourceorrery.ai/getting-started/#install).
 
 ## What is in it
 
@@ -33,7 +33,6 @@ client. To create vaults and store secrets, install the CLI:
 
 Both adapters pass every operation and every error through untouched: the
 error code an application sees is the backend's, whichever shape it called.
-The remote providers themselves (HashiCorp Vault, AWS Secrets Manager,
-Azure Key Vault)
-are the next items of
-[milestone 4](https://github.com/Netizine/sourceorrery/blob/main/docs/roadmap.md).
+HashiCorp Vault, AWS Secrets Manager and Azure Key Vault are implemented
+providers. Their mappings and capability limits are documented in the
+[provider guides](https://sourceorrery.ai/providers/).

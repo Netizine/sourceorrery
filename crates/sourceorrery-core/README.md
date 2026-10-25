@@ -6,9 +6,8 @@ Secrets belong to the runtime, not the repository.
 
 **You probably want another crate.** To read secrets from an application,
 use [`sourceorrery`](https://crates.io/crates/sourceorrery), the read-only
-client. To create vaults and store secrets, install the CLI:
-`cargo install --locked sourceorrery-cli`
-([`sourceorrery-cli`](https://crates.io/crates/sourceorrery-cli)). This
+client. Use the separately installed CLI to create vaults and set secret
+values: [CLI installation guide](https://sourceorrery.ai/getting-started/#install). This
 crate is the shared foundation they are both built on.
 
 ## What is in it

@@ -23,6 +23,11 @@ one of the two crates in the workspace that use `unsafe` (for the Win32
 calls), as [ADR 0010](https://github.com/Netizine/sourceorrery/blob/main/docs/adr/0010-authenticated-key-wraps-and-private-files.md)
 explains.
 
+For application reads, use the read-only
+[`sourceorrery` SDK](https://crates.io/crates/sourceorrery). Use the CLI to
+create vaults and set secret values; follow the
+[CLI installation guide](https://sourceorrery.ai/getting-started/#install).
+
 ## Licence
 
 MIT or Apache-2.0, at your option. Source:

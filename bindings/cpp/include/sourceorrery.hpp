@@ -6,8 +6,10 @@
 //   auto secret = reader.get("database-password");
 //   connect(secret.value.text());          // the value is zeroised when `secret` dies
 //
-// Only so_reader_* / so_project_* functions are used, so a program built on
-// this header cannot write to a vault. Every failure is a
+// This wrapper exposes only the read-only so_reader_* / so_project_* API.
+// Use the separately installed CLI to create vaults and set secret values:
+// https://sourceorrery.ai/getting-started/#install. Applications do not need
+// a CLI process running alongside them. Every failure is a
 // sourceorrery::Error (or a subclass chosen by the stable code) carrying
 // code(), what() and hint(); none of them ever contains a value.
 //

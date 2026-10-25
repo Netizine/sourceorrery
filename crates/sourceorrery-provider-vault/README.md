@@ -13,6 +13,9 @@ applications read it through
 `provider-vault`, on by default) like any other secret; the manifest never
 names the server.
 
+Use the CLI to create vaults and set secret values; application SDKs are
+read-only. See the [CLI installation guide](https://sourceorrery.ai/getting-started/#install).
+
 The connection signs in with a token it stores, sealed in the vault, or
 else as Vault's own tools do: `VAULT_TOKEN` (or `~/.vault-token`), an
 AppRole (`VAULT_ROLE_ID`, `VAULT_SECRET_ID`), a JWT (`VAULT_AUTH_ROLE`,
@@ -22,6 +25,6 @@ AppRole (`VAULT_ROLE_ID`, `VAULT_SECRET_ID`), a JWT (`VAULT_AUTH_ROLE`,
 The mapping of SourceOrrery semantics onto KV v2 (versions, per-version
 properties in `custom_metadata`, soft delete as `delete`/`undelete`/
 metadata deletion, the limits that follow) is documented in
-`docs/providers/hashicorp-vault.md` of the repository. The crate is a small
+the [provider guide](https://sourceorrery.ai/providers/hashicorp-vault/). The crate is a small
 hand-written client over `reqwest` with `rustls`; no response body is ever
 logged, and a secret value crosses it only as `SecretBytes`.

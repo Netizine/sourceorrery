@@ -4,24 +4,12 @@ The `sourceorrery` command creates vaults and stores secrets; the SDKs only
 read them. Install it once per machine. If your environment asks before
 installing software, ask the user first.
 
-Prefer a ready-to-run package; no Rust toolchain is needed:
-
-| Platform | Default route |
-|----------|---------------|
-| macOS / Linux with Homebrew | `brew install Netizine/sourceorrery/sourceorrery` |
-| Windows | `winget install --id Netizine.SourceOrrery --exact` once its catalog entry is approved |
-
-The WinGet catalog submission is still pending. On Windows, Scoop is an
-alternative: `scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery`,
-then `scoop install sourceorrery`. Check `sourceorrery --version` afterward;
-these instructions use the 0.3.0 key/check/storage model.
-
-If a package manager is unavailable, use these routes in order:
-
-- **A prebuilt binary** from the GitHub release: no toolchain needed.
-  Windows, macOS and Linux (glibc), x64 and arm64.
-- **`cargo install --locked sourceorrery-cli`**: needs Rust 1.91.1 or newer,
-  a C compiler, and on Linux `pkg-config` and `libdbus-1-dev`.
+Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install)
+for the current platform-specific steps. Prefer a ready-to-run package;
+prebuilt binaries do not need a Rust toolchain. Application SDKs are
+read-only, and installing one does not install the CLI.
+Check `sourceorrery --version` afterward; these instructions use the 0.3.0
+key/check/storage model. Manual verified-download steps are also below.
 
 Every archive is listed in the release's `SHA256SUMS`. Check it before you
 run anything you downloaded, and stop if the check fails.

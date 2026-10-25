@@ -9,6 +9,12 @@ namespace SourceOrrery;
 /// <c>SOURCEORRERY_RECOVERY_KEY</c>, then <see cref="OpenOptions.RecoveryKeyFile"/>
 /// / <c>SOURCEORRERY_RECOVERY_KEY_FILE</c>. Never prompts.
 /// </summary>
+/// <remarks>
+/// Use the separately installed CLI to create vaults and set secret values:
+/// <see href="https://sourceorrery.ai/getting-started/#install">CLI installation guide</see>.
+/// Installing this SDK does not install the CLI. Applications read the vault
+/// without a CLI process running alongside them.
+/// </remarks>
 public sealed unsafe class SecretReader : IDisposable
 {
     private readonly ReaderHandle handle;

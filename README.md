@@ -217,26 +217,14 @@ they are not SourceOrrery. Read more in
 
 ## Install
 
-Start with a ready-to-run package; Rust is not required for the default
-installation. Full steps: [Getting started](https://sourceorrery.ai/getting-started/).
-
-1. **Homebrew on macOS or Linux:**
-   `brew install Netizine/sourceorrery/sourceorrery`.
-   **WinGet on Windows:** `winget install --id Netizine.SourceOrrery --exact`.
-   The [WinGet catalog submission](https://github.com/microsoft/winget-pkgs/pull/460455)
-   is still open; while it is pending, use Scoop (`Netizine/scoop-sourceorrery`)
-   or the prebuilt download. Package managers install the available release;
-   check `sourceorrery --version` against these 0.3.0 docs.
-2. **Prebuilt release:** download the matching archive from the
-   [0.3.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0)
-   once published, then verify its attestation and checksum.
-3. **Cargo, if Rust and a C compiler are already installed:**
-   `cargo install --locked sourceorrery-cli --version 0.3.0`.
-4. **Build from source:** use the steps below when contributing or changing
-   the implementation.
+Use the [CLI installation guide](https://sourceorrery.ai/getting-started/#install)
+for the current steps on Windows, macOS and Linux. Prebuilt installations
+do not require Rust. Check the installed version with `sourceorrery --version`.
 
 Install the [SDK package](docs/sdks/index.md) for your application language
-separately. An SDK does not install the CLI or create a vault.
+separately. The SDKs are read-only: use the CLI to create vaults and set
+secret values. Installing an SDK does not install the CLI. Applications
+read the vault through the SDK without a CLI process running alongside them.
 
 How each package is published (trusted publishing and provenance where
 the registry supports it) and how to check what you installed:

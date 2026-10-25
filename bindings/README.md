@@ -6,6 +6,11 @@ native-binding technology of its language (ADR 0006). The compatibility
 contract is the SourceOrrery API and `sourceorrery_core::CONTRACT_VERSION`,
 not any binding generator. User guides live in [`docs/sdks/`](../docs/sdks/index.md).
 
+Use the separately installed CLI to create vaults and set secret values:
+[CLI installation guide](https://sourceorrery.ai/getting-started/#install).
+Installing an SDK does not install the CLI. Applications read the vault
+through their SDK without a CLI process running alongside them.
+
 | Language | Directory | Technology | Package |
 |----------|-----------|------------|---------|
 | Rust | `crates/sourceorrery` | the client crate itself, over `sourceorrery-storage` | crates.io `sourceorrery` |

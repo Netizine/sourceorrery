@@ -28,12 +28,11 @@ workflow and published with provenance.
 
 ## The CLI
 
-The SDK only reads secrets. Vaults are created, and secrets stored, with
-the `sourceorrery` command-line tool, which npm does not install: get it
-from the [GitHub release](https://github.com/Netizine/sourceorrery/releases/latest)
-or with `cargo install --locked sourceorrery-cli --version 0.3.0`
-([Getting started](https://sourceorrery.ai/getting-started/)). It does not
-have to be installed where your application runs.
+The SDK is read-only. Use the separately installed `sourceorrery` CLI to
+create vaults and set secret values. Follow the
+[CLI installation guide](https://sourceorrery.ai/getting-started/#install).
+npm does not install the CLI. Your application reads the vault through
+the SDK and does not need a CLI process running alongside it.
 
 Documentation: <https://sourceorrery.ai/sdks/javascript/>. Source:
 <https://github.com/Netizine/sourceorrery/tree/main/bindings/node>.

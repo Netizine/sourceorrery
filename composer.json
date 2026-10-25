@@ -1,6 +1,6 @@
 {
     "name": "sourceorrery/sourceorrery",
-    "description": "Read secrets from SourceOrrery vaults, the encrypted replacement for .env files. Read-only: vaults are created and secrets stored with the sourceorrery CLI; the native library comes from the GitHub release.",
+    "description": "Read-only SourceOrrery SDK for PHP; requires the separate SourceOrrery CLI to create vaults and set secret values. CLI installation: https://sourceorrery.ai/getting-started/#install. The native library comes from the GitHub release.",
     "type": "library",
     "license": "MIT OR Apache-2.0",
     "keywords": ["secrets", "vault", "keyring", "security", "dotenv", "ffi"],

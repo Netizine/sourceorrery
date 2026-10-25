@@ -66,6 +66,17 @@ NOTED = (
 # Pages that carry the version only.
 VERSION_ONLY = (
     "crates/sourceorrery-cli/README.md",
+    "crates/sourceorrery/README.md",
+    "crates/sourceorrery-core/README.md",
+    "crates/sourceorrery-crypto/README.md",
+    "crates/sourceorrery-storage/README.md",
+    "crates/sourceorrery-provider/README.md",
+    "crates/sourceorrery-provider-vault/README.md",
+    "crates/sourceorrery-provider-aws/README.md",
+    "crates/sourceorrery-provider-azure/README.md",
+    "crates/sourceorrery-ffi/README.md",
+    "crates/sourceorrery-os/README.md",
+    "scripts/release/ffi-archive-README.md",
     "docs/README.md",
     "docs/architecture.md",
     "docs/cli.md",

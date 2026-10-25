@@ -7,8 +7,11 @@
             connect(password=secret.value.expose_text())
 
 The package only reads: there is no way to create, change or delete a
-secret, and no key, check, connection or audit management. Administration
-is the CLI's job. All semantics live in the Rust core; this package converts types and
+secret, and no key, check, connection or audit management. Use the
+separately installed CLI to create vaults and set secret values.
+CLI installation: https://sourceorrery.ai/getting-started/#install.
+Applications read through the SDK without a CLI process running alongside them.
+All semantics live in the Rust core; this package converts types and
 raises the typed exceptions in :mod:`sourceorrery.errors`.
 """
 

@@ -30,10 +30,10 @@ Use the archive from the same release as the SDK package you installed.
 
 ## Before you start: the CLI
 
-The library's read-only functions are what applications use. Vaults are
-created, and secrets stored, with the `sourceorrery` command-line tool,
-which is in the `sourceorrery-<version>-<target>` archive of the same
-release (or `cargo install --locked sourceorrery-cli`):
+The library's read-only functions are what applications use. Use the
+separately installed `sourceorrery` CLI to create vaults and set secret
+values. Follow the
+[CLI installation guide](https://sourceorrery.ai/getting-started/#install), then:
 
 ```bash
 sourceorrery vault create development

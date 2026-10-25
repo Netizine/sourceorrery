@@ -12,6 +12,9 @@ use FFI\CData;
  * credential store, then `OpenOptions::$recoveryKey`, SOURCEORRERY_RECOVERY_KEY,
  * then `OpenOptions::$recoveryKeyFile` / SOURCEORRERY_RECOVERY_KEY_FILE. Never
  * prompts.
+ * Use the separately installed CLI to create vaults and set secret values:
+ * https://sourceorrery.ai/getting-started/#install. Installing this SDK does
+ * not install the CLI; applications do not need a CLI process alongside them.
  *
  * ```php
  * $reader = SecretReader::open('development');

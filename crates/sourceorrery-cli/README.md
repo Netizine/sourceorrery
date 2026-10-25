@@ -18,40 +18,14 @@ Documentation: **<https://sourceorrery.ai>** ·
 
 ## Install
 
-Start with a ready-to-run package; Rust is not required:
+Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install)
+for your platform. It covers ready-to-run packages, verified downloads and
+source builds; Rust is not required for a prebuilt installation.
 
-```bash
-# macOS or Linux with Homebrew
-brew install Netizine/sourceorrery/sourceorrery
-```
-
-```powershell
-# Windows, once the WinGet catalog entry is approved
-winget install --id Netizine.SourceOrrery --exact
-```
-
-The WinGet submission is still open; use Scoop
-(`scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery`,
-then `scoop install sourceorrery`) or a prebuilt release while it is pending.
-Check `sourceorrery --version` against the 0.3.0 documentation.
-
-If you already have the Rust toolchain:
-
-```bash
-cargo install --locked sourceorrery-cli --version 0.3.0
-```
-
-This builds the `sourceorrery` binary. It needs Rust 1.91.1 or newer and a C
-compiler for the bundled SQLite, and on Linux `pkg-config` and
-`libdbus-1-dev` for the Secret Service. `--locked` builds with the
-dependency versions the release was tested with.
-
-Prebuilt binaries for Windows, macOS and Linux (x64 and arm64), with a
-`SHA256SUMS` file, are on the
-[GitHub releases](https://github.com/Netizine/sourceorrery/releases/latest)
-page. If you are reading this inside one of those archives, the
-`sourceorrery` binary next to it is the CLI: put it on your `PATH`
-([per platform](https://sourceorrery.ai/getting-started/#from-the-github-release)).
+If you are reading this inside a CLI release archive, the `sourceorrery`
+binary next to this README is the CLI. The installation guide explains how
+to add it to your `PATH`. Check the installed version with
+`sourceorrery --version`.
 
 ## Quick start
 
