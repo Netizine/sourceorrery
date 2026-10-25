@@ -2700,4 +2700,152 @@ mod settings_record {
         let vault = open(&path, &key).unwrap();
         assert_eq!(vault.view_check().unwrap().describe(), "password");
     }
+
+    /// Put the `key_wraps` rows of the file at `older` back into the file
+    /// at `path`, replacing the ones it has, and nothing else.
+    fn put_back_wraps(path: &Path, older: &Path) {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute(
+            "ATTACH DATABASE ?1 AS older",
+            params![older.to_str().unwrap()],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "DELETE FROM key_wraps;
+             INSERT INTO key_wraps SELECT * FROM older.key_wraps;",
+        )
+        .unwrap();
+    }
+
+    /// SR01 of the 2026-10-25 review: the old recovery wrap put back into
+    /// the current file, with the old key, must not open it or return a
+    /// value written after the replacement (ADR 0010).
+    #[test]
+    fn an_old_recovery_wrap_put_back_does_not_open_the_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault, old_key) = create(&dir);
+        let before = snapshot(&dir, &path, "before");
+        let new_key = vault.replace_recovery_key().unwrap();
+        vault
+            .set_secret(
+                "after",
+                SecretBytes::from("written after the replacement"),
+                SetSecretOptions::default(),
+            )
+            .unwrap();
+        drop(vault);
+
+        // The wrap row alone, the current settings and log untouched.
+        let wrap_only = snapshot(&dir, &path, "wrap-only");
+        put_back_wraps(&wrap_only, &before);
+        let err = open(&wrap_only, &old_key).unwrap_err();
+        assert_eq!(err.code(), "crypto", "{err}");
+        assert!(err.to_string().contains("key wrap"), "{err}");
+
+        // The wrap row and the whole settings record from before.
+        let with_record = snapshot(&dir, &path, "with-record");
+        put_back_wraps(&with_record, &before);
+        put_back(&with_record, &before);
+        assert_replay_refused(
+            &open(&with_record, &old_key).unwrap_err(),
+            "the old wrap with the old record",
+        );
+
+        // The untouched file: the old key is refused, the new one reads.
+        assert_eq!(open(&path, &old_key).unwrap_err().code(), "locked");
+        let vault = open(&path, &new_key).unwrap();
+        assert_eq!(
+            vault.get_secret("after", None).unwrap().value.expose(),
+            b"written after the replacement"
+        );
+    }
+
+    #[test]
+    fn a_wrap_row_added_or_swapped_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault, key) = create(&dir);
+        drop(vault);
+        // A second, authentic copy of the recovery wrap under another id.
+        let added = snapshot(&dir, &path, "added");
+        rusqlite::Connection::open(&added)
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO key_wraps
+                 SELECT 'ffffffffffffffff', kind_json, wrapped_nonce, wrapped_key, created_on
+                 FROM key_wraps",
+            )
+            .unwrap();
+        assert_eq!(open(&added, &key).unwrap_err().code(), "crypto");
+        // The same row with another creation time.
+        let edited = snapshot(&dir, &path, "edited");
+        rusqlite::Connection::open(&edited)
+            .unwrap()
+            .execute_batch("UPDATE key_wraps SET created_on = created_on + 1")
+            .unwrap();
+        assert_eq!(open(&edited, &key).unwrap_err().code(), "crypto");
+        // The untouched file opens.
+        open(&path, &key).unwrap();
+    }
+
+    #[test]
+    fn every_change_to_the_wraps_leaves_a_vault_that_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        // Created with this machine's key and a recovery key.
+        let path = dir.path().join("dev.sorvault");
+        let created =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), store.clone())
+                .unwrap();
+        assert!(created.this_machine);
+        let key = created.recovery_key;
+        drop(created.vault);
+        let vault = SqliteVault::open(&path, store.clone(), &NoInteraction).unwrap();
+        // The recovery key replaced on the setup screens' path.
+        let replacement = RecoveryKey::generate().unwrap();
+        vault
+            .change_settings(&SettingsChange {
+                recovery_key: Some(replacement.clone()),
+                ..SettingsChange::default()
+            })
+            .unwrap();
+        drop(vault);
+        assert_eq!(open(&path, &key).unwrap_err().code(), "locked");
+        let vault = open(&path, replacement.as_str()).unwrap();
+        drop(vault);
+        // Replaced again directly, then this machine's key on a vault
+        // that had none.
+        let other = dir.path().join("other.sorvault");
+        let created =
+            SqliteVault::create(&other, "other", CreateVaultOptions::default(), no_store())
+                .unwrap();
+        let other_key = created.vault.replace_recovery_key().unwrap();
+        drop(created.vault);
+        let vault = SqliteVault::open(
+            &other,
+            store.clone(),
+            &StaticRecoveryKey::new(other_key.as_str()),
+        )
+        .unwrap();
+        vault.add_this_machine_key().unwrap();
+        drop(vault);
+        SqliteVault::open(&other, store, &NoInteraction).unwrap();
+    }
+
+    #[test]
+    fn a_file_of_an_earlier_schema_is_refused_without_being_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, vault, key) = create(&dir);
+        drop(vault);
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "UPDATE vault_meta SET value = '4' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let err = open(&path, &key).unwrap_err();
+        assert_eq!(err.code(), "migration_required", "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
 }

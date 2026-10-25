@@ -814,10 +814,15 @@ fn planted_keyring_accounts_are_shown_escaped() {
             [kind],
         )
         .unwrap();
-    // The vault still opens with its recovery key, and shows nothing of it.
-    let listed = env.ok(&["secret", "list", "--vault", "dev"]);
-    assert!(!listed.contains("planted"), "{listed}");
+    // The key wraps are part of the authenticated settings record (ADR
+    // 0010), so the planted row is refused at open, and named nowhere.
+    let out = env.run(&["secret", "list", "--vault", "dev"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("key wrap"), "{}", stderr(&out));
+    assert!(!stderr(&out).contains("planted"), "{}", stderr(&out));
 
+    // `vault destroy` reads the wraps without opening the vault, and shows
+    // the planted account escaped.
     let out = env.run(&["vault", "destroy", "dev", "--yes"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_escaped(&stderr(&out));

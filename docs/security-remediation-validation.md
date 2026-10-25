@@ -120,3 +120,48 @@ Each entry: commit, what it closes, behaviour and compatibility, tests run
   `SECURITY-REMEDIATION-PLAN-2026-10-25.md`). No code.
 * **Evidence:** the baseline above. Failure-injection helpers are added
   with the regression each batch needs, not as a framework up front.
+
+### B02 — key-replacement contract and schema 5
+
+* **Closes:** the SR01 design decision.
+* **Changes:** [ADR 0010](adr/0010-authenticated-key-wraps-and-private-files.md)
+  (the wraps join the settings record; what replacing a recovery key
+  guarantees and what it cannot; the compromise procedure: rotate at the
+  issuers, new vault, destroy the old; schema 5; the `sourceorrery-os`
+  exception for B04). `docs/vault-format.md`, `docs/threat-model.md` (gap
+  10, the controls table), `docs/cli.md`, ADR 0007 and ADR 0009 notes, the
+  changelog, the headless guide.
+* **Compatibility:** schema 5; schemas 1 to 4 refused with
+  `migration_required`, the file unchanged. No ABI, contract or error-code
+  change. In-place vault-key rotation stays out of 0.3.0.
+* **Review:** every entry point that changes `key_wraps` (create,
+  replacement by `change_settings` and `replace_recovery_key`, adding this
+  machine's key, export, import) is listed with the event that checkpoints
+  it; export and import are documented as keeping the vault key.
+
+### B03 — authenticated key-wrap inventory
+
+* **Closes:** SR01 in the file (the documentation half is B02; B24 checks
+  the final wording, B28 the matrix).
+* **Changes:** `integrity::SettingsFields::key_wraps` and
+  `key_wrap_canonical` (domain `sourceorrery/v5/key-wrap`: every column of
+  the row); `Meta` and `write_settings_tag` read the rows; every wrap change
+  rewrites the record in its transaction and its event carries the tag
+  (`protector_add` for replacement and for this machine's key, the copy's
+  `vault_export`, `vault_import` always); `SCHEMA_VERSION` 5.
+* **Tests run:** storage 75 unit tests (new:
+  `an_old_recovery_wrap_put_back_does_not_open_the_vault`, the SR01
+  reproduction, with the wrap alone and with the whole old record;
+  `a_wrap_row_added_or_swapped_is_refused`;
+  `every_change_to_the_wraps_leaves_a_vault_that_opens` over creation with
+  this machine's key, `change_settings`, `replace_recovery_key` and
+  `add_this_machine_key`;
+  `a_file_of_an_earlier_schema_is_refused_without_being_changed`, byte for
+  byte; `the_settings_record_covers_every_part_of_every_key_wrap` over each
+  column, an extra row and none). The SR01 test **fails without the fix**
+  (checked by dropping the section from the record: the old key opened the
+  tampered copy). Then storage (all targets), provider, the Rust client,
+  the C ABI, conformance and the CLI: all pass, export/import round trips
+  included. The CLI test that planted a wrap row now expects the refusal.
+  clippy `-D warnings` clean for storage.
+* **Not run here:** the language SDK suites (B31).

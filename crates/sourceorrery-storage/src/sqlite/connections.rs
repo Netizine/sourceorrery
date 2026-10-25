@@ -365,8 +365,8 @@ impl SqliteVault {
             meta.settings_tag.as_deref(),
         ) {
             return Err(SecretError::Crypto(
-                "vault settings integrity check failed (the view check, a connection or a \
-                 project was altered)"
+                "vault settings integrity check failed (the view check, a connection, a \
+                 project or a key wrap was altered)"
                     .to_owned(),
             ));
         }

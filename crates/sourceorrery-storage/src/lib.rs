@@ -63,7 +63,7 @@ pub const BACKEND_NAME: &str = "encrypted-sqlite";
 /// A vault from an earlier release is refused by
 /// [`sqlite::SqliteVault::open`] with `migration_required`; there is no
 /// migration (ADR 0009).
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// File extension of vault files.
 pub const VAULT_FILE_EXTENSION: &str = "sorvault";

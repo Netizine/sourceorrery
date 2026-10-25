@@ -288,6 +288,7 @@ impl SqliteVault {
             view: ViewState::default(),
             connections: Vec::new(),
             projects: Vec::new(),
+            key_wraps: Vec::new(),
         };
         let rows: [(&str, String); 6] = [
             ("schema_version", SCHEMA_VERSION.to_string()),
@@ -685,7 +686,7 @@ impl SqliteVault {
         )?;
         Err(SecretError::Crypto(
             "vault settings integrity check failed (schema, name, recovery level, retention, \
-             the view check, a connection or a project were altered)"
+             the view check, a connection, a project or a key wrap were altered)"
                 .to_owned(),
         ))
     }

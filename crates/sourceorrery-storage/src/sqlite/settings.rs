@@ -83,15 +83,8 @@ impl SqliteVault {
             success(AuditOperation::VaultChange, &detail, tag)?;
         }
         if let Some(key) = &change.recovery_key {
-            self.install_recovery_key(conn, key)?;
-            self.audit(
-                conn,
-                AuditOperation::ProtectorAdd,
-                None,
-                None,
-                AuditOutcome::Success,
-                Some("recovery key replaced"),
-            )?;
+            let tag = self.install_recovery_key(conn, key)?;
+            success(AuditOperation::ProtectorAdd, "recovery key replaced", tag)?;
         }
         if matches!(change.password, PasswordChange::Keep)
             && matches!(change.authenticator, AuthenticatorChange::Keep)
