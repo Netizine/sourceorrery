@@ -1,202 +1,78 @@
-# Upgrading from 0.2.0
+# Vault files, export and import
 
-SourceOrrery 0.3.0 changes how a vault is kept and opened
-([ADR 0009](adr/0009-local-vaults-checks-and-storage.md),
-[ADR 0010](adr/0010-authenticated-key-wraps-and-private-files.md)): the
-vault key is kept as this machine's key in the OS credential store and
-under one recovery key, the file format is schema 5, and passphrases,
-protectors, recovery codes and `[vaults.*]` manifest tables are gone.
-There is no conversion. 0.3.0 refuses a vault file of an earlier release
-(schema 3 from 0.2.0, schema 4 from development builds of `main`) with
-`migration_required` and leaves it exactly as it was: it writes nothing to
-the file or beside it, and `vault export`, `vault destroy` and
-`vault create` refuse it too. `vault export` and `vault import` copy
-schema 5 vaults between machines; they never convert an older one.
+SourceOrrery 0.3.0 uses **vault schema 5**, **C ABI 2** and **contract 2**.
+Use the CLI, SDK and native library from the same release. There is no
+in-place migration or compatibility layer for earlier vault formats.
 
-Upgrading a vault means keeping its file where 0.2.0 still reads it,
-creating a new vault with 0.3.0, and setting each secret again from the
-old one: 0.2.0 reveals each value into a pipe and 0.3.0 reads it from the
-pipe, so no value is written to disk or typed. The steps below were run
-with the 0.2.0 release CLI against this release in Git Bash, PowerShell
-7.6 and cmd.exe on Windows, for a local vault and for a remote one at
-HashiCorp Vault; every value arrived byte for byte.
+## Supported files
 
-This is the ordinary upgrade, for a vault you trust. If the vault's key, a
-copy of it, or a machine that held it may be compromised, moving the
-values does not help: rotate them at their issuers and follow the
-compromise response in the [threat model](threat-model.md) (known gap 10)
-instead.
+Only schema 5 vaults are supported. An older file is refused with
+`migration_required`; a newer format is refused with an explanatory error.
+Neither case authorises conversion or deletion. Keep unsupported files
+separate and create a new vault with `sourceorrery setup` when starting
+with this release. Do not edit a file's schema marker: the format and key
+wraps are authenticated.
 
-## What moves and what stays
+A recovery key unlocks a supported vault; it does not convert an
+unsupported file. The [format reference](vault-format.md) describes the
+on-disk records, and the [first-run guide](getting-started.md) covers
+creating a vault.
 
-| | |
-|---|---|
-| Each secret's current value | Moves: what 0.2.0's `secret get --reveal` returns, the newest enabled version within its time window |
-| Its content type, tags and time window | Set again with `secret update` (step 5), as 0.2.0's `secret get NAME` shows them |
-| The vault's name | Kept, so a project's `sourceorrery.toml` names the new vault without a change |
-| Older versions, deleted secrets, the audit log | Stay in the old file, readable with 0.2.0 for as long as you keep both |
-| The reveal guard, second factor and recovery codes | Stay with the old file. 0.3.0 has the view check instead, which `setup` offers |
-
-## 1. Keep the 0.2.0 CLI
-
-Keep the 0.2.0 binary under another name before you upgrade, or download
-its archive from the
-[v0.2.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0)
-and check it against the release's `SHA256SUMS`, or its provenance:
+## Export a supported vault
 
 ```bash
-gh attestation verify sourceorrery-0.2.0-x86_64-pc-windows-msvc.zip --repo Netizine/sourceorrery \
-  --signer-workflow Netizine/sourceorrery/.github/workflows/release.yml
+sourceorrery vault export development --out development.sorvault
 ```
 
-Below, 0.2.0 is `sourceorrery-0.2.0` and 0.3.0 is `sourceorrery`.
+The destination must not exist. Export uses SQLite's online backup to
+produce a consistent encrypted copy, preserving local secret versions,
+metadata, connections, projects and audit history. It removes this
+machine's key wrap and the view check from the copy. The copy opens with
+the vault's recovery key only; export does not create a new recovery key
+or change the original vault's key.
 
-## 2. Move the old file out of the vaults folder
+Keep the recovery key apart from the exported file. Stored provider
+credentials remain sealed inside the copy. Values kept at AWS Secrets
+Manager, Azure Key Vault or HashiCorp Vault remain at those services:
+**exporting the local vault is not a backup of remote provider data**.
+Use each provider's backup and recovery controls for that data.
 
-Both releases find a vault as `vaults/<name>.sorvault` in the
-SourceOrrery home: `%LOCALAPPDATA%\sourceorrery` on Windows,
-`~/Library/Application Support/sourceorrery` on macOS,
-`~/.local/share/sourceorrery` on Linux, or `SOURCEORRERY_HOME`. Move the
-old file into a home of its own, which 0.2.0 reads with `--home`. Its
-passphrase, and its entry in the OS credential store, still open it
-there: the entry is named after the vault's id, not its path.
+## Import on another machine
 
-<!-- tabs: shell -->
-
-#### Bash
+Provision the recovery key through a restricted file, then import into a
+home that does not already contain a vault with the same name:
 
 ```bash
-mkdir -p ~/sourceorrery-0.2.0/vaults
-mv ~/.local/share/sourceorrery/vaults/development.sorvault ~/sourceorrery-0.2.0/vaults/
-sourceorrery-0.2.0 --home ~/sourceorrery-0.2.0 secret list --vault development
+sourceorrery --recovery-key-file /run/secrets/development.recovery-key   vault import development.sorvault
 ```
 
-#### PowerShell
+Import reads the exported file without modifying it, verifies the copy's
+name, settings and audit chain, and registers the imported vault. When an
+OS credential store is available, it adds this machine's key. With
+`SOURCEORRERY_KEYRING=off`, continue supplying the recovery key to open it.
+Use `--name NAME` to register a different name.
 
-```powershell
-New-Item -ItemType Directory -Force "$HOME\sourceorrery-0.2.0\vaults" | Out-Null
-Move-Item "$env:LOCALAPPDATA\sourceorrery\vaults\development.sorvault" "$HOME\sourceorrery-0.2.0\vaults\"
-sourceorrery-0.2.0 --home "$HOME\sourceorrery-0.2.0" secret list --vault development
-```
+The imported vault has no view check by default. Set one with
+`--password-file FILE` during import, or open the setup screens afterward
+to configure a password and authenticator. A recovery key remains an
+alternative that satisfies the check. [CLI reference](cli.md#vault)
 
-<!-- /tabs -->
+## Restoring and compromise response
 
-Move the file; never delete it. While it is in the vaults folder, 0.3.0
-says the vault already exists.
+An export is a point-in-time copy. Importing it does not merge later
+versions or audit history from another file. A complete older snapshot
+can be internally authentic even though it omits later changes; compare
+an externally retained audit checkpoint when freshness matters.
 
-## 3. Create the new vault
+Replacing a recovery key changes its wrap in the current file, not the
+underlying vault key. An older copy can still open with its old recovery
+key. If a key or vault copy may be compromised, rotate the exposed
+credentials and provision a new vault. See the
+[threat model](threat-model.md#known-gaps).
 
-```bash
-sourceorrery setup            # or: sourceorrery vault create development
-```
+## Native SDK libraries
 
-Give it the same name. Keep its new recovery key apart from this machine:
-the old passphrase does not open it.
-
-## 4. Set each secret from the old vault
-
-List the names with `secret list` as in step 2, then:
-
-<!-- tabs: shell -->
-
-#### Bash
-
-```bash
-set -euo pipefail
-old() { sourceorrery-0.2.0 --home ~/sourceorrery-0.2.0 "$@"; }
-for name in database-url api-token tls-key; do
-  old secret get "$name" --vault development --reveal --raw |
-    sourceorrery secret set "$name" --vault development --stdin --keep-trailing-newline
-done
-```
-
-#### PowerShell
-
-PowerShell 7, piping from one program straight into the other:
-
-```powershell
-$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true
-$old = "$HOME\bin\sourceorrery-0.2.0.exe"
-foreach ($name in 'database-url', 'api-token', 'tls-key') {
-  & $old --home "$HOME\sourceorrery-0.2.0" secret get $name --vault development --reveal --raw |
-    sourceorrery secret set $name --vault development --stdin --keep-trailing-newline
-}
-```
-
-Windows PowerShell 5.1, and a PowerShell function or script block between
-the two programs, handle the output as lines of text: every line break
-becomes CRLF and one is added at the end, so each value is stored
-changed. Use PowerShell 7 as above, Git Bash, or cmd.exe, whose pipes pass
-the bytes through.
-
-<!-- /tabs -->
-
-`--raw` writes each value with nothing added, and `--keep-trailing-newline`
-stores it with nothing removed, so a value that ends in a line break (a
-PEM key) keeps it. 0.2.0 asks for its passphrase, and what its reveal
-guard asks for, as it always has; storing asks nothing of 0.3.0, whose
-view check guards viewing and revealing.
-
-If a read fails, 0.3.0 receives no input and refuses to store an empty
-value, and the loop stops: nothing wrong is stored. An empty secret is
-refused the same way; set it again by hand with `--allow-empty`. A
-disabled, expired or not-yet-valid secret is not revealed: pass
-`--version ID` (from `old secret versions NAME --vault development`) to
-move that version.
-
-## 5. Set the metadata again
-
-For each secret that has a content type, tags or a time window in
-0.2.0's `secret get NAME`:
-
-```bash
-sourceorrery secret update database-url --vault development \
-  --content-type text/plain --tag team=payments --expires 2027-06-30T00:00:00Z
-```
-
-## 6. Check
-
-```bash
-sourceorrery secret list --vault development
-sourceorrery check            # in each project that uses the vault
-```
-
-`check` resolves every secret the manifest names without reading a value.
-0.3.0 refuses `[vaults.*]` tables and `[secrets.*].vault` keys in a
-manifest and says which: remove them.
-
-## 7. Retire the old vault
-
-When nothing needs its older versions or its log any more:
-
-```bash
-sourceorrery-0.2.0 --home ~/sourceorrery-0.2.0 vault destroy development
-```
-
-removes the file and its entries in the OS credential store. Copies and
-backups of it elsewhere still open with its passphrase.
-
-## A remote vault
-
-A 0.2.0 remote vault, a `[vaults.<name>]` table in `sourceorrery.toml`, is
-not a file: its secrets stay at the provider, where 0.2.0 keeps reading
-them. 0.3.0 reaches a provider through a connection a local vault holds
-([providers](providers/index.md)). Create the new vault with a connection
-(`setup`, or `vault create` with the provider's flags), pointed at a
-location 0.2.0 does not use (another KV mount, AWS prefix or key vault) so
-that the two releases never write the same secret. Then run the loop of
-step 4 with two changes: 0.2.0 runs in the project's directory, where its
-manifest declares the remote vault, and 0.3.0 stores each value at the
-provider:
-
-```bash
-set -euo pipefail
-old() { (cd ~/src/my-application && sourceorrery-0.2.0 "$@"); }
-for name in database-url api-token; do
-  old secret get "$name" --vault production --reveal --raw |
-    sourceorrery secret set "$name" --vault development --storage hashicorp-vault --stdin --keep-trailing-newline
-done
-```
-
-Once every project's manifest names the local vault, the old secrets at
-the provider can be removed with the provider's own tools.
+Java, .NET, Go, PHP and C++ check the native library's ABI before opening a
+vault. An incompatible library fails with `abi_mismatch`. Python and
+Node.js build the client into their native extensions. Use the matching
+0.3.0 packages and archives rather than mixing release generations.

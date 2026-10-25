@@ -6,19 +6,22 @@ from the secrets service a vault's [connection](providers/index.md) keeps its se
 HashiCorp Vault, AWS Secrets Manager or Azure Key Vault. SourceOrrery's part is narrower and
 is what this page describes:
 
-* it authenticates with the identity the platform gives the process (a
-  CI job's OIDC token, a pod's service account, a VM's instance role) and
-  never stores a credential of its own;
+* with ambient credentials, it authenticates as the process using the
+  provider's credential chain (a CI job's OIDC token, a pod's service
+  account or a VM's instance role); a connection can instead use explicit
+  credentials sealed in the local vault;
 * it carries every decision the provider makes through unchanged, as the
   same stable error codes and hints in the CLI, the Rust client and every
   SDK;
-* it keeps no copy of a value outside the process that read it, so a
-  revocation reaches everything but what a running process already holds.
+* it does not persist or share a provider-value cache. Values explicitly
+  read by an application or delivered to a child remain that process's
+  responsibility after provider access is revoked.
 
-The `provider-vault`, `provider-aws` and `provider-azure` CI jobs prove each
-claim below against a real Vault server and Secrets Manager and Key Vault
+The `provider-vault`, `provider-aws` and `provider-azure` CI jobs exercise
+these paths against a real Vault server and Secrets Manager and Key Vault
 emulators (`scripts/ci/vault-federation.sh`, `scripts/ci/aws-federation.sh`,
-`scripts/ci/azure-federation.sh`), except where a section says otherwise.
+`scripts/ci/azure-federation.sh`). Emulators do not establish production
+identity, policy propagation or hosted-service behaviour.
 
 ## Who decides what
 
@@ -26,7 +29,7 @@ emulators (`scripts/ci/vault-federation.sh`, `scripts/ci/aws-federation.sh`,
 |---|---|---|---|---|
 | **Identity** | an auth method: token, AppRole, JWT/OIDC, Kubernetes | an IAM principal: user, role, web identity, instance or task role | an Entra ID principal: service principal, workload identity, managed identity, a signed-in user | finds the credential where the provider's own tools do; refuses to run without one (`unauthenticated`) |
 | **Roles** | the policies attached to the login role | the IAM role the identity assumes | role assignments on the vault (Key Vault Secrets User, Key Vault Secrets Officer), or the vault's access policies | none of its own; the process is whatever the provider says it is |
-| **Policy** | ACL policies on `<mount>/data/<name>` and `<mount>/metadata/<name>`; `update` on `metadata` is policy administration (the version flags and windows live there) | IAM policies on the secret's ARN (`secretsmanager:GetSecretValue`, `DescribeSecret`, `ListSecretVersionIds`, ...); `TagResource` is policy administration (the flags and windows live in tags) | data actions on the vault's secrets; the flags and windows are each version's own attributes, and the one tag SourceOrrery relies on (version order) needs the permission that writes versions | evaluates the flags and windows it reads from the provider; cannot tell a planted one from a set one ([threat model](threat-model.md), gap 14) |
+| **Policy** | ACL policies on `<mount>/data/<name>` and `<mount>/metadata/<name>`; `update` on `metadata` is policy administration (the version flags and windows live there) | IAM policies on the secret's ARN (`secretsmanager:GetSecretValue`, `DescribeSecret`, `ListSecretVersionIds`, ...); `TagResource` is policy administration (the flags and windows live in tags) | data actions on the vault's secrets; the flags and windows are each version's own attributes, and the one tag SourceOrrery relies on (version order) needs the permission that writes versions | evaluates the flags and windows it reads from the provider; cannot tell a planted one from a set one ([threat model](threat-model.md), gap 13) |
 | **Revocation** | `vault token revoke`, a lease that expires, a disabled role or auth mount | a revoked session, a removed trust policy, a deny statement | a removed role assignment, a disabled service principal, a deleted federated credential | takes effect on the next request (below) |
 | **Audit** | the server's audit devices | CloudTrail | the vault's diagnostic logs in Azure Monitor | the vault records every call it sends to a provider in its own log, with the provider's outcome; `sourceorrery audit` also prints where the provider's trail is and the query that shows SourceOrrery's operations; the vault's log is exported with `audit export` ([below](#collecting-the-audit-trail)) |
 
@@ -39,11 +42,12 @@ provider decides who reads what.
 
 ## Federation: the identity the platform already has
 
-Nothing below goes in `sourceorrery.toml`. The manifest names the
-provider, the address and the mount or prefix, and a `token`, `role_id`,
-`access_key_id` or `client_secret` key in it is a parse error. Credentials
-come from the environment of the process, exactly where `vault`, `aws` and
-`az` would find them.
+Provider settings belong to the local vault's connection, configured by
+`setup` or `vault create` flags. `sourceorrery.toml` names the project's
+local vault and secret references only; it contains no provider address,
+mount, prefix or credentials. With ambient sign-in, credentials come from
+the provider's chain for the process. Explicit credentials are supplied
+from files when configuring the connection and are sealed in the vault.
 
 ### HashiCorp Vault
 
@@ -203,8 +207,9 @@ A revoked identity is refused the next time the provider is asked
 anything. What that means for a process depends on where it is in its
 life:
 
-* **A process that has not yet opened the vault** cannot: the login (Vault)
-  or the first request (AWS) fails with `unauthenticated`, and
+* **A process that has not yet read a remote secret** is refused when
+  the provider checks its identity. Opening the local vault alone does
+  not prove access to a provider. If a required secret cannot be read,
   `sourceorrery run` does not start its child.
 * **A process holding an open reader** fails on its next read. The Vault
   provider keeps the token its login returned and does not re-login; the
@@ -214,15 +219,17 @@ life:
   refuses the next read once it has propagated (within minutes). None
   retries with another identity.
 * **A value already read** stays with the process that read it until it
-  drops it. There is no value cache: nothing is written to disk, nothing is
-  shared between processes, and every `get_secret` is a request to the
-  provider. The CLI drops a value when the command ends (`run` passes it to
-  the child's environment and exits with the child); an SDK reader holds
-  it until the application closes it and zeroises it then
+  drops it. There is no shared or persistent provider-value cache: every
+  remote `get_secret` makes a provider request. `run` explicitly delivers
+  values to its child's environment; a reveal can also be redirected to a
+  file by its caller.
+  An SDK value buffer is zeroised when the application closes or drops it;
+  copies made by the application have their own lifetime
   ([threat model](threat-model.md)).
 
-So revocation ends new reads at once and ends what a running process can
-read on its next request, but cannot recall a value already in a
+After the provider has applied a revocation, subsequent requests under
+that identity are refused. Propagation and token caching depend on the
+provider. Revocation cannot recall a value already in a
 process's memory or in a child's environment. Rotating the secret is what
 invalidates those ([rotation.md](rotation.md): `sourceorrery secret rotate`
 issues, validates and activates a new version and retires the previous

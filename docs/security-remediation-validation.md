@@ -8,6 +8,15 @@ stays the record of the findings; nothing here rewrites it. "Run" means
 executed on this machine; a check that needs CI, another platform or a
 live service is listed as not run until it has been.
 
+> **Current-tree note (25 October 2026):** The UI Clippy findings recorded
+> in B32 were resolved by `7564edb`; the completed UI tree records 610
+> workspace tests and workspace Clippy passing in
+> [UI implementation status](UI-IMPLEMENTATION-STATUS.md). B32 remains the
+> historical rehearsal at its stated commit. Hosted CI, platform and
+> manual acceptance still require their own evidence. The current
+> [supported-file guide](upgrading.md) replaces the earlier migration
+> walkthrough; that earlier rehearsal remains historical evidence here.
+
 ## Starting point (B01)
 
 | | |
@@ -69,15 +78,15 @@ No test opened a real vault or the real credential store: the suites use
 temporary homes, recovery keys and an in-memory store, as CLAUDE.md
 requires. The fixture values are synthetic.
 
-## Decisions taken with the owner
+## Release decisions
 
 | Topic | Decision |
 |---|---|
 | Recovery-key replacement (SR01) | Authenticate the wrap inventory; document the narrower guarantee; compromise response is a new vault with rotated values ([ADR 0010](adr/0010-authenticated-key-wraps-and-private-files.md)). No in-place DEK rotation in 0.3.0. |
 | Vault format | Schema 5; schemas 1 to 4 refused with `migration_required`. |
 | Windows key files (SR04) | A new crate, `sourceorrery-os`, over `windows-sys`: the second crate allowed `unsafe`, one safe function, explained in ADR 0010. |
-| Site icons (SR13) | The licensed Font Awesome Pro kit stays (custom icon, duotone). The token is a repository secret for Actions and for Dependabot. Pull requests from forks, which cannot have it, skip the docs build with a notice and are built after merge: the owner's disposition of SR13 rather than a credential-free build. |
-| Publication | Nothing is pushed until the owner asks. |
+| Site icons (SR13) | The licensed Font Awesome Pro kit stays (custom icon, duotone). The token is a repository secret for Actions and for Dependabot. Pull requests from forks, which cannot have it, skip the docs build with a notice and are built after merge: the recorded disposition of SR13; the build still requires the licensed kit. |
+| Publication | A branch push, CI validation and a real release dispatch are separate operations. |
 
 ## Items
 

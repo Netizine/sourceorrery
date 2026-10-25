@@ -93,16 +93,16 @@ class StampTest(unittest.TestCase):
         repo.main()
         readme = repo.read("README.md")
         self.assertIn("> [!IMPORTANT]\n> **SourceOrrery 0.3.0 is not released yet.**", readme)
-        # the note names the current release, which stamping leaves alone
-        self.assertIn("[0.2.0](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0)", readme)
-        self.assertIn("[`v0.2.0` tag](https://github.com/Netizine/sourceorrery/tree/v0.2.0)", readme)
-        self.assertIn("[Upgrading](docs/upgrading.md)", readme)
+        # Current guides name the source version without routing users through
+        # an older release or a legacy migration procedure.
+        self.assertNotRegex(readme, OLD)
+        self.assertIn("[build from source](docs/building.md)", readme)
         self.assertIn("After the note, 0.3.0 again.", readme)
-        self.assertIn("[Upgrading](../upgrading.md)", repo.read("docs/sdks/python.md"))
-        self.assertIn("[Upgrading](upgrading.md)", repo.read("docs/building.md"))
+        self.assertIn("[build from source](../building.md)", repo.read("docs/sdks/python.md"))
+        self.assertIn("[build from source](building.md)", repo.read("docs/building.md"))
         site = repo.read("site/src/content/docs/getting-started.mdx")
         self.assertIn('<Aside type="caution" title="SourceOrrery 0.3.0 is not released yet">', site)
-        self.assertIn("[Upgrading](/guides/upgrading/)", site)
+        self.assertIn("[build from source](/guides/building-from-source/)", site)
         self.assertNotIn("not released", repo.read("bindings/java/README.md"))
 
     def test_a_released_version_carries_no_note(self) -> None:

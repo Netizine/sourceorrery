@@ -138,6 +138,12 @@ the format authenticates.
 
 ## Key hierarchy
 
+The `v1`, `v2`, `v4` and `v5` segments in cryptographic domain strings
+identify specific encodings, not the application release or the SQLite
+schema number. Schema 5 deliberately retains the value, metadata and
+wrap domains shown here. Its settings record authenticates the schema
+number and the complete key-wrap inventory.
+
 ```
 DEK (32 random bytes) ── XChaCha20-Poly1305 ──► each value, the view check's
   │                                              records, stored credentials,
@@ -401,7 +407,7 @@ acknowledgement) and `head_valid`. The log is intact when `first_broken`
 is null, `truncations` is 0 and `head_valid` is true; an acknowledged
 truncation is still a truncation. The check is read-only.
 
-## Compatibility
+## Supported format
 
 `schema_version` is checked on open. A **newer** schema is refused with a
 clear error. An **older** one (schemas 1–4: earlier releases, and development
@@ -409,10 +415,13 @@ builds before the key wraps were authenticated) is refused with
 `migration_required`, without the file being changed: those files are not
 read, nothing is written to them or beside them, and `vault export`,
 `vault destroy` and `vault create` refuse them too. The file is kept for
-the release that wrote it, and the vault is recreated and its secrets set
-again from it: [Upgrading](upgrading.md) is the tested procedure. The
-wrapping AAD names the format, so a file whose marker was edited to
-another number cannot be opened as that format either.
+the release that wrote it. There is no in-place conversion or legacy
+compatibility layer; start with a new vault for this release.
+[Supported files, export and import](upgrading.md) covers the current
+format and portability. Changing the schema marker does not convert the
+file: authenticated settings and key-wrap inventory must also verify.
+The wrap AAD binds the key to its vault and wrap; its `v4` domain remains
+in use in schema 5.
 
 ## Creating a vault
 

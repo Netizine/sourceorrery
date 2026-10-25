@@ -1,7 +1,7 @@
 # CLI reference
 
 > [!NOTE]
-> This reference describes the current release. Check your installed
+> This reference describes the 0.3.0 source tree. Check your installed
 > version with `sourceorrery --version`.
 
 ```
@@ -50,7 +50,7 @@ filled in, and the name of a vault that exists opens it for changes.
 | Name | The new vault's name, checked as it is typed (letters, digits, hyphens, underscores, up to 64, unique ignoring case). |
 | View check | Whether viewing the vault asks for a password, and an authenticator code on top of it ([below](#the-view-check)). |
 | Password | Typed twice with a strength meter (it must rate "good"), or generated and shown once behind a "written down" tick; an optional hint, refused if it gives the password away. |
-| Authenticator | A QR code beside the key, the code field and the buttons, so it fits 80×24. A code from the app is checked before moving on; three wrong ones make a new key. |
+| Authenticator | A complete QR code when it fits, with the manual enrolment key available on compact screens; the code field and controls remain reachable. A code from the app is checked before moving on; three wrong ones make a new key. |
 | Recovery key | Shown once, behind a "written down" tick. When changing a vault it is kept unless a new one is asked for, and the old one then stops working in this file. A new recovery key is not a new vault key: an old copy of the vault still opens with the old key. After a compromise, rotate the exposed credentials and move to a new vault instead ([threat model](threat-model.md), gap 10). |
 | Storage | The SourceOrrery vault (always) and HashiCorp Vault, AWS Secrets Manager and Azure Key Vault; a provider not built into this binary is shown as unavailable. |
 | Connections | One form per provider ticked: its address, region or URL, and its credentials, either this machine's sign-in (the provider's own environment, CLI login or workload identity) or stored in the vault, sealed. **Test connection** makes one metadata call. |
@@ -532,6 +532,23 @@ browser drops the open vault: its handle goes, and with it the vault key,
 which is zeroised; everything read from it goes too. `Enter` opens it
 again, asking what opening it asks, view check included.
 
+The last 30 seconds show a countdown. Display ticks do not refresh metadata
+or extend the session. Synchronous provider work must return before input
+or locking can resume; the operation message makes that limit explicit.
+
+**Actions and complete details.** `F2` opens a contextual menu with the
+same commands as the keyboard shortcuts. Unavailable actions explain why;
+moving through the menu performs no write or provider read. `i` opens the
+complete cached metadata, and `!` opens a complete message. Both scroll
+without fetching more data and return to the same underlying view.
+
+Tables retain name/status first and hide lower-priority columns on narrow
+screens. An ellipsis marks clipped metadata; use `i` or explicit details
+for the full field. Counts distinguish matching rows from the visible row
+range. Help, project declarations, overview panels and form reviews scroll
+at compact sizes. Non-secret text fields support cursor movement and
+mid-string edits; hidden secret prompts retain their own input handling.
+
 **Changes**, unless `--read-only` is given:
 
 | Key | Change | The vault records |
@@ -577,6 +594,13 @@ Qualifiers narrow by one field; several of one kind mean any of them:
 A qualifier for the other kind of view matches nothing. `Enter` keeps the
 filter; `Esc` clears it.
 
+`f` opens filter categories with counts computed from cached metadata.
+Selecting another facet of the same kind replaces that qualifier; typed
+queries still support same-kind OR alternatives. Matching words are
+highlighted. `s` offers Secrets name/updated/expiry and Audit timestamp
+sorting; missing dates stay last. Sorting and refresh retain the selected
+object by its full identity, or clear selection if it disappears.
+
 | Key | Action |
 |-----|--------|
 | `↑` `↓` / `k` `j` | Move the selection (in details: the versions) |
@@ -586,6 +610,10 @@ filter; `Esc` clears it.
 | `Enter` | Details of the selected secret or project; open the selected vault |
 | `Esc` | Back: close the help, the search box, the details; clear the filter |
 | `/` | Search |
+| `F2` | Contextual Actions and unavailable reasons |
+| `f` / `s` | Cached filters / sorting |
+| `i` / `!` | Complete cached metadata / message details |
+| `t` | Preview Dark, Light or Terminal; Enter applies, Esc restores |
 | `r` | Read the vault again (on Vaults: list the files again) |
 | `v` | Check the audit chain again |
 | `L` | Lock now: drop the vault and wipe its key |
@@ -593,8 +621,10 @@ filter; `Esc` clears it.
 | `?` | Keys and search syntax |
 | `q` / `Ctrl-C` | Quit |
 
-What the vault records: everything is read once, when first shown, and
-kept until `r`.
+What the vault records: metadata is read when first shown and retained
+until explicit refresh or a confirmed change needs a reload. Navigation,
+sorting, filtering, menus, theme changes and cached inspection do not
+introduce vault/provider reads.
 
 | Browser action | Audit events |
 |----------------|--------------|
@@ -605,7 +635,10 @@ kept until `r`.
 | The audit log, verifying the chain, the vault's keys, connections, view check and projects, a project's manifest on disk, the vault list, searching, moving, redrawing, locking | none |
 
 What is shown is a snapshot: a change made from another terminal appears
-after `r`.
+after `r`. The successful-load time remains visible. A failed refresh
+keeps its failure state and last successful time; complete error details
+remain available. Refresh and uncached detail opening display an operation
+message before blocking work; neither promises cancellation while blocked.
 
 | Theme | Env | Look |
 |-------|-----|------|

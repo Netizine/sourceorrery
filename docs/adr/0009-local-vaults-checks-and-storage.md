@@ -1,8 +1,10 @@
 # ADR 0009: Local vaults, an optional view check, and storage per secret
 
 **Status:** accepted · **Date:** 2026-10-24 · **Changes:** ADR 0002 (protectors
-as the owner's model), ADR 0008 (remote vaults declared in the manifest), and,
+as the setup model), ADR 0008 (remote vaults declared in the manifest), and,
 once, ADR 0007's deprecation and migration rules
+
+> **0.3.0 implementation:** The original proposal below used schema 4; ADR 0010 advances the implemented format to schema 5 with authenticated key wraps. Earlier files are refused and left unchanged, not deleted. The [current format reference](../vault-format.md) defines the implemented tables and fields.
 
 ## Context
 
@@ -21,7 +23,7 @@ records the flow screen by screen and the thirteen problems found. In short:
 * **`init` ignores the vault.** It writes a template entry instead of the
   vault's secrets.
 
-The owner (James) set the model:
+The model separates vault setup, interactive viewing and application access:
 
 * **A vault is set up, not secrets.** It has an auto-generated key, which
   the machine holds.
@@ -39,9 +41,9 @@ The owner (James) set the model:
   to the vault on the way.
 * **Exports leave the check behind.** The recovery key opens an export,
   and the check is set again after import.
-* **No backwards compatibility.** Existing vaults will be deleted.
+* **No backwards compatibility.** Earlier formats are refused and left unchanged; no automatic deletion or conversion occurs.
 
-The rules in `CLAUDE.md` still hold:
+The implementation retains these constraints:
 
 * values only in `SecretBytes`;
 * a value-free `ui`;
@@ -135,8 +137,8 @@ protect the values:
   program that prints its environment.
 * A program can read the credential store and the file directly.
 
-What protects the values at rest is the vault key, as today. The owner chose
-this on 2026-10-24 over a password that also locks the key (see
+The vault key protects values at rest. A separate view check keeps
+interactive viewing distinct from unattended application access (see
 Alternatives).
 
 ### 4. Storage and connections
@@ -378,9 +380,9 @@ it, a 4-core Intel i7-8650U laptop on Windows 11, Rust 1.99.1, a
   * It would stop a same-user attacker without the password.
   * But `run`, `init` and the SDKs would need the password on every
     machine.
-  * The owner chose a view check only (2026-10-24). It can be added later
-    as a per-vault option without changing this design.
-* **A 6-digit PIN.** Dropped by the owner. As key material it could be
+  * This design uses a view check. A password-bound vault key could be
+    considered separately as a future per-vault option.
+* **A 6-digit PIN.** Rejected. As key material it could be
   guessed in hours; as a check it adds nothing a password does not.
 * **An authenticator code on its own.** It is "password plus": a second
   part of the password check, never the only one.
@@ -412,16 +414,16 @@ it, a 4-core Intel i7-8650U laptop on Windows 11, Rust 1.99.1, a
   job skips), contract (unlock sources and hints change, so
   `CONTRACT_VERSION` becomes `"2"`), SDK APIs, vault file and manifest.
   ADR 0007's "deprecation before removal" and "a new schema only after an
-  explicit migration" are set aside for this change only, at the owner's
-  decision.
+  explicit migration" were superseded by the current pre-1.0 version
+  policy in ADR 0007.
   * Schemas 1–3 are refused with a message that the vault must be
     recreated.
   * `vault migrate` and its code go.
   * The release is the next minor (0.x) release.
 * **ADR 0002's design stays:** one SQLite file with values sealed
   individually under a vault key wrapped by an OS-store key or an Argon2id
-  key. What changes is that the owner chooses a view check, not
-  protectors.
+  key. The interactive policy becomes a view check;
+  key wraps open the vault independently.
 * **ADR 0008's adapters and providers stay.** What changes is that a
   provider is reached through a connection in the vault, never through a
   manifest table, and the provider crates take their credentials from that

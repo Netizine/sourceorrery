@@ -78,9 +78,8 @@ operations there (each provider page, "Audit trail").
 
 ## Error codes
 
-Three codes exist for providers; all are append-only additions
-([ADR 0007](../adr/0007-versioning-and-compatibility.md)) that older SDKs
-report as their base error type with the code preserved:
+Provider failures use stable codes, preserved by the CLI and SDKs
+([ADR 0007](../adr/0007-versioning-and-compatibility.md)):
 
 | Code | Meaning | Hint says |
 |------|---------|-----------|

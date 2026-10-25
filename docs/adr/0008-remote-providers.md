@@ -2,6 +2,8 @@
 
 **Status:** accepted · **Date:** 2026-10-23
 
+> **0.3.0 clarification:** The provider interfaces and adapters remain in use in 0.3.0. Manifest-declared remote vaults in the original design were superseded by ADR 0009: provider settings and credentials now belong to local-vault connections. Use the [provider guides](../providers/index.md) for current configuration.
+
 ## Context
 
 SourceOrrery's contract, `SecretClient`, is synchronous because its one
@@ -130,4 +132,5 @@ The original release reference above is retained as decision history.
 This remains a minor release under ADR 0007: the new public `Manifest`
 and `OpenOptions` fields and `AuditOperation` variants can require changes
 to Rust callers. The C ABI and vault-file compatibility rules remain
-separate. See the [0.2.0 release scope](../roadmap.md#release-020).
+separate. This is historical release planning; the [current roadmap](../roadmap.md)
+describes the 0.3.0 baseline, including the superseding key and connection model.

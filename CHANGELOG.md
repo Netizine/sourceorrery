@@ -6,12 +6,14 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+The next release is **0.3.0**.
+
 **Breaking: vaults from earlier releases are not read.** A vault file of
 schema 1 to 4 (schema 4: development builds of `main`) is refused with
 `migration_required`, never rewritten: keep the file for the release that
-wrote it, recreate the vault with `sourceorrery setup` and set its secrets
-again from the old file, as `docs/upgrading.md` describes (ADR 0009, ADR
-0010). The format is schema 5.
+wrote it and start a new vault for this release. `docs/upgrading.md`
+describes the supported format and current export/import commands (ADR
+0009, ADR 0010). The format is schema 5; no legacy conversion is provided.
 How a vault opens, what it asks and where it keeps secrets change
 together, so the CLI, the Rust API, the C ABI's open options and every
 SDK's open options change with them (ADR 0007: a minor release;
@@ -98,12 +100,18 @@ native library of an earlier release).
   refused certificate's reason is in the Vault provider's error, and the
   CLI no longer prints the TLS verifier's own report of it at the default
   verbosity.
-* **Upgrading from 0.2.0** is a guide of its own (`docs/upgrading.md`): the
-  old file is kept where 0.2.0 reads it, and each value moves through a
-  pipe into a new vault, for local and remote vaults. `migration_required`
-  says the file was left unchanged and how to keep it, instead of
-  `sourceorrery setup` alone, which failed with "already exists" while the
-  old file was in place.
+* **The terminal UI** adds action menus, filtering and sorting, cached
+  inspection, live theme preview, clearer status and idle warnings, and
+  responsive layouts with scrolling controls. Navigation remains
+  metadata-only; reveal and provider reads remain explicit.
+* **The documentation and website** describe the 0.3.0 key model, provider
+  connections, schema 5 and C ABI 2. The architecture diagram and UI
+  walkthroughs match the implementation. Install guides put Homebrew and
+  WinGet first, with WinGet's pending catalog status and ready alternatives.
+* **Optional website analytics** use Microsoft Clarity only after consent.
+  The privacy banner and footer allow a complete opt-out, honour browser
+  privacy signals and keep advertising consent off. The CLI and SDKs do
+  not include this website integration.
 * The install pages name one version, the workspace's, stamped by
   `scripts/release/docs-version.py` and checked in CI and by the release
   workflow; until it is released they say so, and the site header shows it

@@ -2,6 +2,8 @@
 
 **Status:** accepted · **Date:** 2026-10-20
 
+> **0.3.0 clarification:** The passphrase-protector model in this original decision is superseded by ADR 0009 and ADR 0010. In 0.3.0, the vault opens through this-machine/recovery-key wraps; a password is the separate view check. See [current architecture](../architecture.md) and [vault format](../vault-format.md).
+
 ## Context
 
 Two obvious designs: (a) store each secret directly in the OS credential

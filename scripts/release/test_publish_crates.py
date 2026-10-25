@@ -32,7 +32,7 @@ class PublishCratesTests(unittest.TestCase):
         self.assertEqual(len(publish.selected_packages(self.metadata(extra), "0.2.0", "workspace")), 8)
         self.assertNotIn("tests", publish.selected_packages(self.metadata(), "0.2.0", "workspace"))
 
-    def test_bootstrap_has_core_and_only_the_unpublished_providers(self):
+    def test_optional_bootstrap_is_limited_to_its_explicit_allowlist(self):
         self.assertEqual(publish.selected_packages(self.metadata(), "0.2.0", "bootstrap"),
                          [publish.CORE, *publish.PROVIDERS])
         self.assertEqual(publish.PROVIDERS, ("sourceorrery-provider-azure", "sourceorrery-os"))

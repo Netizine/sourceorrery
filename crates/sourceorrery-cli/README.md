@@ -18,8 +18,27 @@ Documentation: **<https://sourceorrery.ai>** ·
 
 ## Install
 
+Start with a ready-to-run package; Rust is not required:
+
 ```bash
-cargo install --locked sourceorrery-cli
+# macOS or Linux with Homebrew
+brew install Netizine/sourceorrery/sourceorrery
+```
+
+```powershell
+# Windows, once the WinGet catalog entry is approved
+winget install --id Netizine.SourceOrrery --exact
+```
+
+The WinGet submission is still open; use Scoop
+(`scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery`,
+then `scoop install sourceorrery`) or a prebuilt release while it is pending.
+Check `sourceorrery --version` against the 0.3.0 documentation.
+
+If you already have the Rust toolchain:
+
+```bash
+cargo install --locked sourceorrery-cli --version 0.3.0
 ```
 
 This builds the `sourceorrery` binary. It needs Rust 1.91.1 or newer and a C

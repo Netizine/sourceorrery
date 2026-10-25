@@ -20,8 +20,8 @@ a third-party version in a listed page must not equal a SourceOrrery
 release.
 
 Each file of `NOTED` also carries one generated block between the markers
-below. While the workspace version is not released, the block says so,
-names the current release and where its documentation is; once the
+below. While the workspace version is not released, the block says so
+and links to building that source version; once the
 CHANGELOG names the version, the block is empty. The bindings' READMEs are
 the registries' package pages, published only at a release, and carry no
 block.
@@ -41,9 +41,8 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-REPO_URL = "https://github.com/Netizine/sourceorrery"
-UPGRADING = "docs/upgrading.md"
-SITE_UPGRADING = "/guides/upgrading/"
+BUILDING = "docs/building.md"
+SITE_BUILDING = "/guides/building-from-source/"
 
 # Pages that carry the release note and the version.
 NOTED = (
@@ -66,6 +65,13 @@ NOTED = (
 )
 # Pages that carry the version only.
 VERSION_ONLY = (
+    "crates/sourceorrery-cli/README.md",
+    "docs/README.md",
+    "docs/architecture.md",
+    "docs/cli.md",
+    "docs/roadmap.md",
+    "docs/upgrading.md",
+    "docs/security-review.md",
     "docs/coverage.md",
     "bindings/README.md",
     "bindings/cpp/README.md",
@@ -128,18 +134,16 @@ def releases(root: Path) -> list[str]:
     return sorted(set(found), key=key, reverse=True)
 
 
-def note(path: str, version: str, current: str) -> str:
+def note(path: str, version: str) -> str:
     """The release note for `path` while `version` is not released."""
     if path.startswith("site/"):
-        upgrading = SITE_UPGRADING
+        building = SITE_BUILDING
     else:
-        upgrading = Path(os.path.relpath(ROOT / UPGRADING, (ROOT / path).parent)).as_posix()
+        building = Path(os.path.relpath(ROOT / BUILDING, (ROOT / path).parent)).as_posix()
     body = (
-        f"These pages describe it, and their install commands name its packages and "
-        f"files, which exist once it is published. The current release is "
-        f"[{current}]({REPO_URL}/releases/tag/v{current}); its documentation is in the "
-        f"repository at the [`v{current}` tag]({REPO_URL}/tree/v{current}). "
-        f"[Upgrading]({upgrading}) moves a vault made by an earlier release."
+        f"These pages describe the {version} source tree. Versioned packages and "
+        f"release downloads become available when that version is published. "
+        f"To try this build before publication, [build from source]({building})."
     )
     title = f"SourceOrrery {version} is not released yet"
     if path.endswith(".mdx"):
@@ -168,7 +172,7 @@ def stamp_text(path: str, text: str, version: str, known: set[str], released: li
     if rest.count(end) != 1:
         raise Problem(f"{path}: the release note opened by `{start}` is not closed by `{end}`")
     _, after = rest.split(end)
-    block = "" if version in released else note(path, version, released[0]) + "\n"
+    block = "" if version in released else note(path, version) + "\n"
     return f"{versions(before)}{start}\n{block}{end}{versions(after)}"
 
 
