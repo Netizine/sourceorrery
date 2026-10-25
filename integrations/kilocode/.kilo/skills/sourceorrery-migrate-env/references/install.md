@@ -1,87 +1,40 @@
-# Installing the SourceOrrery CLI
+# Installing and setting up SourceOrrery
 
-The `sourceorrery` command creates vaults and stores secrets; the SDKs only
-read them. Install it once per machine. If your environment asks before
-installing software, ask the user first.
+The CLI creates vaults and sets secret values; application SDKs are
+read-only. Start by checking `sourceorrery --version`. If it is installed,
+use it as it is. These skills use the 0.3.0 key, view-check and connection
+model and do not require rebuilding the CLI to configure a project.
+
+## If the CLI is missing
 
 Follow the [CLI installation guide](https://sourceorrery.ai/getting-started/#install)
 for the current platform-specific steps. Prefer a ready-to-run package;
-prebuilt binaries do not need a Rust toolchain. Application SDKs are
-read-only, and installing one does not install the CLI.
-Check `sourceorrery --version` afterward; these instructions use the 0.3.0
-key/check/storage model. Manual verified-download steps are also below.
+prebuilt binaries do not need Rust. Follow the environment's existing
+software-installation approval rules. Verify downloaded archives against
+the release's checksums before using them; stop if verification fails.
+Then run `sourceorrery --version` again.
 
-Every archive is listed in the release's `SHA256SUMS`. Check it before you
-run anything you downloaded, and stop if the check fails.
+## Project setup with an agent
 
-## Linux and macOS
+`sourceorrery init --integration <agent>` installs the CLI's bundled
+skills for that agent. `--integration all` covers every supported agent;
+`--scope user` installs them for the user's projects, and `--skills-dir
+DIR` chooses another directory. This installs instructions for an existing
+agent, not the agent application. With no secret selection it neither
+creates a vault nor writes a project manifest.
 
-```bash
-version=$(curl -fsSL https://api.github.com/repos/Netizine/sourceorrery/releases/latest \
-  | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
-case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64)               target=x86_64-unknown-linux-gnu ;;
-  Linux-aarch64|Linux-arm64)  target=aarch64-unknown-linux-gnu ;;
-  Darwin-arm64)               target=aarch64-apple-darwin ;;
-  Darwin-x86_64)              target=x86_64-apple-darwin ;;
-esac
-archive="sourceorrery-$version-$target"
-base="https://github.com/Netizine/sourceorrery/releases/download/v$version"
-curl -fsSLO "$base/$archive.tar.gz"
-curl -fsSLO "$base/SHA256SUMS"
-sha256sum -c --ignore-missing SHA256SUMS        # macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
-tar xzf "$archive.tar.gz"
-mkdir -p "$HOME/.local/bin" && install "$archive/sourceorrery" "$HOME/.local/bin/"
-sourceorrery --version
-```
+The current [repository integration folders](https://github.com/Netizine/sourceorrery/tree/main/integrations)
+and Claude Code plugin provide skill text independently of CLI packages.
+When refreshing a project from those folders, keep each skill's references
+and agent metadata together, review replacements, and preserve unrelated
+or user-authored skills. The CLI writes the snapshot bundled with its
+installed version; it does not fetch repository updates.
 
-The check must print `OK` for the archive. If `~/.local/bin` is not on the
-`PATH`, tell the user or install to `/usr/local/bin` with `sudo install`
-instead.
-
-## Windows (PowerShell)
-
-```powershell
-$version = (Invoke-RestMethod https://api.github.com/repos/Netizine/sourceorrery/releases/latest).tag_name.TrimStart('v')
-$target = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
-$archive = "sourceorrery-$version-$target.zip"
-$base = "https://github.com/Netizine/sourceorrery/releases/download/v$version"
-Invoke-WebRequest "$base/$archive" -OutFile $archive
-Invoke-WebRequest "$base/SHA256SUMS" -OutFile SHA256SUMS
-$hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
-if (-not (Select-String -Path SHA256SUMS -SimpleMatch "$hash  $archive")) { throw "checksum mismatch: do not use $archive" }
-$dir = "$env:LOCALAPPDATA\Programs\sourceorrery"
-Expand-Archive $archive -DestinationPath $dir -Force
-[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", 'User')
-$env:Path += ";$dir"
-sourceorrery --version
-```
-
-## With Cargo
-
-```bash
-cargo install --locked sourceorrery-cli
-```
-
-`--locked` builds with the dependency versions the release was tested
-with. On a server without an OS credential store, `--no-default-features
---features remote` leaves the store out (and the `libdbus-1-dev`
-requirement): vaults there open with their recovery key.
-
-## After installing
-
-The user creates a vault in their own terminal:
-
-```bash
-sourceorrery setup
-```
-
-Its key goes into the OS credential store (Windows Credential Manager,
-macOS Keychain, Secret Service on Linux), so this machine opens it without
-asking, and the screens show its recovery key once, for the user to keep:
-never ask to see it. The CLI makes no network request of its own; a vault
-that keeps secrets at a provider (HashiCorp Vault, AWS, Azure) talks to
-that provider.
+After installation, let the user create or choose the vault. For a new
+vault, they run `sourceorrery setup` in their own terminal, keep the
+recovery key privately and enter any password/authenticator code there.
+Never ask to see those values. The agent can then use metadata commands,
+`init`, `import`, SDK setup and launch configuration within the task.
 
 ## Headless
 

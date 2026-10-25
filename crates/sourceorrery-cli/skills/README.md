@@ -4,6 +4,11 @@
 the binary by `src/integrations.rs` (`include_str!`), to each agent's skills
 directory. This folder is their only source.
 
+The generated repository and plugin folders can be copied into a project
+independently of CLI packages. The installed CLI always writes its bundled
+snapshot; a documentation push does not alter an existing binary. Setup
+guides present manual CLI setup as option 1 and AI-assisted setup as option 2.
+
 - `sourceorrery/`, `sourceorrery-migrate-env/`: each skill's `SKILL.md`.
 - `references/`: files a skill links to; `src/integrations.rs` lists which
   skill ships which file (some go into both).

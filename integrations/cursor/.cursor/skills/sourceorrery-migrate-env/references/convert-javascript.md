@@ -2,10 +2,10 @@
 
 SDK: `npm install @sourceorreryai/sdk` (Node.js 20+, a native addon with
 TypeScript types; prebuilt for Windows, macOS and Linux glibc, x64 and
-arm64). It runs in Node.js only: not in browsers, edge runtimes
-(Cloudflare Workers, Vercel Edge), Deno Deploy or Bun-compiled single
-binaries. There, keep the variables and start the process with
-`sourceorrery run --`.
+arm64). The supported runtime is Node.js. Browser bundles must not contain
+secrets. Edge and managed runtimes use their platform's secret store;
+`sourceorrery run --` can wrap a local process, not a remotely hosted
+runtime or browser. Keep those deployment boundaries intact.
 
 ## One module for every read
 

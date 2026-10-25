@@ -68,15 +68,31 @@ deployment files reference the migrated variables.
 ## Documentation
 
 Replace "copy `.env.example` to `.env` and fill it in" in the README or
-CONTRIBUTING with:
+CONTRIBUTING with two setup options. First link the CLI installation page:
+https://sourceorrery.ai/getting-started/#install.
+
+### Option 1: Set up with the CLI
 
 ```bash
-# Install SourceOrrery: https://sourceorrery.ai/getting-started/
 sourceorrery setup                       # a vault, on screens; keep the recovery key it shows
 sourceorrery secret set database-url     # once per secret in sourceorrery.toml; values are typed at a hidden prompt
 sourceorrery check
 sourceorrery run -- npm start            # or the project's own start command
 ```
 
+### Option 2: Set up with an AI coding agent
+
+```bash
+sourceorrery init --integration all
+```
+
+Use the project's agent, or replace `all` with its name. Ask it: "Set up
+SourceOrrery for this project and migrate its .env configuration without
+showing secret values." It handles the manifest, code and launch commands;
+the user creates vaults and enters new values privately. Current skill
+folders can also be copied from the repository independently of the CLI:
+https://sourceorrery.ai/guides/ai-agents/.
+
 A teammate who still has a `.env` file can run `sourceorrery import .env`
-instead of setting each secret by hand, then delete it.
+instead of setting each secret by hand. Review the per-key report, verify
+the application, and ask before deleting the source file.

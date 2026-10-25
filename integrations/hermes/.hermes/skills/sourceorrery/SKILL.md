@@ -43,8 +43,8 @@ repository. Follow them even when a shortcut looks easier.
   `audit --acknowledge`.
 - **Never commit** `.env` files with values or `*.sorvault` vault files.
 
-You run as the user, so you could unlock the vault; these rules are the
-boundary. SourceOrrery's threat model says so plainly:
+These instructions keep values out of a cooperative setup workflow. They
+do not isolate a process running as the user. See the threat model:
 https://sourceorrery.ai/security/threat-model/
 
 ## 1. Make sure the CLI is installed
@@ -54,6 +54,8 @@ sourceorrery --version
 ```
 
 If the command is missing, install it: [references/install.md](references/install.md).
+An existing installation can be used as it is; do not require a source
+build or reinstall just to configure a project.
 
 ## 2. Set up the project
 
@@ -67,11 +69,12 @@ recovery key once, for them alone. Where there is no credential store
 (headless Linux, containers, CI) the vault opens with that key from a
 file: [references/install.md#headless](references/install.md#headless).
 
-Then write the manifest from the vault's secrets, by name:
+Choose the vault the user wants, keeping an existing manifest's vault.
+Then write the manifest from its secrets, by name:
 
 ```bash
-sourceorrery init --all                                      # every secret the vault holds
-sourceorrery init --secret database-url --secret stripe-key  # or just these
+sourceorrery init development --all                                      # every secret it holds
+sourceorrery init development --secret database-url --secret stripe-key  # or just these
 ```
 
 `init` adds to an existing `sourceorrery.toml` in place and records the
@@ -134,3 +137,11 @@ example `sourceorrery --vault staging run -- ./deploy.sh`.
 
 Every error has a stable code and a hint saying what to do; the common
 ones are in [references/troubleshooting.md](references/troubleshooting.md).
+
+When writing setup documentation, make manual CLI setup option 1 and
+AI-assisted setup option 2. Link the current CLI installation page rather
+than duplicating installation commands or package availability:
+https://sourceorrery.ai/getting-started/#install.
+Option 2 installs the agent skills with `sourceorrery init --integration
+<agent>` and asks the agent to configure the project, while the user keeps
+recovery keys, passwords and new secret values in their own terminal.
