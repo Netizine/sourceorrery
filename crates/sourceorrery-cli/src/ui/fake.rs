@@ -32,13 +32,16 @@ pub struct Fake {
     pub fail: Cell<bool>,
     /// `secret_list` reads: the secret list and the deleted list.
     pub lists: Cell<usize>,
+    pub list_delay: Cell<std::time::Duration>,
     /// `secret_inspect` reads: version lists.
     pub inspects: Cell<usize>,
+    pub fail_versions: Cell<bool>,
     pub capability_reads: Cell<usize>,
     pub audit_actor: Option<Principal>,
     pub audit_detail: Option<String>,
     /// Audit-log reads (not audited by the vault).
     pub audit_reads: Cell<usize>,
+    pub fail_audit: Cell<bool>,
     /// Chain verifications (not audited).
     pub verifies: Cell<usize>,
     /// Report a broken chain.
@@ -222,6 +225,7 @@ impl MetadataSource for Fake {
     }
 
     fn secrets(&self) -> Result<Vec<SecretProperties>> {
+        std::thread::sleep(self.list_delay.get());
         self.audited(&self.lists)?;
         Ok(self
             .names
@@ -233,6 +237,9 @@ impl MetadataSource for Fake {
 
     fn versions(&self, name: &str) -> Result<Vec<SecretProperties>> {
         self.audited(&self.inspects)?;
+        if self.fail_versions.get() {
+            return Err(SecretError::Crypto("synthetic version read failure".into()));
+        }
         if let Some(ids) = self.version_ids.borrow().as_ref() {
             return Ok(ids.iter().map(|id| self.props(name, id)).collect());
         }
@@ -260,6 +267,9 @@ impl MetadataSource for Fake {
 
     fn audit(&self, query: AuditQuery) -> Result<Vec<AuditEvent>> {
         self.audit_reads.set(self.audit_reads.get() + 1);
+        if self.fail_audit.get() {
+            return Err(SecretError::Crypto("synthetic audit read failure".into()));
+        }
         let mut events = vec![event(1, AuditOperation::VaultCreate, None)];
         let mut id = 1;
         for name in self.names.borrow().iter() {

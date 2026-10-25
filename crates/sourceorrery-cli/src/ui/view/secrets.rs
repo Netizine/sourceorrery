@@ -23,19 +23,16 @@ const SHORT_VERSION: usize = 8;
 /// Rows the activity list keeps for itself below the versions.
 const ACTIVITY_ROWS: u16 = 3;
 
-pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Drawn {
-    let shown = app.shown_secrets();
-    let now = timestamp::now();
-    let selected = app.list(Tab::Secrets).table.selected();
-    let indices: &[usize] = match area.width {
+fn secret_columns(width: u16) -> Columns {
+    let indices: &[usize] = match width {
         140.. => &[0, 1, 2, 3, 4, 5, 6, 7],
         90.. => &[0, 1, 2, 4, 5, 7],
         65.. => &[0, 1, 5, 2],
         48.. => &[0, 1, 5],
         _ => &[0, 1],
     };
-    let columns = Columns::new(
-        area.width,
+    Columns::new(
+        width,
         indices,
         &[
             "NAME",
@@ -47,17 +44,15 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
             "PROJECTS",
             "TAGS",
         ],
-        &[
-            0,
-            8,
-            9,
-            8,
-            16,
-            16,
-            8,
-            if area.width >= 110 { 28 } else { 12 },
-        ],
-    );
+        &[0, 8, 9, 8, 16, 16, 8, if width >= 110 { 28 } else { 12 }],
+    )
+}
+
+pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Drawn {
+    let shown = app.shown_secrets();
+    let now = timestamp::now();
+    let selected = app.list(Tab::Secrets).table.selected();
+    let columns = secret_columns(area.width);
     let vault = app
         .session
         .as_ref()
@@ -114,8 +109,7 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
                     now,
                     theme,
                     selected == Some(i),
-                    &columns,
-                    &app.list(Tab::Secrets).query,
+                    (&columns, &app.list(Tab::Secrets).query),
                 )
             })
             .collect(),
@@ -150,9 +144,9 @@ fn secret_row(
     now: OffsetDateTime,
     theme: &Theme,
     selected: bool,
-    columns: &Columns,
-    query: &str,
+    presentation: (&Columns, &str),
 ) -> Row<'static> {
+    let (columns, query) = presentation;
     let status = output::status(p, now);
     let muted = |text: String| Span::styled(text, theme.cell(theme.muted, selected));
     columns.row([

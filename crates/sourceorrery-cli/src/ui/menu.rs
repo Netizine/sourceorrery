@@ -34,6 +34,7 @@ impl Menu {
             ("Forget missing project", "x", Action::Unlink),
             ("Refresh metadata (audited)", "r", Action::Refresh),
             ("Vault settings", "c", Action::ChangeVault),
+            ("Theme preview…", "t", Action::Theme),
             ("Verify audit chain", "v", Action::Verify),
             ("Lock vault", "L", Action::Lock),
             ("Help", "?", Action::Help),
@@ -98,6 +99,25 @@ impl Menu {
                 })
                 .collect(),
         )
+    }
+    pub fn themes(choice: crate::cli::UiTheme) -> Self {
+        use crate::cli::UiTheme;
+        let choices = [UiTheme::Dark, UiTheme::Light, UiTheme::Terminal];
+        let mut menu = Self::new(
+            "Theme preview — Enter apply / Esc restore",
+            choices
+                .iter()
+                .map(|&choice| Item {
+                    label: format!("{choice:?}"),
+                    shortcut: "",
+                    action: Action::ChooseTheme(choice),
+                    reason: None,
+                    query: None,
+                })
+                .collect(),
+        );
+        menu.state.select(choices.iter().position(|c| *c == choice));
+        menu
     }
     pub fn new(title: &'static str, items: Vec<Item>) -> Self {
         let selected = (!items.is_empty()).then_some(0);

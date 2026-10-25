@@ -240,8 +240,8 @@ impl<B: Backend> Wizard<B> {
     pub fn new(backend: B, start: Start) -> Self {
         Self {
             backend,
-            viewport: Default::default(),
-            text_cursor: Default::default(),
+            viewport: std::cell::RefCell::default(),
+            text_cursor: crate::ui::text_input::Cursor::default(),
             cursor_control: None,
             step: Step::Vault,
             focus: 0,
@@ -446,7 +446,7 @@ impl<B: Backend> Wizard<B> {
 
     fn go(&mut self, step: Step) {
         self.cursor_control = None;
-        *self.viewport.borrow_mut() = Default::default();
+        *self.viewport.borrow_mut() = crate::ui::viewport::Viewport::default();
         self.step = step;
         self.focus = 0;
     }
@@ -598,7 +598,7 @@ impl<B: Backend> Wizard<B> {
                     self.text_cursor.insert(&mut self.manifest_path, c);
                 }
                 Control::Filter if self.filter.len() < MAX_NAME => {
-                    self.text_cursor.insert(&mut self.filter, c)
+                    self.text_cursor.insert(&mut self.filter, c);
                 }
                 Control::Name if self.new_name.len() < MAX_NAME => {
                     self.text_cursor.insert(&mut self.new_name, c);

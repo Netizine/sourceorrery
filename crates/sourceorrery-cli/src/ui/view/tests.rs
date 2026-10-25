@@ -233,7 +233,9 @@ fn messages_are_callouts() {
 fn the_help_lists_the_keys_and_what_is_recorded() {
     let (_, mut app) = app(&["a"]);
     app.update(Action::Help);
-    let screen = render(&mut app, 110, 46);
+    let mut screen = render(&mut app, 110, 46);
+    app.update(Action::Bottom);
+    screen.push_str(&render(&mut app, 110, 46));
     assert!(screen.contains("KEYS"), "{screen}");
     assert!(screen.contains("on the setup screens"), "{screen}");
     assert!(screen.contains("switch view"), "{screen}");
@@ -943,4 +945,80 @@ fn focused_long_metadata_keeps_cursor_visible_after_horizontal_edit_and_resize()
     }
     assert!(!app.should_quit());
     assert!(fake.writes.borrow().is_empty());
+}
+
+#[test]
+fn synchronous_feedback_is_drawn_before_one_slow_explicit_refresh() {
+    use std::time::{Duration, Instant};
+    let (fake, mut app) = app(&["a"]);
+    let lists = fake.lists.get();
+    let at = app.feedback.at;
+    fake.list_delay.set(Duration::from_millis(2));
+    app.feedback.operation = app.operation_for(Action::Refresh);
+    let screen = render(&mut app, 80, 24);
+    assert!(screen.contains("Refreshing metadata") && screen.contains("synchronous"));
+    assert!(!screen.contains("Esc cancel"));
+    assert_eq!(fake.lists.get(), lists);
+    let started = Instant::now();
+    app.update(Action::Refresh);
+    app.feedback.elapsed = Some(started.elapsed());
+    app.feedback.operation = None;
+    assert_eq!(fake.lists.get(), lists + 1);
+    assert!(app.feedback.elapsed.unwrap() >= Duration::from_millis(2));
+    assert!(app.feedback.at >= at);
+    assert!(render(&mut app, 80, 24).contains("Snapshot from"));
+    let at = app.feedback.at;
+    fake.fail.set(true);
+    app.update(Action::Refresh);
+    assert_eq!(app.feedback.at, at);
+    assert!(render(&mut app, 80, 24).contains("Refresh failed"));
+}
+
+#[test]
+fn theme_preview_repaints_locally_respects_no_color_and_keeps_idle_warning_visible() {
+    use crate::cli::UiTheme;
+    use std::time::Duration;
+    let (fake, mut app) = app(&["a"]);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    app = app.with_lock_after(Some(Duration::from_secs(60)));
+    app.update(Action::Theme);
+    app.update(Action::Down);
+    for color in [true, false] {
+        let base = Theme::new(UiTheme::Dark, color, false);
+        let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app, &base)).unwrap();
+        let buffer = terminal.backend().buffer();
+        if color {
+            assert_eq!(
+                buffer[(0, 0)].bg,
+                base.choosing(UiTheme::Light).screen.bg.unwrap()
+            );
+        } else {
+            assert!(
+                buffer
+                    .content()
+                    .iter()
+                    .all(|c| c.fg == ratatui::style::Color::Reset
+                        && c.bg == ratatui::style::Color::Reset)
+            );
+        }
+    }
+    app.idle_tick(Duration::from_secs(31));
+    assert!(render(&mut app, 80, 24).contains("Locks in 29s"));
+    app.update(Action::Back);
+    assert!(!app.theme_changed);
+    app.idle_tick(Duration::ZERO);
+    assert!(!render(&mut app, 80, 24).contains("Locks in"));
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
 }

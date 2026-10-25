@@ -498,8 +498,8 @@ impl<B: Backend> Wizard<B> {
     pub fn new(backend: B) -> Self {
         Self {
             backend,
-            viewport: Default::default(),
-            text_cursor: Default::default(),
+            viewport: std::cell::RefCell::default(),
+            text_cursor: crate::ui::text_input::Cursor::default(),
             cursor_control: None,
             step: Step::Start,
             focus: 0,
@@ -767,7 +767,7 @@ impl<B: Backend> Wizard<B> {
 
     fn go(&mut self, step: Step) {
         self.cursor_control = None;
-        *self.viewport.borrow_mut() = Default::default();
+        *self.viewport.borrow_mut() = crate::ui::viewport::Viewport::default();
         self.step = step;
         self.focus = 0;
         // A message is about the screen it was given on.

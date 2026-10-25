@@ -679,6 +679,34 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     app.update(Action::Down);
     out.push(("secrets", draw(&mut app, theme, 18)));
     out.push(("secrets-80", draw_at(&mut app, theme, 80, 24)));
+    let selected = app.list(Tab::Secrets).table;
+    for (state, name) in [
+        ("secrets-disabled-80", "legacy-token"),
+        ("secrets-expired-80", "old-cert"),
+    ] {
+        let index = app
+            .shown_secrets()
+            .iter()
+            .position(|p| p.name == name)
+            .expect("fixture row exists");
+        app.list_mut(Tab::Secrets).table.select(Some(index));
+        out.push((state, draw_at(&mut app, theme, 80, 24)));
+    }
+    app.list_mut(Tab::Secrets).table = selected;
+    type_text(&mut app, "webhook");
+    out.push(("search-match-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Back);
+    app.feedback.operation = Some("Refreshing metadata…");
+    out.push(("refreshing-80", draw_at(&mut app, theme, 80, 24)));
+    app.feedback.operation = None;
+    app = app.with_lock_after(Some(std::time::Duration::from_secs(60)));
+    app.idle_tick(std::time::Duration::from_secs(31));
+    out.push(("idle-warning-80", draw_at(&mut app, theme, 80, 24)));
+    app.idle_tick(std::time::Duration::ZERO);
+    app.update(Action::Theme);
+    app.update(Action::Down);
+    out.push(("theme-preview-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Back);
     out.push(("secrets-60", draw_at(&mut app, theme, 60, 18)));
     app.update(Action::Actions);
     out.push(("actions-60", draw_at(&mut app, theme, 60, 18)));
@@ -740,6 +768,7 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
          (head was event 41)"
             .into(),
     ));
+    app.feedback.failed = true;
     out.push(("error", draw(&mut app, theme, 18)));
     app.update(Action::Lock);
     out.push(("locked", draw(&mut app, theme, 14)));

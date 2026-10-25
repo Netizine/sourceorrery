@@ -83,14 +83,14 @@ impl Cursor {
                     .copied()
                     .take_while(|&i| i < pos)
                     .last()
-                    .unwrap_or(0)
+                    .unwrap_or(0);
             }
             Edit::Right => {
                 self.byte = bounds
                     .iter()
                     .copied()
                     .find(|&i| i > pos)
-                    .unwrap_or(text.len())
+                    .unwrap_or(text.len());
             }
             Edit::Delete => {
                 let end = bounds.iter().copied().find(|&i| i > pos).unwrap_or(pos);

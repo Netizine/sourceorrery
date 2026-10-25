@@ -104,6 +104,8 @@ pub enum Action {
     Unlink,
     Help,
     Actions,
+    Theme,
+    ChooseTheme(crate::cli::UiTheme),
     Inspect,
     ErrorDetails,
     Filters,
@@ -184,6 +186,11 @@ pub struct App {
     pub help: bool,
     pub menu: Option<super::menu::Menu>,
     pub inspection: Option<super::inspection::Inspection>,
+    pub feedback: super::feedback::Feedback,
+    pub idle_warning: Option<u64>,
+    pub theme_choice: crate::cli::UiTheme,
+    pub theme_changed: bool,
+    theme_preview: Option<(crate::cli::UiTheme, bool)>,
     pub help_view: super::viewport::Viewport,
     pub declarations: TableState,
     pub declaration_page: usize,
@@ -228,23 +235,102 @@ impl App {
             help: false,
             menu: None,
             inspection: None,
-            help_view: Default::default(),
+            feedback: super::feedback::Feedback::default(),
+            idle_warning: None,
+            theme_choice: crate::cli::UiTheme::Dark,
+            theme_changed: false,
+            theme_preview: None,
+            help_view: super::viewport::Viewport::default(),
             declarations: TableState::default(),
             declaration_page: 1,
-            overview_view: Default::default(),
+            overview_view: std::cell::RefCell::default(),
             message: None,
             request: None,
             quit: false,
             lock_after: None,
             locked: None,
             dialog: None,
-            dialog_view: Default::default(),
+            dialog_view: super::viewport::Viewport::default(),
             pending_value: None,
             read_only: false,
             selection_lost: false,
         };
         app.clamp();
         app
+    }
+
+    #[must_use]
+    pub fn with_theme(mut self, choice: crate::cli::UiTheme) -> Self {
+        self.theme_choice = choice;
+        self
+    }
+    /// The same session-local palette for browsing and child setup screens.
+    pub fn resolved_theme(&self, base: &super::theme::Theme) -> super::theme::Theme {
+        if self.theme_changed {
+            base.choosing(self.theme_choice)
+        } else {
+            *base
+        }
+    }
+    fn cancel_theme(&mut self) {
+        if let Some((choice, changed)) = self.theme_preview.take() {
+            self.theme_choice = choice;
+            self.theme_changed = changed;
+        }
+    }
+    pub fn idle_tick(&mut self, idle: Duration) {
+        self.idle_warning = None;
+        if let Some(left) = self.locks_in(idle) {
+            if left.is_zero() {
+                self.lock(true);
+            } else if left <= Duration::from_secs(30) {
+                self.idle_warning = Some(left.as_secs() + u64::from(left.subsec_nanos() > 0));
+            }
+        }
+    }
+    pub fn operation_for(&self, action: Action) -> Option<&'static str> {
+        let action = if action == Action::Commit {
+            self.menu
+                .as_ref()
+                .and_then(|m| m.state.selected().and_then(|i| m.items.get(i)))
+                .map_or(action, |i| i.action)
+        } else {
+            action
+        };
+        match action {
+            Action::Refresh if self.session.is_some() && self.tab != Tab::Vaults => {
+                Some("Refreshing metadata…")
+            }
+            Action::Open if matches!(self.tab, Tab::Secrets | Tab::Deleted) => {
+                let name = if self.tab == Tab::Secrets {
+                    self.selected_secret().map(|p| p.name.as_str())
+                } else {
+                    self.selected_deleted().map(|d| d.properties.name.as_str())
+                }?;
+                self.session
+                    .as_ref()
+                    .filter(|s| s.detail(name).is_none())
+                    .map(|_| "Opening details…")
+            }
+            _ => None,
+        }
+    }
+    fn clear_transients(&mut self) {
+        self.cancel_theme();
+        self.help = false;
+        self.menu = None;
+        self.inspection = None;
+        self.dialog = None;
+        self.pending_value = None;
+        self.request = None;
+        self.versions = TableState::default();
+        self.declarations = TableState::default();
+        self.declaration_page = 1;
+        self.help_view = super::viewport::Viewport::default();
+        self.dialog_view = super::viewport::Viewport::default();
+        *self.overview_view.borrow_mut() = super::viewport::Viewport::default();
+        self.idle_warning = None;
+        self.feedback = super::feedback::Feedback::default();
     }
 
     /// Lock the open vault after `after` without a key (`None`: never).
@@ -284,6 +370,7 @@ impl App {
         };
         let vault = session.vault.name.clone();
         drop(session);
+        self.clear_transients();
         self.lists = Default::default();
         self.detail = None;
         self.editing = false;
@@ -303,6 +390,9 @@ impl App {
     /// Show `session`: its secrets, or its audit log when it is blocked.
     pub fn set_session(&mut self, session: Session) {
         let blocked = session.is_blocked();
+        let partial = !session.unreachable.is_empty();
+        self.clear_transients();
+        self.feedback.loaded(timestamp::now(), partial);
         self.session = Some(session);
         self.lists = Default::default();
         self.detail = None;
@@ -527,6 +617,11 @@ impl App {
     }
 
     pub fn update(&mut self, action: Action) {
+        if !self.update_transient(action) {
+            self.update_browser(action);
+        }
+    }
+    fn update_transient(&mut self, action: Action) -> bool {
         if let Some(mut inspection) = self.inspection.take() {
             match action {
                 Action::Back => {}
@@ -537,12 +632,15 @@ impl App {
                     self.inspection = Some(inspection);
                 }
             }
-            return;
+            return true;
         }
         if let Some(mut menu) = self.menu.take() {
             match action {
-                Action::Back | Action::Actions => {}
-                Action::Quit => self.quit = true,
+                Action::Back | Action::Actions => self.cancel_theme(),
+                Action::Quit => {
+                    self.cancel_theme();
+                    self.quit = true;
+                }
                 Action::Commit => {
                     if let Some(item) = menu.state.selected().and_then(|i| menu.items.get(i)) {
                         if let Some(reason) = self.unavailable(item.action) {
@@ -557,10 +655,20 @@ impl App {
                 }
                 action => {
                     menu.move_by(action);
+                    if self.theme_preview.is_some()
+                        && let Some(Action::ChooseTheme(choice)) = menu
+                            .state
+                            .selected()
+                            .and_then(|i| menu.items.get(i))
+                            .map(|i| i.action)
+                    {
+                        self.theme_choice = choice;
+                        self.theme_changed = true;
+                    }
                     self.menu = Some(menu);
                 }
             }
-            return;
+            return true;
         }
 
         if self.help {
@@ -569,7 +677,7 @@ impl App {
                 Action::Quit => self.quit = true,
                 action => self.help_view.move_by(action),
             }
-            return;
+            return true;
         }
         if self.dialog.is_some()
             && matches!(
@@ -578,23 +686,35 @@ impl App {
             )
         {
             self.dialog_view.move_by(action);
-            return;
+            return true;
         }
         if let Some(dialog) = self.dialog.take() {
             self.dialog = self.update_dialog(dialog, action);
-            return;
+            return true;
         }
-        self.dialog_view = Default::default();
+        false
+    }
+    fn update_browser(&mut self, action: Action) {
+        self.dialog_view = super::viewport::Viewport::default();
         match action {
             Action::Quit => self.quit = true,
             Action::Help => self.help = true,
             Action::Actions => self.menu = Some(super::menu::Menu::actions(self)),
+            Action::Theme => {
+                self.theme_preview = Some((self.theme_choice, self.theme_changed));
+                self.menu = Some(super::menu::Menu::themes(self.theme_choice));
+            }
+            Action::ChooseTheme(choice) => {
+                self.theme_choice = choice;
+                self.theme_changed = true;
+                self.theme_preview = None;
+            }
             Action::Inspect => self.inspection = super::inspection::Inspection::metadata(self),
             Action::ErrorDetails => {
                 self.inspection = self
                     .message
                     .as_ref()
-                    .map(super::inspection::Inspection::message)
+                    .map(super::inspection::Inspection::message);
             }
             Action::Filters => {
                 if self.unavailable(action).is_none() {
@@ -721,10 +841,10 @@ impl App {
         if !self.list(self.tab).initialized {
             self.select(0);
             self.list_mut(self.tab).initialized = true;
-        } else if let Some(current) = self.selected_index() {
-            if current >= self.shown_len(self.tab) {
-                self.list_mut(self.tab).table.select(None);
-            }
+        } else if let Some(current) = self.selected_index()
+            && current >= self.shown_len(self.tab)
+        {
+            self.list_mut(self.tab).table.select(None);
         }
     }
 
@@ -761,18 +881,22 @@ impl App {
     }
 
     fn selected_key(&self, tab: Tab) -> Option<String> {
+        if self.total(tab).is_none() && matches!(tab, Tab::Audit | Tab::Deleted) {
+            return self.list(tab).pending_selection.clone();
+        }
         self.row_keys(tab)
             .get(self.list(tab).table.selected()?)
             .cloned()
     }
 
     fn restore_selection(&mut self, tab: Tab, key: Option<String>) {
-        let index = key
-            .as_ref()
-            .and_then(|key| self.row_keys(tab).iter().position(|k| k == key));
-        if key.is_some() && index.is_none() {
+        let had_key = key.is_some();
+        let index = key.and_then(|key| self.row_keys(tab).iter().position(|k| *k == key));
+        if had_key && index.is_none() {
             self.selection_lost = true;
-            self.message = Some(Message::Info("Selection cleared: the selected object is no longer visible; navigate to select a target.".into()));
+            if !matches!(self.message, Some(Message::Error(_))) {
+                self.message = Some(Message::Info("Selection cleared: the selected object is no longer visible; navigate to select a target.".into()));
+            }
         }
         self.list_mut(tab).table.select(index);
     }
@@ -790,10 +914,21 @@ impl App {
 
     /// Read what the current view shows, if it is not held yet.
     fn load_view(&mut self) {
+        let result = self.read_view();
+        self.feedback.partial = self
+            .session
+            .as_ref()
+            .is_some_and(|s| !s.unreachable.is_empty());
+        if let Err(err) = result {
+            self.feedback.failed = true;
+            self.message = Some(failure("reading the vault failed", &err));
+        }
+    }
+    fn read_view(&mut self) -> Result<(), SecretError> {
         let Some(session) = &mut self.session else {
-            return;
+            return Ok(());
         };
-        let loaded = match self.tab {
+        match self.tab {
             Tab::Overview => session
                 .load_deleted()
                 .and_then(|()| session.load_audit())
@@ -806,9 +941,6 @@ impl App {
             Tab::Audit => session.load_audit(),
             // The projects are read with the vault.
             Tab::Secrets | Tab::Projects | Tab::Vaults => Ok(()),
-        };
-        if let Err(err) = loaded {
-            self.message = Some(failure("reading the vault failed", &err));
         }
     }
 
@@ -873,16 +1005,19 @@ impl App {
     }
 
     fn open_detail(&mut self, name: String, live: bool) {
-        let Some(session) = &mut self.session else {
-            return;
-        };
-        match session.load_detail(&name, live) {
-            Ok(()) => {
-                self.detail = Some(name);
-                self.versions = TableState::default().with_selected(Some(0));
-            }
-            Err(err) => self.message = Some(failure(&format!("reading '{name}' failed"), &err)),
+        let what = format!("reading '{name}' failed");
+        if let Err(err) = self.read_detail(name, live) {
+            self.message = Some(failure(&what, &err));
         }
+    }
+    fn read_detail(&mut self, name: String, live: bool) -> Result<(), SecretError> {
+        let Some(session) = &mut self.session else {
+            return Ok(());
+        };
+        session.load_detail(&name, live)?;
+        self.detail = Some(name);
+        self.versions = TableState::default().with_selected(Some(0));
+        Ok(())
     }
 
     fn back(&mut self) {
@@ -896,6 +1031,8 @@ impl App {
         } else if !self.list(self.tab).query.is_empty() {
             self.list_mut(self.tab).query.clear();
             self.restore_selection(self.tab, key);
+        } else {
+            self.message = None;
         }
     }
 
@@ -904,14 +1041,18 @@ impl App {
             self.request = Some(Request::ListVaults);
             return;
         }
+        if self.session.is_none() {
+            return;
+        }
+        self.message = None;
         match self.reread() {
             Ok(name) if !self.selection_lost => {
-                self.message = Some(Message::Info(format!("reloaded vault '{name}'")))
+                self.message = Some(Message::Info(format!("reloaded vault '{name}'")));
             }
             Ok(_) => {}
             Err(err) => {
                 self.message = Some(failure(
-                    "refresh failed; showing what was read before",
+                    "refresh failed; showing what was read before where available",
                     &err,
                 ));
             }
@@ -927,18 +1068,26 @@ impl App {
             .filter(|_| self.detail.is_some())
             .map(|p| p.version);
         self.selection_lost = false;
+        self.feedback.failed = true;
         let Some(session) = &mut self.session else {
             return Ok(String::new());
         };
         session.reload()?;
         let name = session.vault.name.clone();
-        self.load_view();
+        let view_result = self.read_view();
         for (tab, key) in Tab::ALL.into_iter().zip(keys) {
             if self.total(tab).is_none() && matches!(tab, Tab::Audit | Tab::Deleted) {
                 self.list_mut(tab).pending_selection = key;
             } else {
                 self.restore_selection(tab, key);
             }
+        }
+        // Reload replaced the list even if a secondary read failed. Restore
+        // cached identities before returning that failure; never keep an index
+        // that could now name a neighbouring secret.
+        if let Err(err) = view_result {
+            self.versions.select(None);
+            return Err(err);
         }
         if let Some(detail) = self.detail.take() {
             if self.tab == Tab::Projects {
@@ -947,6 +1096,12 @@ impl App {
                     self.detail = Some(detail);
                 }
                 self.clamp();
+                self.feedback.loaded(
+                    timestamp::now(),
+                    self.session
+                        .as_ref()
+                        .is_some_and(|s| !s.unreachable.is_empty()),
+                );
                 return Ok(name);
             }
             let live = self.tab == Tab::Secrets;
@@ -958,7 +1113,11 @@ impl App {
                     .any(|d| d.properties.name == detail),
             };
             if still_there {
-                self.open_detail(detail, live);
+                if let Err(err) = self.read_detail(detail.clone(), live) {
+                    self.detail = Some(detail);
+                    self.versions.select(None);
+                    return Err(err);
+                }
                 let index = version.as_ref().and_then(|id| {
                     self.session
                         .as_ref()?
@@ -976,6 +1135,12 @@ impl App {
             }
         }
         self.clamp();
+        self.feedback.loaded(
+            timestamp::now(),
+            self.session
+                .as_ref()
+                .is_some_and(|s| !s.unreachable.is_empty()),
+        );
         Ok(name)
     }
 
@@ -1006,10 +1171,7 @@ impl App {
         }
     }
 
-    /// Pure cached availability. Execution retains all existing form/provider checks.
-    pub fn unavailable(&self, action: Action) -> Option<String> {
-        let wrong = || Some("Unavailable on this view".to_owned());
-        let none = || Some("No selection; navigate to select an object".to_owned());
+    fn denied_change(&self, action: Action) -> Option<String> {
         if matches!(
             action,
             Action::Edit
@@ -1021,6 +1183,16 @@ impl App {
         ) && let Some(reason) = self.change_unavailable()
         {
             return Some(reason.into());
+        }
+        None
+    }
+
+    /// Pure cached availability. Execution retains all existing form/provider checks.
+    pub fn unavailable(&self, action: Action) -> Option<String> {
+        let wrong = || Some("Unavailable on this view".to_owned());
+        let none = || Some("No selection; navigate to select an object".to_owned());
+        if let Some(reason) = self.denied_change(action) {
+            return Some(reason);
         }
         match action {
             Action::Inspect if super::inspection::Inspection::metadata(self).is_none() => none(),
@@ -1375,7 +1547,7 @@ impl App {
                     Action::Commit => {
                         return match form.submit(timestamp::now()) {
                             Ok(confirm) => {
-                                self.dialog_view = Default::default();
+                                self.dialog_view = super::viewport::Viewport::default();
                                 Some(Dialog::Confirm(confirm))
                             }
                             Err(err) => {
@@ -1391,10 +1563,10 @@ impl App {
             (Dialog::Confirm(mut confirm), action) => {
                 match action {
                     Action::Text(super::text_input::Edit::Home) => {
-                        self.dialog_view.move_by(Action::Top)
+                        self.dialog_view.move_by(Action::Top);
                     }
                     Action::Text(super::text_input::Edit::End) => {
-                        self.dialog_view.move_by(Action::Bottom)
+                        self.dialog_view.move_by(Action::Bottom);
                     }
                     Action::Input(c) => confirm.input(c),
                     Action::Erase => confirm.erase(),
@@ -1602,6 +1774,217 @@ pub mod tests {
     }
 
     #[test]
+    fn applied_theme_is_shared_with_child_screens_and_preserves_color_capabilities() {
+        use super::super::theme::Theme;
+        use crate::cli::UiTheme;
+        let mut app = App::new(Vec::new()).with_theme(UiTheme::Dark);
+        for (color, truecolor) in [(true, true), (true, false), (false, false)] {
+            let base = Theme::new(UiTheme::Dark, color, truecolor);
+            app.update(Action::ChooseTheme(UiTheme::Light));
+            let resolved = app.resolved_theme(&base);
+            let expected = Theme::new(UiTheme::Light, color, truecolor);
+            assert_eq!(resolved.screen, expected.screen);
+            assert_eq!(resolved.selected, expected.selected);
+        }
+    }
+
+    #[test]
+    fn filtering_does_not_hide_refresh_errors_and_back_acknowledges_them() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        fake.fail.set(true);
+        app.update(Action::Refresh);
+        app.apply_query("missing-name".into());
+        assert!(matches!(app.message, Some(Message::Error(_))));
+        app.update(Action::Back);
+        app.update(Action::Back);
+        assert!(app.message.is_none());
+        assert!(app.feedback.failed);
+    }
+
+    #[test]
+    fn repeated_refresh_keeps_identity_for_a_tab_waiting_for_lazy_reload() {
+        let fake = Fake::with(&["a"]);
+        *fake.deleted_names.borrow_mut() = vec!["first", "selected"];
+        let mut app = on_secrets(&fake);
+        app.update(Action::Show(Tab::Deleted));
+        app.update(Action::Down);
+        app.update(Action::Show(Tab::Secrets));
+        let lists = fake.lists.get();
+        app.update(Action::Refresh);
+        app.update(Action::Refresh);
+        assert_eq!(
+            fake.lists.get(),
+            lists + 2,
+            "inactive deleted list is not reread automatically"
+        );
+        app.update(Action::Show(Tab::Deleted));
+        assert_eq!(app.selected_deleted().unwrap().properties.name, "selected");
+    }
+
+    #[test]
+    fn failed_primary_and_secondary_refreshes_keep_honest_freshness_without_retries() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        let at = app.feedback.at;
+        fake.fail.set(true);
+        let before = fake.lists.get();
+        app.update(Action::Refresh);
+        assert!(app.feedback.failed);
+        assert_eq!(app.feedback.at, at);
+        assert_eq!(fake.lists.get(), before + 1);
+        fake.fail.set(false);
+        app.update(Action::Show(Tab::Audit));
+        fake.fail_audit.set(true);
+        let at = app.feedback.at;
+        let audit = fake.audit_reads.get();
+        app.update(Action::Refresh);
+        assert!(app.feedback.failed);
+        assert_eq!(app.feedback.at, at);
+        assert_eq!(fake.audit_reads.get(), audit + 1);
+    }
+
+    #[test]
+    fn failed_secondary_refresh_still_restores_other_tab_identity() {
+        let fake = Fake::with(&["bravo", "charlie"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Down);
+        assert_eq!(app.selected_secret().unwrap().name, "charlie");
+        app.update(Action::Show(Tab::Audit));
+        *fake.names.borrow_mut() = vec!["alpha", "bravo", "charlie"];
+        fake.fail_audit.set(true);
+        let at = app.feedback.at;
+        let reads = (fake.lists.get(), fake.audit_reads.get());
+        app.update(Action::Refresh);
+        assert!(app.feedback.failed);
+        assert_eq!(app.feedback.at, at);
+        app.update(Action::Show(Tab::Secrets));
+        assert_eq!(app.selected_secret().unwrap().name, "charlie");
+        assert_eq!(
+            (fake.lists.get(), fake.audit_reads.get()),
+            (reads.0 + 1, reads.1 + 1)
+        );
+        assert!(writes(&fake).is_empty());
+    }
+
+    #[test]
+    fn failed_detail_refresh_keeps_name_but_clears_version_without_retry() {
+        let fake = Fake::with(&["a"]);
+        let mut app = on_secrets(&fake);
+        app.update(Action::Open);
+        app.update(Action::Down);
+        let at = app.feedback.at;
+        let reads = (fake.lists.get(), fake.inspects.get());
+        fake.fail_versions.set(true);
+        app.update(Action::Refresh);
+        assert!(app.feedback.failed);
+        assert_eq!(app.feedback.at, at);
+        assert_eq!(app.detail.as_deref(), Some("a"));
+        assert!(app.versions.selected().is_none());
+        assert!(app.target_version().is_none());
+        assert_eq!(
+            (fake.lists.get(), fake.inspects.get()),
+            (reads.0 + 1, reads.1 + 1)
+        );
+        assert!(writes(&fake).is_empty());
+    }
+
+    #[test]
+    fn theme_preview_restores_exact_choice_on_cancel_quit_and_idle_lock() {
+        use crate::cli::UiTheme;
+        let fake = Fake::with(&["a"]);
+        let mut app = app_with(&fake)
+            .with_theme(UiTheme::Light)
+            .with_lock_after(Some(Duration::from_secs(60)));
+        let reads = (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get(),
+            fake.capability_reads.get(),
+        );
+        app.update(Action::Theme);
+        app.update(Action::Top);
+        assert_eq!(app.theme_choice, UiTheme::Dark);
+        assert!(app.theme_changed);
+        app.update(Action::Back);
+        assert_eq!(app.theme_choice, UiTheme::Light);
+        assert!(!app.theme_changed);
+        app.update(Action::Theme);
+        app.update(Action::Commit);
+        assert_eq!(app.theme_choice, UiTheme::Light);
+        assert!(app.theme_changed);
+        assert!(app.theme_preview.is_none());
+        app.update(Action::Theme);
+        app.update(Action::Bottom);
+        app.idle_tick(Duration::from_secs(60));
+        assert_eq!(app.theme_choice, UiTheme::Light);
+        assert!(app.theme_changed);
+        assert!(app.menu.is_none());
+        assert!(app.session.is_none());
+        assert_eq!(
+            (
+                fake.lists.get(),
+                fake.inspects.get(),
+                fake.audit_reads.get(),
+                fake.capability_reads.get()
+            ),
+            reads
+        );
+        let mut app = app_with(&fake).with_theme(UiTheme::Terminal);
+        app.update(Action::Theme);
+        app.update(Action::Top);
+        app.update(Action::Quit);
+        assert_eq!(app.theme_choice, UiTheme::Terminal);
+        assert!(!app.theme_changed);
+        assert!(app.should_quit());
+    }
+
+    #[test]
+    fn deterministic_idle_ticks_warn_then_drop_every_transient_without_reads() {
+        for action in [
+            Action::Help,
+            Action::Actions,
+            Action::Inspect,
+            Action::Edit,
+            Action::Theme,
+        ] {
+            let fake = Fake::with(&["a"]);
+            let mut app = on_secrets(&fake).with_lock_after(Some(Duration::from_secs(60)));
+            app.update(action);
+            let reads = (
+                fake.lists.get(),
+                fake.inspects.get(),
+                fake.audit_reads.get(),
+                fake.capability_reads.get(),
+            );
+            app.idle_tick(Duration::from_secs(29));
+            assert_eq!(app.idle_warning, None);
+            app.idle_tick(Duration::from_secs(30));
+            assert_eq!(app.idle_warning, Some(30));
+            app.idle_tick(Duration::from_millis(59_500));
+            assert_eq!(app.idle_warning, Some(1));
+            app.idle_tick(Duration::from_secs(60));
+            assert!(app.session.is_none());
+            assert!(
+                app.dialog.is_none() && app.menu.is_none() && app.inspection.is_none() && !app.help
+            );
+            assert!(app.pending_value.is_none() && app.request.is_none());
+            assert!(app.feedback.at.is_none());
+            assert!(app.idle_warning.is_none());
+            assert_eq!(Rc::strong_count(&fake), 1);
+            assert_eq!(
+                (
+                    fake.lists.get(),
+                    fake.inspects.get(),
+                    fake.audit_reads.get(),
+                    fake.capability_reads.get()
+                ),
+                reads
+            );
+        }
+    }
+
+    #[test]
     fn facets_and_text_queries_are_identical_compose_and_read_nothing() {
         let fake = Fake::with(&["alpha-key", "bravo-key"]);
         fake.disabled.borrow_mut().insert("bravo-key".into());
@@ -1630,11 +2013,11 @@ pub mod tests {
             app.shown_secrets().len()
         );
         app.apply_query("alpha status:disabled".into());
-        assert!(app.shown_secrets().is_empty());
+        assert_eq!(app.shown_secrets(), [] as [&SecretProperties; 0]);
         app.update(Action::Filters);
         app.update(Action::Top);
         app.update(Action::Commit);
-        assert!(app.list(Tab::Secrets).query.is_empty());
+        assert_eq!(app.list(Tab::Secrets).query, "");
         assert_eq!(app.shown_secrets().len(), 2);
         assert_eq!(
             (
@@ -2451,6 +2834,36 @@ pub mod tests {
         assert_eq!(session.secrets.len(), 1);
         assert_eq!(session.unreachable.len(), 1);
         assert_eq!(session.unreachable[0].code, "provider_unavailable");
+        assert!(app.feedback.partial && !app.feedback.failed);
+        assert!(
+            app.feedback
+                .label()
+                .contains("provider metadata incomplete")
+        );
+    }
+
+    #[test]
+    fn provider_warning_discovered_by_a_lazy_read_stays_visible_without_retries() {
+        let fake = Fake::with_connection(&["local"], &["remote"]);
+        let mut app = on_secrets(&fake);
+        // Refresh on Secrets leaves Deleted uncached for an explicit tab visit.
+        app.update(Action::Refresh);
+        assert!(!app.feedback.partial);
+        *fake.unreachable.borrow_mut() = Some("c1".to_owned());
+        let at = app.feedback.at;
+        let reads = fake.listings_at.get();
+        app.update(Action::Show(Tab::Deleted));
+        assert!(app.feedback.partial && !app.feedback.failed);
+        assert_eq!(app.feedback.at, at);
+        assert_eq!(fake.listings_at.get(), reads + 1);
+        app.update(Action::Show(Tab::Secrets));
+        assert!(app.feedback.partial);
+        assert_eq!(fake.listings_at.get(), reads + 1);
+        assert!(
+            app.feedback
+                .label()
+                .contains("provider metadata incomplete")
+        );
     }
 
     #[test]

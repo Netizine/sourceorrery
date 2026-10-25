@@ -135,6 +135,8 @@ pub struct Theme {
     /// The selection is reverse video: coloured text in a selected row
     /// would become a block of colour, so status colours are dropped there.
     reverse_selection: bool,
+    color: bool,
+    truecolor: bool,
 }
 
 impl Theme {
@@ -154,11 +156,17 @@ impl Theme {
         if !color {
             return Self::mono();
         }
-        match choice {
+        let mut theme = match choice {
             UiTheme::Dark => Self::paper(&DARK, truecolor),
             UiTheme::Light => Self::paper(&LIGHT, truecolor),
             UiTheme::Terminal => Self::named(),
-        }
+        };
+        theme.truecolor = truecolor;
+        theme
+    }
+
+    pub fn choosing(&self, choice: UiTheme) -> Self {
+        Self::new(choice, self.color, self.truecolor)
     }
 
     /// Style for a status from [`crate::output::status`].
@@ -223,6 +231,8 @@ impl Theme {
             disabled: fg(p.gray_3),
             unavailable: fg(p.red),
             reverse_selection: false,
+            color: true,
+            truecolor,
         }
     }
 
@@ -261,6 +271,8 @@ impl Theme {
             disabled: Style::new().add_modifier(Modifier::DIM),
             unavailable: fg(Color::Red),
             reverse_selection: true,
+            color: true,
+            truecolor: true,
         }
     }
 
@@ -298,6 +310,8 @@ impl Theme {
             disabled: dim,
             unavailable: bold,
             reverse_selection: true,
+            color: false,
+            truecolor: false,
         }
     }
 }

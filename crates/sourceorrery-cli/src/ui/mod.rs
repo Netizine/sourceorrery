@@ -36,6 +36,7 @@ mod edit;
 mod editor;
 #[cfg(test)]
 mod fake;
+mod feedback;
 mod filters;
 pub(crate) mod init;
 mod inspection;
@@ -95,7 +96,8 @@ pub fn run(ctx: &Ctx, args: &UiArgs) -> anyhow::Result<()> {
         (args.lock_after > 0).then(|| Duration::from_secs(u64::from(args.lock_after) * 60));
     let mut app = App::new(list_vaults(ctx)?)
         .with_lock_after(lock_after)
-        .with_read_only(args.read_only);
+        .with_read_only(args.read_only)
+        .with_theme(args.theme);
     // A vault named by --vault or the manifest is opened before the screen
     // is taken over, and a failure ends the command as it would any other.
     if let Some(name) = ctx.selected_vault()? {
@@ -124,14 +126,14 @@ fn event_loop(
 ) -> anyhow::Result<()> {
     let mut last_key = Instant::now();
     while !app.should_quit() {
+        app.idle_tick(last_key.elapsed());
         terminal.draw(|frame| view::draw(frame, app, theme))?;
         // Wait for input, but no longer than the idle lock allows.
         let input = match app.locks_in(last_key.elapsed()) {
-            Some(left) => event::poll(left)?,
+            Some(left) => event::poll(left.min(Duration::from_secs(1)))?,
             None => true,
         };
         if !input {
-            app.lock(true);
             continue;
         }
         if let Event::Key(key) = event::read()? {
@@ -139,7 +141,17 @@ fn event_loop(
                 last_key = Instant::now();
             }
             if let Some(action) = keys::action(key, app.mode()) {
+                let operation = app.operation_for(action);
+                if let Some(operation) = operation {
+                    app.feedback.operation = Some(operation);
+                    terminal.draw(|frame| view::draw(frame, app, theme))?;
+                }
+                let started = Instant::now();
                 app.update(action);
+                if operation.is_some() {
+                    app.feedback.operation = None;
+                    app.feedback.elapsed = Some(started.elapsed());
+                }
             }
         }
         match app.take_request() {
@@ -159,8 +171,9 @@ fn event_loop(
             }
             Some(Request::Setup(name)) => {
                 // The setup screens take the terminal over and give it back.
-                let result = setup::run_on(ctx, terminal, name.as_deref(), theme)
-                    .map_err(|err| format!("{err:#}"));
+                let result =
+                    setup::run_on(ctx, terminal, name.as_deref(), &app.resolved_theme(theme))
+                        .map_err(|err| format!("{err:#}"));
                 terminal.clear()?;
                 match list_vaults(ctx) {
                     Ok(vaults) => app.set_vaults(vaults),

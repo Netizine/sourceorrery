@@ -358,9 +358,9 @@ impl Session {
         self.details.insert(
             name.to_owned(),
             Detail {
+                capabilities,
                 versions,
                 activity,
-                capabilities,
             },
         );
         Ok(())

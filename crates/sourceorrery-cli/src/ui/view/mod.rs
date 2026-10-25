@@ -50,9 +50,11 @@ struct Drawn {
 }
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
+    let resolved = app.resolved_theme(theme);
+    let theme = &resolved;
     frame.render_widget(Block::new().style(theme.screen), frame.area());
     let message_height = u16::from(app.message.is_some());
-    let [header, tabs, _, body, message, footer] = Layout::vertical([
+    let [header, tabs, freshness, body, message, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -61,8 +63,41 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
         Constraint::Length(1),
     ])
     .areas(frame.area());
-    frame.render_widget(header_bar(app, theme, header.width), header);
+    frame.render_widget(
+        header_bar(
+            app,
+            theme,
+            header
+                .width
+                .saturating_sub(if app.idle_warning.is_some() { 15 } else { 0 }),
+        ),
+        header,
+    );
     frame.render_widget(tab_bar(app, theme, tabs.width), tabs);
+    if app.session.is_some() {
+        frame.render_widget(
+            Paragraph::new(app.feedback.label()).style(
+                if app.feedback.failed || app.feedback.partial {
+                    theme.caution
+                } else {
+                    theme.muted
+                },
+            ),
+            freshness,
+        );
+    }
+    if let Some(seconds) = app.idle_warning {
+        let width = header.width.min(15);
+        let area = Rect {
+            x: header.right().saturating_sub(width),
+            width,
+            ..header
+        };
+        frame.render_widget(
+            Paragraph::new(format!("Locks in {seconds}s")).style(theme.caution),
+            area,
+        );
+    }
 
     let drawn = draw_body(frame, app, theme, body.inner(Margin::new(2, 0)));
     if let Some(drawn) = drawn {
@@ -87,6 +122,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
         frame.render_widget(Paragraph::new(" ! details").style(theme.key), route);
     }
     draw_footer(frame, app, theme, footer);
+    if app.feedback.operation.is_some() {
+        return;
+    }
     if let Some(open) = &app.dialog {
         dialog::draw(frame, open, theme, &mut app.dialog_view);
     }
@@ -683,6 +721,14 @@ fn view_hints(app: &App, changes: bool) -> &'static [(&'static str, &'static str
 }
 
 fn draw_footer(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    if app.feedback.operation.is_some() {
+        frame.render_widget(
+            Paragraph::new("Working synchronously; commands resume after completion.")
+                .style(theme.bar),
+            area,
+        );
+        return;
+    }
     let all = hints(app);
     let mut pairs = all.to_vec();
     let normal = app.mode() == crate::ui::app::Mode::Normal;
@@ -753,7 +799,13 @@ fn draw_footer(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     );
 }
 
-const HELP_KEYS: [(&str, &str); 13] = [
+const HELP_KEYS: [(&str, &str); 19] = [
+    ("F2", "Actions: availability and reasons"),
+    ("f", "filters using cached metadata"),
+    ("s", "typed sort; keeps object selection"),
+    ("i", "inspect full cached metadata; no reads"),
+    ("!", "complete message details"),
+    ("t", "theme preview; Enter applies, Esc restores"),
     ("↑ ↓  k j", "move"),
     ("PgUp PgDn", "move a screenful"),
     ("g G  Home End", "first, last"),
@@ -784,13 +836,23 @@ const HELP_CHANGES: [(&str, &str); 9] = [
 fn draw_help(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
     let mut lines: Vec<Line<'_>> = HELP_KEYS
         .iter()
-        .map(|(keys, what)| {
-            Line::from(vec![
-                Span::styled(format!("{keys:<23}"), theme.key),
-                Span::raw(*what),
-            ])
+        .flat_map(|(keys, what)| {
+            if frame.area().width <= 60 {
+                vec![
+                    Line::from(Span::styled(*keys, theme.key)),
+                    Line::from(*what),
+                ]
+            } else {
+                vec![Line::from(vec![
+                    Span::styled(format!("{keys:<23}"), theme.key),
+                    Span::raw(*what),
+                ])]
+            }
         })
         .collect();
+    lines.push(Line::from(
+        "Text fields: Left/Right, Home/End, Delete, Backspace; PgUp/PgDn scrolls.",
+    ));
     lines.push(Line::from(Span::styled("CHANGES", theme.label)));
     if app.is_read_only() {
         lines.push(Line::from("None: this browser is read-only (--read-only)."));
