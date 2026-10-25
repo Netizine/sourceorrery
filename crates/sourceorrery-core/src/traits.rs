@@ -21,11 +21,16 @@ pub enum Capability {
     /// current one. A service whose metadata is per secret applies them to
     /// every version at once. Rotation ([`crate::rotation`]) needs this.
     PerVersionProperties,
+    /// `update_secret_properties` can remove a version's `not_before` and
+    /// `expires_on` (`Some(None)`). A service that can only replace them
+    /// refuses the removal with `unsupported`; a new version without the
+    /// time window is the way to lift it there.
+    ClearableTimeWindow,
 }
 
 impl Capability {
     /// Everything the local vault does.
-    pub const ALL: &'static [Self] = &[Self::PerVersionProperties];
+    pub const ALL: &'static [Self] = &[Self::PerVersionProperties, Self::ClearableTimeWindow];
 }
 
 /// Everything a secret backend must be able to do.
@@ -71,6 +76,14 @@ pub trait SecretClient {
     /// here before it writes anything.
     fn capabilities(&self) -> &'static [Capability] {
         Capability::ALL
+    }
+
+    /// What of the contract the backend that keeps `name` can express (or
+    /// would keep it, for a new secret). A client over several backends
+    /// answers per secret; any other answers [`Self::capabilities`].
+    fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]> {
+        let _ = name;
+        Ok(self.capabilities())
     }
 
     /// Create a new version of `name` holding `value`.
@@ -186,6 +199,12 @@ pub trait AsyncSecretClient: Send + Sync {
     /// See [`SecretClient::capabilities`].
     fn capabilities(&self) -> &'static [Capability] {
         Capability::ALL
+    }
+
+    /// See [`SecretClient::capabilities_of`].
+    async fn capabilities_of(&self, name: &str) -> Result<&'static [Capability]> {
+        let _ = name;
+        Ok(self.capabilities())
     }
 
     /// Create a new version of `name` holding `value`.

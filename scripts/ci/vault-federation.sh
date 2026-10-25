@@ -22,8 +22,13 @@ root="${VAULT_TOKEN:?set VAULT_TOKEN to the dev server root token}"
 mount="federation-$$"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-export SOURCEORRERY_HOME="$work/home"   # no local vaults; HOME keeps ~/.vault-token out
+export SOURCEORRERY_HOME="$work/home"   # HOME keeps ~/.vault-token out
 export HOME="$work/empty-home"
+# The vault opens with its recovery key; nothing touches the OS credential
+# store. The job's SOURCEORRERY_RECOVERY_KEY is the fixture vault's, and the
+# CLI would try it first.
+unset SOURCEORRERY_RECOVERY_KEY
+export SOURCEORRERY_KEYRING=off SOURCEORRERY_RECOVERY_KEY_FILE="$work/remote.key"
 mkdir -p "$SOURCEORRERY_HOME" "$HOME" "$work/project"
 
 api() { # METHOD PATH [JSON]
@@ -56,19 +61,18 @@ run_as() { # VAR=value... -- args
 }
 
 api POST "sys/mounts/$mount" '{"type":"kv","options":{"version":"2"}}'
+# A connection without a stored token: every identity below is the
+# environment's.
+run_as -- vault create remote --no-keyring --recovery-key-out "$work/remote.key" \
+  --hashicorp-vault "$addr" --hashicorp-vault-mount "$mount" > /dev/null
 cat > "$work/project/sourceorrery.toml" <<TOML
 [project]
 name = "federation"
 vault = "remote"
 
 [secrets.database-password]
-
-[vaults.remote]
-provider = "hashicorp-vault"
-address = "$addr"
-mount = "$mount"
 TOML
-printf 'federation-fixture-value' | run_as VAULT_TOKEN="$root" -- secret set database-password --vault remote --stdin > /dev/null
+printf 'federation-fixture-value' | run_as VAULT_TOKEN="$root" -- secret set database-password --vault remote --stdin --storage hashicorp-vault > /dev/null
 
 reader_policy="path \"$mount/data/*\" { capabilities = [\"read\"] }
 path \"$mount/metadata/*\" { capabilities = [\"read\", \"list\"] }

@@ -16,7 +16,7 @@ keywords = ["secrets", "vault", "hashicorp", "kv", "provider"]
 sourceorrery-core.workspace = true
 async-trait.workspace = true
 base64 = "0.23"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "http2"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "http2"] }
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true
@@ -27,9 +27,10 @@ zeroize.workspace = true
 # Test-only back edge: Cargo strips path-only dev dependencies on publish.
 sourceorrery-provider = { path = "../sourceorrery-provider" }
 sourceorrery-conformance = { path = "../../tests/conformance" }
+sourceorrery-storage = { path = "../sourceorrery-storage", default-features = false }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "sync"] }
 tempfile.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 
 [lints]
 workspace = true

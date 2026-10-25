@@ -1,0 +1,63 @@
+{
+  "projectStatus": {
+    "status": "ERROR",
+    "conditions": [
+      {
+        "status": "ERROR",
+        "metricKey": "new_coverage",
+        "comparator": "LT",
+        "periodIndex": 1,
+        "errorThreshold": "80",
+        "actualValue": "2.5"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_duplicated_lines_density",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "3",
+        "actualValue": "0.0"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_bugs_severity",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "9",
+        "actualValue": "0"
+      },
+      {
+        "status": "ERROR",
+        "metricKey": "new_code_smells_severity",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "14",
+        "actualValue": "15"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_sca_severity_any_issue",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "9",
+        "actualValue": "0"
+      },
+      {
+        "status": "OK",
+        "metricKey": "new_vulnerabilities_severity",
+        "comparator": "GT",
+        "periodIndex": 1,
+        "errorThreshold": "9",
+        "actualValue": "0"
+      }
+    ],
+    "periods": [
+      {
+        "index": 1,
+        "mode": "previous_version",
+        "date": "2026-10-23T11:58:14+01:00"
+      }
+    ],
+    "ignoredConditions": false
+  }
+}

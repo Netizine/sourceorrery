@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +13,7 @@ import (
 )
 
 type fixture struct {
-	home, passphrase, vault, manifest, oldVersion string
+	home, recoveryKey, vault, manifest, oldVersion string
 }
 
 const (
@@ -32,15 +31,15 @@ func loadFixture(t *testing.T) fixture {
 		return value
 	}
 	return fixture{
-		home:       get("SOURCEORRERY_HOME"),
-		passphrase: get("SOURCEORRERY_PASSPHRASE"),
-		vault:      get("SOURCEORRERY_TEST_VAULT"),
-		manifest:   get("SOURCEORRERY_TEST_MANIFEST"),
-		oldVersion: get("SOURCEORRERY_TEST_OLD_VERSION"),
+		home:        get("SOURCEORRERY_HOME"),
+		recoveryKey: get("SOURCEORRERY_RECOVERY_KEY"),
+		vault:       get("SOURCEORRERY_TEST_VAULT"),
+		manifest:    get("SOURCEORRERY_TEST_MANIFEST"),
+		oldVersion:  get("SOURCEORRERY_TEST_OLD_VERSION"),
 	}
 }
 
-// Unlocks through SOURCEORRERY_PASSPHRASE from the environment, like the CLI.
+// Unlocks through SOURCEORRERY_RECOVERY_KEY from the environment, like the CLI.
 func openReader(t *testing.T, fx fixture) *Reader {
 	t.Helper()
 	reader, err := Open(fx.vault, nil)
@@ -100,7 +99,7 @@ func expectErr(t *testing.T, err error, sentinel error, code string, hintContain
 }
 
 func TestContractVersion(t *testing.T) {
-	if ContractVersion() != "1" || AbiVersion() != 1 {
+	if ContractVersion() != "2" || AbiVersion() != 2 {
 		t.Fatalf("unexpected versions %s / %d", ContractVersion(), AbiVersion())
 	}
 }
@@ -215,17 +214,17 @@ func TestVaultErrorsSayHowToFixThem(t *testing.T) {
 	if !strings.Contains(e.Hint, fx.home) {
 		t.Fatalf("hint should name the home directory: %s", e.Hint)
 	}
-	_, err = Open(fx.vault, &OpenOptions{Passphrase: []byte("wrong-passphrase"), IgnoreEnvironment: true})
-	e = expectErr(t, err, ErrLocked, "locked", "passphrase option: tried")
-	if !strings.Contains(e.Hint, "SOURCEORRERY_PASSPHRASE: not set") || !strings.Contains(e.Hint, "--vault "+fx.vault) || strings.Contains(err.Error(), "wrong-passphrase") {
+	_, err = Open(fx.vault, &OpenOptions{RecoveryKey: []byte("wrong-recovery-key"), IgnoreEnvironment: true})
+	e = expectErr(t, err, ErrLocked, "locked", "recovery_key option: tried")
+	if !strings.Contains(e.Hint, "SOURCEORRERY_RECOVERY_KEY: not set") || !strings.Contains(e.Hint, "sourceorrery vault create "+fx.vault) || strings.Contains(err.Error(), "wrong-recovery-key") {
 		t.Fatalf("unexpected locked error: %v", err)
 	}
-	reader, err := Open(fx.vault, &OpenOptions{Home: fx.home, Passphrase: []byte(fx.passphrase), IgnoreEnvironment: true})
+	reader, err := Open(fx.vault, &OpenOptions{Home: fx.home, RecoveryKey: []byte(fx.recoveryKey), IgnoreEnvironment: true})
 	if err != nil {
 		t.Fatalf("explicit open: %v", err)
 	}
 	descriptor, err := reader.Descriptor()
-	if err != nil || descriptor.Name != fx.vault || len(descriptor.Protectors) == 0 || descriptor.Protectors[0] != "passphrase" {
+	if err != nil || descriptor.Name != fx.vault || len(descriptor.Protectors) == 0 || descriptor.Protectors[0] != "recovery" {
 		t.Fatalf("descriptor: %v %+v", err, descriptor)
 	}
 	if reader.VaultName() != fx.vault {
@@ -317,65 +316,8 @@ func TestProjectLoadMirrorsRun(t *testing.T) {
 	}
 	_, err = LoadProject(fx.manifest+".missing", nil)
 	expectErr(t, err, ErrManifest, "manifest", "")
-	_, err = LoadProject(fx.manifest, &OpenOptions{Passphrase: []byte("wrong"), IgnoreEnvironment: true})
+	_, err = LoadProject(fx.manifest, &OpenOptions{RecoveryKey: []byte("wrong"), IgnoreEnvironment: true})
 	expectErr(t, err, ErrLocked, "locked", "")
-}
-
-// A manifest whose [vaults.<name>] table makes `remote` a remote vault; the
-// fixture vault stays a local file.
-func manifestWithRemote(t *testing.T, fx fixture, remote string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "sourceorrery.toml")
-	content := fmt.Sprintf("[project]\nname = \"demo\"\nvault = %q\n\n"+
-		"[vaults.%s]\nprovider = \"hashicorp-vault\"\n"+
-		"address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n", fx.vault, remote)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write manifest: %v", err)
-	}
-	return path
-}
-
-func TestAVaultTheManifestDeclaresRemoteIsOpenedAtItsProvider(t *testing.T) {
-	fx := loadFixture(t)
-	opts := &OpenOptions{Manifest: manifestWithRemote(t, fx, "remote-x")}
-	// With a credential the provider connects to the manifest's address, where
-	// nothing listens: the failure is transient and names the vault's table.
-	t.Setenv("VAULT_TOKEN", "test-token")
-	_, err := Open("remote-x", opts)
-	e := expectErr(t, err, ErrProviderUnavailable, "provider_unavailable", "[vaults.remote-x]")
-	if !strings.Contains(e.Message, "hashicorp-vault is unavailable") || !e.Transient() {
-		t.Fatalf("unexpected remote error: %v", err)
-	}
-	// Without VAULT_TOKEN the process is unauthenticated before any request
-	// is made, unless the developer has another Vault credential (such as
-	// ~/.vault-token), in which case the address is still unreachable.
-	os.Unsetenv("VAULT_TOKEN")
-	_, err = Open("remote-x", opts)
-	e, ok := AsError(err)
-	if !ok {
-		t.Fatalf("expected *Error without VAULT_TOKEN, got %T: %v", err, err)
-	}
-	switch e.Code {
-	case "unauthenticated":
-		if !errors.Is(err, ErrUnauthenticated) || e.Transient() || !strings.Contains(e.Message, "not authenticated to hashicorp-vault") || !strings.Contains(e.Hint, "VAULT_TOKEN") {
-			t.Fatalf("unexpected unauthenticated error: %v", err)
-		}
-	case "provider_unavailable":
-		if !errors.Is(err, ErrProviderUnavailable) || !e.Transient() {
-			t.Fatalf("unexpected unavailable error: %v", err)
-		}
-	default:
-		t.Fatalf("unexpected remote error without VAULT_TOKEN: %v", err)
-	}
-	// A vault without a table is still the local file.
-	reader, err := Open(fx.vault, opts)
-	if err != nil {
-		t.Fatalf("open local vault with manifest: %v", err)
-	}
-	defer reader.Close()
-	if get(t, reader, "database-password").Value.Text() != latestValue {
-		t.Fatalf("local vault value")
-	}
 }
 
 func TestRemoteProviderCodesMapToSentinels(t *testing.T) {

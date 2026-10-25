@@ -82,21 +82,21 @@ try {
 }
 ```
 
-`new SecretReader(vault, { home, passphrase, passphraseFile, environment, manifest })`
-opens the vault; with no options it behaves like the CLI (`SOURCEORRERY_HOME`,
-then the OS credential store, `SOURCEORRERY_PASSPHRASE`,
-`SOURCEORRERY_PASSPHRASE_FILE`). `environment: false` ignores the two
-passphrase variables.
+`new SecretReader(vault, { home, recoveryKey, recoveryKeyFile, environment })`
+opens the vault. With the default options, `SOURCEORRERY_HOME` locates the
+vault; this machine's key in the OS credential store opens it, else the
+recovery key: `recoveryKey`, `SOURCEORRERY_RECOVERY_KEY`, then
+`recoveryKeyFile` or `SOURCEORRERY_RECOVERY_KEY_FILE`. `environment: false`
+ignores the two variables. The SDK never prompts and never asks the
+vault's view check.
 
-`manifest` is the `sourceorrery.toml` whose `[vaults.<name>]` tables say
-which vaults are remote and where; the default is the nearest one above
-the current directory, as `sourceorrery run` finds it. A vault declared
-there is opened at its provider rather than as a local file, with the
-credentials the provider's own tools expect from the environment: the
-manifest never holds any. [HashiCorp Vault](../providers/hashicorp-vault.md) takes
-`VAULT_TOKEN` or the other sources it documents,
-[AWS Secrets Manager](../providers/aws-secrets-manager.md) the AWS default
-credential chain, never the manifest. A vault without a table stays local.
+A secret the vault keeps at a provider
+([HashiCorp Vault](../providers/hashicorp-vault.md),
+[AWS Secrets Manager](../providers/aws-secrets-manager.md),
+[Azure Key Vault](../providers/azure-key-vault.md)) is read there through
+the vault's connection, with the same calls: the connection signs in with
+the credentials it stores, or with the provider's own sign-in on the
+machine. No provider is contacted until a secret it keeps is read.
 
 | Call | Returns |
 |------|---------|
@@ -147,7 +147,7 @@ Classes: `VaultNotFoundError`, `VaultLockedError`,
 `SecretDisabledError`, `SecretNotYetValidError` (`transient` is true),
 `SecretExpiredError`, `IntegrityError`, `UnsupportedError`,
 `InvalidArgumentError`, `InvalidNameError`, `ManifestError`,
-`PermissionDeniedError`, `StorageError`, and for remote vaults
+`PermissionDeniedError`, `StorageError`, and for secrets kept at a provider
 `UnauthenticatedError` (the provider has no credentials for this process)
 and `ProviderUnavailableError` (it could not be reached; `transient` is
 true). See [the SDK overview](index.md#errors).

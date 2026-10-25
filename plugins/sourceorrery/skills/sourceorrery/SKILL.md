@@ -30,10 +30,17 @@ repository. Follow them even when a shortcut looks easier.
 - **Values already in a `.env` file** move with `sourceorrery import`,
   which stores them without showing them (the sourceorrery-migrate-env
   skill has the whole procedure).
-- **Do not create or store vault passphrases.** Prefer the OS credential
-  store; where a passphrase is needed, the user chooses and types it.
-- **Ask first** before `secret delete`, `secret purge`, `vault destroy`,
-  `vault protector remove` or `audit --acknowledge`.
+- **Never see a recovery key or a view-check password.** A vault's
+  recovery key opens it anywhere and is shown once, when the vault is
+  made: the user creates vaults themselves (`sourceorrery setup`, in their
+  own terminal). If they ask you to create one, run
+  `sourceorrery vault create <name> --recovery-key-out <file>` with a path
+  they choose outside the repository, never print the file, and tell them
+  where it is. Never set `SOURCEORRERY_PASSWORD`, `--password-file` or
+  `--code`: when the vault's view check refuses a command
+  (`permission_denied`), ask the user to run it.
+- **Ask first** before `secret delete`, `secret purge`, `vault destroy` or
+  `audit --acknowledge`.
 - **Never commit** `.env` files with values or `*.sorvault` vault files.
 
 You run as the user, so you could unlock the vault; these rules are the
@@ -52,15 +59,26 @@ If the command is missing, install it: [references/install.md](references/instal
 
 ```bash
 sourceorrery vault list                  # vaults on this machine
-sourceorrery vault create development    # key kept in the OS credential store: nothing to type
-sourceorrery init                        # writes sourceorrery.toml in the current directory
 ```
 
-Where there is no credential store (headless Linux, containers, CI),
-`vault create` asks for a passphrase twice: ask the user to run it, and
-see [references/install.md#headless](references/install.md#headless).
+If there is no vault, ask the user to run `sourceorrery setup` in their
+own terminal and wait: it creates the vault on screens and shows its
+recovery key once, for them alone. Where there is no credential store
+(headless Linux, containers, CI) the vault opens with that key from a
+file: [references/install.md#headless](references/install.md#headless).
 
-`sourceorrery.toml` declares the secrets; commit it:
+Then write the manifest from the vault's secrets, by name:
+
+```bash
+sourceorrery init --all                                      # every secret the vault holds
+sourceorrery init --secret database-url --secret stripe-key  # or just these
+```
+
+`init` adds to an existing `sourceorrery.toml` in place and records the
+folder in the vault. A secret the vault does not have yet is stored first
+(the user runs `sourceorrery secret set <name>`, or `sourceorrery import`
+moves a `.env` file in). `sourceorrery.toml` declares the secrets; commit
+it:
 
 ```toml
 [project]
@@ -75,22 +93,22 @@ env = "STRIPE_SECRET_KEY"        # delivered as this variable (default: STRIPE_K
 required = false                 # the program still starts without it
 ```
 
-A `value` key is a parse error. The template `init` writes declares
-`database-password` as an example: remove it if the project has no such
-secret.
+A `value` key is a parse error, and so is a provider: where a secret is
+kept (the vault file, or a provider such as AWS Secrets Manager through a
+connection the vault holds) is the vault's record, never the manifest's.
 
 ## 3. Store and inspect secrets
 
 | Task | Command |
 |------|---------|
-| A new value, typed by the user | the user runs `sourceorrery secret set <name>` |
+| A new value, typed by the user | the user runs `sourceorrery secret set <name>` (`--storage aws-secrets-manager`, `hashicorp-vault` or `azure-key-vault` keeps it at a provider the vault connects to) |
 | Values from a `.env` file | `sourceorrery import .env` |
 | A value from a file (certificate, key) | `sourceorrery secret set tls-key --from-file ./server.key` |
-| What exists, without values | `sourceorrery secret list`, `secret versions <name>`, `secret get <name>` |
-| Everything the manifest needs is present | `sourceorrery check` |
+| Everything the manifest needs is present | `sourceorrery check` (no view check) |
+| What exists, without values | `sourceorrery secret list`, `secret versions <name>`, `secret get <name>` (they ask the vault's view check, when it has one: then the user runs them) |
 | Disable or expire a version | `sourceorrery secret update <name> --disable`, `--expires 2027-01-01T00:00:00Z` |
 | Rotate a credential | `sourceorrery secret rotate <name>` (the new value comes from the manifest's `[rotation.<name>]` issue command, or the user types it) |
-| Who read what | `sourceorrery audit` |
+| Who read what | `sourceorrery audit` (asks the view check too) |
 
 Every `set` adds an immutable version; a read takes the newest enabled
 version inside its time window. Add `-o json` to any command for

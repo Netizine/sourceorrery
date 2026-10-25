@@ -10,8 +10,9 @@
 //!
 //! Vaults are opened for inspection, as `audit` opens them: a vault blocked
 //! by an unacknowledged audit-log truncation still shows its audit log,
-//! and refuses everything else. Unlocking may prompt for a passphrase, so
-//! it happens outside the screen: before the browser starts for the vault
+//! and refuses everything else. Opening may prompt for the recovery key
+//! and the view check (the password, an authenticator code), so it
+//! happens outside the screen: before the browser starts for the vault
 //! the command names, and with the screen suspended for one picked from
 //! the vault list.
 //!
@@ -23,17 +24,23 @@
 //! and only once confirmed (`ui::edit`); `--read-only` refuses them all. A
 //! new value is read at the ordinary hidden prompt with the screen
 //! suspended and passed straight to the vault: it is never drawn, and the
-//! browser keeps nothing of it.
+//! browser keeps nothing of it. The vault's own settings (its view check,
+//! recovery key and storage) change on the setup screens, which `c` and,
+//! on the Vaults view, `n` show in place of the browser.
+//!
+//! Vaults open through [`Routed`], as `run` and `secret` open them: a
+//! secret a connection stores is listed and changed at its provider.
 
 mod app;
 mod edit;
 mod editor;
 #[cfg(test)]
 mod fake;
+pub(crate) mod init;
 mod keys;
 mod search;
 mod session;
-pub mod setup;
+pub(crate) mod setup;
 #[cfg(test)]
 mod snapshot;
 mod source;
@@ -52,6 +59,7 @@ use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use sourceorrery_core::{SecretBytes, SecretError};
+use sourceorrery_provider::Routed;
 use time::OffsetDateTime;
 
 use self::app::{App, Request, VaultEntry};
@@ -86,7 +94,8 @@ pub fn run(ctx: &Ctx, args: &UiArgs) -> anyhow::Result<()> {
     // is taken over, and a failure ends the command as it would any other.
     if let Some(name) = ctx.selected_vault()? {
         let vault = ctx.inspect(&name)?;
-        app.set_session(Session::open(Box::new(vault))?);
+        ctx.check_view(&vault)?;
+        app.set_session(Session::open(Box::new(Routed::new(vault)))?);
     }
 
     let mut terminal = match ratatui::try_init() {
@@ -142,6 +151,21 @@ fn event_loop(
                 app.write_version(value);
                 last_key = Instant::now();
             }
+            Some(Request::Setup(name)) => {
+                // The setup screens take the terminal over and give it back.
+                let result = setup::run_on(ctx, terminal, name.as_deref(), theme)
+                    .map_err(|err| format!("{err:#}"));
+                terminal.clear()?;
+                match list_vaults(ctx) {
+                    Ok(vaults) => app.set_vaults(vaults),
+                    Err(err) => {
+                        app.message =
+                            Some(app::Message::Error(format!("listing vaults failed: {err}")));
+                    }
+                }
+                app.set_up(result);
+                last_key = Instant::now();
+            }
             Some(Request::ListVaults) => match list_vaults(ctx) {
                 Ok(vaults) => app.set_vaults(vaults),
                 Err(err) => {
@@ -155,13 +179,15 @@ fn event_loop(
     Ok(())
 }
 
-/// Unlock and read a vault picked in the browser, with the screen
-/// suspended so the passphrase prompt (if any) is the ordinary one.
+/// Open and read a vault picked in the browser, with the screen
+/// suspended so the recovery-key and view-check prompts (if any) are
+/// the ordinary ones.
 fn open(ctx: &Ctx, name: &str) -> Result<Session, String> {
     let mut stderr = std::io::stderr();
     let _ = writeln!(stderr, "Opening vault '{name}' for the browser…");
     let vault = ctx.inspect(name).map_err(|err| describe(&err))?;
-    Session::open(Box::new(vault)).map_err(|err| format!("{err} ({})", err.code()))
+    ctx.check_view(&vault).map_err(|err| describe(&err))?;
+    Session::open(Box::new(Routed::new(vault))).map_err(|err| format!("{err} ({})", err.code()))
 }
 
 /// A new value for `name`, typed twice at the hidden prompt with the screen
@@ -170,7 +196,8 @@ fn read_value(name: &str) -> Result<SecretBytes, String> {
     let mut stderr = std::io::stderr();
     let _ = writeln!(
         stderr,
-        "New version of secret '{}'. The value is not echoed, is stored as typed and is          never shown.",
+        "New version of secret '{}'. The value is not echoed, is stored as typed and is \
+         never shown.",
         crate::output::sanitize(name)
     );
     let first = prompt::read_hidden("Value: ").map_err(|err| err.to_string())?;
@@ -228,38 +255,51 @@ mod tests {
 
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use sourceorrery_core::ConnectionSettings;
     use sourceorrery_core::{
         AuditOperation, AuditOutcome, AuditQuery, SecretBytes, SecretClient, SetSecretOptions,
     };
-    use sourceorrery_crypto::Argon2Params;
-    use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, SqliteVault, StaticPassphrase};
+    use sourceorrery_provider::{ConnectionClient, Routed};
+    use sourceorrery_storage::{
+        CreateVaultOptions, CredentialStore, NoStore, SecretStorage, SqliteVault, StaticRecoveryKey,
+    };
 
     use super::app::{Action, App, Request, Tab};
-    use super::session::Session;
+    use super::session::{ProjectStatus, Session};
+
+    /// No credential store: these vaults open with their recovery keys, and
+    /// a test never touches the real OS store.
+    fn no_store() -> std::sync::Arc<dyn CredentialStore> {
+        std::sync::Arc::new(NoStore)
+    }
     use super::theme::Theme;
     use super::view;
 
     const CANARY: &str = "ui-canary-4f1c-value";
-    const PASSPHRASE: &str = "ui-test-passphrase";
 
-    fn vault(dir: &tempfile::TempDir) -> SqliteVault {
-        let spec = ProtectorSpec::Passphrase {
-            passphrase: SecretBytes::from(PASSPHRASE),
-            params: Argon2Params::TESTING,
-        };
+    /// The test vault, routed as the browser opens it.
+    fn vault(dir: &tempfile::TempDir) -> Routed {
+        Routed::new(vault_and_key(dir).0)
+    }
+
+    /// The test vault and the recovery key that opens it again.
+    fn vault_and_key(dir: &tempfile::TempDir) -> (SqliteVault, String) {
         let path = dir.path().join("dev.sorvault");
-        let vault = SqliteVault::create(&path, "dev", CreateVaultOptions::default(), spec).unwrap();
+        let created =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), no_store()).unwrap();
+        let key = created.recovery_key.to_string();
+        let vault = created.vault;
         for name in ["api-key", "database-password", "signing-key", "retired"] {
             vault
                 .set_secret(name, SecretBytes::from(CANARY), SetSecretOptions::default())
                 .unwrap();
         }
         vault.delete_secret("retired").unwrap();
-        vault
+        (vault, key)
     }
 
     /// Audited reads so far, by operation.
-    fn reads(vault: &SqliteVault, operation: AuditOperation) -> usize {
+    fn reads(vault: &Routed, operation: AuditOperation) -> usize {
         vault
             .audit_events(AuditQuery {
                 operation: Some(operation),
@@ -415,7 +455,8 @@ mod tests {
     fn a_truncated_vault_shows_its_log_and_is_not_asked_for_secrets() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dev.sorvault");
-        drop(vault(&dir));
+        let (vault, key) = vault_and_key(&dir);
+        drop(vault);
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             conn.execute(
@@ -424,18 +465,18 @@ mod tests {
             )
             .unwrap();
         }
-        let vault = Rc::new(
+        let vault = Rc::new(Routed::new(
             SqliteVault::open_with(
                 &path,
-                &StaticPassphrase::new(PASSPHRASE),
+                no_store(),
+                &StaticRecoveryKey::new(key),
                 sourceorrery_storage::OpenOptions {
                     allow_quarantined: true,
-                    ..Default::default()
                 },
             )
             .unwrap(),
-        );
-        let failures = |vault: &SqliteVault| {
+        ));
+        let failures = |vault: &Routed| {
             vault
                 .audit_events(AuditQuery::default())
                 .unwrap()
@@ -558,6 +599,147 @@ mod tests {
             screens
                 .iter()
                 .all(|s| !s.contains(NEW_VALUE) && !s.contains(CANARY)),
+            "a value reached the screen"
+        );
+    }
+
+    /// A vault with a secret at a connection (a second vault file stands in
+    /// for the provider) and two project folders, one of them gone: the
+    /// browser lists the secret with its storage, adds one there, shows the
+    /// projects as the disk has them and forgets the one that is gone.
+    #[test]
+    #[allow(clippy::too_many_lines)] // one vault, its storage and its projects
+    fn storage_and_projects_are_shown_and_changed_through_the_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, _) = vault_and_key(&dir);
+        let provider_path = dir.path().join("provider.sorvault");
+        let created = SqliteVault::create(
+            &provider_path,
+            "provider",
+            CreateVaultOptions::default(),
+            no_store(),
+        )
+        .unwrap();
+        let provider_key = created.recovery_key.to_string();
+        drop(created);
+        let connection = vault
+            .add_connection(
+                &ConnectionSettings::HashicorpVault {
+                    address: "https://vault.example.com:8200".to_owned(),
+                    mount: "secret".to_owned(),
+                    namespace: None,
+                },
+                None,
+            )
+            .unwrap()
+            .id;
+        let found = tempfile::tempdir().unwrap();
+        std::fs::write(
+            found.path().join("sourceorrery.toml"),
+            "[project]\nname = \"shop\"\nvault = \"dev\"\n\n[secrets.api-key]\n\n[secrets.remote-token]\n",
+        )
+        .unwrap();
+        let gone = tempfile::tempdir().unwrap();
+        let gone_path = gone.path().to_path_buf();
+        vault.link_project(found.path(), "shop").unwrap();
+        vault.link_project(&gone_path, "old-site").unwrap();
+        drop(gone);
+        let routed = Routed::with_opener(vault, move |_, _, _| {
+            let provider = SqliteVault::open(
+                &provider_path,
+                no_store(),
+                &StaticRecoveryKey::new(provider_key.as_str()),
+            )?;
+            let client: ConnectionClient = Box::new(provider);
+            Ok(client)
+        });
+        routed
+            .set_secret_in(
+                &SecretStorage::Connection(connection.clone()),
+                "remote-token",
+                SecretBytes::from(CANARY),
+                SetSecretOptions::default(),
+            )
+            .unwrap();
+        let vault = Rc::new(routed);
+
+        let mut app = App::new(Vec::new());
+        app.set_session(Session::open(Box::new(Rc::clone(&vault))).unwrap());
+        let session = app.session.as_ref().unwrap();
+        assert_eq!(session.storage.get("remote-token"), Some(&connection));
+        assert!(session.secrets.iter().any(|p| p.name == "remote-token"));
+        assert_eq!(session.projects.len(), 2);
+        assert!(matches!(
+            session.projects[0].status,
+            ProjectStatus::Found { ref secrets, .. } if secrets.len() == 2
+        ));
+        assert_eq!(session.projects[1].status, ProjectStatus::Missing);
+        assert_eq!(session.projects_using("remote-token").len(), 1);
+
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        let mut screens = vec![draw(&mut terminal, &mut app)];
+        for text in [
+            "password",
+            "storage: SourceOrrery, HashiCorp Vault",
+            "HashiCorp",
+        ] {
+            assert!(screens[0].contains(text), "{text}: {}", screens[0]);
+        }
+        app.update(Action::Show(Tab::Secrets));
+        screens.push(draw(&mut terminal, &mut app));
+        assert!(screens[1].contains("STORAGE"), "{}", screens[1]);
+
+        // A new secret at the connection, its value from the prompt.
+        app.update(Action::Add);
+        for c in "second-token".chars() {
+            app.update(Action::Input(c));
+        }
+        app.update(Action::Down);
+        app.update(Action::Input(' '));
+        app.update(Action::Commit);
+        screens.push(draw(&mut terminal, &mut app));
+        app.update(Action::Commit);
+        assert_eq!(
+            app.take_request(),
+            Some(Request::ReadValue("second-token".to_owned()))
+        );
+        app.write_version(Ok(SecretBytes::from(CANARY)));
+        assert!(
+            matches!(app.message, Some(super::app::Message::Info(_))),
+            "{:?}",
+            app.message
+        );
+        assert_eq!(
+            vault.vault().storage_of("second-token").unwrap(),
+            Some(SecretStorage::Connection(connection.clone()))
+        );
+
+        // The project that is gone is forgotten; the one there is not.
+        app.update(Action::Show(Tab::Projects));
+        screens.push(draw(&mut terminal, &mut app));
+        assert!(screens.last().unwrap().contains("✗ gone"));
+        app.update(Action::Unlink);
+        assert!(matches!(app.message, Some(super::app::Message::Error(_))));
+        app.update(Action::Down);
+        app.update(Action::Open);
+        screens.push(draw(&mut terminal, &mut app));
+        app.update(Action::Unlink);
+        app.update(Action::Commit);
+        assert_eq!(vault.vault().projects().unwrap().len(), 1);
+        assert_eq!(reads(&vault, AuditOperation::ProjectUnlink), 1);
+        app.update(Action::Back);
+        app.update(Action::Top);
+        app.update(Action::Open);
+        screens.push(draw(&mut terminal, &mut app));
+        assert!(
+            screens.last().unwrap().contains("remote-token"),
+            "{}",
+            screens.last().unwrap()
+        );
+
+        assert_eq!(reads(&vault, AuditOperation::SecretGet), 0);
+        assert!(
+            screens.iter().all(|s| !s.contains(CANARY)),
             "a value reached the screen"
         );
     }

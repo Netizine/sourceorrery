@@ -1,7 +1,7 @@
 //! Read one secret and report its size, never its value.
 //!
 //! ```bash
-//! export SOURCEORRERY_PASSPHRASE=...   # or rely on the OS credential store
+//! export SOURCEORRERY_RECOVERY_KEY=...   # or rely on this machine's key
 //! cargo run -p sourceorrery --example get_secret -- development database-password
 //! ```
 

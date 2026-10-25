@@ -10,6 +10,7 @@ mod dotenv;
 mod integrations;
 mod output;
 mod prompt;
+#[cfg(feature = "ui")]
 mod qr;
 mod strength;
 #[cfg(feature = "ui")]
@@ -48,8 +49,6 @@ fn main() -> ExitCode {
         Command::Import(args) => commands::import::run(&ctx, args),
         Command::Check(args) => commands::project::check(&ctx, args),
         Command::Run(args) => return commands::project::run(&ctx, args),
-        Command::Backup(args) => commands::backup::backup(&ctx, args),
-        Command::Restore(args) => commands::backup::restore(&ctx, args),
         #[cfg(feature = "ui")]
         Command::Ui(args) => ui::run(&ctx, args),
         Command::Completions(args) => commands::completions::run(args),
@@ -71,8 +70,10 @@ fn report(err: &anyhow::Error, format: cli::OutputFormat) -> ExitCode {
 
 fn init_tracing(verbosity: u8) {
     use tracing_subscriber::EnvFilter;
+    // At the default verbosity the TLS verifier's own report of a refused
+    // certificate is left out: the error that follows carries its reason.
     let default = match verbosity {
-        0 => "warn",
+        0 => "warn,rustls_platform_verifier=off",
         1 => "info",
         2 => "debug",
         _ => "trace",

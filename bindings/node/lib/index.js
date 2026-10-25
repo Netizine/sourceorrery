@@ -158,9 +158,9 @@ class Secret {
   }
 }
 
-function passphraseBytes(passphrase) {
-  if (passphrase == null) return null;
-  return Buffer.isBuffer(passphrase) ? passphrase : Buffer.from(String(passphrase), 'utf8');
+function recoveryKeyBytes(recoveryKey) {
+  if (recoveryKey == null) return null;
+  return Buffer.isBuffer(recoveryKey) ? recoveryKey : Buffer.from(String(recoveryKey), 'utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -169,24 +169,22 @@ function passphraseBytes(passphrase) {
 
 /**
  * A read-only handle on one vault, unlocked the way the CLI unlocks it: OS
- * credential store, then `options.passphrase`, `SOURCEORRERY_PASSPHRASE`,
- * then `options.passphraseFile` / `SOURCEORRERY_PASSPHRASE_FILE`. Never
- * prompts. A vault that `options.manifest` (default: the nearest
- * `sourceorrery.toml`) declares in a `[vaults.<name>]` table is opened at
- * its remote provider instead of as a local file.
+ * credential store, then `options.recoveryKey`, `SOURCEORRERY_RECOVERY_KEY`,
+ * then `options.recoveryKeyFile` / `SOURCEORRERY_RECOVERY_KEY_FILE`. Never
+ * prompts. A secret one of the vault's connections stores is read at that
+ * provider.
  */
 class SecretReader {
   constructor(vault, options = {}) {
-    const { home, passphrase, passphraseFile, environment, manifest } = options;
+    const { home, recoveryKey, recoveryKeyFile, environment } = options;
     this._native = guarded(
       () =>
         new native.NativeReader(
           vault,
           home ?? null,
-          passphraseBytes(passphrase),
-          passphraseFile ?? null,
+          recoveryKeyBytes(recoveryKey),
+          recoveryKeyFile ?? null,
           environment ?? true,
-          manifest ?? null,
         ),
     );
     this._vault = vault;
@@ -252,9 +250,9 @@ class Project {
   }
 
   static load(manifest, options = {}) {
-    const { home, passphrase, passphraseFile, environment } = options;
+    const { home, recoveryKey, recoveryKeyFile, environment } = options;
     const loaded = guarded(() =>
-      native.loadProject(manifest ?? null, home ?? null, passphraseBytes(passphrase), passphraseFile ?? null, environment ?? true),
+      native.loadProject(manifest ?? null, home ?? null, recoveryKeyBytes(recoveryKey), recoveryKeyFile ?? null, environment ?? true),
     );
     const secrets = loaded.takeEntries().map((value) => {
       const entry = JSON.parse(value.metadataJson);

@@ -1,12 +1,12 @@
-//! Opening the vault a `[vaults.<name>]` manifest table describes.
+//! Opening the provider a connection reaches.
 
 use std::fmt;
 
 use sourceorrery_core::{
-    Provider, RemoteVault, Result, SecretClient, SecretError, VaultDescriptor,
+    ConnectionSettings, Credentials, Provider, Result, SecretClient, SecretError, VaultDescriptor,
 };
 
-/// An open remote vault: a synchronous client (a [`crate::Blocking`]
+/// An open connection: a synchronous client (a [`crate::Blocking`]
 /// adapter over the provider's async client) and what the provider says
 /// about the vault.
 pub struct Remote {
@@ -24,24 +24,33 @@ impl fmt::Debug for Remote {
     }
 }
 
-/// Open the remote vault `name`, as its manifest table `config` describes.
+/// Open the provider `settings` reach, as the vault `name`.
 ///
-/// Credentials come from the provider's own environment, platform identity
-/// or credential file, as its SDK or CLI would find them; nothing is read
-/// from the manifest besides the address. A provider this build does not
-/// include is [`SecretError::Unsupported`]; a provider that finds no
-/// credentials is [`SecretError::Unauthenticated`]; one that cannot be
-/// reached is [`SecretError::ProviderUnavailable`].
+/// With `credentials` (a connection's stored credentials) the provider signs
+/// in with those alone. Without, it uses its own chain: the environment,
+/// platform identity or credential file, as its SDK or CLI would find them.
+/// Settings that fail [`ConnectionSettings::validate`] and credentials for
+/// another provider are [`SecretError::InvalidArgument`]; a provider that
+/// finds no credentials is [`SecretError::Unauthenticated`]; one that cannot
+/// be reached is [`SecretError::ProviderUnavailable`].
 ///
 /// A provider this build leaves out (its Cargo feature off) is
 /// `unsupported`, naming the provider.
-pub fn open_remote(name: &str, config: &RemoteVault) -> Result<Remote> {
-    match config.provider() {
+pub fn open_connection(
+    name: &str,
+    settings: &ConnectionSettings,
+    credentials: Option<&Credentials>,
+) -> Result<Remote> {
+    settings.validate()?;
+    if let Some(credentials) = credentials {
+        credentials.check_for(settings)?;
+    }
+    match settings.provider() {
         #[cfg(feature = "provider-vault")]
         Provider::HashicorpVault => {
             use sourceorrery_provider_vault::{Auth, Settings, VaultClient};
-            let settings = Settings::from_manifest(config)?;
-            let auth = Auth::from_env()?;
+            let settings = Settings::from_connection(settings)?;
+            let auth = Auth::from_credentials(credentials)?;
             let client = crate::Blocking::connect(|| VaultClient::connect(name, &settings, auth))?;
             let descriptor = client.inner().descriptor().clone();
             Ok(Remote {
@@ -52,15 +61,32 @@ pub fn open_remote(name: &str, config: &RemoteVault) -> Result<Remote> {
         #[cfg(feature = "provider-aws")]
         Provider::AwsSecretsManager => {
             use sourceorrery_provider_aws::{AwsClient, Settings};
-            let settings = Settings::from_manifest(config)?;
-            let client = crate::Blocking::connect(|| AwsClient::connect(name, &settings))?;
+            let settings = Settings::from_connection(settings)?;
+            let client =
+                crate::Blocking::connect(|| AwsClient::connect(name, &settings, credentials))?;
             let descriptor = client.inner().descriptor().clone();
             Ok(Remote {
                 client: Box::new(client),
                 descriptor,
             })
         }
-        #[cfg(not(all(feature = "provider-vault", feature = "provider-aws")))]
+        #[cfg(feature = "provider-azure")]
+        Provider::AzureKeyVault => {
+            use sourceorrery_provider_azure::{AzureClient, Settings};
+            let settings = Settings::from_connection(settings)?;
+            let client =
+                crate::Blocking::connect(|| AzureClient::connect(name, &settings, credentials))?;
+            let descriptor = client.inner().descriptor().clone();
+            Ok(Remote {
+                client: Box::new(client),
+                descriptor,
+            })
+        }
+        #[cfg(not(all(
+            feature = "provider-vault",
+            feature = "provider-aws",
+            feature = "provider-azure"
+        )))]
         provider => Err(not_built_in(name, provider)),
     }
 }

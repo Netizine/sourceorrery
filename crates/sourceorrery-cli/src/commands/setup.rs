@@ -1,127 +1,100 @@
-//! `sourceorrery setup`: the guided first run. On a terminal, the screens
-//! (`ui::setup`, Cargo feature `ui`); anywhere else, or with `--guide`, the
-//! same six steps as commands on stderr, so a script, a pipe or a minimal
-//! build gets the plan rather than a refusal.
+//! `sourceorrery setup`: on a terminal, the setup screens (`ui::setup`),
+//! which create a vault or change one. With `--guide`, without a terminal
+//! or as JSON, the one `vault create` command that does the same without
+//! them, with its flags, on stderr (or as JSON on stdout).
 
 use crate::cli::SetupArgs;
 use crate::context::Ctx;
 use crate::output;
 
-/// The vault the steps name when `--vault` names none.
+/// The vault the guide names when `--vault` names none.
 const DEFAULT_VAULT: &str = "development";
 
 pub fn run(ctx: &Ctx, args: &SetupArgs) -> anyhow::Result<()> {
     #[cfg(feature = "ui")]
-    if !args.guide && !ctx.json() && {
-        use std::io::IsTerminal as _;
-        std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
-    } {
-        return crate::ui::setup::run(ctx, args);
+    if !args.guide && !ctx.json() && crate::commands::on_a_terminal() {
+        return crate::ui::setup::run(ctx, ctx.vault_flag.as_deref(), args.theme);
     }
-    guide(ctx, args)
+    #[cfg(not(feature = "ui"))]
+    let _ = args;
+    guide(ctx)
 }
 
-/// One step of the guide.
+/// One optional flag set of the command.
 #[derive(serde::Serialize)]
-struct GuideStep {
-    step: usize,
-    title: &'static str,
+struct GuideOption {
+    flags: &'static str,
     what: &'static str,
-    commands: Vec<String>,
 }
 
-fn steps(vault: &str, secret: &str) -> Vec<GuideStep> {
-    let step = |step, title, what, commands: Vec<String>| GuideStep {
-        step,
-        title,
-        what,
-        commands,
-    };
+fn options() -> Vec<GuideOption> {
+    let option = |flags, what| GuideOption { flags, what };
     vec![
-        step(
-            1,
-            "Vault",
-            "an encrypted file for this machine, unlocked by a strong passphrase; the OS \
-             credential store can hold a second key so day-to-day use does not prompt",
-            vec![
-                format!("sourceorrery vault create {vault} --protector passphrase"),
-                "sourceorrery vault passphrase generate      # a passphrase to type, if you want one made".to_owned(),
-                format!("sourceorrery vault protector add --kind os-keyring --vault {vault}   # optional"),
-            ],
+        option(
+            "--password-file FILE",
+            "the view check's password, asked before anyone views the vault or reveals a value; \
+             `run`, `check`, `init` and the SDKs never ask it",
         ),
-        step(
-            2,
-            "First secret",
-            "the database password, typed at a hidden prompt (it must rate \"good\") or generated \
-             and piped in; never a command-line argument",
-            vec![
-                format!("sourceorrery secret set {secret} --vault {vault}"),
-                format!(
-                    "sourceorrery vault passphrase generate --length 24 | sourceorrery secret set {secret} --vault {vault}"
-                ),
-            ],
+        option(
+            "--hashicorp-vault ADDRESS [--hashicorp-vault-mount MOUNT] \
+             [--hashicorp-vault-namespace NAMESPACE] [--hashicorp-vault-token-file FILE]",
+            "a connection to a HashiCorp Vault server",
         ),
-        step(
-            3,
-            "Recovery",
-            "codes that unlock the vault in place of the passphrase, shown once; an optional \
-             hint shown at the prompt",
-            vec![
-                format!("sourceorrery vault recovery codes --vault {vault}"),
-                format!("sourceorrery vault passphrase hint \"the usual phrase\" --vault {vault}"),
-            ],
+        option(
+            "--aws-secrets-manager REGION [--aws-secrets-manager-prefix PREFIX] \
+             [--aws-access-key-id ID --aws-secret-access-key-file FILE]",
+            "a connection to AWS Secrets Manager",
         ),
-        step(
-            4,
-            "Second factor",
-            "an authenticator app enrolled from a QR code and proven with one code",
-            vec![format!("sourceorrery vault 2fa enable --vault {vault}")],
-        ),
-        step(
-            5,
-            "Reveal guard",
-            "what `secret get --reveal` and `backup` must ask for again: the passphrase, a \
-             code, both or nothing; `run`, `check` and the SDKs are untouched",
-            vec![format!(
-                "sourceorrery vault guard --reveal passphrase,second-factor --vault {vault}"
-            )],
-        ),
-        step(
-            6,
-            "Project",
-            "the manifest that replaces .env, checked, and the command that starts your \
-             program with the secret in its environment",
-            vec![
-                format!("sourceorrery init --vault-name {vault}"),
-                "sourceorrery check".to_owned(),
-                "sourceorrery run -- <your command>".to_owned(),
-            ],
+        option(
+            "--azure-key-vault URL [--azure-tenant-id ID --azure-client-id ID \
+             --azure-client-secret-file FILE]",
+            "a connection to an Azure Key Vault",
         ),
     ]
 }
 
-/// The steps as commands, on stderr (or as JSON on stdout).
-pub fn guide(ctx: &Ctx, args: &SetupArgs) -> anyhow::Result<()> {
+/// The command, the flags it may take, and what comes after it, on stderr
+/// (or as JSON on stdout).
+pub fn guide(ctx: &Ctx) -> anyhow::Result<()> {
     let vault = ctx.vault_flag.as_deref().unwrap_or(DEFAULT_VAULT);
-    let steps = steps(vault, &args.secret);
+    let command =
+        format!("sourceorrery vault create {vault} --recovery-key-out {vault}.recovery-key");
+    let then = [
+        format!("sourceorrery secret set NAME --vault {vault}"),
+        format!("sourceorrery init --vault {vault}"),
+        "sourceorrery run -- <your command>".to_owned(),
+    ];
+    let options = options();
     if ctx.json() {
-        return output::json(&serde_json::json!({ "vault": vault, "steps": steps }));
+        return output::json(&serde_json::json!({
+            "vault": vault,
+            "command": command,
+            "options": options,
+            "then": then,
+        }));
     }
-    eprintln!("SourceOrrery setup: from the first vault to the first run, in six steps.");
-    if cfg!(feature = "ui") && !args.guide {
-        eprintln!(
-            "(The guided screens need an interactive terminal; these are the same steps as commands.)"
-        );
+    eprintln!("SourceOrrery setup without the screens: one command creates the vault, with");
+    eprintln!("its view check's password and its connections, at once.");
+    eprintln!();
+    eprintln!("  {command}");
+    eprintln!();
+    eprintln!("  The recovery key goes to that file, readable by you only (without the flag it");
+    eprintln!("  is printed once): it opens the vault wherever this machine's key cannot.");
+    eprintln!();
+    eprintln!("Optional, on the same command:");
+    for option in &options {
+        eprintln!("  {}", option.flags);
+        eprintln!("      {}", option.what);
     }
-    for step in steps {
-        eprintln!();
-        eprintln!("{}. {}", step.step, step.title);
-        eprintln!("   {}", step.what);
-        for command in &step.commands {
-            eprintln!("     {command}");
-        }
+    eprintln!("  A connection uses this machine's sign-in for the provider, or the credentials");
+    eprintln!("  in the files named, sealed in the vault. A secret value is never a flag.");
+    eprintln!();
+    eprintln!("Then:");
+    for command in &then {
+        eprintln!("  {command}");
     }
     eprintln!();
-    eprintln!("Details: docs/getting-started.md and `sourceorrery <command> --help`.");
+    eprintln!("In a terminal, `sourceorrery setup` does the same on screens, and enrols an");
+    eprintln!("authenticator app for the view check.");
     Ok(())
 }

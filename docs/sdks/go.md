@@ -95,18 +95,21 @@ defer secret.Close()                  // zeroises the value
 connect(secret.Value.Text())
 ```
 
-`Open(vault, nil)` behaves like the CLI: `SOURCEORRERY_HOME` locates the
-vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`, then
-`SOURCEORRERY_PASSPHRASE_FILE` unlock it. `&sourceorrery.OpenOptions{Home,
-Passphrase, PassphraseFile, IgnoreEnvironment, Manifest}` overrides any of
-that. `Manifest` names the `sourceorrery.toml` whose `[vaults.<name>]`
-tables say which vaults are remote and at which provider (default: the
-nearest one above the current directory); a vault with such a table is
-opened at its provider instead of as a local file. Credentials come from
-the provider's own environment, never from the manifest: [HashiCorp
-Vault](../providers/hashicorp-vault.md) takes `VAULT_TOKEN` or the other
-sources it documents, [AWS Secrets Manager](../providers/aws-secrets-manager.md)
-the AWS default credential chain.
+With the default options, `SOURCEORRERY_HOME` locates the vault;
+this machine's key in the OS credential store opens it, else the
+recovery key: an explicit one, `SOURCEORRERY_RECOVERY_KEY`, then a file
+or `SOURCEORRERY_RECOVERY_KEY_FILE`. `&sourceorrery.OpenOptions{Home,
+RecoveryKey, RecoveryKeyFile, IgnoreEnvironment}` overrides any of that
+(wipe `RecoveryKey` after use). The SDK never prompts and never asks the
+vault's view check.
+
+A secret the vault keeps at a provider
+([HashiCorp Vault](../providers/hashicorp-vault.md),
+[AWS Secrets Manager](../providers/aws-secrets-manager.md),
+[Azure Key Vault](../providers/azure-key-vault.md)) is read there through
+the vault's connection, with the same calls: the connection signs in with
+the credentials it stores, or with the provider's own sign-in on the
+machine. No provider is contacted until a secret it keeps is read.
 
 | Call | Returns |
 |------|---------|
@@ -140,7 +143,7 @@ switch {
 case errors.Is(err, sourceorrery.ErrLocked):
     var e *sourceorrery.Error
     errors.As(err, &e)
-    log.Println(e.Hint)                       // which passphrase sources were tried
+    log.Println(e.Hint)                       // which recovery-key sources were tried
 case errors.Is(err, sourceorrery.ErrNotFound):
     log.Println(err)                          // "secret ... was not found. Store it with ..."
 case errors.Is(err, sourceorrery.ErrPolicy):  // disabled, not yet valid or expired
@@ -155,7 +158,7 @@ Sentinels: `ErrNotFound`, `ErrVersionNotFound`, `ErrDeleted`,
 `ErrInvalidName`, `ErrInvalidArgument`, `ErrPermissionDenied`,
 `ErrLocked`, `ErrVaultNotFound`, `ErrMigrationRequired`,
 `ErrVaultMismatch`, `ErrManifest`, `ErrCrypto`, `ErrStorage`,
-`ErrUnsupported`, `ErrUnauthenticated` (the remote provider has no
+`ErrUnsupported`, `ErrUnauthenticated` (the provider that stores the secret has no
 credentials for this process), `ErrProviderUnavailable` (it could not be
 reached). `(*Error).Transient()` is true for `not_yet_valid` and
 `provider_unavailable`. See [the SDK overview](index.md#errors).

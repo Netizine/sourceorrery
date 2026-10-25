@@ -16,7 +16,8 @@ The crate opens a vault the way the `sourceorrery` CLI does, reads the
 newest accessible version of a secret (or an exact version), its
 properties, `sourceorrery://vault/name[/version]` references, and every
 secret a project's `sourceorrery.toml` declares. It cannot create, change,
-delete, recover or purge a secret, or touch protectors or the audit log:
+delete, recover or purge a secret, or touch the vault's keys, checks,
+connections or audit log:
 an application that only reads cannot be tricked into writing. It is also
 the core that the Python and JavaScript SDKs are built from.
 
@@ -31,7 +32,7 @@ This crate only reads. Vaults are created, and secrets stored, with the
 
 ```bash
 cargo install --locked sourceorrery-cli      # or a prebuilt binary from the GitHub release
-sourceorrery vault create development
+sourceorrery setup                           # screens: the vault, its checks, its storage
 sourceorrery secret set database-password --vault development
 ```
 
@@ -48,18 +49,22 @@ cargo add sourceorrery
 The crate reads the vault directly (there is no C ABI in between), so it
 needs what the CLI needs to build: Rust 1.91.1 or newer and a C compiler for
 the bundled SQLite, and on Linux `pkg-config` and `libdbus-1-dev` for the
-Secret Service. For headless servers that only use passphrases,
-`cargo add sourceorrery --no-default-features` drops the OS credential
-store (the `os-keyring` feature) and the D-Bus requirement.
+Secret Service. For headless servers that open vaults with their
+recovery keys only, `cargo add sourceorrery --no-default-features` drops
+the OS credential store (the `os-keyring` feature), the providers
+(`remote`) and the D-Bus requirement.
 
-## Unlocking
+## Opening a vault
 
 `SecretReader::open(vault)` looks for the vault under `SOURCEORRERY_HOME`
-or the platform data directory and unlocks it with the OS credential
-store, then `SOURCEORRERY_PASSPHRASE`, then the file named by
-`SOURCEORRERY_PASSPHRASE_FILE`. There is never an interactive prompt.
+or the platform data directory and opens it with this machine's key in
+the OS credential store, else the vault's recovery key from
+`SOURCEORRERY_RECOVERY_KEY` or the file named by
+`SOURCEORRERY_RECOVERY_KEY_FILE`. There is never an interactive prompt, and
+the vault's view check is never asked.
 `SecretReader::open_with(vault, &OpenOptions)` sets a home directory, a
-passphrase or a passphrase file in code.
+recovery key or a recovery-key file in code. A secret the vault keeps at a
+provider is read there, through the vault's connection.
 
 ## Errors
 

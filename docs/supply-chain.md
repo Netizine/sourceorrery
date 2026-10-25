@@ -60,15 +60,18 @@ stored long-lived token for those registries. npm and PyPI also record a **prove
 statement, signed through Sigstore, that ties each published file to the
 commit and the workflow run that built it.
 
-Every registry that supports trusted publishing gets the packages that
-way, from `release.yml` or `ReleasePackages.yaml` in
-`Netizine/sourceorrery`:
+Normal releases use trusted publishing where supported, from `release.yml`
+or `ReleasePackages.yaml` in `Netizine/sourceorrery`. The three provider
+crates needed an initial token-authenticated publication in 0.2.0 before
+crates.io would allow their trusted publishers to be configured; the other
+six crates used OIDC in that release. See the
+[provider publication procedure](release.md#first-provider-publication-for-020).
 
 | Registry | Package | Published with | What you can check |
 |----------|---------|----------------|--------------------|
 | npm | `@sourceorreryai/sdk` and its six platform packages | Trusted publishing | Provenance and registry signatures |
 | PyPI | `sourceorrery` | Trusted publishing | An attestation for every file, and its SHA-256 against the release |
-| crates.io | the six `sourceorrery*` crates | Trusted publishing (a token that lives 30 minutes) | The checksums in `Cargo.lock` |
+| crates.io | the nine `sourceorrery*` crates | Trusted publishing (a token that lives 30 minutes); the three providers' initial 0.2.0 publication used the scoped bootstrap token described above | The checksums in `Cargo.lock` |
 | NuGet | `SourceOrrery` | Trusted publishing (a key that lives one hour) | nuget.org's repository signature |
 | Maven Central | `ai.sourceorrery:sourceorrery` | A Central user token (Central has no trusted publishing); every file signed with the release key | The `.asc` signature next to each file |
 | Go module proxy | `github.com/netizine/sourceorrery/bindings/go` | Nothing uploaded: the tag `bindings/go/vX.Y.Z` | The Go checksum database |
@@ -256,18 +259,19 @@ reduces that exposure after the original files and copies are removed.
 It does not change these limits:
 
 * **Code running as you can open the vault as you.** An install script or
-  an agent runs with your user's rights, so it can run the CLI and unlock
-  any vault you can unlock without typing anything. A vault with an
-  OS-keyring protector opens silently; a vault protected only by a
-  passphrase opens only where the passphrase is available. Keep production
-  secrets in vaults that development machines cannot unlock, and keep
-  `SOURCEORRERY_PASSPHRASE` out of shells that install packages. The
+  an agent runs with your user's rights, so it can run the CLI and open
+  any vault you can open without typing anything: this machine's key opens
+  it silently, and `run` never asks the view check. Elsewhere a vault opens
+  only where its recovery key is available. Keep production secrets in
+  vaults that development machines cannot open, and keep
+  `SOURCEORRERY_RECOVERY_KEY` out of shells that install packages. The
   authenticated broker (milestone 3) is what will change this
   ([threat model](threat-model.md#the-three-guarantees)).
 * **Code inside your application reads what your application reads.** A
   compromised dependency can read every secret the application can. What
   it cannot do through an SDK is write: no SDK can set, disable, delete or
-  purge a secret, change a protector or manage the audit log
+  purge a secret, change the vault's keys, checks or connections, or
+  manage the audit log
   ([ADR 0005](adr/0005-read-only-sdks.md)), so it cannot plant a value for
   the next deployment through the library. Every read is recorded in the
   vault's audit log, which `sourceorrery audit` shows.

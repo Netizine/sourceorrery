@@ -49,12 +49,12 @@ final class Project
         $ffi = Native::ffi();
         [$manifestPtr, $manifestLen] = Native::arg($manifest);
         [$jsonPtr, $jsonLen] = Native::arg($options->toJson());
-        [$passPtr, $passLen] = Native::arg($options->passphrase);
+        [$keyPtr, $keyLen] = Native::arg($options->recoveryKey);
         $handle = $ffi->new('so_project*');
         try {
-            Native::check($ffi->so_project_load($manifestPtr, $manifestLen, $jsonPtr, $jsonLen, $passPtr, $passLen, FFI::addr($handle)));
+            Native::check($ffi->so_project_load($manifestPtr, $manifestLen, $jsonPtr, $jsonLen, $keyPtr, $keyLen, FFI::addr($handle)));
         } finally {
-            Native::release($passPtr, $passLen);
+            Native::release($keyPtr, $keyLen);
             Native::release($jsonPtr, $jsonLen);
             Native::release($manifestPtr, $manifestLen);
         }

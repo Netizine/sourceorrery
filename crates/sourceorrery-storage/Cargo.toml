@@ -1,6 +1,6 @@
 [package]
 name = "sourceorrery-storage"
-description = "Encrypted, versioned local vault storage for SourceOrrery with OS-keyring and passphrase key protectors"
+description = "Encrypted, versioned local vault storage for SourceOrrery: this machine's key in the OS credential store, a recovery key, and connections to providers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -26,7 +26,8 @@ os-keyring = [
 [dependencies]
 sourceorrery-core.workspace = true
 sourceorrery-crypto.workspace = true
-rusqlite = { version = "0.40", features = ["bundled"] }
+# `backup` is SQLite's online backup, which writes exports and imports.
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -49,7 +50,7 @@ zbus-secret-service-keyring-store = { version = "1", optional = true, features =
 [dev-dependencies]
 tempfile.workspace = true
 # `trace` lets the listing-cost test count the statements a listing runs.
-rusqlite = { version = "0.40", features = ["bundled", "trace"] }
+rusqlite = { version = "0.40", features = ["bundled", "backup", "trace"] }
 
 [lints]
 workspace = true

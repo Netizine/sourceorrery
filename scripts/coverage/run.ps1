@@ -70,16 +70,23 @@ try {
             '--src', 'site/plugins', '--src', 'site/src/lib', '--src', 'site/scripts',
             '--include', 'site/plugins/**/*.mjs', '--include', 'site/src/lib/**/*.mjs', '--include', 'site/scripts/**/*.mjs',
             '--exclude', '**/*.test.mjs', '--reporter=lcovonly', '--reporter=text-summary',
-            '--reports-dir', 'coverage/site', '--temp-directory', 'coverage/site/tmp', 'node', '--test'
+            '--reports-dir', 'coverage/site', '--temp-directory', 'coverage/site/tmp'
         )
         $tests = @(Get-ChildItem -LiteralPath 'site/scripts' -Filter '*.test.mjs' | ForEach-Object FullName)
         if ($tests.Count -eq 0) { throw 'No site tooling tests were found.' }
-        Invoke-Checked 'node' ($arguments + $tests)
+        Invoke-Checked 'node' ($arguments + @('node', '--test') + $tests)
+        $savedTelemetry = [Environment]::GetEnvironmentVariable('ASTRO_TELEMETRY_DISABLED', 'Process')
+        try {
+            $env:ASTRO_TELEMETRY_DISABLED = '1'
+            Invoke-Checked 'node' ($arguments + @('--clean=false', 'npm', '--prefix', 'site', 'run', 'build'))
+        } finally {
+            [Environment]::SetEnvironmentVariable('ASTRO_TELEMETRY_DISABLED', $savedTelemetry, 'Process')
+        }
         Write-Host 'Report: coverage/site/lcov.info. Nothing was uploaded.'
         return
     }
 
-    $names = @('GITHUB_ENV', 'CARGO_TARGET_DIR', 'SOURCEORRERY_HOME', 'SOURCEORRERY_PASSPHRASE',
+    $names = @('GITHUB_ENV', 'CARGO_TARGET_DIR', 'SOURCEORRERY_HOME', 'SOURCEORRERY_RECOVERY_KEY',
         'SOURCEORRERY_TEST_VAULT', 'SOURCEORRERY_TEST_MANIFEST', 'SOURCEORRERY_TEST_OLD_VERSION',
         'SOURCEORRERY_NATIVE_DIR', 'SOURCEORRERY_CLI')
     $saved = @{}

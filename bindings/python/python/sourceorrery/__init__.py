@@ -7,8 +7,8 @@
             connect(password=secret.value.expose_text())
 
 The package only reads: there is no way to create, change or delete a
-secret, and no protector or audit management. Administration is the CLI's
-job. All semantics live in the Rust core; this package converts types and
+secret, and no key, check, connection or audit management. Administration
+is the CLI's job. All semantics live in the Rust core; this package converts types and
 raises the typed exceptions in :mod:`sourceorrery.errors`.
 """
 
@@ -88,10 +88,10 @@ def _timestamp(text: str | None) -> datetime | None:
     return None if text is None else datetime.fromisoformat(text)
 
 
-def _passphrase_bytes(passphrase: str | bytes | None) -> bytes | None:
-    if passphrase is None:
+def _recovery_key_bytes(recovery_key: str | bytes | None) -> bytes | None:
+    if recovery_key is None:
         return None
-    return passphrase.encode("utf-8") if isinstance(passphrase, str) else bytes(passphrase)
+    return recovery_key.encode("utf-8") if isinstance(recovery_key, str) else bytes(recovery_key)
 
 
 @dataclass(frozen=True)
@@ -159,18 +159,14 @@ class SecretReader:
 
     ``vault`` is the vault name. The vault is looked up under ``home`` (or
     ``SOURCEORRERY_HOME``, or the platform data directory) and unlocked, in
-    order, by the OS credential store, ``passphrase``,
-    ``SOURCEORRERY_PASSPHRASE`` and ``passphrase_file`` /
-    ``SOURCEORRERY_PASSPHRASE_FILE``. Pass ``environment=False`` to ignore
-    the two passphrase variables. There is never an interactive prompt.
+    order, by the OS credential store, ``recovery_key``,
+    ``SOURCEORRERY_RECOVERY_KEY`` and ``recovery_key_file`` /
+    ``SOURCEORRERY_RECOVERY_KEY_FILE``. Pass ``environment=False`` to ignore
+    the two recovery-key variables. There is never an interactive prompt.
 
-    ``manifest`` is the ``sourceorrery.toml`` whose ``[vaults.<name>]``
-    tables say which vaults are remote and where (default: the nearest one
-    above the current directory, as ``sourceorrery run`` finds it). A vault
-    the manifest declares there is opened at its provider, with the
-    credentials the provider's own tools expect from the environment; the
-    manifest never holds any. A vault without a table, or no manifest at
-    all, is a local vault file.
+    A secret one of the vault's connections stores is read at that
+    provider, with the credentials the connection stores or the ones the
+    provider's own tools find in the environment.
     """
 
     def __init__(
@@ -178,18 +174,16 @@ class SecretReader:
         vault: str,
         *,
         home: PathLike | None = None,
-        passphrase: str | bytes | None = None,
-        passphrase_file: PathLike | None = None,
+        recovery_key: str | bytes | None = None,
+        recovery_key_file: PathLike | None = None,
         environment: bool = True,
-        manifest: PathLike | None = None,
     ) -> None:
         self._native = _native.Reader(
             vault,
             home=None if home is None else os.fspath(home),
-            passphrase=_passphrase_bytes(passphrase),
-            passphrase_file=None if passphrase_file is None else os.fspath(passphrase_file),
+            recovery_key=_recovery_key_bytes(recovery_key),
+            recovery_key_file=None if recovery_key_file is None else os.fspath(recovery_key_file),
             environment=environment,
-            manifest=None if manifest is None else os.fspath(manifest),
         )
         self._vault = vault
 
@@ -253,7 +247,8 @@ class Project:
     """The secrets a ``sourceorrery.toml`` declares, resolved like
     ``sourceorrery run``: every required secret must resolve or
     :meth:`load` raises that secret's error; optional secrets that are
-    missing, refused by policy or whose vault does not exist are left out."""
+    missing, refused by policy or in a vault that does not exist are left
+    out."""
 
     def __init__(self, name: str, manifest_path: str, secrets: list[ProjectSecret]) -> None:
         self._name = name
@@ -266,18 +261,18 @@ class Project:
         manifest: PathLike | None = None,
         *,
         home: PathLike | None = None,
-        passphrase: str | bytes | None = None,
-        passphrase_file: PathLike | None = None,
+        recovery_key: str | bytes | None = None,
+        recovery_key_file: PathLike | None = None,
         environment: bool = True,
     ) -> Project:
         """Load ``manifest`` (default: the nearest ``sourceorrery.toml``
         above the current directory). Unlock options as for
-        :class:`SecretReader` and apply to every vault the manifest names."""
+        :class:`SecretReader`, for the vault the manifest names."""
         info_text, entries = _native.load_project(
             manifest=None if manifest is None else os.fspath(manifest),
             home=None if home is None else os.fspath(home),
-            passphrase=_passphrase_bytes(passphrase),
-            passphrase_file=None if passphrase_file is None else os.fspath(passphrase_file),
+            recovery_key=_recovery_key_bytes(recovery_key),
+            recovery_key_file=None if recovery_key_file is None else os.fspath(recovery_key_file),
             environment=environment,
         )
         info = json.loads(info_text)
@@ -341,15 +336,15 @@ def load_project(
     manifest: PathLike | None = None,
     *,
     home: PathLike | None = None,
-    passphrase: str | bytes | None = None,
-    passphrase_file: PathLike | None = None,
+    recovery_key: str | bytes | None = None,
+    recovery_key_file: PathLike | None = None,
     environment: bool = True,
 ) -> Project:
     """Shorthand for :meth:`Project.load`."""
     return Project.load(
         manifest,
         home=home,
-        passphrase=passphrase,
-        passphrase_file=passphrase_file,
+        recovery_key=recovery_key,
+        recovery_key_file=recovery_key_file,
         environment=environment,
     )

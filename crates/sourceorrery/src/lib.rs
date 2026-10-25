@@ -6,8 +6,9 @@
 //! secrets a project declares in `sourceorrery.toml`.
 //!
 //! It deliberately offers **no** way to create, change, delete, recover or
-//! purge a secret and no protector or audit management: an application that
-//! only reads cannot be tricked into writing. Administration is the CLI's job.
+//! purge a secret and no key, check, connection or audit management: an
+//! application that only reads cannot be tricked into writing.
+//! Administration is the CLI's job.
 //!
 //! ```no_run
 //! use sourceorrery::SecretReader;
@@ -21,10 +22,13 @@
 //!
 //! ## Unlocking
 //!
-//! [`SecretReader::open`] unlocks the vault in the same order as the CLI:
-//! the OS credential store first (no prompt), then a passphrase given in
-//! [`OpenOptions`], then `SOURCEORRERY_PASSPHRASE`, then the file named by
-//! `SOURCEORRERY_PASSPHRASE_FILE`. There is never an interactive prompt.
+//! [`SecretReader::open`] opens the vault in the same order as the CLI:
+//! this machine's key in the OS credential store first (no prompt), then
+//! the vault's recovery key, given in [`OpenOptions`], in
+//! `SOURCEORRERY_RECOVERY_KEY` or in the file named by
+//! `SOURCEORRERY_RECOVERY_KEY_FILE`. There is never an interactive prompt,
+//! and a reader never asks for the vault's view check, which guards only
+//! people viewing the vault (ADR 0009).
 //! Vaults are looked up under `SOURCEORRERY_HOME` or the platform data
 //! directory unless [`OpenOptions::home`] says otherwise.
 //!
@@ -32,7 +36,7 @@
 //!
 //! Every failure is an [`Error`] carrying the core's stable code
 //! ([`Error::code`]), a message and an actionable [`Error::hint`] that says
-//! what to do about it (which CLI command creates the vault, which passphrase
+//! what to do about it (which CLI command creates the vault, which key
 //! sources were tried, why a version was refused by policy, ...). SDKs map
 //! [`ErrorKind`] to their own exception types and keep the code and hint.
 //!
@@ -56,14 +60,15 @@ pub use sourceorrery_core::{
     CONTRACT_VERSION, RecoveryLevel, Secret, SecretBytes, SecretError, SecretProperties,
     SecretReference, VaultDescriptor,
 };
-pub use unlock::{PassphraseSource, UnlockReport};
+pub use unlock::{KeySource, UnlockReport};
 
 /// Environment variable naming the SourceOrrery home directory.
 pub const HOME_ENV: &str = sourceorrery_storage::registry::HOME_ENV;
 
-/// Environment variable supplying a vault passphrase directly (CI only;
-/// environment variables are visible to process inspection).
-pub const PASSPHRASE_ENV: &str = "SOURCEORRERY_PASSPHRASE";
+/// Environment variable supplying a vault's recovery key directly, where
+/// this machine's credential store cannot open it (CI, containers; an
+/// environment variable is visible to process inspection).
+pub const RECOVERY_KEY_ENV: &str = "SOURCEORRERY_RECOVERY_KEY";
 
-/// Environment variable naming a file that holds the vault passphrase.
-pub const PASSPHRASE_FILE_ENV: &str = "SOURCEORRERY_PASSPHRASE_FILE";
+/// Environment variable naming a file that holds the vault's recovery key.
+pub const RECOVERY_KEY_FILE_ENV: &str = "SOURCEORRERY_RECOVERY_KEY_FILE";

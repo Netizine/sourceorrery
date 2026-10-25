@@ -85,7 +85,7 @@ pub use vault::{
 
 /// Version of this C ABI. Bumped only for incompatible changes to the
 /// functions or structs in the header; additions do not bump it.
-pub const SO_ABI_VERSION: u32 = 1;
+pub const SO_ABI_VERSION: u32 = 2;
 
 /// Version of the C ABI this library was built with. Compare with
 /// `SO_ABI_VERSION` from the header you compiled against.

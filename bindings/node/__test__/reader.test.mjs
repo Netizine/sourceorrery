@@ -1,10 +1,7 @@
 // The Node SDK against the vault created by scripts/ci/fixture-vault.sh.
 // Run after `npm run build`:  eval "$(bash scripts/ci/fixture-vault.sh)" && npm test
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { test } from 'node:test';
 import util from 'node:util';
 
@@ -37,7 +34,7 @@ const {
 const env = process.env;
 const fixture = {
   home: env.SOURCEORRERY_HOME,
-  passphrase: env.SOURCEORRERY_PASSPHRASE,
+  recoveryKey: env.SOURCEORRERY_RECOVERY_KEY,
   vault: env.SOURCEORRERY_TEST_VAULT,
   manifest: env.SOURCEORRERY_TEST_MANIFEST,
   oldVersion: env.SOURCEORRERY_TEST_OLD_VERSION,
@@ -48,7 +45,7 @@ const ready = Object.values(fixture).every(Boolean);
 const skip = ready ? false : 'run scripts/ci/fixture-vault.sh first';
 
 function withReader(fn) {
-  const reader = new SecretReader(fixture.vault); // unlocks through SOURCEORRERY_PASSPHRASE
+  const reader = new SecretReader(fixture.vault); // unlocks through SOURCEORRERY_RECOVERY_KEY
   try {
     return fn(reader);
   } finally {
@@ -57,7 +54,7 @@ function withReader(fn) {
 }
 
 test('contract version', () => {
-  assert.equal(contractVersion(), '1');
+  assert.equal(contractVersion(), '2');
 });
 
 test('get returns the newest accessible version', { skip }, () =>
@@ -144,18 +141,18 @@ test('vault errors say how to fix them', { skip }, () => {
     (err) => err instanceof VaultNotFoundError && err.hint.includes('sourceorrery vault create no-such-vault') && err.hint.includes(fixture.home),
   );
   assert.throws(
-    () => new SecretReader(fixture.vault, { passphrase: 'wrong-passphrase', environment: false }),
+    () => new SecretReader(fixture.vault, { recoveryKey: 'wrong-recovery-key', environment: false }),
     (err) =>
       err instanceof VaultLockedError &&
-      err.hint.includes('passphrase option: tried') &&
-      err.hint.includes('SOURCEORRERY_PASSPHRASE: not set') &&
-      err.hint.includes(`--vault ${fixture.vault}`) &&
-      !err.message.includes('wrong-passphrase'),
+      err.hint.includes('recovery_key option: tried') &&
+      err.hint.includes('SOURCEORRERY_RECOVERY_KEY: not set') &&
+      err.hint.includes(`sourceorrery vault create ${fixture.vault}`) &&
+      !err.message.includes('wrong-recovery-key'),
   );
-  const reader = SecretReader.open(fixture.vault, { home: fixture.home, passphrase: Buffer.from(fixture.passphrase), environment: false });
+  const reader = SecretReader.open(fixture.vault, { home: fixture.home, recoveryKey: Buffer.from(fixture.recoveryKey), environment: false });
   assert.equal(reader.vaultName, fixture.vault);
   assert.equal(reader.descriptor().name, fixture.vault);
-  assert.ok(reader.descriptor().protectors.includes('passphrase'));
+  assert.ok(reader.descriptor().protectors.includes('recovery'));
   reader.close();
   assert.equal(reader.closed, true);
   assert.throws(() => reader.get('database-password'), /closed/);
@@ -208,7 +205,7 @@ test('project load mirrors run', { skip }, () => {
   assert.equal(project.env('ROTATED').closed, true);
   assert.equal(loadProject(fixture.manifest).name, 'ci-project');
   assert.throws(() => Project.load(`${fixture.manifest}.missing`), ManifestError);
-  assert.throws(() => Project.load(fixture.manifest, { passphrase: 'wrong', environment: false }), VaultLockedError);
+  assert.throws(() => Project.load(fixture.manifest, { recoveryKey: 'wrong', environment: false }), VaultLockedError);
 });
 
 test('unknown codes keep their code', () => {
@@ -228,71 +225,4 @@ test('provider codes map to typed errors', () => {
   assert.equal(unavailable.constructor, ProviderUnavailableError);
   assert.equal(unavailable.code, 'provider_unavailable');
   assert.equal(unavailable.transient, true);
-});
-
-test('a remote vault in the manifest is opened at its provider', { skip }, () => {
-  const manifest = join(mkdtempSync(join(tmpdir(), 'sourceorrery-sdk-')), 'sourceorrery.toml');
-  writeFileSync(
-    manifest,
-    [
-      '[project]',
-      'name = "demo"',
-      `vault = "${fixture.vault}"`,
-      '',
-      '[vaults.remote-x]',
-      'provider = "hashicorp-vault"',
-      'address = "http://127.0.0.1:1"', // nothing listens here
-      'mount = "secret"',
-      '',
-    ].join('\n'),
-  );
-  const options = { home: fixture.home, passphrase: fixture.passphrase, environment: false, manifest };
-
-  const hadToken = Object.prototype.hasOwnProperty.call(process.env, 'VAULT_TOKEN');
-  const savedToken = process.env.VAULT_TOKEN;
-  try {
-    // With a credential, the remote vault is opened at its provider, which is not there.
-    process.env.VAULT_TOKEN = 'dummy-token-for-tests';
-    assert.throws(
-      () => new SecretReader('remote-x', options),
-      (err) =>
-        err instanceof ProviderUnavailableError &&
-        err.code === 'provider_unavailable' &&
-        err.transient === true &&
-        err.detail.includes('hashicorp-vault is unavailable') &&
-        err.hint.includes('[vaults.remote-x]'),
-    );
-
-    // Without one, the provider refuses before any request, unless the developer
-    // running the tests has a ~/.vault-token or another Vault credential around.
-    delete process.env.VAULT_TOKEN;
-    assert.throws(
-      () => new SecretReader('remote-x', options),
-      (err) => {
-        if (err instanceof UnauthenticatedError) {
-          return (
-            err.code === 'unauthenticated' &&
-            err.transient === false &&
-            err.detail.includes('not authenticated to hashicorp-vault') &&
-            err.hint.includes('VAULT_TOKEN')
-          );
-        }
-        return err instanceof ProviderUnavailableError && err.code === 'provider_unavailable';
-      },
-    );
-  } finally {
-    if (hadToken) {
-      process.env.VAULT_TOKEN = savedToken;
-    } else {
-      delete process.env.VAULT_TOKEN;
-    }
-  }
-
-  // A vault without a `[vaults.<name>]` table is still the local file.
-  const reader = SecretReader.open(fixture.vault, options);
-  try {
-    assert.equal(reader.get('database-password').value.exposeText(), fixture.latest);
-  } finally {
-    reader.close();
-  }
 });

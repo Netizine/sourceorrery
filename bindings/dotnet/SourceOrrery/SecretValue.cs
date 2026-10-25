@@ -52,6 +52,9 @@ public sealed unsafe class SecretValue : IDisposable
         lock (gate)
         {
             action(Span(), state);
+            // The span points into native memory that the finalizer frees: keep
+            // this object reachable until the callback has finished with it.
+            GC.KeepAlive(this);
         }
     }
 
@@ -60,7 +63,9 @@ public sealed unsafe class SecretValue : IDisposable
     {
         lock (gate)
         {
-            return Span().ToArray();
+            var copy = Span().ToArray();
+            GC.KeepAlive(this);
+            return copy;
         }
     }
 
@@ -69,7 +74,9 @@ public sealed unsafe class SecretValue : IDisposable
     {
         lock (gate)
         {
-            return Encoding.UTF8.GetString(Span());
+            var text = Encoding.UTF8.GetString(Span());
+            GC.KeepAlive(this);
+            return text;
         }
     }
 

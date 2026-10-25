@@ -5,16 +5,17 @@
 /security/threat-model.md
 /security/review.md
 /security/supply-chain.md
-/guides/first-run.md
+/guides/first-run.mdx
 /guides/ai-agents.md
 /guides/building-from-source.mdx
-/reference/cli.md
+/reference/cli.mdx
 /reference/vault-format.md
 /roadmap.md
 /reference/release.md
 /providers/index.md
 /providers/hashicorp-vault.md
 /providers/aws-secrets-manager.md
+/providers/azure-key-vault.md
 /guides/rotation.md
 /guides/enterprise.md
 /sdks/index.md
@@ -35,5 +36,6 @@
 /decisions/0006-binding-technologies.md
 /decisions/0007-versioning-and-compatibility.md
 /decisions/0008-remote-providers.md
+/decisions/0009-local-vaults-checks-and-storage.md
 /decisions/index.md
 /reference/error-codes.md

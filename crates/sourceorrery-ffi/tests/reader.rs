@@ -2,6 +2,8 @@
 //! C or P/Invoke caller would call it. Vaults are created through the
 //! write-capable `so_vault_*` functions only to set the scene.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::ffi::CStr;
 use std::ptr;
 
@@ -14,9 +16,11 @@ use sourceorrery_ffi::{
     so_status, so_vault, so_vault_close, so_vault_create,
 };
 
-const PASSPHRASE: &[u8] = b"reader-test-passphrase";
+const WRONG_KEY: &[u8] = b"AAAAA-AAAAA-AAAAA-AAAAA-AAAAA";
 const CANARY: &str = "CANARY-9b1d-value-that-must-never-appear";
-const TEST_OPTIONS: &str = r#"{"argon2":{"memory_kib":8192,"iterations":1,"parallelism":1}}"#;
+/// No key for this machine: a test never touches the real OS credential
+/// store, and its vaults open with their recovery keys.
+const TEST_OPTIONS: &str = r#"{"this_machine":false}"#;
 
 fn c_str(ptr: *const std::ffi::c_char) -> Option<String> {
     if ptr.is_null() {
@@ -59,16 +63,18 @@ const EMPTY: so_bytes = so_bytes {
     len: 0,
 };
 
-/// A temporary home with one passphrase vault, populated through the
-/// write-capable ABI.
+/// A temporary home whose vaults are populated through the write-capable
+/// ABI; it remembers each vault's recovery key.
 struct Scene {
     home: tempfile::TempDir,
+    keys: RefCell<BTreeMap<String, Vec<u8>>>,
 }
 
 impl Scene {
     fn new() -> Self {
         Self {
             home: tempfile::tempdir().expect("temp dir"),
+            keys: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -83,8 +89,13 @@ impl Scene {
         )
     }
 
+    fn key(&self, name: &str) -> Vec<u8> {
+        self.keys.borrow()[name].clone()
+    }
+
     fn create_vault(&self, name: &str) -> *mut so_vault {
         let home = self.home();
+        let mut key = EMPTY;
         let mut handle: *mut so_vault = ptr::null_mut();
         // SAFETY: every pointer is backed by a live Rust value for the call.
         let status = unsafe {
@@ -95,18 +106,19 @@ impl Scene {
                 name.len(),
                 TEST_OPTIONS.as_ptr(),
                 TEST_OPTIONS.len(),
-                PASSPHRASE.as_ptr(),
-                PASSPHRASE.len(),
+                &raw mut key,
                 &raw mut handle,
             )
         };
         assert_eq!(status, so_status::SO_STATUS_OK, "{}", last_code());
+        let key = take(&mut key);
+        self.keys.borrow_mut().insert(name.to_owned(), key);
         handle
     }
 
-    fn open(&self, name: &str, passphrase: Option<&[u8]>) -> Result<*mut so_reader, String> {
+    fn open(&self, name: &str, recovery_key: Option<&[u8]>) -> Result<*mut so_reader, String> {
         let options = self.options();
-        let (pass_ptr, pass_len) = passphrase.map_or((ptr::null(), 0), |p| (p.as_ptr(), p.len()));
+        let (key_ptr, key_len) = recovery_key.map_or((ptr::null(), 0), |k| (k.as_ptr(), k.len()));
         let mut handle: *mut so_reader = ptr::null_mut();
         // SAFETY: every pointer is backed by a live Rust value for the call.
         let status = unsafe {
@@ -115,8 +127,8 @@ impl Scene {
                 name.len(),
                 options.as_ptr(),
                 options.len(),
-                pass_ptr,
-                pass_len,
+                key_ptr,
+                key_len,
                 &raw mut handle,
             )
         };
@@ -263,7 +275,7 @@ fn reader_reads_latest_pinned_properties_and_references() {
     let v2 = set(vault, "db-password", CANARY.as_bytes(), "");
     close_vault(vault);
 
-    let reader = scene.open("dev", Some(PASSPHRASE)).unwrap();
+    let reader = scene.open("dev", Some(&scene.key("dev"))).unwrap();
     let (props, value) = get(reader, "db-password", None).unwrap();
     assert_eq!(props.version, v2.version);
     assert_eq!(value, CANARY.as_bytes());
@@ -296,7 +308,7 @@ fn reader_reads_latest_pinned_properties_and_references() {
     assert_eq!(status, so_status::SO_STATUS_OK);
     let descriptor: serde_json::Value = take_json(&mut descriptor);
     assert_eq!(descriptor["name"], "dev");
-    assert_eq!(descriptor["protectors"][0], "passphrase");
+    assert_eq!(descriptor["protectors"][0], "recovery");
     assert!(!descriptor.to_string().contains(CANARY));
     close_reader(reader);
 }
@@ -318,7 +330,7 @@ fn reader_errors_carry_codes_messages_and_hints() {
     close_vault(vault);
 
     assert_eq!(
-        scene.open("nope", Some(PASSPHRASE)).unwrap_err(),
+        scene.open("nope", Some(&scene.key("dev"))).unwrap_err(),
         "vault_not_found"
     );
     assert!(
@@ -328,17 +340,20 @@ fn reader_errors_carry_codes_messages_and_hints() {
     );
     assert!(last_hint().contains(&scene.home()));
 
-    assert_eq!(scene.open("dev", Some(b"wrong")).unwrap_err(), "locked");
+    assert_eq!(scene.open("dev", Some(WRONG_KEY)).unwrap_err(), "locked");
     let hint = last_hint();
-    assert!(hint.contains("passphrase option: tried"), "{hint}");
-    assert!(hint.contains("SOURCEORRERY_PASSPHRASE: not set"), "{hint}");
-    assert!(!hint.contains("wrong"));
-    assert!(!c_str(so_last_error_message()).unwrap().contains("wrong"));
+    assert!(hint.contains("recovery_key option: tried"), "{hint}");
+    assert!(
+        hint.contains("SOURCEORRERY_RECOVERY_KEY: not set"),
+        "{hint}"
+    );
+    assert!(!hint.contains("AAAAA"));
+    assert!(!c_str(so_last_error_message()).unwrap().contains("AAAAA"));
 
     assert_eq!(scene.open("dev", None).unwrap_err(), "locked");
-    assert!(last_hint().contains("passphrase option: not given"));
+    assert!(last_hint().contains("recovery_key option: not given"));
 
-    let reader = scene.open("dev", Some(PASSPHRASE)).unwrap();
+    let reader = scene.open("dev", Some(&scene.key("dev"))).unwrap();
     assert!(so_last_error_hint().is_null(), "success clears the hint");
 
     assert_eq!(get(reader, "missing", None).unwrap_err(), "not_found");
@@ -371,6 +386,7 @@ fn reader_errors_carry_codes_messages_and_hints() {
 
     // Argument errors and a NULL handle are reported, not crashes.
     assert_eq!(get(ptr::null(), "k", None).unwrap_err(), "invalid_argument");
+    let key = scene.key("dev");
     let bad_options = "{\"nope\":1}";
     let name = "dev";
     let mut handle: *mut so_reader = ptr::null_mut();
@@ -381,8 +397,8 @@ fn reader_errors_carry_codes_messages_and_hints() {
             name.len(),
             bad_options.as_ptr(),
             bad_options.len(),
-            PASSPHRASE.as_ptr(),
-            PASSPHRASE.len(),
+            key.as_ptr(),
+            key.len(),
             &raw mut handle,
         )
     };
@@ -403,7 +419,7 @@ fn reader_is_shared_between_threads() {
     let vault = scene.create_vault("dev");
     set(vault, "shared", b"value", "");
     close_vault(vault);
-    let reader = scene.open("dev", Some(PASSPHRASE)).unwrap();
+    let reader = scene.open("dev", Some(&scene.key("dev"))).unwrap();
     let address = reader as usize;
     let workers: Vec<_> = (0..4)
         .map(|_| {
@@ -450,6 +466,7 @@ fn project_load_resolves_the_manifest() {
     .unwrap();
     let manifest = manifest.to_str().unwrap().to_owned();
     let options = scene.options();
+    let key = scene.key("dev");
 
     let mut handle: *mut so_project = ptr::null_mut();
     // SAFETY: every pointer is backed by a live Rust value for the call.
@@ -459,8 +476,8 @@ fn project_load_resolves_the_manifest() {
             manifest.len(),
             options.as_ptr(),
             options.len(),
-            PASSPHRASE.as_ptr(),
-            PASSPHRASE.len(),
+            key.as_ptr(),
+            key.len(),
             &raw mut handle,
         )
     };
@@ -526,8 +543,8 @@ fn project_load_resolves_the_manifest() {
             manifest.len(),
             options.as_ptr(),
             options.len(),
-            PASSPHRASE.as_ptr(),
-            PASSPHRASE.len(),
+            key.as_ptr(),
+            key.len(),
             &raw mut handle,
         )
     };
@@ -554,8 +571,8 @@ fn project_load_resolves_the_manifest() {
             missing.len(),
             options.as_ptr(),
             options.len(),
-            PASSPHRASE.as_ptr(),
-            PASSPHRASE.len(),
+            key.as_ptr(),
+            key.len(),
             &raw mut handle,
         )
     };
@@ -569,77 +586,36 @@ fn close_accepts_null() {
 }
 
 #[test]
-fn reader_options_take_a_manifest_that_declares_remote_vaults() {
+fn reader_options_refuse_keys_they_do_not_have() {
     let scene = Scene::new();
     close_vault(scene.create_vault("dev"));
-    let manifest = scene.home.path().join("sourceorrery.toml");
-    std::fs::write(
-        &manifest,
-        "[project]\nname = \"demo\"\nvault = \"dev\"\n\n[vaults.prod]\n\
-         provider = \"hashicorp-vault\"\naddress = \"http://127.0.0.1:1\"\n\
-         mount = \"secret\"\n",
-    )
-    .unwrap();
-    let options = format!(
-        r#"{{"home":{},"environment":false,"manifest":{}}}"#,
-        serde_json::to_string(&scene.home()).unwrap(),
-        serde_json::to_string(manifest.to_str().unwrap()).unwrap()
-    );
-    let open = |name: &str| {
+    let key = scene.key("dev");
+    let open = |options: &str| {
         let mut handle: *mut so_reader = ptr::null_mut();
         // SAFETY: every pointer is backed by a live Rust value for the call.
         let status = unsafe {
             so_reader_open(
-                name.as_ptr(),
-                name.len(),
+                "dev".as_ptr(),
+                3,
                 options.as_ptr(),
                 options.len(),
-                PASSPHRASE.as_ptr(),
-                PASSPHRASE.len(),
+                key.as_ptr(),
+                key.len(),
                 &raw mut handle,
             )
         };
         (status, handle)
     };
-
-    // The local vault opens as before.
-    let (status, handle) = open("dev");
+    let (status, handle) = open(&scene.options());
     assert_eq!(status, so_status::SO_STATUS_OK, "{}", last_code());
     close_reader(handle);
 
-    // The remote one reaches the HashiCorp Vault provider: `unauthenticated`
-    // without a token in the environment, `provider_unavailable` with one
-    // (nothing listens on port 1).
-    let (status, handle) = open("prod");
-    assert_eq!(status, so_status::SO_STATUS_ERROR);
-    assert!(handle.is_null());
-    let code = last_code();
-    assert!(
-        code == "unauthenticated" || code == "provider_unavailable",
-        "{code}: {}",
-        last_hint()
-    );
-    assert!(
-        last_hint().contains("VAULT_TOKEN") || last_hint().contains("[vaults.prod]"),
-        "{}",
-        last_hint()
-    );
-
-    // An unknown option key is still refused.
-    let bad = r#"{"manifest_path":"x"}"#;
-    let mut handle: *mut so_reader = ptr::null_mut();
-    // SAFETY: every pointer is backed by a live Rust value for the call.
-    let status = unsafe {
-        so_reader_open(
-            "dev".as_ptr(),
-            3,
-            bad.as_ptr(),
-            bad.len(),
-            ptr::null(),
-            0,
-            &raw mut handle,
-        )
-    };
-    assert_eq!(status, so_status::SO_STATUS_ERROR);
-    assert_eq!(last_code(), "invalid_argument");
+    // There is no `manifest` option: the vault's connections say where its
+    // secrets are kept, so it is an unknown key, like any other.
+    for bad in [r#"{"manifest":"x"}"#, r#"{"manifest_path":"x"}"#] {
+        let (status, handle) = open(bad);
+        assert_eq!(status, so_status::SO_STATUS_ERROR, "{bad}");
+        assert!(handle.is_null());
+        assert_eq!(last_code(), "invalid_argument", "{bad}");
+    }
 }

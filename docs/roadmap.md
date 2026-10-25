@@ -1,11 +1,12 @@
 # Roadmap
 
-This documentation is prepared for **0.2.0**: the encrypted local vault,
+The [**0.2.0 release**](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0) includes the encrypted local vault,
 CLI and read-only SDKs, guided setup, `.env` import, agent integrations,
 and optional AWS Secrets Manager and HashiCorp Vault providers
-([release scope](#release-020)). Checked items below are implemented;
-unchecked items remain planned. Implementation does not mean a package has
-already been published.
+([release scope](#release-020)). The next release reworks how a vault is
+opened, checked and where it keeps secrets
+([ADR 0009](#next-release-local-vaults-one-set-of-checks-storage-per-secret)).
+Checked items below are implemented; unchecked items remain planned.
 
 > [!IMPORTANT]
 > The authenticated local broker remains milestone 3. SourceOrrery
@@ -17,7 +18,7 @@ already been published.
 - [x] Secret contracts (`SecretClient`), stable error codes, naming rules
 - [x] Enforced policy: enabled, `not_before`, `expires_on`; latest-accessible selection
 - [x] Encrypted SQLite vault; per-value AEAD bound to vault/name/version
-- [x] Key protectors: OS credential store (Windows/macOS/Linux) and Argon2id passphrase; several per vault
+- [x] Key wraps: this machine's key in the OS credential store (Windows/macOS/Linux) and one recovery key, shown once, that opens the vault anywhere else
 - [x] Versions, soft delete, recovery, purge, retention with automatic purge
 - [x] Metadata-only audit log, including failed unlocks
 - [x] CLI: `vault`, `secret`, `audit`, `init`, `check`, `run`, `completions`
@@ -32,10 +33,10 @@ already been published.
 - [x] Metadata and audit-log integrity (MAC over mutable metadata)
 - [x] Reads load only the value they return (metadata projection for every version query; one ciphertext row per `get`)
 - [x] Listing cost: one scan of the checkpoint rows and one statement each over the names, rows and versions of a listing window, and `list_*_page` with a name-based continuation token in core, with conformance tests (`secret list --limit N --after NAME`)
-- [x] `backup` / `restore`: an encrypted export of a vault or of named secrets, every version with its value, restored as new versions through the audited write path ([format](backup-format.md))
+- [x] `vault export` / `vault import`: a copy of a vault that opens with its recovery key only, brought onto another machine
 - [x] Pre-built CLI archives for six targets on the GitHub release, with `SHA256SUMS`
-- [x] Cargo installation of the CLI (`cargo install --locked sourceorrery-cli --version 0.2.0` after publication)
-- [x] Package managers: Homebrew, WinGet, Scoop
+- [x] Cargo installation of the CLI (`cargo install --locked sourceorrery-cli --version 0.2.0`)
+- [x] Package managers: Homebrew and Scoop; the [WinGet submission](https://github.com/microsoft/winget-pkgs/pull/460455) awaits catalog approval
 - [x] Docs site at sourceorrery.ai (Astro Starlight) from `docs/`, deployed by Azure Static Web Apps
 
 ## Milestone 2 — first-class language bindings
@@ -78,19 +79,26 @@ The 0.1.4 build includes these changes alongside milestones 1 and 2:
 Alongside the 0.1.4 features above, this build includes remote providers
 (milestone 4 below), encrypted backup and restore, paged listings, ABI
 compatibility checks, release provenance and software bills of materials,
-and multi-language coverage reports for SonarCloud. The full release can
-publish the three new provider crates with a temporary credential while
-existing crates use trusted publishing; all packages stay on **0.2.0**.
+and multi-language coverage reports for SonarCloud. The full release
+published the three new provider crates with a temporary credential while
+existing crates used trusted publishing; all packages use **0.2.0**.
 Configure the providers' trusted publishers afterward and revoke the
 temporary credential. Enabling trusted publishing does not require another
 release; see the [release procedure](release.md).
 
-### Onboarding, a strong passphrase and a second factor
+## Next release: local vaults, one set of checks, storage per secret
 
-- [x] `sourceorrery setup`: the guided first run, from a vault to `run`, as screens on the terminal, with the same six steps printed as commands where there is no terminal ([First run](getting-started.md))
-- [x] A vault passphrase typed at a prompt must rate "good" on a rule-based strength estimate (`vault passphrase check`, `vault passphrase generate`); one from the environment or a file is warned about, not refused
-- [x] Recovery codes (`vault recovery codes`) that unlock the vault in place of the passphrase, and a clear-text passphrase hint shown at the prompt; `vault passphrase set` to replace the passphrase with a code in hand
-- [x] An authenticator app as a second factor (`vault 2fa`, RFC 6238, the secret sealed inside the vault, a code accepted once) and the reveal guard (`vault guard`): `secret get --reveal` and `backup` ask for the passphrase, a code or both again; `run`, `check` and the SDKs are untouched ([CLI reference](cli.md#the-reveal-guard), [threat model](threat-model.md))
+[ADR 0009](adr/0009-local-vaults-checks-and-storage.md). Vaults from earlier
+releases are not read: recreate them and set their secrets again.
+
+- [x] A vault opens with this machine's key in the OS credential store, else its recovery key (`SOURCEORRERY_RECOVERY_KEY`, `--recovery-key-file`, a prompt); passphrases, protectors and recovery codes are gone
+- [x] The view check: an optional password (rated as it is typed, or generated) with a hint and an authenticator code on top, asked before anyone views the vault or reveals a value; `run`, `check`, `init` and the SDKs never ask it ([CLI reference](cli.md#the-view-check), [threat model](threat-model.md))
+- [x] Storage per secret: the vault file, or HashiCorp Vault, AWS Secrets Manager or Azure Key Vault through a connection the vault holds (credentials from the provider's own sign-in or sealed in the vault); the manifest names no provider ([providers](providers/index.md))
+- [x] `sourceorrery setup` and `vault create [NAME]`: one set of screens that creates a vault or changes one (view check, recovery key, storage, connections with a test), committed in one transaction at its review; `setup --guide` prints the one command that does it without the screens ([First run](getting-started.md))
+- [x] `sourceorrery init`: the manifest written from the vault's secrets by name, with its own screens (All, a loop adding new secrets), adding to an existing manifest in place, and the folder recorded in the vault
+- [x] The `ui` browser: storage and projects columns, a Projects view with a check on disk, new secrets in a chosen storage, the setup screens from inside it
+- [x] `vault export` / `vault import` replace `backup` / `restore`
+- [x] The settings record checkpointed on the audit chain: an older authentic copy of it (from before a view check was set or a connection changed) is refused like an older row ([threat model](threat-model.md), gap 6; [vault format](vault-format.md#the-settings-record))
 
 ## Milestone 3 — local broker and agent isolation
 
@@ -103,6 +111,7 @@ release; see the [release procedure](release.md).
 
 ## Milestone 4 — enterprise integrations
 
+- [x] Azure Key Vault (`sourceorrery-provider-azure`, [docs](providers/azure-key-vault.md)), tested against LocalStack for Azure; not yet released
 - [x] Remote providers behind the same contract: HashiCorp Vault (`sourceorrery-provider-vault`, [docs](providers/hashicorp-vault.md)) and AWS Secrets Manager (`sourceorrery-provider-aws`, [docs](providers/aws-secrets-manager.md)); no SourceOrrery server: the providers' own services are the only remote ends
 - [x] `AsyncSecretClient` ([ADR 0008](adr/0008-remote-providers.md): the async shape of the contract in core, the `Blocking` and `AsyncLocal` adapters in `sourceorrery-provider`, and the lifecycle conformance suite as a function every backend runs)
 - [x] Workload identity through the providers' federation (OIDC, workload and Kubernetes identities, instance roles); RBAC, policy and revocation administered in the provider and honoured by the client ([enterprise.md](enterprise.md); no SourceOrrery server, so nothing of ours to administer centrally)

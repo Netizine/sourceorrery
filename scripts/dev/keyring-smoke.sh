@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Smoke test of the OS-keyring protector path, for macOS (Keychain) and
-# Linux (Secret Service: GNOME Keyring, KWallet, KeePassXC). Everything the
-# CLI does with the credential store is exercised once, in an isolated
-# home, and the store itself is inspected after each step, so the result
-# says whether this machine's store behaves as the vault expects.
+# Smoke test of this machine's key in the OS credential store, for macOS
+# (Keychain) and Linux (Secret Service: GNOME Keyring, KWallet, KeePassXC).
+# Everything the CLI does with the credential store is exercised once, in
+# an isolated home, and the store itself is inspected after each step, so
+# the result says whether this machine's store behaves as the vault expects.
 #
 #   bash scripts/dev/keyring-smoke.sh [PATH-TO-sourceorrery]
 #
 # Exit 0: every check passed. 1: a check failed. 2: the credential store
-# is not available here (the CLI falls back to a passphrase, which CI
-# covers everywhere else). Nothing it prints is a secret value: the one
-# value it stores is a canary it generates itself, compared in memory.
+# is not available here (the vault then opens with its recovery key only,
+# which CI covers everywhere else). Nothing it prints is a secret value: the
+# one value it stores is a canary it generates itself, compared in memory,
+# and the recovery keys go to files in the isolated home.
 #
 # CI runs this against a temporary macOS keychain and a GNOME Keyring under
 # dbus-run-session (ci.yml, job `keyring`); a desktop session is validated
@@ -31,20 +32,26 @@ fi
 
 export SOURCEORRERY_HOME
 SOURCEORRERY_HOME="$(mktemp -d)"
-unset SOURCEORRERY_PASSPHRASE SOURCEORRERY_PASSPHRASE_FILE SOURCEORRERY_VAULT
+unset SOURCEORRERY_RECOVERY_KEY SOURCEORRERY_RECOVERY_KEY_FILE SOURCEORRERY_KEYRING SOURCEORRERY_VAULT
 passed=0
 failed=0
 pass() { passed=$((passed + 1)); echo "PASS  $1"; }
 fail() { failed=$((failed + 1)); echo "FAIL  $1" >&2; }
+# No check has a terminal to prompt on: a vault that cannot be opened fails
+# instead of asking for its recovery key.
 check() { # <description> <command...>: PASS when the command succeeds
   local what="$1"; shift
-  if "$@" >/dev/null 2>&1; then pass "$what"; else fail "$what"; fi
+  if "$@" >/dev/null 2>&1 </dev/null; then pass "$what"; else fail "$what"; fi
 }
 check_not() { # <description> <command...>: PASS when the command fails
   local what="$1"; shift
-  if "$@" >/dev/null 2>&1; then fail "$what"; else pass "$what"; fi
+  if "$@" >/dev/null 2>&1 </dev/null; then fail "$what"; else pass "$what"; fi
 }
 json() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1], {"d": d}))' "$1"; }
+# The id of the this-machine key in `vault create -o json`'s report.
+machine_key() { json '([k["id"] for k in d["keys"] if k["kind"] == "this-machine"] or [""])[0]'; }
+# What a machine without this store does: no credential store at all.
+elsewhere() { env SOURCEORRERY_KEYRING=off "$@"; }
 
 cleanup() {
   # Leave nothing behind: vaults still present are destroyed (which also
@@ -85,46 +92,40 @@ case "$os" in
 esac
 echo "  home: $SOURCEORRERY_HOME"
 
-# 1. A vault with an OS-keyring protector, or a clear verdict that the
-#    store is unavailable here.
-if ! create_out="$("$cli" vault create smoke --protector os-keyring 2>&1 </dev/null)"; then
-  echo "$create_out" | sed 's/^/  /'
-  if echo "$create_out" | grep -qi "not available\|unsupported\|refused access"; then
-    echo "keyring-smoke: the OS credential store is not available in this session" >&2
-    exit 2
-  fi
-  fail "vault create --protector os-keyring"
+# 1. A vault this machine opens through its credential store, or a clear
+#    verdict that the store is unavailable here.
+key_file="$SOURCEORRERY_HOME/smoke.key"
+if ! created="$("$cli" -o json vault create smoke --recovery-key-out "$key_file" 2>"$SOURCEORRERY_HOME/create.err" </dev/null)"; then
+  sed 's/^/  /' "$SOURCEORRERY_HOME/create.err"
+  fail "vault create"
   exit 1
 fi
-pass "vault create --protector os-keyring"
+if [[ "$(echo "$created" | json 'd["this_machine"]')" != "True" ]]; then
+  echo "keyring-smoke: the OS credential store is not available in this session" >&2
+  exit 2
+fi
+pass "vault create keeps this machine's key in the store"
 
-vault_id="$("$cli" -o json vault info --vault smoke </dev/null | json 'd["vault"]["id"]')"
-protector_id="$("$cli" -o json vault protector list --vault smoke </dev/null | json '[p["id"] for p in d if p["kind"] == "os-keyring"][0]')"
-account="vault/$vault_id/$protector_id"
-check "protector list shows an os-keyring protector" test -n "$protector_id"
+vault_id="$(echo "$created" | json 'd["vault"]["id"]')"
+wrap_id="$(echo "$created" | machine_key)"
+account="vault/$vault_id/$wrap_id"
+check "vault create reports this machine's key" test -n "$wrap_id"
 store_check "the store holds the vault's entry ($account)" "$account" present
 
 # 2. A value goes in and comes back, in a fresh process each time and with
 #    no terminal to prompt on.
 canary="smoke-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
-check "secret set through the keyring protector" bash -c 'printf "%s" "$1" | "$2" secret set canary --vault smoke --stdin' _ "$canary" "$cli"
+check "secret set through this machine's key" bash -c 'printf "%s" "$1" | "$2" secret set canary --vault smoke --stdin' _ "$canary" "$cli"
 got="$("$cli" secret get canary --vault smoke --reveal --raw </dev/null 2>/dev/null || true)"
 if [[ "$got" = "$canary" ]]; then pass "secret get returns the stored value"; else fail "secret get returns the stored value"; fi
-check "a second process opens the vault without a prompt" "$cli" secret list --vault smoke </dev/null
+check "a second process opens the vault without a prompt" "$cli" secret list --vault smoke
 
-# 3. Protectors change: a passphrase joins, the keyring protector leaves and
-#    its entry with it, the vault still opens, the keyring protector returns.
-export SOURCEORRERY_PASSPHRASE="smoke-passphrase-$$"
-check "protector add --kind passphrase" "$cli" vault protector add --kind passphrase --vault smoke
-check "protector remove <os-keyring id>" "$cli" vault protector remove "$protector_id" --vault smoke
-store_check "the entry is gone after the protector is removed" "$account" absent
-check "the vault opens with the passphrase alone" "$cli" secret list --vault smoke
-check "protector add --kind os-keyring" "$cli" vault protector add --kind os-keyring --vault smoke
-unset SOURCEORRERY_PASSPHRASE
-protector_id="$("$cli" -o json vault protector list --vault smoke </dev/null | json '[p["id"] for p in d if p["kind"] == "os-keyring"][0]')"
-account="vault/$vault_id/$protector_id"
-store_check "the store holds the new entry" "$account" present
-check "the vault opens through the new keyring protector" "$cli" secret list --vault smoke
+# 3. Where this machine's key cannot be used the vault needs its recovery
+#    key, and opening it that way leaves this machine's entry alone.
+check_not "elsewhere, without the recovery key, the vault stays locked" elsewhere "$cli" secret list --vault smoke
+check "elsewhere the recovery key opens it" elsewhere env SOURCEORRERY_RECOVERY_KEY_FILE="$key_file" "$cli" secret list --vault smoke
+store_check "this machine's entry is unchanged" "$account" present
+check "this machine still opens the vault without a prompt" "$cli" secret list --vault smoke
 
 # 4. Destroying a vault removes its entry, unless another vault file in the
 #    home still references it.
@@ -136,10 +137,8 @@ check "destroying the copy" "$cli" vault destroy smoke-copy --yes
 store_check "the entry is removed with the last file" "$account" absent
 
 # 5. --keep-os-key leaves the entry alone; the copy's destruction cleans up.
-check "vault create keep --protector os-keyring" "$cli" vault create keep --protector os-keyring
-keep_id="$("$cli" -o json vault info --vault keep </dev/null | json 'd["vault"]["id"]')"
-keep_protector="$("$cli" -o json vault protector list --vault keep </dev/null | json '[p["id"] for p in d if p["kind"] == "os-keyring"][0]')"
-keep_account="vault/$keep_id/$keep_protector"
+if kept="$("$cli" -o json vault create keep --recovery-key-out "$SOURCEORRERY_HOME/keep.key" </dev/null 2>/dev/null)"; then pass "vault create keep"; else fail "vault create keep"; fi
+keep_account="vault/$(echo "$kept" | json 'd["vault"]["id"]')/$(echo "$kept" | machine_key)"
 cp "$SOURCEORRERY_HOME/vaults/keep.sorvault" "$SOURCEORRERY_HOME/vaults/keep-copy.sorvault"
 check "vault destroy --keep-os-key" "$cli" vault destroy keep --yes --keep-os-key
 store_check "the entry is kept on request" "$keep_account" present

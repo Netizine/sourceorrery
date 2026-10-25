@@ -1,0 +1,114 @@
+{
+	"setup-first-vault": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-name": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-view-check": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-password": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-authenticator": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-recovery-key": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-storage": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-connections": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-review": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-done": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-start": {
+		"cols": 120,
+		"rows": 30
+	},
+	"setup-unlock": {
+		"cols": 120,
+		"rows": 30
+	},
+	"overview": {
+		"cols": 120,
+		"rows": 32
+	},
+	"secrets": {
+		"cols": 120,
+		"rows": 18
+	},
+	"detail": {
+		"cols": 120,
+		"rows": 30
+	},
+	"add-secret": {
+		"cols": 120,
+		"rows": 24
+	},
+	"projects": {
+		"cols": 120,
+		"rows": 14
+	},
+	"project-detail": {
+		"cols": 120,
+		"rows": 20
+	},
+	"deleted": {
+		"cols": 120,
+		"rows": 14
+	},
+	"audit": {
+		"cols": 120,
+		"rows": 30
+	},
+	"vaults": {
+		"cols": 120,
+		"rows": 14
+	},
+	"init-vault": {
+		"cols": 120,
+		"rows": 30
+	},
+	"init-project": {
+		"cols": 120,
+		"rows": 30
+	},
+	"init-secrets": {
+		"cols": 120,
+		"rows": 30
+	},
+	"init-add-new": {
+		"cols": 120,
+		"rows": 30
+	},
+	"init-new-secret": {
+		"cols": 120,
+		"rows": 30
+	},
+	"init-review": {
+		"cols": 120,
+		"rows": 30
+	},
+	"init-done": {
+		"cols": 120,
+		"rows": 30
+	}
+}

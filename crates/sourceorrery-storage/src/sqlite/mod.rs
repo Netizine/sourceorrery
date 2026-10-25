@@ -11,8 +11,16 @@
 //! * `audit`: the audit chain writer, head record, verification, and the
 //!   completion helpers every operation ends with (`audit`, `fail`,
 //!   `finish_read`), so no operation can skip its audit row.
-//! * `protectors`: unlocking, key protectors and OS-keyring ownership.
-//! * `migrate`: the explicit forward migration of schema 1 and 2 files.
+//! * `wraps`: opening, the key wraps (this machine, the recovery key) and
+//!   credential-store ownership.
+//! * `view`: the view check (password, hint, authenticator).
+//! * `connections`: how the vault reaches a provider (settings, sealed
+//!   credentials, the last test).
+//! * `catalog`: what the vault says about a secret besides its value (its
+//!   description).
+//! * `projects`: the project folders built from the vault (sealed path and
+//!   name, keyed path MAC).
+//! * `export`: copies for another machine, and their import.
 //!
 //! This file keeps the vault type, its construction and the
 //! [`SecretClient`] implementation. Every operation starts with
@@ -22,21 +30,35 @@
 //! state of the rows they touched as checkpoints in that row.
 
 mod audit;
-mod backup;
-mod guard;
-mod migrate;
-
-pub use self::guard::{MAX_HINT_LEN, RevealGuard, SecondFactorInfo};
-pub use self::protectors::RECOVERY_LABEL_PREFIX;
-mod protectors;
+mod catalog;
+mod connections;
+mod export;
+mod projects;
 mod rows;
 mod schema;
+mod settings;
 #[cfg(test)]
 mod tests;
+mod view;
+mod wraps;
+
+pub use self::catalog::{CatalogEntry, MAX_DESCRIPTION_LEN, validate_description};
+pub use self::connections::{
+    CatalogChange, ConnectionChange, ConnectionInfo, ConnectionTest, CredentialSource,
+    SecretStorage,
+};
+pub use self::export::Imported;
+pub use self::projects::{MAX_PROJECT_NAME_LEN, ProjectLink};
+pub use self::settings::SettingsChange;
+pub use self::view::{
+    AuthenticatorChange, FREE_FAILURES, MAX_HINT_LEN, PasswordChange, SecondFactorInfo,
+    ViewAnswers, ViewCheck,
+};
+pub use self::wraps::RecoveryKey;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::{Connection, Transaction, params};
 use serde::Serialize;
@@ -48,66 +70,38 @@ use sourceorrery_core::{
     UpdateSecretProperties, VaultDescriptor, timestamp, validate_vault_name,
 };
 use sourceorrery_crypto::{SymmetricKey, aead, random};
+use zeroize::Zeroizing;
 
 use crate::integrity::{self, Checkpoint, VersionFields};
-use crate::keystore;
-use crate::protector::{ProtectorKind, ProtectorSpec};
+use crate::keystore::CredentialStore;
 use crate::registry::restrict_permissions;
 use crate::unlock::UnlockProvider;
 use crate::{BACKEND_NAME, SCHEMA_VERSION};
 
 use self::audit::{
-    AuditRow, AuditWriter, Checkpoints, SecretCheckpoints, chain_problem, event_from_row,
-    head_problem, quarantined_message, truncated_message, unacknowledged_truncations,
-    vault_checkpoints,
-};
-use self::migrate::migrate;
-use self::protectors::{
-    Unlocked, add_protector, any_keyring_protector_wrapped_newer, read_protectors,
-    rewrap_protector, try_passphrases, try_unwrap,
+    AuditRow, AuditWriter, Checkpoints, Entry, SecretCheckpoints, chain_problem, event_from_row,
+    head_problem, quarantined_message, settings_message, settings_problem, truncated_message,
+    unacknowledged_truncations, vault_checkpoints,
 };
 use self::rows::{
     NewVersion, RawVersion, SecretRow, StoredSecretRow, load_ciphertext, query_raw_versions_in,
-    query_secret_names, query_secret_rows, select_version,
+    query_secret_names, query_secret_rows, select_version, stored_elsewhere,
 };
 use self::schema::{
-    GuardState, Meta, SCHEMA, begin_write, crypto, db, nanos, open_connection, opt_nanos,
-    read_meta, recovery_id, value_aad, write_settings_tag,
+    Meta, SCHEMA, ViewState, begin_write, crypto, db, nanos, open_connection, opt_nanos, read_meta,
+    recovery_id, value_aad, write_settings_tag,
+};
+use self::wraps::{
+    new_recovery_wrap, new_this_machine_wrap, read_wraps, recovery_wrap_for, try_recovery_key,
+    try_this_machine,
 };
 
-/// The passphrase hint a vault file stores, read without unlocking it:
-/// in clear and unauthenticated, so it is whatever the file says.
-pub(crate) fn read_passphrase_hint(path: &Path) -> Result<Option<String>> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let conn = open_connection(path)?;
-    Ok(read_meta(&conn)?.passphrase_hint)
-}
-
-/// Maximum passphrase attempts per `open`.
+/// Maximum recovery-key attempts per `open`.
 pub const MAX_UNLOCK_ATTEMPTS: u32 = 3;
-
-/// Most passphrase protectors tried per attempt. Each one costs an Argon2id
-/// derivation whose parameters come from the file, so the total work an
-/// unlock can be made to do is bounded here and in `Argon2Params::MAX`.
-pub(super) const MAX_PASSPHRASE_PROTECTORS: usize = 8;
-
-/// Oldest on-disk schema this build can open (and migrate forward).
-pub(super) const OLDEST_SUPPORTED_SCHEMA: u32 = 1;
 
 /// Options for [`SqliteVault::open_with`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpenOptions {
-    /// Unlock a vault written by an older schema and migrate it forward.
-    ///
-    /// Off by default. The legacy format is unauthenticated, so migrating is
-    /// a trust decision the user makes explicitly (`vault migrate`); plain
-    /// `open` refuses with [`SecretError::MigrationRequired`]. Even when set,
-    /// a file whose key material shows it was already in the current format
-    /// is refused, because that means the schema marker was rolled back.
-    pub allow_legacy_migration: bool,
-
     /// Unlock a vault whose audit log has a detected truncation that nobody
     /// has acknowledged (a *quarantined* vault), for inspection and
     /// acknowledgement only.
@@ -115,7 +109,7 @@ pub struct OpenOptions {
     /// Off by default: plain `open` refuses such a vault with
     /// [`SecretError::Crypto`]. A handle opened this way can read the log,
     /// verify the chain and call [`SqliteVault::acknowledge_truncations`];
-    /// every secret and protector operation on it is still refused until
+    /// every secret and key operation on it is still refused until
     /// the truncation is acknowledged. A chain head found stale at this
     /// unlock is recorded rather than refused, so the truncation can be
     /// reviewed and acknowledged in the same session, and the retention
@@ -143,6 +137,10 @@ pub struct CreateVaultOptions {
     pub recovery_level: RecoveryLevel,
     /// Soft-delete retention in days (7–90).
     pub retention_days: u32,
+    /// Let this machine open the vault without asking, by keeping a key in
+    /// the credential store, when the store is available (default). Without
+    /// it, or without a store, the vault opens with its recovery key only.
+    pub this_machine: bool,
 }
 
 impl Default for CreateVaultOptions {
@@ -150,13 +148,26 @@ impl Default for CreateVaultOptions {
         Self {
             recovery_level: RecoveryLevel::Recoverable,
             retention_days: SoftDeletePolicy::default().retention_days,
+            this_machine: true,
         }
     }
 }
 
-/// Create the vault file exclusively. `AlreadyExists` means another vault
-/// (or a concurrent creator) owns the path; any other error is passed on.
-fn reserve_path(path: &Path, name: &str) -> Result<()> {
+/// A vault just created, with the recovery key to show its owner once.
+#[derive(Debug)]
+pub struct Created {
+    /// The open vault.
+    pub vault: SqliteVault,
+    /// The recovery key (`XXXXX-XXXXX-XXXXX-XXXXX-XXXXX`). It opens the vault
+    /// anywhere and is not stored: shown once, then wiped when dropped.
+    pub recovery_key: Zeroizing<String>,
+    /// True when this machine can open the vault without asking.
+    pub this_machine: bool,
+}
+
+/// Create `path` as an empty file readable by its owner only, failing with
+/// `AlreadyExists` when anything is there already.
+fn create_exclusive(path: &Path) -> std::io::Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -164,8 +175,14 @@ fn reserve_path(path: &Path, name: &str) -> Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    match options.open(path) {
-        Ok(_file) => Ok(()),
+    options.open(path).map(drop)
+}
+
+/// Create the vault file exclusively. `AlreadyExists` means another vault
+/// (or a concurrent creator) owns the path; any other error is passed on.
+fn reserve_path(path: &Path, name: &str) -> Result<()> {
+    match create_exclusive(path) {
+        Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
             Err(SecretError::VaultExists {
                 name: name.to_owned(),
@@ -183,28 +200,47 @@ pub struct SqliteVault {
     /// HKDF sub-key of `dek` that authenticates metadata and the audit chain.
     metadata_key: SymmetricKey,
     meta: Meta,
-    /// The second-factor enrolment and the reveal guard as they are now
-    /// (`meta.guard` is what the file said at open).
-    guard: Mutex<GuardState>,
+    /// The view check as it is now (`meta.view` is what the file said at
+    /// open).
+    view: Mutex<ViewState>,
     path: PathBuf,
     actor: Principal,
+    /// Where this vault's this-machine keys are kept.
+    store: Arc<dyn CredentialStore>,
+    /// The recovery key opened this handle, which passes the view check.
+    opened_with_recovery_key: bool,
 }
 
 impl SqliteVault {
-    /// Create a new vault file at `path` with one initial key protector.
+    /// Create a new vault file at `path`: a fresh vault key, its recovery
+    /// wrap (the recovery key is returned, to be shown once) and, when
+    /// `options.this_machine` is set and `store` is available, a
+    /// this-machine wrap so the vault opens here without asking.
     ///
     /// The path is reserved by creating the file exclusively, so of several
     /// callers racing to create the same vault exactly one succeeds and the
     /// others get [`SecretError::VaultExists`] without touching the winner's
-    /// file. If the protector cannot be installed (for example the OS
-    /// credential store is unavailable) the creator removes its own file
-    /// again so no un-openable vault is left behind.
+    /// file. If anything fails afterwards (for example the credential store
+    /// refuses the key) the creator removes its own file again, so no
+    /// half-made vault is left behind.
     pub fn create(
         path: &Path,
         name: &str,
         options: CreateVaultOptions,
-        protector: ProtectorSpec,
-    ) -> Result<Self> {
+        store: Arc<dyn CredentialStore>,
+    ) -> Result<Created> {
+        Self::create_with(path, name, options, store, None)
+    }
+
+    /// [`SqliteVault::create`] with the recovery key `recovery_key`, made
+    /// and shown beforehand, instead of a new one.
+    pub(crate) fn create_with(
+        path: &Path,
+        name: &str,
+        options: CreateVaultOptions,
+        store: Arc<dyn CredentialStore>,
+        recovery_key: Option<RecoveryKey>,
+    ) -> Result<Created> {
         validate_vault_name(name)?;
         SoftDeletePolicy::new(options.retention_days)?;
         if let Some(parent) = path.parent() {
@@ -214,7 +250,7 @@ impl SqliteVault {
 
         // From here on this call owns the file: only the creator that
         // reserved the path may remove it.
-        let result = Self::create_inner(path, name, options, protector);
+        let result = Self::create_inner(path, name, options, store, recovery_key);
         if result.is_err() {
             let _ = std::fs::remove_file(path);
         }
@@ -225,15 +261,16 @@ impl SqliteVault {
         path: &Path,
         name: &str,
         options: CreateVaultOptions,
-        protector: ProtectorSpec,
-    ) -> Result<Self> {
+        store: Arc<dyn CredentialStore>,
+        recovery_key: Option<RecoveryKey>,
+    ) -> Result<Created> {
         // The reserved file is empty, which SQLite treats as a new database.
         let mut conn = open_connection(path)?;
         restrict_permissions(path, 0o600)?;
         conn.execute_batch(SCHEMA).map_err(db)?;
         // Everything that makes the file a vault lands in one transaction:
         // a crash leaves an empty database, never a vault without its
-        // protector, its settings tag or its first audit row.
+        // keys, its settings tag or its first audit row.
         let tx = begin_write(&mut conn)?;
 
         let now = timestamp::now();
@@ -248,8 +285,9 @@ impl SqliteVault {
             recovery_level_raw: recovery_level_raw.clone(),
             retention_days: options.retention_days,
             settings_tag: None,
-            guard: GuardState::default(),
-            passphrase_hint: None,
+            view: ViewState::default(),
+            connections: Vec::new(),
+            projects: Vec::new(),
         };
         let rows: [(&str, String); 6] = [
             ("schema_version", SCHEMA_VERSION.to_string()),
@@ -270,46 +308,72 @@ impl SqliteVault {
         let dek = SymmetricKey::generate().map_err(crypto)?;
         let metadata_key = integrity::derive_metadata_key(&dek);
         let actor = Principal::local_user();
-        add_protector(&tx, &meta, &dek, protector, None)?;
-        write_settings_tag(&tx, &metadata_key, &meta)?;
+        let recovery_key = match recovery_key {
+            Some(key) => {
+                recovery_wrap_for(&tx, &meta, &dek, &key)?;
+                key.into_text()
+            }
+            None => new_recovery_wrap(&tx, &meta, &dek)?.1,
+        };
+        let this_machine = options.this_machine && store.available();
+        if this_machine {
+            new_this_machine_wrap(&tx, &meta, &dek, store.as_ref())?;
+        }
+        let settings = write_settings_tag(&tx, &metadata_key, &meta)?;
         AuditWriter {
             meta: &meta,
             key: Some(&metadata_key),
             actor: &actor,
             allow_empty_chain: true,
         }
-        .record(
+        .record_entry(
             &tx,
-            AuditOperation::VaultCreate,
-            None,
-            None,
-            AuditOutcome::Success,
-            Some(BACKEND_NAME),
+            &Entry {
+                operation: AuditOperation::VaultCreate,
+                secret_name: None,
+                version: None,
+                outcome: AuditOutcome::Success,
+                detail: Some(BACKEND_NAME),
+                checkpoints: Checkpoints {
+                    settings: Some(settings),
+                    ..Checkpoints::default()
+                },
+            },
         )?;
         tx.commit().map_err(db)?;
 
-        Ok(Self {
+        let vault = Self {
             conn: Mutex::new(conn),
             dek,
             metadata_key,
-            guard: Mutex::new(meta.guard.clone()),
+            view: Mutex::new(meta.view.clone()),
             meta,
             path: path.to_path_buf(),
             actor,
+            store,
+            opened_with_recovery_key: false,
+        };
+        Ok(Created {
+            vault,
+            recovery_key,
+            this_machine,
         })
     }
 
-    /// Open and unlock the vault at `path`.
+    /// Open the vault at `path`.
     ///
-    /// OS-keyring protectors are tried first (no interaction). If none
-    /// unlocks the vault, `unlock` is asked for a passphrase up to
+    /// A this-machine key in `store` is tried first (no interaction). If
+    /// none opens the vault, `unlock` is asked for the recovery key up to
     /// [`MAX_UNLOCK_ATTEMPTS`] times. Every failed attempt is audited.
     ///
-    /// A vault written by an older schema version is **not** opened: the
-    /// call fails with [`SecretError::MigrationRequired`]. Use
-    /// [`SqliteVault::open_with`] (or `vault migrate`) to migrate it.
-    pub fn open(path: &Path, unlock: &dyn UnlockProvider) -> Result<Self> {
-        Self::open_with(path, unlock, OpenOptions::default())
+    /// A vault written by an earlier release (an older schema) is refused
+    /// with [`SecretError::MigrationRequired`]: there is no migration.
+    pub fn open(
+        path: &Path,
+        store: Arc<dyn CredentialStore>,
+        unlock: &dyn UnlockProvider,
+    ) -> Result<Self> {
+        Self::open_with(path, store, unlock, OpenOptions::default())
     }
 
     /// [`SqliteVault::open`] with options.
@@ -319,10 +383,11 @@ impl SqliteVault {
     /// another vault ([`SecretError::VaultMismatch`]).
     pub fn open_with(
         path: &Path,
+        store: Arc<dyn CredentialStore>,
         unlock: &dyn UnlockProvider,
         options: OpenOptions,
     ) -> Result<Self> {
-        Self::open_checked(path, None, unlock, options)
+        Self::open_checked(path, None, store, unlock, options)
     }
 
     /// [`SqliteVault::open_with`] for the vault named `name`: once the name
@@ -332,15 +397,17 @@ impl SqliteVault {
     pub(crate) fn open_named(
         path: &Path,
         name: &str,
+        store: Arc<dyn CredentialStore>,
         unlock: &dyn UnlockProvider,
         options: OpenOptions,
     ) -> Result<Self> {
-        Self::open_checked(path, Some(name), unlock, options)
+        Self::open_checked(path, Some(name), store, unlock, options)
     }
 
     fn open_checked(
         path: &Path,
         expected_name: Option<&str>,
+        store: Arc<dyn CredentialStore>,
         unlock: &dyn UnlockProvider,
         options: OpenOptions,
     ) -> Result<Self> {
@@ -355,18 +422,10 @@ impl SqliteVault {
         }
         let conn = open_connection(path)?;
         let meta = read_meta(&conn)?;
-        if meta.schema < SCHEMA_VERSION && !options.allow_legacy_migration {
-            return Err(SecretError::MigrationRequired {
-                name: meta.name,
-                schema: meta.schema,
-            });
-        }
-        let protectors = read_protectors(&conn)?;
+        let wraps = read_wraps(&conn)?;
         let actor = Principal::local_user();
-        if protectors.is_empty() {
-            return Err(SecretError::Locked(
-                "vault has no key protectors".to_owned(),
-            ));
+        if wraps.is_empty() {
+            return Err(SecretError::Locked("vault has no key wraps".to_owned()));
         }
         // Rows written here precede unlock: no metadata key yet.
         let unkeyed = AuditWriter {
@@ -377,56 +436,22 @@ impl SqliteVault {
         };
 
         let mut reasons: Vec<String> = Vec::new();
-
-        for protector in protectors
-            .iter()
-            .filter(|p| matches!(p.kind, ProtectorKind::OsKeyring { .. }))
-        {
-            let ProtectorKind::OsKeyring { account, .. } = &protector.kind else {
-                continue;
-            };
-            match keystore::load_key(account) {
-                Ok(Some(kek)) => match try_unwrap(&meta, protector, &kek) {
-                    Ok((dek, wrapped_schema)) => {
-                        let unlocked = Unlocked {
-                            protector_id: protector.id.clone(),
-                            kek,
-                            wrapped_schema,
-                        };
-                        return Self::finish_open(
-                            conn,
-                            dek,
-                            meta,
-                            path,
-                            actor,
-                            &unlocked,
-                            options,
-                            expected_name,
-                        );
-                    }
-                    Err(err) => reasons.push(format!("{}: {err}", protector.label)),
-                },
-                Ok(None) => reasons.push(format!(
-                    "{}: no entry in {}",
-                    protector.label,
-                    keystore::STORE_NAME
-                )),
-                Err(err) => reasons.push(format!("{}: {err}", protector.label)),
-            }
-        }
-
-        if let Some((dek, unlocked)) =
-            try_passphrases(&conn, &meta, &protectors, unlock, &unkeyed, &mut reasons)?
-        {
+        let opened = match try_this_machine(&meta, &wraps, store.as_ref(), &mut reasons) {
+            Some(dek) => Some((dek, false)),
+            None => try_recovery_key(&conn, &meta, &wraps, unlock, &unkeyed, &mut reasons)?
+                .map(|dek| (dek, true)),
+        };
+        if let Some((dek, with_recovery_key)) = opened {
             return Self::finish_open(
                 conn,
                 dek,
                 meta,
                 path,
                 actor,
-                &unlocked,
+                store,
                 options,
                 expected_name,
+                with_recovery_key,
             );
         }
 
@@ -443,68 +468,32 @@ impl SqliteVault {
 
     #[allow(clippy::too_many_arguments)] // one call per unlock route, all of them needed
     fn finish_open(
-        mut conn: Connection,
+        conn: Connection,
         dek: SymmetricKey,
-        mut meta: Meta,
+        meta: Meta,
         path: &Path,
         actor: Principal,
-        unlocked: &Unlocked,
+        store: Arc<dyn CredentialStore>,
         options: OpenOptions,
         expected_name: Option<&str>,
+        with_recovery_key: bool,
     ) -> Result<Self> {
         let metadata_key = integrity::derive_metadata_key(&dek);
-        let migrated = meta.schema < SCHEMA_VERSION;
-        let mut head_stale = false;
-        if migrated {
-            // The file says "older" but only key material is trustworthy: a
-            // key wrapped under a newer schema proves the marker was rolled
-            // back, and the migration must not launder that file.
-            let rolled_back = unlocked.wrapped_schema > meta.schema
-                || any_keyring_protector_wrapped_newer(&conn, &meta)?;
-            if rolled_back {
-                AuditWriter {
-                    meta: &meta,
-                    key: None,
-                    actor: &actor,
-                    allow_empty_chain: false,
-                }
-                .record(
-                    &conn,
-                    AuditOperation::VaultMigrate,
-                    None,
-                    None,
-                    AuditOutcome::Failure,
-                    Some("schema marker rolled back"),
-                )?;
-                return Err(SecretError::Crypto(
-                    "vault reports an older schema but its key is bound to a newer one: \
-                     the schema marker was altered; refusing to migrate"
-                        .to_owned(),
-                ));
-            }
-            // The legacy name is not authenticated, but a file under the
-            // wrong name must not be migrated: migration binds the name it
-            // finds into the settings tag for good.
-            Self::refuse_if_misnamed(&conn, None, &meta, &actor, expected_name)?;
-            // Refuses a schema 2 file whose audit log was truncated.
-            migrate(&mut conn, &mut meta, &dek, &metadata_key, &actor, unlocked)?;
-        } else {
-            head_stale = Self::refuse_if_truncated(
-                &conn,
-                &metadata_key,
-                &meta,
-                &actor,
-                options.allow_quarantined,
-            )?;
-            Self::verify_settings(&conn, &metadata_key, &meta, &actor)?;
-            // The settings tag covers the name, so it is authentic here.
-            Self::refuse_if_misnamed(&conn, Some(&metadata_key), &meta, &actor, expected_name)?;
-        }
+        let head_stale = Self::refuse_if_truncated(
+            &conn,
+            &metadata_key,
+            &meta,
+            &actor,
+            options.allow_quarantined,
+        )?;
+        Self::verify_settings(&conn, &metadata_key, &meta, &actor)?;
+        // The settings tag covers the name, so it is authentic here.
+        Self::refuse_if_misnamed(&conn, &metadata_key, &meta, &actor, expected_name)?;
 
-        // The chain is in the current format. A detected truncation that
-        // nobody has acknowledged blocks the vault: only an unlock asked for
-        // inspection gets a handle, and that handle refuses every operation
-        // until the acknowledgement is on the chain.
+        // A detected truncation that nobody has acknowledged blocks the
+        // vault: only an unlock asked for inspection gets a handle, and that
+        // handle refuses every operation until the acknowledgement is on
+        // the chain.
         let pending = unacknowledged_truncations(&conn, &metadata_key, &meta.id)?;
         let quarantined = head_stale || !pending.is_empty();
         if quarantined && !options.allow_quarantined {
@@ -524,14 +513,20 @@ impl SqliteVault {
             )?;
             return Err(SecretError::Crypto(quarantined_message(&pending)));
         }
-        if !quarantined && !migrated && unlocked.wrapped_schema < SCHEMA_VERSION {
-            // A protector left over from a migration that could not re-wrap
-            // it (another passphrase): bind it now that we can.
-            rewrap_protector(&conn, &meta, &dek, &unlocked.protector_id, &unlocked.kek)?;
+        // A quarantined vault's settings are judged by their tag alone (see
+        // `verified_meta`): the missing events may have held the newest
+        // checkpoint.
+        if !quarantined {
+            Self::refuse_if_settings_replayed(&conn, &metadata_key, &meta, &actor)?;
         }
         // On a stale head this append records the detection first (every
         // keyed append does), so what the inspecting caller sees is on the
         // chain before the handle is handed out.
+        let detail = match (quarantined, with_recovery_key) {
+            (true, _) => Some("inspection (truncation unacknowledged)"),
+            (false, true) => Some("opened with the recovery key"),
+            (false, false) => None,
+        };
         AuditWriter {
             meta: &meta,
             key: Some(&metadata_key),
@@ -544,16 +539,18 @@ impl SqliteVault {
             None,
             None,
             AuditOutcome::Success,
-            quarantined.then_some("inspection (truncation unacknowledged)"),
+            detail,
         )?;
         let vault = Self {
             conn: Mutex::new(conn),
             dek,
             metadata_key,
-            guard: Mutex::new(meta.guard.clone()),
+            view: Mutex::new(meta.view.clone()),
             meta,
             path: path.to_path_buf(),
             actor,
+            store,
+            opened_with_recovery_key: with_recovery_key,
         };
         if !quarantined {
             vault.purge_expired_deletions()?;
@@ -623,12 +620,10 @@ impl SqliteVault {
 
     /// Refuse a vault opened by a name that is not its own: the file found
     /// for `expected` holds another vault, renamed, copied or swapped in.
-    /// Recording the refusal puts it on that vault's own log. `key` is
-    /// `None` for a legacy file that is about to be migrated, whose rows
-    /// are not keyed yet.
+    /// Recording the refusal puts it on that vault's own log.
     fn refuse_if_misnamed(
         conn: &Connection,
-        key: Option<&SymmetricKey>,
+        key: &SymmetricKey,
         meta: &Meta,
         actor: &Principal,
         expected: Option<&str>,
@@ -642,7 +637,7 @@ impl SqliteVault {
         let detail = format!("opened as vault '{expected}'");
         AuditWriter {
             meta,
-            key,
+            key: Some(key),
             actor,
             allow_empty_chain: false,
         }
@@ -689,10 +684,43 @@ impl SqliteVault {
             Some("settings integrity check failed"),
         )?;
         Err(SecretError::Crypto(
-            "vault settings integrity check failed (schema, name, recovery level or \
-             retention were altered)"
+            "vault settings integrity check failed (schema, name, recovery level, retention, \
+             the view check, a connection or a project were altered)"
                 .to_owned(),
         ))
+    }
+
+    /// Refuse to unlock a vault whose settings record, authentic as it is,
+    /// is not the one the audit chain records last: an older copy of the
+    /// whole record put back, which would switch the view check off, reset
+    /// the count of wrong answers or bring back a removed connection. Like
+    /// a replayed row it stays refused; the refusal is recorded.
+    fn refuse_if_settings_replayed(
+        conn: &Connection,
+        key: &SymmetricKey,
+        meta: &Meta,
+        actor: &Principal,
+    ) -> Result<()> {
+        let Some(problem) = settings_problem(conn, key, &meta.id, meta.settings_tag.as_deref())?
+        else {
+            return Ok(());
+        };
+        let detail = format!("settings integrity check failed: {problem}");
+        AuditWriter {
+            meta,
+            key: Some(key),
+            actor,
+            allow_empty_chain: false,
+        }
+        .record(
+            conn,
+            AuditOperation::VaultOpen,
+            None,
+            None,
+            AuditOutcome::Failure,
+            Some(detail.as_str()),
+        )?;
+        Err(SecretError::Crypto(settings_message(&problem)))
     }
 
     /// Replace the principal recorded in audit events (default: OS user).
@@ -704,7 +732,7 @@ impl SqliteVault {
 
     /// Non-sensitive description of this vault.
     pub fn descriptor(&self) -> Result<VaultDescriptor> {
-        let protectors = self.protectors()?.into_iter().map(|p| p.label).collect();
+        let protectors = self.wraps()?.into_iter().map(|w| w.kind).collect();
         Ok(VaultDescriptor {
             name: self.meta.name.clone(),
             id: self.meta.id.clone(),
@@ -806,7 +834,9 @@ impl SqliteVault {
                     state.and_then(|c| c.state),
                 )?;
                 let Some(row) = row else { continue };
-                if !wanted(&row) {
+                // A connection stores the value of a row with a storage, so
+                // the file has nothing to list for it.
+                if row.storage.is_some() || !wanted(&row) {
                     continue;
                 }
                 let raw = window.versions.remove(name).unwrap_or_default();
@@ -885,6 +915,18 @@ impl SecretClient for SqliteVault {
                     },
                 );
             }
+            Ok(Some(SecretRow {
+                storage: Some(connection),
+                ..
+            })) => {
+                return self.fail(
+                    tx,
+                    op,
+                    Some(name),
+                    None,
+                    stored_elsewhere(name, &connection),
+                );
+            }
             Ok(Some(_)) => None,
             Ok(None) => {
                 let row = SecretRow {
@@ -892,6 +934,8 @@ impl SecretClient for SqliteVault {
                     deleted_on: None,
                     scheduled_purge_on: None,
                     recovery_id: None,
+                    storage: None,
+                    description: None,
                 };
                 Some(Checkpoint::Present(self.insert_secret(&tx, name, &row)?))
             }
@@ -947,6 +991,7 @@ impl SecretClient for SqliteVault {
             Checkpoints {
                 state,
                 version: Some(Checkpoint::Present(version_tag)),
+                settings: None,
             },
         )?;
         tx.commit().map_err(db)?;
@@ -1140,6 +1185,7 @@ impl SecretClient for SqliteVault {
             Checkpoints {
                 state: None,
                 version: Some(Checkpoint::Present(tag)),
+                settings: None,
             },
         )?;
         tx.commit().map_err(db)?;
@@ -1164,10 +1210,10 @@ impl SecretClient for SqliteVault {
             let purge_on = self.meta.retention().scheduled_purge_on(now);
             let rid = recovery_id(&self.meta.name, name);
             let state = SecretRow {
-                created_on: row.created_on,
                 deleted_on: Some(nanos(now)?),
                 scheduled_purge_on: Some(nanos(purge_on)?),
                 recovery_id: Some(rid.clone()),
+                ..row
             };
             let tag = self.write_secret_state(&tx, name, &state)?;
             (
@@ -1204,6 +1250,7 @@ impl SecretClient for SqliteVault {
             Checkpoints {
                 state: Some(state),
                 version: None,
+                settings: None,
             },
         )?;
         tx.commit().map_err(db)?;
@@ -1249,10 +1296,10 @@ impl SecretClient for SqliteVault {
             Err(err) => return self.fail(tx, op, Some(name), None, err),
         };
         let state = SecretRow {
-            created_on: row.created_on,
             deleted_on: None,
             scheduled_purge_on: None,
             recovery_id: None,
+            ..row
         };
         let tag = self.write_secret_state(&tx, name, &state)?;
         let props = match self.newest_props(&tx, name) {
@@ -1268,6 +1315,7 @@ impl SecretClient for SqliteVault {
             Checkpoints {
                 state: Some(Checkpoint::Present(tag)),
                 version: None,
+                settings: None,
             },
         )?;
         tx.commit().map_err(db)?;
@@ -1292,6 +1340,7 @@ impl SecretClient for SqliteVault {
             Checkpoints {
                 state: Some(Checkpoint::Absent),
                 version: None,
+                settings: None,
             },
         )?;
         tx.commit().map_err(db)?;

@@ -13,6 +13,15 @@ This is not an independent audit, and the wording in the README and the
 [supply chain](supply-chain.md) page that says so is unchanged: that call
 is the maintainer's, after their own review.
 
+> [!NOTE]
+> This review predates [ADR 0009](adr/0009-local-vaults-checks-and-storage.md).
+> It checked passphrase protectors, recovery codes, the reveal guard,
+> backups and manifest-declared remote vaults, which that change removed;
+> its gap numbers are the threat model's at the time. The recovery key,
+> the view check, connections and export/import have not been through a
+> pass like this one yet. What ADR 0009 changed in the threat model is in
+> the ADR's *Threat model changes*.
+
 ## Scope and method
 
 | Surface | Read in full | Claims checked against |

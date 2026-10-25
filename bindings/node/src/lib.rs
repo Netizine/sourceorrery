@@ -51,17 +51,17 @@ fn json_text<T: serde::Serialize>(value: &T) -> Result<String> {
 
 fn open_options(
     home: Option<String>,
-    passphrase: Option<Buffer>,
-    passphrase_file: Option<String>,
+    recovery_key: Option<Buffer>,
+    recovery_key_file: Option<String>,
     environment: Option<bool>,
-    manifest: Option<String>,
 ) -> OpenOptions {
     OpenOptions {
         home: home.filter(|h| !h.is_empty()).map(PathBuf::from),
-        passphrase: passphrase.map(|b| SecretBytes::new(b.to_vec())),
-        passphrase_file: passphrase_file.filter(|f| !f.is_empty()).map(PathBuf::from),
+        recovery_key: recovery_key.map(|b| SecretBytes::new(b.to_vec())),
+        recovery_key_file: recovery_key_file
+            .filter(|f| !f.is_empty())
+            .map(PathBuf::from),
         environment: environment.unwrap_or(true),
-        manifest: manifest.filter(|m| !m.is_empty()).map(PathBuf::from),
     }
 }
 
@@ -184,19 +184,17 @@ impl NativeReader {
 
 #[napi]
 impl NativeReader {
-    /// Open `vault`. `manifest` is the `sourceorrery.toml` whose
-    /// `[vaults.<name>]` tables say which vaults are remote (`undefined`:
-    /// the nearest one above the current directory).
+    /// Open `vault`. A secret one of its connections stores is read at that
+    /// provider.
     #[napi(constructor)]
     pub fn new(
         vault: String,
         home: Option<String>,
-        passphrase: Option<Buffer>,
-        passphrase_file: Option<String>,
+        recovery_key: Option<Buffer>,
+        recovery_key_file: Option<String>,
         environment: Option<bool>,
-        manifest: Option<String>,
     ) -> Result<Self> {
-        let options = open_options(home, passphrase, passphrase_file, environment, manifest);
+        let options = open_options(home, recovery_key, recovery_key_file, environment);
         let reader = SecretReader::open_with(&vault, &options).map_err(|err| to_js(&err))?;
         Ok(Self {
             inner: Mutex::new(Some(reader)),
@@ -303,12 +301,11 @@ impl NativeProject {
 pub fn load_project(
     manifest: Option<String>,
     home: Option<String>,
-    passphrase: Option<Buffer>,
-    passphrase_file: Option<String>,
+    recovery_key: Option<Buffer>,
+    recovery_key_file: Option<String>,
     environment: Option<bool>,
 ) -> Result<NativeProject> {
-    // The project resolves remote vaults through the manifest it loads.
-    let options = open_options(home, passphrase, passphrase_file, environment, None);
+    let options = open_options(home, recovery_key, recovery_key_file, environment);
     let manifest = manifest.filter(|m| !m.is_empty()).map(PathBuf::from);
     let project = Project::load(manifest.as_deref(), &options).map_err(|err| to_js(&err))?;
     let info_json = json_text(&ProjectInfo {

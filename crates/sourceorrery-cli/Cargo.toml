@@ -24,18 +24,22 @@ doc = false
 
 [features]
 default = ["os-keyring", "ui", "remote", "otlp"]
-# Protect vault keys with the OS credential store. Disable for headless
-# servers that only use passphrase protectors.
+# Keep this machine's key in the OS credential store. Disable for headless
+# servers that open vaults with their recovery keys only.
 os-keyring = ["sourceorrery-storage/os-keyring"]
-# Every remote provider a manifest can name (`[vaults.<name>]`).
+# Every provider a vault's connection can reach.
 remote = ["sourceorrery-provider/remote"]
 # HashiCorp Vault, KV version 2.
 provider-vault = ["sourceorrery-provider/provider-vault"]
 # AWS Secrets Manager.
 provider-aws = ["sourceorrery-provider/provider-aws"]
-# The interactive vault browser, `sourceorrery ui` (Ratatui). Nothing else
-# in the CLI depends on it; disable for minimal builds.
-ui = ["dep:ratatui"]
+# Azure Key Vault.
+provider-azure = ["sourceorrery-provider/provider-azure"]
+# The terminal screens (Ratatui): the vault browser (`sourceorrery ui`),
+# `init`'s, and the setup wizard of `setup` and `vault create` with its
+# authenticator QR code. Nothing else in the CLI depends on them; disable
+# for minimal builds (`setup` then prints the non-interactive create).
+ui = ["dep:ratatui", "dep:qrcode"]
 # `audit export --format otlp`: OTLP/HTTP log records to a collector. JSON
 # Lines needs nothing and is always built.
 otlp = ["dep:reqwest"]
@@ -54,12 +58,13 @@ serde.workspace = true
 serde_json.workspace = true
 time.workspace = true
 toml.workspace = true
+toml_edit = "0.25"
 zeroize.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"], optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"], optional = true }
-qrcode = { version = "0.14", default-features = false }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"], optional = true }
+qrcode = { version = "0.14", default-features = false, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -14,15 +14,17 @@ keywords = ["secrets", "vault", "dotenv", "keyring", "sdk"]
 
 [features]
 default = ["os-keyring", "remote"]
-# Unlock vault keys from the OS credential store. Disable for headless
-# servers that only use passphrase protectors.
+# Open vaults with this machine's key in the OS credential store. Disable
+# for headless servers that open vaults with their recovery keys only.
 os-keyring = ["sourceorrery-storage/os-keyring"]
-# Every remote provider a manifest can name (`[vaults.<name>]`).
+# Every provider a vault's connection can reach.
 remote = ["sourceorrery-provider/remote"]
 # HashiCorp Vault, KV version 2.
 provider-vault = ["sourceorrery-provider/provider-vault"]
 # AWS Secrets Manager.
 provider-aws = ["sourceorrery-provider/provider-aws"]
+# Azure Key Vault.
+provider-azure = ["sourceorrery-provider/provider-azure"]
 
 [dependencies]
 sourceorrery-core.workspace = true

@@ -81,22 +81,21 @@ try (SecretReader reader = SecretReader.open("development");
 }   // closing zeroises the value and releases the vault
 ```
 
-`SecretReader.open(vault)` behaves like the CLI: `SOURCEORRERY_HOME`
-locates the vault; the OS credential store, then `SOURCEORRERY_PASSPHRASE`,
-then `SOURCEORRERY_PASSPHRASE_FILE` unlock it. `SecretReader.open(vault,
-OpenOptions.defaults().withHome(..).withPassphrase(..).withPassphraseFile(..).withEnvironment(false))`
-overrides any of that.
+With the default options, `SOURCEORRERY_HOME` locates the vault;
+this machine's key in the OS credential store opens it, else the
+recovery key: an explicit one, `SOURCEORRERY_RECOVERY_KEY`, then a file
+or `SOURCEORRERY_RECOVERY_KEY_FILE`. `SecretReader.open(vault,
+OpenOptions.defaults().withHome(..).withRecoveryKey(..).withRecoveryKeyFile(..).withEnvironment(false))`
+overrides any of that. The SDK never prompts and never asks the vault's
+view check.
 
-A vault that `sourceorrery.toml` declares in a `[vaults.<name>]` table
-([providers](../providers/index.md)) is opened at its remote provider by
-the same call; `withManifest(path)` names the manifest to resolve through
-(default: the nearest `sourceorrery.toml` above the current directory;
-`Project.load` always uses the manifest it loads). Credentials come from
-the provider's own environment, never from the manifest, which holds the
-address only. [HashiCorp Vault](../providers/hashicorp-vault.md) takes
-`VAULT_TOKEN` or the other sources it documents,
-[AWS Secrets Manager](../providers/aws-secrets-manager.md) the AWS default
-credential chain.
+A secret the vault keeps at a provider
+([HashiCorp Vault](../providers/hashicorp-vault.md),
+[AWS Secrets Manager](../providers/aws-secrets-manager.md),
+[Azure Key Vault](../providers/azure-key-vault.md)) is read there through
+the vault's connection, with the same calls: the connection signs in with
+the credentials it stores, or with the provider's own sign-in on the
+machine. No provider is contacted until a secret it keeps is read.
 
 | Call | Returns |
 |------|---------|
@@ -129,7 +128,7 @@ Every failure is a `SourceOrreryException` (unchecked) or a subclass, with
 try (SecretReader reader = SecretReader.open("development")) {
     reader.get("database-password");
 } catch (VaultLockedException e) {
-    System.err.println(e.hint());    // which passphrase sources were tried
+    System.err.println(e.hint());    // which recovery-key sources were tried
 } catch (SecretNotFoundException e) {
     System.err.println(e.hint());    // "Store it with `sourceorrery secret set ...`"
 } catch (SourceOrreryException e) {
@@ -145,7 +144,7 @@ Classes: `VaultNotFoundException`, `VaultLockedException`,
 `SecretExpiredException`, `IntegrityException`, `UnsupportedException`,
 `InvalidArgumentException`, `InvalidNameException`, `ManifestException`,
 `PermissionDeniedException`, `StorageException`,
-`UnauthenticatedException` (the remote provider refused the process's
+`UnauthenticatedException` (the provider that stores the secret refused the
 credentials), `ProviderUnavailableException` (the provider could not be
 reached; `isTransient()`). See [the SDK overview](index.md#errors).
 

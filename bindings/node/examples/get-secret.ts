@@ -1,7 +1,7 @@
 // Read one secret and report its size, never its value (TypeScript).
 //
 //   npm install @sourceorreryai/sdk
-//   export SOURCEORRERY_PASSPHRASE=...   # or rely on the OS credential store
+//   export SOURCEORRERY_RECOVERY_KEY=...   # or rely on the OS credential store
 //   node --experimental-strip-types get-secret.ts development database-password
 //
 // On Node 24+ (or with a bundler) `using reader = new SecretReader(vault)`

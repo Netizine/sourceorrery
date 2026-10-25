@@ -17,7 +17,8 @@ import ai.sourceorrery.internal.Json;
  * @param createdOn creation time
  * @param recoveryLevel deletion behaviour for secrets in the vault
  * @param retentionDays soft-delete retention in days
- * @param protectors installed key protector kinds
+ * @param protectors the kinds of key that open the vault ({@code this-machine},
+ *     {@code recovery})
  */
 public record VaultDescriptor(
         String name,

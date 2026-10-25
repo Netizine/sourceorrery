@@ -1,18 +1,24 @@
 # AWS Secrets Manager
 
-`provider = "aws-secrets-manager"` serves the secrets under one prefix in
-one region of [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/)
-as a SourceOrrery vault. The crate is `sourceorrery-provider-aws`, on by
-default in the CLI, the `sourceorrery` crate, the C ABI and every SDK
-(Cargo feature `provider-aws`, part of `remote`).
+A vault's `aws-secrets-manager` [connection](index.md) keeps secrets under
+one prefix in one region of
+[AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/). The
+crate is `sourceorrery-provider-aws`, on by default in the CLI, the
+`sourceorrery` crate, the C ABI and every SDK (Cargo feature
+`provider-aws`, part of `remote`).
 
-```toml
-[vaults.production]
-provider = "aws-secrets-manager"
-region = "eu-west-1"
-prefix = "myapp/"                          # optional: every secret name is placed under it
-endpoint_url = "http://localhost:4566"     # optional: a private endpoint or an emulator (https://, or http:// for localhost)
+```bash
+sourceorrery vault create production --recovery-key-out production.recovery-key \
+  --aws-secrets-manager eu-west-1 \
+  --aws-secrets-manager-prefix myapp/ \
+  --aws-secrets-manager-endpoint http://localhost:4566 \
+  --aws-access-key-id AKIA... --aws-secret-access-key-file key.txt   # optional: store an access key
 ```
+
+The prefix is optional: every secret name is placed under it. The endpoint
+is optional too, for a private endpoint or an emulator (`https://`, or
+`http://` for this machine). Without a stored access key the connection
+uses the AWS default credential chain.
 
 A prefix should end in a separator (`myapp/`): names never start with a
 hyphen, but `myapp` alone would place `myapp` and `myapp-other` under one
@@ -31,14 +37,14 @@ counterpart here ([threat model](../threat-model.md), known gap 14).
 
 ## Credentials
 
-The manifest holds the region, prefix and endpoint only. The official AWS
-SDK's default credential chain supplies the credentials, in its usual
-order: the environment (`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`,
+An access key stored in the connection is used when there is one.
+Otherwise the official AWS SDK's default credential chain supplies the
+credentials, in its usual order: the environment (`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`,
 `AWS_SESSION_TOKEN`), the shared config and credentials files with
 `AWS_PROFILE`, SSO, web identity (`AWS_WEB_IDENTITY_TOKEN_FILE` and
 `AWS_ROLE_ARN`, the path GitHub Actions and Kubernetes use), the ECS task
 role and the EC2 instance role. Credentials are resolved once when the
-vault is opened: a process the chain finds nothing for fails there with
+connection is first used: a process the chain finds nothing for fails there with
 `unauthenticated`, before any request. Credentials the service rejects
 (`UnrecognizedClientException`, an expired token) are `unauthenticated`
 too; a policy that denies the call is `permission_denied`.
@@ -117,7 +123,7 @@ exactly as for a local vault.
 ## Audit trail
 
 AWS CloudTrail holds the trail; SourceOrrery writes no log of its own for a
-remote vault, and `sourceorrery audit --vault <name>` prints this pointer.
+provider's secrets, and `sourceorrery audit --vault <name>` prints this pointer.
 Secrets Manager's API calls are management events, recorded by default
 with the identity the process authenticated as: a read is
 `GetSecretValue` (preceded by `DescribeSecret` and `ListSecretVersionIds`
@@ -162,14 +168,25 @@ anything), the `live` test runs the lifecycle conformance suite without
 per-secret behaviour above:
 
 ```bash
-pip install 'moto[server]' && moto_server -p 4566 &     # or: docker run -p 4566:5000 motoserver/moto
+npm ci --ignore-scripts --prefix scripts/ci/lstk     # the pinned LocalStack CLI
+# From the repository root, with LOCALSTACK_AUTH_TOKEN set:
+scripts/ci/lstk/node_modules/.bin/lstk start
 SOURCEORRERY_AWS_TEST_ENDPOINT=http://127.0.0.1:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
-  cargo test -p sourceorrery-provider-aws --test live
+  cargo test -p sourceorrery-provider-aws --test live -- --show-output
 ```
 
-The `provider-aws` CI job does the same against the `motoserver/moto`
-container (the LocalStack image needs a licence token since its 2026
-releases), then writes secrets into a Secrets-Manager-backed vault with
-the CLI and
+The `provider-aws` CI job does the same against LocalStack, started by
+lstk with the image pinned in `.lstk/config.toml` and the
+`LOCALSTACK_AUTH_TOKEN` repository secret (a LocalStack CI auth token),
+then writes secrets into a Secrets-Manager-backed vault with the CLI and
 reads them back through the Rust and C conformance runners with the SDK
-harness's `--remote` scenarios (without `--remote-per-version`).
+harness's `--remote` scenarios (without `--remote-per-version`). Pull
+requests from forks do not receive the secret: their emulator tests are
+skipped with a warning and run after merge.
+
+LocalStack refuses `ListSecretVersionIds` for a secret scheduled for
+deletion, which AWS allows, and gives version creation times in whole
+seconds. The provider then falls back to the secret's own creation time,
+so the two deletion tests compare everything except the times and report
+the divergence as a workflow warning. Against an endpoint that lists those
+versions, they compare the times too.

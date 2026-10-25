@@ -9,9 +9,9 @@ import ai.sourceorrery.internal.Native;
 
 /**
  * A read-only, thread-safe handle on one vault, unlocked the way the CLI
- * unlocks it: OS credential store, then {@link OpenOptions#passphrase()},
- * {@code SOURCEORRERY_PASSPHRASE}, then {@link OpenOptions#passphraseFile()}
- * / {@code SOURCEORRERY_PASSPHRASE_FILE}. Never prompts.
+ * unlocks it: OS credential store, then {@link OpenOptions#recoveryKey()},
+ * {@code SOURCEORRERY_RECOVERY_KEY}, then {@link OpenOptions#recoveryKeyFile()}
+ * / {@code SOURCEORRERY_RECOVERY_KEY_FILE}. Never prompts.
  *
  * <pre>{@code
  * try (SecretReader reader = SecretReader.open("development");
@@ -39,7 +39,7 @@ public final class SecretReader implements AutoCloseable {
         Native.requireAbi();
         Objects.requireNonNull(vault, "vault");
         Objects.requireNonNull(options, "options");
-        MemorySegment opened = Native.readerOpen(vault, options.toJson(), options.passphraseBytes());
+        MemorySegment opened = Native.readerOpen(vault, options.toJson(), options.recoveryKeyBytes());
         return new SecretReader(opened, vault);
     }
 

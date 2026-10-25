@@ -50,10 +50,9 @@ public class Run {
         String vault = kv.getOrDefault("vault", System.getenv().getOrDefault("SOURCEORRERY_TEST_VAULT", "development"));
         OpenOptions options = new OpenOptions(
                 Optional.ofNullable(kv.get("home")),
-                Optional.ofNullable(kv.get("passphrase")),
-                Optional.ofNullable(kv.get("passphrase_file")),
-                !"false".equals(kv.get("environment")),
-                Optional.empty());
+                Optional.ofNullable(kv.get("recovery_key")),
+                Optional.ofNullable(kv.get("recovery_key_file")),
+                !"false".equals(kv.get("environment")));
         try {
             if (op.equals("load")) {
                 try (Project project = Project.load(Optional.ofNullable(kv.get("manifest")), options)) {

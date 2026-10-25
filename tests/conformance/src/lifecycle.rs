@@ -2,9 +2,9 @@
 //!
 //! Each scenario is a function over `&dyn SecretClient`, so the same code
 //! judges the local vault, the adapter pair of `sourceorrery-provider` and
-//! every remote provider (through its `Blocking` adapter). A scenario asks
+//! every provider (through its `Blocking` adapter). A scenario asks
 //! only what the contract on `SecretClient` promises: nothing about files,
-//! protectors, version-id shapes or the audit log, which are the backend's
+//! key wraps, version-id shapes or the audit log, which are the backend's
 //! own tests. A scenario fails by panicking; [`lifecycle`] runs them all and
 //! reports every failure at once.
 
@@ -53,6 +53,11 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "time_window_is_enforced_on_retrieval",
         run: time_window_is_enforced_on_retrieval,
         needs: &[],
+    },
+    Scenario {
+        name: "a_cleared_expiry_no_longer_applies",
+        run: a_cleared_expiry_no_longer_applies,
+        needs: &[Capability::ClearableTimeWindow],
     },
     Scenario {
         name: "update_changes_metadata_never_the_value",
@@ -250,19 +255,6 @@ fn time_window_is_enforced_on_retrieval(client: &dyn SecretClient) {
     assert_eq!(err.code(), "not_yet_valid");
     assert!(err.is_transient());
 
-    // Clearing the expiry makes the secret readable again.
-    client
-        .update_secret_properties(
-            "expired",
-            None,
-            UpdateSecretProperties {
-                expires_on: Some(None),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert!(client.get_secret("expired", None).is_ok());
-
     // An inverted window is rejected up front.
     let err = client
         .set_secret(
@@ -276,6 +268,35 @@ fn time_window_is_enforced_on_retrieval(client: &dyn SecretClient) {
         )
         .unwrap_err();
     assert_eq!(err.code(), "invalid_argument");
+}
+
+fn a_cleared_expiry_no_longer_applies(client: &dyn SecretClient) {
+    client
+        .set_secret(
+            "expired",
+            SecretBytes::from("x"),
+            SetSecretOptions {
+                expires_on: Some(timestamp::now() - Duration::minutes(1)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        client.get_secret("expired", None).unwrap_err().code(),
+        "expired"
+    );
+    let cleared = client
+        .update_secret_properties(
+            "expired",
+            None,
+            UpdateSecretProperties {
+                expires_on: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(cleared.expires_on, None);
+    assert!(client.get_secret("expired", None).is_ok());
 }
 
 fn update_changes_metadata_never_the_value(client: &dyn SecretClient) {
@@ -1111,6 +1132,7 @@ mod tests {
             needing,
             [
                 "get_returns_latest_accessible_version",
+                "a_cleared_expiry_no_longer_applies",
                 "rotation_activates_a_validated_candidate_and_supersedes_the_old_one",
                 "rotation_keeps_the_current_version_when_validation_fails",
             ]

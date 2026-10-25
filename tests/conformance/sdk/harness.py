@@ -47,17 +47,17 @@ RUNNERS = {
 ENV_VARIABLES = {
     "vault": "SOURCEORRERY_TEST_VAULT",
     "home": "SOURCEORRERY_HOME",
-    "passphrase": "SOURCEORRERY_PASSPHRASE",
+    "recovery_key": "SOURCEORRERY_RECOVERY_KEY",
     "manifest": "SOURCEORRERY_TEST_MANIFEST",
     "old_version": "SOURCEORRERY_TEST_OLD_VERSION",
 }
 
-# Variables the scenarios marked `"requires": "remote"` use: a vault that a
-# manifest declares as remote (`[vaults.<name>]`) and that manifest. Set by
+# What the scenarios marked `"requires": "remote"` need besides the fixture:
+# the manifest fixture-vault.sh writes when it is given a provider's
+# connection flags, and the secrets it then keeps at that provider. Set by
 # the provider CI jobs, which run those scenarios with --remote; absent
 # otherwise, and the scenarios are skipped.
 REMOTE_VARIABLES = {
-    "remote_vault": "SOURCEORRERY_TEST_REMOTE_VAULT",
     "remote_manifest": "SOURCEORRERY_TEST_REMOTE_MANIFEST",
 }
 
@@ -76,7 +76,8 @@ def variables(remote: bool = False) -> dict[str, str]:
             missing.append(env)
         values[name] = value
     if missing:
-        sys.exit(f"harness: {', '.join(missing)} not set; run scripts/ci/fixture-vault.sh first")
+        how = "with a provider's connection flags" if remote else "first"
+        sys.exit(f"harness: {', '.join(missing)} not set; run scripts/ci/fixture-vault.sh {how}")
     return values
 
 
@@ -220,7 +221,7 @@ def main() -> int:
     parser.add_argument(
         "--remote",
         action="store_true",
-        help="also run the scenarios that need a remote vault (SOURCEORRERY_TEST_REMOTE_VAULT and _MANIFEST)",
+        help="also run the scenarios that read secrets kept at a provider (a fixture made with connection flags, SOURCEORRERY_TEST_REMOTE_MANIFEST)",
     )
     parser.add_argument(
         "--remote-per-version",

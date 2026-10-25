@@ -1,0 +1,16 @@
+# LocalStack for Azure, for the Azure Key Vault provider tests
+# (`lstk --config .lstk/azure.toml start`, through scripts/ci/localstack.sh):
+# the provider-azure job in ci.yml and the Azure stage of coverage.yml.
+# The image publishes no version tags, so it is pinned by digest. Port 4567,
+# so a vault URL never points at the AWS emulator's 4566; the two cannot
+# run at once (both bind 443 and 4510-4559). Role-based access is enforced,
+# so a principal without a role is refused as on Azure. Every start is
+# fresh: nothing here enables persistence or a snapshot.
+[[containers]]
+type = "azure"
+image = "localstack/localstack-azure@sha256:666c18870a16b8fd8c283321313537ecdd37080998a40e8c30101b71288e5993"
+port = "4567"
+env = ["rbac"]
+
+[env.rbac]
+LS_AZURE_ENFORCE_RBAC = "1"

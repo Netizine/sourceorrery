@@ -681,6 +681,12 @@ mod tests {
         assert!(SecretReference::parse("https://dev/key").is_err());
         assert!(SecretReference::parse("sourceorrery://dev").is_err());
         assert!(SecretReference::parse("sourceorrery://dev/key/v/extra").is_err());
-        assert!(SecretReference::parse("sourceorrery://Dev/key").is_err());
+        assert!(SecretReference::parse("sourceorrery://-dev/key").is_err());
+        assert_eq!(
+            SecretReference::parse("sourceorrery://Dev_Team/key")
+                .unwrap()
+                .vault,
+            "Dev_Team"
+        );
     }
 }

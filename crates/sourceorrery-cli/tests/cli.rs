@@ -4,12 +4,15 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-const PASSPHRASE: &str = "cli-test-passphrase";
 const CANARY: &str = "cli-canary-9b1d-value";
+/// A view-check password the strength estimate rates good.
+const PASSWORD: &str = "Orbit-Lantern-Copper-Nine-42";
 
 struct Env {
     home: tempfile::TempDir,
     project: tempfile::TempDir,
+    /// One `<vault>.key` file per vault the test created: its recovery key.
+    keys: tempfile::TempDir,
 }
 
 impl Env {
@@ -17,6 +20,7 @@ impl Env {
         Self {
             home: tempfile::tempdir().unwrap(),
             project: tempfile::tempdir().unwrap(),
+            keys: tempfile::tempdir().unwrap(),
         }
     }
 
@@ -25,13 +29,61 @@ impl Env {
         cmd.args(args)
             .current_dir(self.project.path())
             .env("SOURCEORRERY_HOME", self.home.path())
-            .env("SOURCEORRERY_PASSPHRASE", PASSPHRASE)
+            // Never the real OS credential store: every vault opens with its
+            // recovery key, from the file the harness keeps for it.
+            .env("SOURCEORRERY_KEYRING", "off")
             .env_remove("SOURCEORRERY_VAULT")
+            .env_remove("SOURCEORRERY_RECOVERY_KEY")
+            .env_remove("SOURCEORRERY_PASSWORD")
+            .env_remove("SOURCEORRERY_PASSWORD_FILE")
+            .env_remove("SOURCEORRERY_TOTP")
             .env("NO_COLOR", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        match self.vault_of(args) {
+            Some(vault) => cmd.env("SOURCEORRERY_RECOVERY_KEY_FILE", self.key_file(&vault)),
+            None => cmd.env_remove("SOURCEORRERY_RECOVERY_KEY_FILE"),
+        };
         cmd
+    }
+
+    /// The vault a command acts on, as the CLI picks it: `--vault`, else the
+    /// project manifest's, else the only vault the test created.
+    fn vault_of(&self, args: &[&str]) -> Option<String> {
+        if let Some(i) = args.iter().position(|a| *a == "--vault") {
+            return args.get(i + 1).map(|v| (*v).to_owned());
+        }
+        if let Ok(manifest) = std::fs::read_to_string(self.project.path().join("sourceorrery.toml"))
+            && let Some(name) = manifest
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("vault = "))
+        {
+            return Some(name.trim_matches('"').to_owned());
+        }
+        let mut keys = std::fs::read_dir(self.keys.path())
+            .ok()?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "key"));
+        let only = keys.next()?;
+        if keys.next().is_some() {
+            return None;
+        }
+        only.file_stem().map(|s| s.to_string_lossy().into_owned())
+    }
+
+    /// Where the harness keeps `vault`'s recovery key.
+    fn key_file(&self, vault: &str) -> std::path::PathBuf {
+        self.keys.path().join(format!("{vault}.key"))
+    }
+
+    /// `vault`'s recovery key, as `vault create` wrote it.
+    fn recovery_key(&self, vault: &str) -> String {
+        std::fs::read_to_string(self.key_file(vault))
+            .unwrap()
+            .trim()
+            .to_owned()
     }
 
     fn run(&self, args: &[&str]) -> Output {
@@ -60,8 +112,18 @@ impl Env {
         String::from_utf8(out.stdout).unwrap()
     }
 
+    /// Create a vault that opens with its recovery key only; the key goes
+    /// to the harness's file for it.
     fn create_vault(&self, name: &str) {
-        self.ok(&["vault", "create", name, "--protector", "passphrase"]);
+        let key = self.key_file(name);
+        self.ok(&[
+            "vault",
+            "create",
+            name,
+            "--no-keyring",
+            "--recovery-key-out",
+            key.to_str().unwrap(),
+        ]);
     }
 
     fn set(&self, vault: &str, name: &str, value: &str) {
@@ -72,7 +134,58 @@ impl Env {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+
+    /// A file in the project directory holding `text`.
+    fn file(&self, name: &str, text: &str) -> String {
+        let path = self.project.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        path.to_str().unwrap().to_owned()
+    }
+
+    /// `vault` opened in the test itself, with its recovery key, for what the
+    /// CLI cannot do yet (add a connection, catalogue a secret at one).
+    fn open_vault(&self, vault: &str) -> sourceorrery_storage::SqliteVault {
+        sourceorrery_storage::VaultRegistry::with_root(self.home.path())
+            .with_store(std::sync::Arc::new(sourceorrery_storage::NoStore))
+            .open(
+                vault,
+                &sourceorrery_storage::StaticRecoveryKey::new(self.recovery_key(vault).as_str()),
+            )
+            .unwrap()
+    }
+
+    /// Add a connection with `settings` to `vault` and catalogue `secret` as
+    /// stored through it, as a set there would; returns the connection's id.
+    fn store_through(
+        &self,
+        vault: &str,
+        settings: &sourceorrery_core::ConnectionSettings,
+        secret: &str,
+    ) -> String {
+        let opened = self.open_vault(vault);
+        let token = sourceorrery_core::Credentials::VaultToken("hvs.cli-test".into());
+        let stored = matches!(
+            settings,
+            sourceorrery_core::ConnectionSettings::HashicorpVault { .. }
+        )
+        .then_some(&token);
+        let id = opened.add_connection(settings, stored).unwrap().id;
+        opened
+            .record_at_connection(
+                &id,
+                sourceorrery_core::AuditOperation::SecretSet,
+                Some(secret),
+                None,
+                Ok(()),
+                sourceorrery_storage::CatalogChange::Add,
+            )
+            .unwrap();
+        id
+    }
 }
+
+/// A recovery key that opens nothing: the right shape, wrong letters.
+const WRONG_KEY: &str = "AAAAA-AAAAA-AAAAA-AAAAA-AAAAA";
 
 fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
@@ -197,12 +310,12 @@ fn errors_are_structured_in_json_mode() {
 }
 
 #[test]
-fn wrong_passphrase_is_locked() {
+fn a_wrong_recovery_key_is_locked() {
     let env = Env::new();
     env.create_vault("dev");
     let out = env
         .cmd(&["secret", "list", "--vault", "dev"])
-        .env("SOURCEORRERY_PASSPHRASE", "wrong")
+        .env("SOURCEORRERY_RECOVERY_KEY", WRONG_KEY)
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -244,26 +357,34 @@ fn update_delete_recover_purge() {
 fn manifest_driven_check_and_run() {
     let env = Env::new();
     env.create_vault("development");
+    env.set("development", "database-password", CANARY);
 
-    let init = env.run(&["init", "--project-name", "demo"]);
+    let init = env.run(&["init", "--all", "--project-name", "demo"]);
     assert!(init.status.success(), "{}", stderr(&init));
     let manifest_path = env.project.path().join("sourceorrery.toml");
     let manifest = std::fs::read_to_string(&manifest_path).unwrap();
     assert!(manifest.contains("database-password"));
     assert!(!manifest.contains("value ="));
+    assert!(!manifest.contains(CANARY));
 
     // Vault comes from the manifest now: no --vault flag.
     let out = env.run(&["check"]);
-    assert!(
-        !out.status.success(),
-        "check must fail while the secret is missing"
-    );
-    assert!(stdout(&out).contains("not_found"));
-
-    env.set("development", "database-password", CANARY);
-    let out = env.run(&["check"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(stdout(&out).contains("ok"));
+
+    // A secret the manifest declares and the vault lacks fails the check.
+    std::fs::write(
+        &manifest_path,
+        format!("{manifest}\n[secrets.missing-one]\n"),
+    )
+    .unwrap();
+    let out = env.run(&["check"]);
+    assert!(
+        !out.status.success(),
+        "check must fail while a secret is missing"
+    );
+    assert!(stdout(&out).contains("not_found"));
+    std::fs::write(&manifest_path, &manifest).unwrap();
     // --access reads the value too (and discards it), which the audit log
     // records as a secret_get; plain check leaves no such row.
     let gets = |label: &str| {
@@ -297,6 +418,173 @@ fn manifest_driven_check_and_run() {
     assert_eq!(env.run(fail).status.code(), Some(7));
 
     assert!(Path::new(&manifest_path).exists());
+}
+
+/// `init` reads the vault, never a value: it declares the secrets picked by
+/// name, `purpose` from each description, and records the folder. Run again
+/// on the manifest it adds what is missing and leaves the rest byte for
+/// byte, under the vault and project name the manifest has.
+#[test]
+#[allow(clippy::too_many_lines)] // one manifest, written and then added to
+fn init_writes_the_manifest_from_the_vault_and_records_the_folder() {
+    let env = Env::new();
+    let none = env.run(&["init", "--all"]);
+    assert!(!none.status.success());
+    assert!(stderr(&none).contains("no vault yet"), "{}", stderr(&none));
+
+    env.create_vault("dev");
+    let out = env.run_with_stdin(
+        &[
+            "secret",
+            "set",
+            "db-password",
+            "--vault",
+            "dev",
+            "--description",
+            "Database authentication",
+        ],
+        CANARY,
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    env.set("dev", "api-key", "key");
+
+    for (args, says) in [
+        (&["init"][..], "pick the secrets"),
+        (
+            &["init", "--secret", "missing"][..],
+            "has no secret 'missing'",
+        ),
+    ] {
+        let refused = env.run(args);
+        assert!(!refused.status.success(), "{args:?}");
+        assert!(
+            stderr(&refused).contains(says),
+            "{args:?}: {}",
+            stderr(&refused)
+        );
+    }
+    let manifest_path = env.project.path().join("sourceorrery.toml");
+    assert!(!manifest_path.exists(), "a refused init writes nothing");
+
+    let written: serde_json::Value = serde_json::from_str(&env.ok(&[
+        "init",
+        "--secret",
+        "db-password",
+        "--project-name",
+        "demo",
+        "-o",
+        "json",
+    ]))
+    .unwrap();
+    assert_eq!(written["created"], true);
+    assert_eq!(written["vault"], "dev");
+    assert_eq!(written["added"], serde_json::json!(["db-password"]));
+    assert_eq!(written["linked"]["name"], "demo");
+    let folder = std::fs::canonicalize(env.project.path()).unwrap();
+    let recorded = written["linked"]["path"].as_str().unwrap().to_owned();
+    assert!(
+        folder.to_str().unwrap().ends_with(&recorded) && Path::new(&recorded).is_absolute(),
+        "{recorded} is not {}",
+        folder.display()
+    );
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    assert!(
+        manifest.contains("name = \"demo\"\nvault = \"dev\""),
+        "{manifest}"
+    );
+    assert!(
+        manifest.contains(
+            "[secrets.db-password]\nrequired = true\npurpose = \"Database authentication\""
+        ),
+        "{manifest}"
+    );
+    assert!(!manifest.contains("api-key") && !manifest.contains(CANARY));
+    env.ok(&["check"]);
+
+    // A hand edit stays; the second run adds the rest under the manifest's
+    // own vault and name, and the folder keeps its one record.
+    let edited = manifest.replace(
+        "[secrets.db-password]\n",
+        "# the production one\n[secrets.db-password]\nenv = \"DB_PASS\"\n",
+    );
+    std::fs::write(&manifest_path, &edited).unwrap();
+    for (args, says) in [
+        (&["init", "other", "--all"][..], "names vault 'dev'"),
+        (
+            &["init", "--all", "--project-name", "x"][..],
+            "names the project 'demo'",
+        ),
+    ] {
+        let refused = env.run(args);
+        assert!(!refused.status.success(), "{args:?}");
+        assert!(
+            stderr(&refused).contains(says),
+            "{args:?}: {}",
+            stderr(&refused)
+        );
+    }
+    let added: serde_json::Value =
+        serde_json::from_str(&env.ok(&["init", "--all", "-o", "json"])).unwrap();
+    assert_eq!(added["created"], false);
+    assert_eq!(added["added"], serde_json::json!(["api-key"]));
+    assert_eq!(added["declared"], serde_json::json!(["db-password"]));
+    assert_eq!(added["linked"]["id"], written["linked"]["id"]);
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest.starts_with(&edited), "{manifest}");
+    assert!(
+        manifest.ends_with("\n[secrets.api-key]\nrequired = true\n"),
+        "{manifest}"
+    );
+    let projects = env.open_vault("dev").projects().unwrap();
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].name, "demo");
+
+    // Nothing left to add: the file is not touched.
+    let again = env.ok(&["init", "--all"]);
+    assert_eq!(std::fs::read_to_string(&manifest_path).unwrap(), manifest);
+    drop(again);
+
+    let audit = env.ok(&["audit", "--vault", "dev", "-o", "json"]);
+    assert!(audit.contains("project_link"), "{audit}");
+    assert!(!audit.contains(CANARY));
+}
+
+/// With several vaults init asks which one; the vault a manifest names
+/// must be on this machine.
+#[test]
+fn init_needs_to_know_the_vault() {
+    let env = Env::new();
+    env.create_vault("dev");
+    env.create_vault("prod");
+    env.set("prod", "api-key", "key");
+    let several = env.run(&["init", "--all"]);
+    assert!(!several.status.success());
+    assert!(
+        stderr(&several).contains("there are 2 vaults (dev, prod)"),
+        "{}",
+        stderr(&several)
+    );
+    let out = env
+        .cmd(&["init", "prod", "--all"])
+        .env("SOURCEORRERY_RECOVERY_KEY_FILE", env.key_file("prod"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let manifest = std::fs::read_to_string(env.project.path().join("sourceorrery.toml")).unwrap();
+    assert!(manifest.contains("vault = \"prod\""), "{manifest}");
+
+    std::fs::write(
+        env.project.path().join("sourceorrery.toml"),
+        "[project]\nname = \"demo\"\nvault = \"elsewhere\"\n",
+    )
+    .unwrap();
+    let missing = env.run(&["init", "--all"]);
+    assert!(!missing.status.success());
+    assert!(
+        stderr(&missing).contains("vault import"),
+        "{}",
+        stderr(&missing)
+    );
 }
 
 #[test]
@@ -419,8 +707,6 @@ fn truncated_audit_log_blocks_the_vault_until_acknowledged() {
     assert!(!stdout(&out).contains(CANARY));
     let out = env.run(&["secret", "list", "--vault", "dev"]);
     assert!(!out.status.success());
-    let out = env.run(&["vault", "info", "--vault", "dev"]);
-    assert!(!out.status.success());
 
     // Inspection still works: the chain report and the log, with a warning.
     let out = env.run(&["audit", "--verify", "--vault", "dev", "-o", "json"]);
@@ -510,38 +796,30 @@ fn assert_escaped(output: &str) {
 }
 
 #[test]
-fn tampered_protector_labels_are_shown_escaped() {
+fn planted_keyring_accounts_are_shown_escaped() {
     let env = Env::new();
     env.create_vault("dev");
-    // A label is not part of the key wrapping: the vault still unlocks.
-    open_vault_file(env.home.path(), "dev")
-        .execute("UPDATE key_protectors SET label = ?1", [PLANTED])
-        .unwrap();
-
-    assert_escaped(&env.ok(&["vault", "info", "--vault", "dev"]));
-    assert_escaped(&env.ok(&["vault", "protector", "list", "--vault", "dev"]));
-
-    // JSON is left alone: serde escapes the controls, the value round-trips.
-    let json = env.ok(&["vault", "protector", "list", "--vault", "dev", "-o", "json"]);
-    assert!(!json.contains('\x1b'));
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed[0]["label"], PLANTED);
-
-    // Before unlock: a protector the CLI refuses to try is named, by its
-    // unverified label, in the error.
+    // A this-machine wrap names its credential-store account in the file,
+    // where nothing proves it; `vault destroy` names the ones it keeps.
+    let kind = serde_json::json!({
+        "kind": "this-machine",
+        "service": "sourceorrery",
+        "account": PLANTED,
+    })
+    .to_string();
     open_vault_file(env.home.path(), "dev")
         .execute(
-            "UPDATE key_protectors SET kind_json = json_set(kind_json, '$.params.iterations', 1000)",
-            [],
+            "INSERT INTO key_wraps (id, kind_json, wrapped_nonce, wrapped_key, created_on)
+             VALUES ('0123456789abcdef', ?1, zeroblob(24), zeroblob(48), 0)",
+            [kind],
         )
         .unwrap();
-    let out = env.run(&["vault", "info", "--vault", "dev"]);
-    assert!(!out.status.success());
-    assert!(
-        stderr(&out).contains("exceed the supported limits"),
-        "{}",
-        stderr(&out)
-    );
+    // The vault still opens with its recovery key, and shows nothing of it.
+    let listed = env.ok(&["secret", "list", "--vault", "dev"]);
+    assert!(!listed.contains("planted"), "{listed}");
+
+    let out = env.run(&["vault", "destroy", "dev", "--yes"]);
+    assert!(out.status.success(), "{}", stderr(&out));
     assert_escaped(&stderr(&out));
 }
 
@@ -553,7 +831,7 @@ fn forged_audit_rows_are_shown_escaped() {
     // tamperer can rewrite; a later unlock puts keyed rows after them.
     let out = env
         .cmd(&["secret", "list", "--vault", "dev"])
-        .env("SOURCEORRERY_PASSPHRASE", "wrong")
+        .env("SOURCEORRERY_RECOVERY_KEY", WRONG_KEY)
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -610,24 +888,24 @@ fn no_arguments_prints_the_banner_without_touching_a_vault() {
 }
 
 #[test]
-fn run_does_not_pass_the_unlock_passphrase_to_the_child() {
+fn run_does_not_pass_the_unlock_or_view_check_variables_to_the_child() {
     let env = Env::new();
     env.create_vault("development");
     env.set("development", "database-password", "pw");
-    let init = env.run(&["init", "--project-name", "demo"]);
+    let init = env.run(&["init", "--all", "--project-name", "demo"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    // The child reports whether any unlock or guard variable reached it.
+    // The child reports whether any unlock or view-check variable reached it.
     let probe: &[&str] = if cfg!(windows) {
         &[
             "run",
             "--",
             "cmd",
             "/C",
-            "if defined SOURCEORRERY_PASSPHRASE (echo LEAK) else if defined \
-             SOURCEORRERY_PASSPHRASE_FILE (echo LEAK) else if defined SOURCEORRERY_TOTP \
-             (echo LEAK) else if defined SOURCEORRERY_BACKUP_PASSPHRASE (echo LEAK) else \
-             (echo CLEAN)",
+            "if defined SOURCEORRERY_RECOVERY_KEY (echo LEAK) else if defined \
+             SOURCEORRERY_RECOVERY_KEY_FILE (echo LEAK) else if defined SOURCEORRERY_PASSWORD \
+             (echo LEAK) else if defined SOURCEORRERY_PASSWORD_FILE (echo LEAK) else if defined \
+             SOURCEORRERY_TOTP (echo LEAK) else (echo CLEAN)",
         ]
     } else {
         &[
@@ -635,48 +913,67 @@ fn run_does_not_pass_the_unlock_passphrase_to_the_child() {
             "--",
             "sh",
             "-c",
-            "if [ -n \"$SOURCEORRERY_PASSPHRASE$SOURCEORRERY_PASSPHRASE_FILE$SOURCEORRERY_TOTP\
-             $SOURCEORRERY_BACKUP_PASSPHRASE\" ]; then echo LEAK; else echo CLEAN; fi",
+            "if [ -n \"$SOURCEORRERY_RECOVERY_KEY$SOURCEORRERY_RECOVERY_KEY_FILE\
+             $SOURCEORRERY_PASSWORD$SOURCEORRERY_PASSWORD_FILE$SOURCEORRERY_TOTP\" ]; then \
+             echo LEAK; else echo CLEAN; fi",
         ]
     };
+    let password = env.file("password.txt", PASSWORD);
     let out = env
         .cmd(probe)
+        .env("SOURCEORRERY_RECOVERY_KEY", env.recovery_key("development"))
+        .env("SOURCEORRERY_PASSWORD", PASSWORD)
+        .env("SOURCEORRERY_PASSWORD_FILE", &password)
         .env("SOURCEORRERY_TOTP", "123456")
-        .env("SOURCEORRERY_BACKUP_PASSPHRASE", "backup-pass")
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out).trim(), "CLEAN");
 }
 
-/// A passphrase of exactly twenty-five letters and some spaces has the
-/// shape of a recovery code; it must still unlock as typed, and a real
-/// code must still unlock however it is written.
+/// The recovery key opens the vault from the environment or a file, however
+/// it is typed: case, hyphens and spaces do not matter. Without one, and
+/// without a terminal to ask at, the vault stays locked.
 #[test]
-fn a_passphrase_shaped_like_a_recovery_code_unlocks_as_typed() {
-    const PHRASE: &str = "correct horse battery staple";
+fn the_recovery_key_opens_from_the_environment_or_a_file_however_it_is_typed() {
     let env = Env::new();
-    let create = env
-        .cmd(&["vault", "create", "dev", "--protector", "passphrase"])
-        .env("SOURCEORRERY_PASSPHRASE", PHRASE)
-        .output()
-        .unwrap();
-    assert!(create.status.success(), "{}", stderr(&create));
-    let list = env
-        .cmd(&["secret", "list", "--vault", "dev"])
-        .env("SOURCEORRERY_PASSPHRASE", PHRASE)
-        .output()
-        .unwrap();
-    assert!(list.status.success(), "{}", stderr(&list));
-    let wrong = env
-        .cmd(&["secret", "list", "--vault", "dev"])
-        .env("SOURCEORRERY_PASSPHRASE", "CORRECTHORSEBATTERYSTAPLE")
-        .output()
-        .unwrap();
-    assert!(
-        !wrong.status.success(),
-        "the folded form is not the passphrase"
-    );
+    env.create_vault("dev");
+    env.set("dev", "api-key", CANARY);
+    let key = env.recovery_key("dev");
+    assert_eq!(key.len(), 29, "{key}");
+    assert_eq!(key.matches('-').count(), 4, "{key}");
+
+    let list = |extra: &[&str], key: Option<&str>| -> Output {
+        let mut args = vec!["secret", "list", "--vault", "dev"];
+        args.extend_from_slice(extra);
+        let mut cmd = env.cmd(&args);
+        cmd.env_remove("SOURCEORRERY_RECOVERY_KEY_FILE");
+        if let Some(key) = key {
+            cmd.env("SOURCEORRERY_RECOVERY_KEY", key);
+        }
+        cmd.output().unwrap()
+    };
+    for typed in [
+        key.to_lowercase(),
+        key.replace('-', ""),
+        key.replace('-', " "),
+    ] {
+        let out = list(&[], Some(&typed));
+        assert!(out.status.success(), "{typed}: {}", stderr(&out));
+        assert!(stdout(&out).contains("api-key"));
+    }
+    let out = list(&[], Some(WRONG_KEY));
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("locked"), "{}", stderr(&out));
+    assert!(!stdout(&out).contains("api-key"));
+
+    let file = env.file("key.txt", &format!("{}\n", key.to_lowercase()));
+    let out = list(&["--recovery-key-file", &file], None);
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    let out = list(&[], None);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("locked"), "{}", stderr(&out));
 }
 
 /// Tags under SourceOrrery's own prefix record rotation and restore state;
@@ -713,70 +1010,122 @@ fn reserved_tag_keys_are_refused() {
     );
 }
 
-#[cfg(unix)]
+/// `vault export` writes a copy that opens with the recovery key only: the
+/// user's alone, no value in clear, the view check left behind, and never
+/// over a file. `vault import` registers it under its own name or `--name`,
+/// never over a vault, opens it with the recovery key alone, and sets the
+/// check again from `--password-file`.
 #[test]
-fn a_backup_never_inherits_another_files_mode_or_follows_a_link() {
-    use std::os::unix::fs::PermissionsExt as _;
+fn vault_export_and_import_move_a_vault_with_its_recovery_key() {
     let env = Env::new();
-    env.create_vault("dev");
+    let password = env.file("password.txt", PASSWORD);
+    env.ok(&[
+        "vault",
+        "create",
+        "dev",
+        "--no-keyring",
+        "--recovery-key-out",
+        env.key_file("dev").to_str().unwrap(),
+        "--password-file",
+        &password,
+    ]);
     env.set("dev", "api-key", CANARY);
-    let out = env.project.path().join("dev.sobackup");
-    std::fs::write(&out, b"old").unwrap();
-    std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644)).unwrap();
-    let backup = |args: &[&str]| {
-        env.cmd(args)
-            .env(
-                "SOURCEORRERY_BACKUP_PASSPHRASE",
-                "orbit-lantern-copper-nine-42",
-            )
-            .output()
-            .unwrap()
-    };
-    let refused = backup(&["backup", "--vault", "dev", "--out", out.to_str().unwrap()]);
-    assert!(!refused.status.success());
-    assert_eq!(
-        std::fs::read(&out).unwrap(),
-        b"old",
-        "nothing is replaced without --force"
-    );
-    let replaced = backup(&[
-        "backup",
-        "--vault",
-        "dev",
-        "--out",
-        out.to_str().unwrap(),
-        "--force",
-    ]);
-    assert!(replaced.status.success(), "{}", stderr(&replaced));
-    let mode = std::fs::metadata(&out).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o600, "the export is the user's alone");
-    assert!(
-        !std::fs::read(&out)
-            .unwrap()
-            .windows(CANARY.len())
-            .any(|w| w == CANARY.as_bytes())
-    );
 
-    // A link in the output's place is removed, never written through.
-    let target = env.project.path().join("elsewhere");
-    std::fs::write(&target, b"untouched").unwrap();
-    let link = env.project.path().join("link.sobackup");
-    std::os::unix::fs::symlink(&target, &link).unwrap();
-    let through = backup(&[
-        "backup",
-        "--vault",
-        "dev",
-        "--out",
-        link.to_str().unwrap(),
-        "--force",
+    let copy = env.project.path().join("dev.export");
+    let copy_arg = copy.to_str().unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_str(&env.ok(&["vault", "export", "dev", "--out", copy_arg, "-o", "json"]))
+            .unwrap();
+    assert_eq!(exported["vault"], "dev");
+    assert_eq!(exported["left_out"], serde_json::json!(["the password"]));
+    let bytes = std::fs::read(&copy).unwrap();
+    assert!(!bytes.windows(CANARY.len()).any(|w| w == CANARY.as_bytes()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&copy).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the copy is the user's alone");
+    }
+    let again = env.run(&["vault", "export", "dev", "--out", copy_arg]);
+    assert!(!again.status.success());
+    assert!(
+        stderr(&again).contains("never replaces"),
+        "{}",
+        stderr(&again)
+    );
+    assert_eq!(std::fs::read(&copy).unwrap(), bytes);
+
+    // Its own name is taken in this home, and a wrong key imports nothing.
+    let taken = env.run(&["vault", "import", copy_arg]);
+    assert!(!taken.status.success());
+    assert!(
+        stderr(&taken).contains("already exists"),
+        "{}",
+        stderr(&taken)
+    );
+    let wrong = env
+        .cmd(&["vault", "import", copy_arg, "--name", "moved"])
+        .env_remove("SOURCEORRERY_RECOVERY_KEY_FILE")
+        .env("SOURCEORRERY_RECOVERY_KEY", WRONG_KEY)
+        .output()
+        .unwrap();
+    assert!(!wrong.status.success());
+    assert!(stderr(&wrong).contains("locked"), "{}", stderr(&wrong));
+    assert!(!env.ok(&["vault", "list"]).contains("moved"));
+
+    // Under another name, with the copy's recovery key and a password.
+    let imported: serde_json::Value = serde_json::from_str(&env.ok(&[
+        "vault",
+        "import",
+        copy_arg,
+        "--name",
+        "moved",
+        "--password-file",
+        &password,
+        "-o",
+        "json",
+    ]))
+    .unwrap();
+    assert_eq!(imported["vault"]["name"], "moved");
+    assert_eq!(imported["renamed_from"], "dev");
+    assert_eq!(imported["this_machine"], false, "no credential store here");
+    assert_eq!(imported["view_check"]["password"], true);
+    std::fs::copy(env.key_file("dev"), env.key_file("moved")).unwrap();
+    let revealed = env.ok(&[
+        "secret", "get", "api-key", "--vault", "moved", "--reveal", "--raw",
     ]);
-    assert!(through.status.success(), "{}", stderr(&through));
-    assert_eq!(std::fs::read(&target).unwrap(), b"untouched");
-    assert!(std::fs::symlink_metadata(&link).unwrap().is_file());
+    assert_eq!(revealed.trim(), CANARY);
+    let audit = env.ok(&["audit", "--vault", "moved", "-o", "json"]);
+    assert!(audit.contains("vault_export"), "{audit}");
+    assert!(audit.contains("vault_import"), "{audit}");
+    assert!(!audit.contains(CANARY));
+
+    // Without --password-file the vault comes with no view check.
+    let plain = env
+        .cmd(&["vault", "import", copy_arg, "--name", "plain"])
+        .env("SOURCEORRERY_RECOVERY_KEY_FILE", env.key_file("dev"))
+        .output()
+        .unwrap();
+    assert!(plain.status.success(), "{}", stderr(&plain));
+    assert!(
+        stderr(&plain).contains("no view check"),
+        "{}",
+        stderr(&plain)
+    );
+    assert!(
+        stderr(&plain).contains("sourceorrery vault create plain"),
+        "{}",
+        stderr(&plain)
+    );
+    assert_eq!(
+        std::fs::read(&copy).unwrap(),
+        bytes,
+        "the copy is only read"
+    );
 }
 
 #[test]
-fn optional_secret_in_a_missing_vault_does_not_block_run() {
+fn an_optional_secret_the_vault_lacks_does_not_block_run() {
     let env = Env::new();
     env.create_vault("development");
     env.set("development", "database-password", "pw");
@@ -784,7 +1133,7 @@ fn optional_secret_in_a_missing_vault_does_not_block_run() {
         env.project.path().join("sourceorrery.toml"),
         "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
          [secrets.database-password]\n\n\
-         [secrets.extra-key]\nrequired = false\nvault = \"nowhere\"\n",
+         [secrets.extra-key]\nrequired = false\n",
     )
     .unwrap();
     let out = env.run(&["check"]);
@@ -799,16 +1148,16 @@ fn optional_secret_in_a_missing_vault_does_not_block_run() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out).trim(), "pw");
 
-    // A required secret in a missing vault still refuses to start.
+    // A required secret the vault lacks still refuses to start.
     std::fs::write(
         env.project.path().join("sourceorrery.toml"),
         "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
-         [secrets.extra-key]\nrequired = true\nvault = \"nowhere\"\n",
+         [secrets.extra-key]\nrequired = true\n",
     )
     .unwrap();
     let out = env.run(echo);
     assert!(!out.status.success());
-    assert!(stderr(&out).contains("vault_not_found"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("not_found"), "{}", stderr(&out));
 }
 
 #[test]
@@ -843,7 +1192,7 @@ fn run_passes_the_child_exit_status_through_whole() {
     let env = Env::new();
     env.create_vault("development");
     env.set("development", "database-password", "pw");
-    let init = env.run(&["init", "--project-name", "demo"]);
+    let init = env.run(&["init", "--all", "--project-name", "demo"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
     let small: &[&str] = if cfg!(windows) {
@@ -866,51 +1215,37 @@ fn run_passes_the_child_exit_status_through_whole() {
 }
 
 #[test]
-fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
+fn a_secret_a_connection_stores_is_read_at_its_provider() {
     let env = Env::new();
     env.create_vault("development");
     env.set("development", "database-password", CANARY);
+    // A HashiCorp Vault connection where nothing listens, with a token
+    // stored in it, so the environment's own does not matter.
+    let connection = env.store_through(
+        "development",
+        &sourceorrery_core::ConnectionSettings::HashicorpVault {
+            address: "http://127.0.0.1:1".to_owned(),
+            mount: "secret".to_owned(),
+            namespace: None,
+        },
+        "api-key",
+    );
     std::fs::write(
         env.project.path().join("sourceorrery.toml"),
         "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
-         [secrets.database-password]\n\n\
-         [secrets.api-key]\nvault = \"prod\"\n\n\
-         [vaults.prod]\nprovider = \"hashicorp-vault\"\n\
-         address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n",
+         [secrets.database-password]\n\n[secrets.api-key]\n",
     )
     .unwrap();
 
-    // The listing shows both kinds.
-    let out = env.ok(&["vault", "list"]);
-    assert!(
-        out.contains("development") && out.contains("local"),
-        "{out}"
-    );
-    assert!(
-        out.contains("prod") && out.contains("hashicorp-vault") && out.contains("127.0.0.1:1"),
-        "{out}"
-    );
-    let json: serde_json::Value =
-        serde_json::from_str(&env.ok(&["vault", "list", "-o", "json"])).unwrap();
-    let rows = json.as_array().unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0]["name"], "development");
-    assert_eq!(rows[0]["kind"], "local");
-    assert_eq!(rows[1]["name"], "prod");
-    assert_eq!(rows[1]["kind"], "remote");
-    assert_eq!(rows[1]["provider"], "hashicorp-vault");
-
-    // Contract commands reach the HashiCorp Vault provider. With a token in
-    // the environment the provider connects, and nothing listens on port 1,
-    // so the outcome is `provider_unavailable`; without one it is
-    // `unauthenticated` before any connection (unless the developer running
-    // the tests has a ~/.vault-token).
-    let remote = |args: &[&str]| {
-        let mut cmd = env.cmd(args);
-        cmd.env("VAULT_TOKEN", "cli-test-token");
-        cmd.output().unwrap()
-    };
-    let out = remote(&["secret", "get", "api-key", "--vault", "prod", "-o", "json"]);
+    let out = env.run(&[
+        "secret",
+        "get",
+        "api-key",
+        "--vault",
+        "development",
+        "-o",
+        "json",
+    ]);
     assert!(!out.status.success());
     let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
     assert_eq!(err["error"]["code"], "provider_unavailable", "{err}");
@@ -921,49 +1256,272 @@ fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
             .contains("hashicorp-vault is unavailable"),
         "{err}"
     );
-    let out = env.run(&["secret", "get", "api-key", "--vault", "prod", "-o", "json"]);
-    assert!(!out.status.success());
-    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
-    assert!(
-        err["error"]["code"] == "unauthenticated" || err["error"]["code"] == "provider_unavailable",
-        "{err}"
-    );
-    let out = remote(&["check"]);
+    let out = env.run(&["check"]);
     assert!(!out.status.success());
     assert!(
         stdout(&out).contains("provider_unavailable"),
         "{}",
         stdout(&out)
     );
-    // The local vault is still read as before.
+    // The vault file's own secret is read as before.
     assert!(stdout(&out).contains("ok"), "{}", stdout(&out));
 
-    // Local-only commands refuse the remote vault by name, before any
-    // network or unlock attempt.
-    for args in [
-        vec!["vault", "protector", "list", "--vault", "prod"],
-        vec!["vault", "destroy", "prod", "--yes"],
-        vec!["vault", "migrate", "prod"],
-        vec!["audit", "--verify", "--vault", "prod"],
-        vec!["audit", "--acknowledge", "--yes", "--vault", "prod"],
-        vec!["backup", "--vault", "prod", "--out", "x.sobackup"],
-    ] {
-        let out = env.run(&args);
-        assert!(!out.status.success(), "{args:?}");
-        let text = stderr(&out);
-        assert!(
-            text.contains("remote vault") && text.contains("local vaults only"),
-            "{args:?}: {text}"
-        );
-    }
-    assert!(!env.project.path().join("x.sobackup").exists());
-    // Listing the audit log of a remote vault points at the provider's own
-    // trail instead, without touching the network.
-    let out = env.run(&["audit", "--vault", "prod"]);
+    // The vault's log has the attempts, and the provider's own trail is
+    // pointed at, without touching the network.
+    let out = env.run(&["audit", "--vault", "development"]);
     assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains(&format!("at connection {connection}")),
+        "{}",
+        stdout(&out)
+    );
     assert!(stderr(&out).contains("audit devices"), "{}", stderr(&out));
+    assert!(!stdout(&out).contains(CANARY) && !stderr(&out).contains(CANARY));
+}
 
-    // A credential in the manifest is a parse error that never echoes it.
+#[test]
+fn vault_create_adds_a_connection_per_provider_and_never_shows_a_credential() {
+    const AWS_SECRET: &str = "aws-secret-from-a-file";
+    const AZURE_SECRET: &str = "azure-secret-from-a-file";
+    let env = Env::new();
+    let aws = env.file("aws.txt", AWS_SECRET);
+    let azure = env.file("azure.txt", AZURE_SECRET);
+    let key = env.key_file("linked");
+    let out = env.run(&[
+        "vault",
+        "create",
+        "linked",
+        "--no-keyring",
+        "--recovery-key-out",
+        key.to_str().unwrap(),
+        "--hashicorp-vault",
+        "https://vault.example.com:8200",
+        "--hashicorp-vault-mount",
+        "kv",
+        "--aws-secrets-manager",
+        "eu-west-1",
+        "--aws-secrets-manager-prefix",
+        "app/",
+        "--aws-access-key-id",
+        "AKIAEXAMPLE",
+        "--aws-secret-access-key-file",
+        &aws,
+        "--azure-key-vault",
+        "https://myapp-kv.vault.azure.net",
+        "--azure-tenant-id",
+        "00000000-0000-0000-0000-000000000001",
+        "--azure-client-id",
+        "00000000-0000-0000-0000-000000000002",
+        "--azure-client-secret-file",
+        &azure,
+        "-o",
+        "json",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let created: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    let connections = created["connections"].as_array().unwrap();
+    assert_eq!(connections.len(), 3);
+
+    let mut seen: Vec<(String, String)> = connections
+        .iter()
+        .map(|c| {
+            (
+                c["settings"]["provider"].as_str().unwrap().to_owned(),
+                c["credentials"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    seen.sort();
+    assert_eq!(
+        seen,
+        [
+            ("aws-secrets-manager".to_owned(), "stored".to_owned()),
+            ("azure-key-vault".to_owned(), "stored".to_owned()),
+            ("hashicorp-vault".to_owned(), "ambient".to_owned()),
+        ]
+    );
+    for shown in [stdout(&out), stderr(&out)] {
+        for secret in [AWS_SECRET, AZURE_SECRET] {
+            assert!(!shown.contains(secret), "a credential was shown: {shown}");
+        }
+    }
+}
+
+#[test]
+fn vault_create_refuses_a_wrong_connection_before_creating_anything() {
+    let env = Env::new();
+    let key = env.key_file("nothing");
+    let refused: [&[&str]; 3] = [
+        // A credential sent in clear text off this machine.
+        &["--hashicorp-vault", "http://vault.example.com"],
+        // Half a stored access key.
+        &[
+            "--aws-secrets-manager",
+            "eu-west-1",
+            "--aws-access-key-id",
+            "AKIA",
+        ],
+        // A provider flag without its provider.
+        &["--azure-client-id", "client"],
+    ];
+    for flags in refused {
+        let mut args = vec![
+            "vault",
+            "create",
+            "nothing",
+            "--no-keyring",
+            "--recovery-key-out",
+            key.to_str().unwrap(),
+        ];
+        args.extend_from_slice(flags);
+        let out = env.run(&args);
+        assert!(!out.status.success(), "{flags:?}");
+        assert!(!key.exists(), "{flags:?}: a recovery key was written");
+        let list = env.ok(&["vault", "list", "-o", "json"]);
+        assert_eq!(list.trim(), "[]", "{flags:?}: {list}");
+    }
+}
+
+/// `secret set --description` keeps one line in the vault's catalog; one
+/// that breaks the rule is refused before the value is read, so nothing
+/// is stored.
+#[test]
+fn secret_set_takes_a_description_for_the_catalog() {
+    let env = Env::new();
+    env.create_vault("dev");
+    let set: serde_json::Value = serde_json::from_str(&stdout(&env.run_with_stdin(
+        &[
+            "secret",
+            "set",
+            "db-password",
+            "--vault",
+            "dev",
+            "--description",
+            "Database authentication",
+            "-o",
+            "json",
+        ],
+        "pw",
+    )))
+    .unwrap();
+    assert_eq!(set["description"], "Database authentication");
+    assert_eq!(
+        env.open_vault("dev")
+            .description_of("db-password")
+            .unwrap()
+            .as_deref(),
+        Some("Database authentication")
+    );
+
+    let long = "d".repeat(sourceorrery_storage::MAX_DESCRIPTION_LEN + 1);
+    let refused = env.run_with_stdin(
+        &[
+            "secret",
+            "set",
+            "api-key",
+            "--vault",
+            "dev",
+            "--description",
+            &long,
+        ],
+        "key",
+    );
+    assert!(!refused.status.success());
+    assert!(stderr(&refused).contains("at most"), "{}", stderr(&refused));
+    assert!(
+        !env.ok(&["secret", "list", "--vault", "dev"])
+            .contains("api-key")
+    );
+}
+
+#[test]
+fn secret_set_and_import_take_a_storage() {
+    let env = Env::new();
+    let key = env.key_file("development");
+    let token = env.file("token.txt", "hvs.storage-test");
+    // Nothing listens on port 1: the provider cannot be reached.
+    env.ok(&[
+        "vault",
+        "create",
+        "development",
+        "--no-keyring",
+        "--recovery-key-out",
+        key.to_str().unwrap(),
+        "--hashicorp-vault",
+        "http://127.0.0.1:1",
+        "--hashicorp-vault-token-file",
+        &token,
+    ]);
+    let set = |args: &[&str], value: &str| {
+        let mut all = vec!["secret", "set"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--vault", "development", "-o", "json"]);
+        env.run_with_stdin(&all, value)
+    };
+
+    // The vault file is a storage like any other, and the default.
+    let out = set(&["in-file", "--storage", "sourceorrery"], "v1");
+    assert!(out.status.success(), "{}", stderr(&out));
+    // An unknown storage is refused, naming what the vault has.
+    let out = set(&["x", "--storage", "aws-secrets-manager"], "v");
+    assert!(!out.status.success());
+    let text = stderr(&out);
+    assert!(
+        text.contains("has no storage 'aws-secrets-manager'")
+            && text.contains("sourceorrery, hashicorp-vault"),
+        "{text}"
+    );
+    // At the provider: unreachable, so nothing is catalogued.
+    let out = set(&["at-vault", "--storage", "hashicorp-vault"], "v");
+    assert!(!out.status.success());
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert_eq!(err["error"]["code"], "provider_unavailable", "{err}");
+    let out = env.run(&[
+        "secret",
+        "get",
+        "at-vault",
+        "--vault",
+        "development",
+        "-o",
+        "json",
+    ]);
+    let err: serde_json::Value = serde_json::from_str(stderr(&out).trim()).unwrap();
+    assert_eq!(err["error"]["code"], "not_found", "{err}");
+    // A new version of a secret goes where the secret is.
+    let out = set(&["in-file", "--storage", "hashicorp-vault"], "v2");
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("kept in the vault file"),
+        "{}",
+        stderr(&out)
+    );
+
+    // `import --storage` sends each new secret there.
+    let dotenv = env.file(".env", "API_TOKEN=abc\n");
+    let out = env.run(&[
+        "import",
+        &dotenv,
+        "--vault",
+        "development",
+        "--no-manifest",
+        "--storage",
+        "hashicorp-vault",
+        "-o",
+        "json",
+    ]);
+    assert!(!out.status.success());
+    assert!(
+        stdout(&out).contains("provider_unavailable"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn a_manifest_that_names_remote_vaults_is_refused_with_what_replaced_them() {
+    let env = Env::new();
+    env.create_vault("development");
+    // Even with a credential in it: a parse error that never echoes it.
     std::fs::write(
         env.project.path().join("sourceorrery.toml"),
         "[project]\nname = \"demo\"\nvault = \"development\"\n\n\
@@ -972,10 +1530,14 @@ fn remote_vaults_come_from_the_manifest_and_local_only_commands_refuse_them() {
          token = \"hvs.SMUGGLED-TOKEN-CANARY\"\n",
     )
     .unwrap();
-    let out = env.run(&["vault", "list"]);
+    let out = env.run(&["check"]);
     assert!(!out.status.success());
-    assert!(stderr(&out).contains("token"), "{}", stderr(&out));
-    assert!(!stderr(&out).contains("SMUGGLED"), "{}", stderr(&out));
+    let text = stderr(&out) + &stdout(&out);
+    assert!(
+        text.contains("[vaults.*] tables are no longer read"),
+        "{text}"
+    );
+    assert!(!text.contains("SMUGGLED"), "{text}");
 }
 
 /// Hook scripts for `secret rotate`: the issuer mints `next-<current>`, the
@@ -1041,13 +1603,13 @@ fn write_rotation_hooks(project: &Path) -> String {
 fn rotation_project() -> Env {
     let env = Env::new();
     env.create_vault("development");
-    env.ok(&["init", "--project-name", "demo"]);
+    env.set("development", "database-password", "first-value");
+    env.ok(&["init", "--all", "--project-name", "demo"]);
     let manifest_path = env.project.path().join("sourceorrery.toml");
     let mut manifest = std::fs::read_to_string(&manifest_path).unwrap();
     manifest.push('\n');
     manifest.push_str(&write_rotation_hooks(env.project.path()));
     std::fs::write(&manifest_path, manifest).unwrap();
-    env.set("development", "database-password", "first-value");
     env
 }
 
@@ -1210,11 +1772,11 @@ fn a_failing_validator_leaves_the_current_version_in_place() {
 fn rotation_without_hooks_reads_stdin_and_activates_on_demand() {
     let env = Env::new();
     env.create_vault("development");
-    env.ok(&["init", "--project-name", "demo"]);
+    env.set("development", "api-key", "k1");
+    env.ok(&["init", "--all", "--project-name", "demo"]);
 
     // Without hooks the value comes from stdin, and without a grace period
     // the previous version is retired in the same run.
-    env.set("development", "api-key", "k1");
     let out = env.run_with_stdin(&["secret", "rotate", "api-key", "-o", "json"], "k2\n");
     assert!(out.status.success(), "{}", stderr(&out));
     let report: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
@@ -1534,514 +2096,319 @@ fn audit_export_posts_otlp_log_records() {
 }
 
 #[test]
-fn audit_on_a_remote_vault_points_at_the_providers_trail() {
+fn audit_points_at_the_trail_of_each_provider_that_stores_a_secret() {
     let env = Env::new();
-    std::fs::write(
-        env.project.path().join("sourceorrery.toml"),
-        "[project]\nname = \"x\"\nvault = \"dev\"\n\n[vaults.remote]\n\
-         provider = \"aws-secrets-manager\"\nregion = \"eu-west-1\"\nprefix = \"myapp/\"\n",
-    )
-    .unwrap();
-    let text = env.ok(&["audit", "--vault", "remote", "-o", "json"]);
-    let pointer: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(pointer["provider"], "aws-secrets-manager");
-    assert_eq!(pointer["audit_trail"], "AWS CloudTrail");
-    assert!(pointer["query"].as_str().unwrap().contains("myapp/"));
-    assert!(pointer["docs"].as_str().unwrap().ends_with("#audit-trail"));
-    let out = env.run(&["audit", "--vault", "remote"]);
-    assert!(out.status.success());
-    assert!(stderr(&out).contains("CloudTrail"), "{}", stderr(&out));
-
-    // An export has nothing of ours to export there.
-    let out = env.run(&["audit", "export", "--vault", "remote"]);
-    assert!(!out.status.success());
-    let err = stderr(&out);
-    assert!(
-        err.contains("unsupported") && err.contains("CloudTrail"),
-        "{err}"
+    env.create_vault("dev");
+    env.store_through(
+        "dev",
+        &sourceorrery_core::ConnectionSettings::AwsSecretsManager {
+            region: "eu-west-1".to_owned(),
+            prefix: Some("myapp/".to_owned()),
+            endpoint_url: None,
+        },
+        "aws-held",
     );
-}
-
-#[test]
-fn passphrase_generate_and_check_estimate_strength_without_storing_anything() {
-    let env = Env::new();
-    let text = env.ok(&["vault", "passphrase", "generate"]);
-    let generated = text.trim();
-    assert_eq!(generated.chars().count(), 20, "{text}");
-    assert!(generated.bytes().all(|b| b.is_ascii_graphic()));
-    let again = env.ok(&["vault", "passphrase", "generate", "--length", "32"]);
-    assert_eq!(again.trim().chars().count(), 32);
-    assert_ne!(generated, again.trim());
-    let json = env.ok(&["vault", "passphrase", "generate", "-o", "json"]);
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["length"], 20);
-    assert_eq!(parsed["bits"], 125);
-    assert_eq!(parsed["passphrase"].as_str().unwrap().len(), 20);
-    let out = env.run(&["vault", "passphrase", "generate", "--length", "8"]);
-    assert!(!out.status.success());
-
-    // The generated passphrase rates strong; a common one does not, and the
-    // estimate never repeats what it was given.
-    let out = env.run_with_stdin(&["vault", "passphrase", "check", "-o", "json"], generated);
+    env.store_through(
+        "dev",
+        &sourceorrery_core::ConnectionSettings::AzureKeyVault {
+            vault_url: "https://myapp-kv.vault.azure.net".to_owned(),
+        },
+        "azure-held",
+    );
+    let out = env.run(&["audit", "--vault", "dev"]);
     assert!(out.status.success(), "{}", stderr(&out));
-    let estimate: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
-    // Random characters can land in runs the estimate costs as words, so a
-    // generated passphrase is asserted acceptable, not a fixed score.
-    assert_eq!(estimate["acceptable"], true, "{estimate}");
-    assert!(estimate["bits"].as_u64().unwrap() >= 44, "{estimate}");
-    let out = env.run_with_stdin(
-        &["vault", "passphrase", "check", "-o", "json"],
-        "Password1!\n",
+    let notes = stderr(&out);
+    assert!(notes.contains("CloudTrail"), "{notes}");
+    assert!(notes.contains("myapp/"), "{notes}");
+    assert!(notes.contains("Azure Monitor"), "{notes}");
+    // Diagnostic logs name the vault resource in capitals.
+    assert!(notes.contains("Resource == 'MYAPP-KV'"), "{notes}");
+    assert!(notes.contains("MICROSOFT.KEYVAULT"), "{notes}");
+    assert!(
+        notes.contains("/providers/azure-key-vault/#audit-trail"),
+        "{notes}"
     );
-    let estimate: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
-    assert_eq!(estimate["label"], "guessable", "{estimate}");
-    assert_eq!(estimate["acceptable"], false);
-    assert!(!stdout(&out).contains("Password1"));
-    let out = env.run_with_stdin(&["vault", "passphrase", "check"], "Harbour2024!\n");
-    let shown = format!("{}{}", stdout(&out), stderr(&out));
-    assert!(shown.contains("a year"), "{shown}");
-    assert!(!shown.contains("Harbour"), "{shown}");
+    // The JSON form is the vault's own log, unchanged.
+    let events: serde_json::Value =
+        serde_json::from_str(&env.ok(&["audit", "--vault", "dev", "-o", "json"])).unwrap();
+    assert!(events.is_array());
 }
 
 #[test]
-fn a_weak_passphrase_from_the_environment_is_warned_about_not_refused() {
+fn a_weak_password_from_a_file_is_warned_about_not_refused() {
     let env = Env::new();
-    let out = env
-        .cmd(&["vault", "create", "weakly", "--protector", "passphrase"])
-        .env("SOURCEORRERY_PASSPHRASE", "dev-only")
-        .output()
-        .unwrap();
+    let create = |name: &str, password: &str| {
+        env.run(&[
+            "vault",
+            "create",
+            name,
+            "--no-keyring",
+            "--recovery-key-out",
+            env.key_file(name).to_str().unwrap(),
+            "--password-file",
+            password,
+        ])
+    };
+    let weak = env.file("weak.txt", "dev-only\n");
+    let out = create("weak", &weak);
     assert!(out.status.success(), "{}", stderr(&out));
     let err = stderr(&out);
     assert!(
         err.contains("rates fair") || err.contains("rates weak"),
         "{err}"
     );
-    assert!(err.contains("SOURCEORRERY_PASSPHRASE"), "{err}");
+    assert!(err.contains("the password file"), "{err}");
     assert!(
         !err.contains("dev-only"),
-        "the passphrase itself is never printed: {err}"
+        "the password itself is never printed: {err}"
     );
     // A strong one passes silently.
-    let out = env
-        .cmd(&["vault", "create", "strongly", "--protector", "passphrase"])
-        .output()
-        .unwrap();
+    let strong = env.file("strong.txt", PASSWORD);
+    let out = create("strong", &strong);
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(!stderr(&out).contains("rates"), "{}", stderr(&out));
 }
 
 // ---------------------------------------------------------------------------
-// Part 3: the reveal guard, second factor, recovery codes and the hint
+// Part 3: the recovery key and the view check
 // ---------------------------------------------------------------------------
 
-/// The current TOTP step, after waiting (at most a few seconds) for one with
-/// enough of it left that the codes a test computes for the steps before,
-/// at and after it stay inside the verifier's window while the test runs.
-fn fresh_totp_step() -> u64 {
-    use sourceorrery_crypto::totp::{PERIOD_SECS, counter_at, seconds_left};
-    loop {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        if seconds_left(now) >= 20 {
-            return counter_at(now);
-        }
-        std::thread::sleep(std::time::Duration::from_secs(
-            seconds_left(now).min(PERIOD_SECS),
-        ));
-    }
-}
-
-fn totp_code(key: &str, step: u64) -> String {
-    sourceorrery_crypto::TotpSecret::from_base32(key)
-        .unwrap()
-        .code(step)
-}
-
 #[test]
-#[allow(clippy::too_many_lines)] // one enrolment, one TOTP window, every door tried
-fn second_factor_and_guard_protect_reveal_and_export() {
+fn the_recovery_key_is_shown_once_and_never_written_over_a_file() {
     let env = Env::new();
-    env.create_vault("dev");
-    env.set("dev", "api-key", CANARY);
-    let backup = env.project.path().join("dev.sobackup");
-    let backup = backup.to_str().unwrap();
-
-    // Enrol without verifying: the key is shown once, as JSON here.
-    let enrolled: serde_json::Value = serde_json::from_str(&env.ok(&[
+    // Printed on stdout when no file is named, with a note on stderr.
+    let out = env.run(&["vault", "create", "shown", "--no-keyring"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let key = stdout(&out).trim().to_owned();
+    assert_eq!(key.len(), 29, "{key}");
+    assert_eq!(key.matches('-').count(), 4, "{key}");
+    assert!(stderr(&out).contains("shown once"), "{}", stderr(&out));
+    // In JSON it is a field.
+    let json = env.ok(&[
         "vault",
-        "2fa",
-        "enable",
-        "--vault",
-        "dev",
-        "--no-verify",
-        "-o",
-        "json",
-    ]))
-    .unwrap();
-    let key = enrolled["key"].as_str().unwrap().to_owned();
-    assert_eq!(key.len(), 32);
-    assert!(
-        enrolled["uri"]
-            .as_str()
-            .unwrap()
-            .starts_with("otpauth://totp/SourceOrrery:dev?secret=")
-    );
-    assert_eq!(enrolled["verified"], false);
-    let status = env.ok(&["vault", "2fa", "status", "--vault", "dev", "-o", "json"]);
-    let status: serde_json::Value = serde_json::from_str(&status).unwrap();
-    assert_eq!(status["enrolled"], true);
-    assert_eq!(status["verified"], false);
-
-    // Until it is verified the guard cannot ask for it.
-    let early = env.run(&[
-        "vault",
-        "guard",
-        "--reveal",
-        "second-factor",
-        "--vault",
-        "dev",
-    ]);
-    assert!(!early.status.success());
-    assert!(stderr(&early).contains("verif"), "{}", stderr(&early));
-
-    // Verify with the code of the previous step; the window allows it.
-    let step = fresh_totp_step();
-    let verified = env.ok(&[
-        "vault",
-        "2fa",
-        "verify",
-        "--vault",
-        "dev",
-        "--code",
-        &totp_code(&key, step - 1),
+        "create",
+        "json-vault",
+        "--no-keyring",
         "-o",
         "json",
     ]);
-    let verified: serde_json::Value = serde_json::from_str(&verified).unwrap();
-    assert_eq!(verified["accepted"], true);
-
-    // A code is only ever accepted once.
-    let replay = env.run(&[
+    let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(json["recovery_key"].as_str().unwrap().len(), 29);
+    assert_eq!(json["this_machine"], false);
+    // With no credential store the vault says how it opens.
+    let out = env.run(&[
         "vault",
-        "2fa",
-        "verify",
-        "--vault",
-        "dev",
-        "--code",
-        &totp_code(&key, step - 1),
+        "create",
+        "no-store",
+        "--recovery-key-out",
+        env.key_file("no-store").to_str().unwrap(),
     ]);
-    assert!(!replay.status.success());
+    assert!(out.status.success(), "{}", stderr(&out));
     assert!(
-        stderr(&replay).contains("already used"),
+        stderr(&out).contains("recovery key only"),
         "{}",
-        stderr(&replay)
+        stderr(&out)
     );
-
-    // Turn the guard on (changing it passes the current guard: none).
-    let set = env.ok(&[
-        "vault",
-        "guard",
-        "--reveal",
-        "passphrase,second-factor",
-        "--vault",
-        "dev",
-        "-o",
-        "json",
-    ]);
-    let set: serde_json::Value = serde_json::from_str(&set).unwrap();
-    assert_eq!(set["reveal"]["passphrase"], true);
-    assert_eq!(set["reveal"]["second_factor"], true);
-
-    // Reading metadata needs nothing new.
-    assert!(
-        env.ok(&["secret", "list", "--vault", "dev"])
-            .contains("api-key")
-    );
-
-    // Revealing without a code is refused and nothing is printed.
-    let refused = env.run(&["secret", "get", "api-key", "--vault", "dev", "--reveal"]);
-    assert!(!refused.status.success());
-    assert!(!stdout(&refused).contains(CANARY));
-    assert!(stderr(&refused).contains("--code"), "{}", stderr(&refused));
-    assert!(
-        stderr(&refused).contains("permission denied"),
-        "{}",
-        stderr(&refused)
-    );
-
-    // A code from well outside the window is refused too.
-    let wrong = env.run(&[
-        "secret",
-        "get",
-        "api-key",
-        "--vault",
-        "dev",
-        "--reveal",
-        "--code",
-        &totp_code(&key, step + 7),
-    ]);
-    assert!(!wrong.status.success());
-    assert!(!stdout(&wrong).contains(CANARY));
-
-    // With the current step's code the value is shown, once.
-    let shown = env.ok(&[
-        "secret",
-        "get",
-        "api-key",
-        "--vault",
-        "dev",
-        "--reveal",
-        "--code",
-        &totp_code(&key, step),
-    ]);
-    assert!(shown.contains(CANARY));
-    let again = env.run(&[
-        "secret",
-        "get",
-        "api-key",
-        "--vault",
-        "dev",
-        "--reveal",
-        "--code",
-        &totp_code(&key, step),
-    ]);
-    assert!(!again.status.success(), "a code was accepted twice");
-    assert!(!stdout(&again).contains(CANARY));
-
-    // The export asks for the same things.
-    let export = env.run(&["backup", "--vault", "dev", "--out", backup]);
-    assert!(!export.status.success());
-    assert!(
-        stderr(&export).contains("export the vault"),
-        "{}",
-        stderr(&export)
-    );
-    assert!(!Path::new(backup).exists());
-
-    // Without the passphrase the guard refuses as well, whatever the code.
-    let no_pass = env
-        .cmd(&[
-            "secret", "get", "api-key", "--vault", "dev", "--reveal", "--code", "000000",
-        ])
-        .env_remove("SOURCEORRERY_PASSPHRASE")
-        .output()
-        .unwrap();
-    assert!(!no_pass.status.success());
-    assert!(!stdout(&no_pass).contains(CANARY));
-
-    // `vault info` describes the guard without any secret.
-    let info = env.ok(&["vault", "info", "--vault", "dev", "-o", "json"]);
-    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
-    assert_eq!(info["guard"]["second_factor"], true);
-    assert_eq!(info["second_factor"]["verified"], true);
-    assert!(!info.to_string().contains(&key));
-
-    // Disabling the second factor needs one more code (the next step's);
-    // the guard then asks for the passphrase alone.
-    let disabled = env.ok(&[
-        "vault",
-        "2fa",
-        "disable",
-        "--vault",
-        "dev",
-        "--code",
-        &totp_code(&key, step + 1),
-        "-o",
-        "json",
-    ]);
-    let disabled: serde_json::Value = serde_json::from_str(&disabled).unwrap();
-    assert_eq!(disabled["second_factor"], false);
-    assert_eq!(disabled["guard"]["passphrase"], true);
-    assert_eq!(disabled["guard"]["second_factor"], false);
-    let shown = env.ok(&["secret", "get", "api-key", "--vault", "dev", "--reveal"]);
-    assert!(shown.contains(CANARY));
-
-    // Every guard decision is in the audit trail; no code or key is.
-    let audit = env.ok(&["audit", "--vault", "dev", "-o", "json"]);
-    assert!(audit.contains("\"guard\""));
-    assert!(!audit.contains(&key));
-    assert!(!audit.contains(CANARY));
+    // A recovery-key file is never written over, and nothing is created.
+    let existing = env.file("existing.key", "keep");
+    let out = env.run(&["vault", "create", "other", "--recovery-key-out", &existing]);
+    assert!(!out.status.success());
+    assert_eq!(std::fs::read_to_string(&existing).unwrap(), "keep");
+    assert!(!env.ok(&["vault", "list"]).contains("other"));
 }
 
-#[test]
-#[allow(clippy::too_many_lines)] // one set of codes, every way of typing one
-fn recovery_codes_unlock_and_the_hint_is_shown_before_unlock() {
-    let env = Env::new();
-    env.create_vault("dev");
-    env.set("dev", "api-key", CANARY);
-
-    let issued = env.ok(&[
-        "vault", "recovery", "codes", "--vault", "dev", "--count", "2", "-o", "json",
+/// The guard events whose detail is exactly `detail`.
+fn guard_events(env: &Env, vault: &str, detail: &str) -> usize {
+    let audit = env.ok(&[
+        "audit",
+        "--vault",
+        vault,
+        "--operation",
+        "guard",
+        "--limit",
+        "1000",
+        "-o",
+        "json",
     ]);
-    let issued: serde_json::Value = serde_json::from_str(&issued).unwrap();
-    let codes: Vec<String> = issued["codes"]
+    let events: serde_json::Value = serde_json::from_str(&audit).unwrap();
+    events
         .as_array()
         .unwrap()
         .iter()
-        .map(|c| c.as_str().unwrap().to_owned())
-        .collect();
-    assert_eq!(codes.len(), 2);
-    assert_eq!(issued["replaced"], 0);
-    assert_eq!(
-        issued["labels"],
-        serde_json::json!(["recovery-1", "recovery-2"])
-    );
-    for code in &codes {
-        assert_eq!(code.len(), 29, "{code}");
-        assert_eq!(code.matches('-').count(), 4, "{code}");
-    }
-    let info = env.ok(&["vault", "info", "--vault", "dev", "-o", "json"]);
-    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
-    assert_eq!(
-        info["recovery_codes"],
-        serde_json::json!(["recovery-1", "recovery-2"])
-    );
-    assert!(!info.to_string().contains(&codes[0]));
-
-    // A code unlocks the vault in place of the passphrase, however it is
-    // written: lower case, with or without hyphens, from the environment or
-    // a file.
-    let unlock_with = |pass: &str| -> Output {
-        env.cmd(&["secret", "list", "--vault", "dev"])
-            .env("SOURCEORRERY_PASSPHRASE", pass)
-            .output()
-            .unwrap()
-    };
-    let out = unlock_with(&codes[0].to_lowercase());
-    assert!(out.status.success(), "{}", stderr(&out));
-    assert!(stdout(&out).contains("api-key"));
-    let out = unlock_with(&codes[0].replace('-', ""));
-    assert!(out.status.success(), "{}", stderr(&out));
-    let mut wrong = codes[0].clone();
-    wrong.replace_range(0..1, if codes[0].starts_with('A') { "B" } else { "A" });
-    let out = unlock_with(&wrong);
-    assert!(!out.status.success());
-    assert!(!stdout(&out).contains("api-key"));
-
-    let file = env.project.path().join("recovery.txt");
-    std::fs::write(&file, format!("{}\n", codes[1].to_lowercase())).unwrap();
-    let out = env
-        .cmd(&[
-            "secret",
-            "list",
-            "--vault",
-            "dev",
-            "--passphrase-file",
-            file.to_str().unwrap(),
-        ])
-        .env_remove("SOURCEORRERY_PASSPHRASE")
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
-
-    // The hint lives in clear in the file; it cannot be the passphrase.
-    let bad = env.run(&["vault", "passphrase", "hint", PASSPHRASE, "--vault", "dev"]);
-    assert!(!bad.status.success());
-    env.ok(&[
-        "vault",
-        "passphrase",
-        "hint",
-        "the usual one, with the year",
-        "--vault",
-        "dev",
-    ]);
-    let hint = env.ok(&[
-        "vault",
-        "passphrase",
-        "hint",
-        "--vault",
-        "dev",
-        "-o",
-        "json",
-    ]);
-    let hint: serde_json::Value = serde_json::from_str(&hint).unwrap();
-    assert_eq!(hint["hint"], "the usual one, with the year");
-    let info = env.ok(&["vault", "info", "--vault", "dev", "-o", "json"]);
-    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
-    assert_eq!(info["passphrase_hint"], "the usual one, with the year");
-    env.ok(&["vault", "passphrase", "hint", "--clear", "--vault", "dev"]);
-    let hint = env.ok(&[
-        "vault",
-        "passphrase",
-        "hint",
-        "--vault",
-        "dev",
-        "-o",
-        "json",
-    ]);
-    let hint: serde_json::Value = serde_json::from_str(&hint).unwrap();
-    assert!(hint["hint"].is_null());
-
-    // Changing the passphrase keeps the recovery codes; a weak replacement
-    // from a file is warned about, not refused.
-    let new_file = env.project.path().join("new.txt");
-    std::fs::write(&new_file, "Orbit-Lantern-Copper-Nine-42\n").unwrap();
-    let changed = env.ok(&[
-        "vault",
-        "passphrase",
-        "set",
-        "--new-from-file",
-        new_file.to_str().unwrap(),
-        "--vault",
-        "dev",
-        "-o",
-        "json",
-    ]);
-    let changed: serde_json::Value = serde_json::from_str(&changed).unwrap();
-    assert_eq!(changed["kind"], "passphrase");
-    let old = unlock_with(PASSPHRASE);
-    assert!(!old.status.success(), "the old passphrase still unlocks");
-    let new = unlock_with("Orbit-Lantern-Copper-Nine-42");
-    assert!(new.status.success(), "{}", stderr(&new));
-    let code = unlock_with(&codes[1]);
-    assert!(code.status.success(), "{}", stderr(&code));
-
-    // New codes replace the old ones.
-    let reissued = env
-        .cmd(&["vault", "recovery", "codes", "--vault", "dev", "-o", "json"])
-        .env("SOURCEORRERY_PASSPHRASE", "Orbit-Lantern-Copper-Nine-42")
-        .output()
-        .unwrap();
-    assert!(reissued.status.success(), "{}", stderr(&reissued));
-    let reissued: serde_json::Value = serde_json::from_str(&stdout(&reissued)).unwrap();
-    assert_eq!(reissued["replaced"], 2);
-    assert_eq!(reissued["codes"].as_array().unwrap().len(), 5);
-    let stale = unlock_with(&codes[1]);
-    assert!(
-        !stale.status.success(),
-        "a replaced recovery code still unlocks"
-    );
-    let fresh = reissued["codes"][4].as_str().unwrap();
-    let fresh = unlock_with(fresh);
-    assert!(fresh.status.success(), "{}", stderr(&fresh));
+        .filter(|e| e["detail"] == detail)
+        .count()
 }
 
 #[test]
-fn setup_without_a_terminal_prints_the_steps_and_creates_nothing() {
+fn the_view_check_is_asked_for_by_viewing_commands_only() {
+    const OPENED: &str = "view check passed: opened with the recovery key";
+    let env = Env::new();
+    let password = env.file("password.txt", &format!("{PASSWORD}\n"));
+    env.ok(&[
+        "vault",
+        "create",
+        "development",
+        "--no-keyring",
+        "--recovery-key-out",
+        env.key_file("development").to_str().unwrap(),
+        "--password-file",
+        &password,
+    ]);
+    env.set("development", "database-password", CANARY);
+    let init = env.run(&["init", "--all", "--project-name", "demo"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+    let vault = ["--vault", "development"];
+
+    // Every viewing command asks; this vault opens with its recovery key,
+    // which passes the check by itself, and the vault records that.
+    let before = guard_events(&env, "development", OPENED);
+    for args in [
+        vec!["secret", "list"],
+        vec!["secret", "get", "database-password"],
+        vec!["secret", "get", "database-password", "--reveal"],
+        vec!["secret", "versions", "database-password"],
+        vec!["audit"],
+    ] {
+        let mut args = args.clone();
+        args.extend_from_slice(&vault);
+        env.ok(&args);
+    }
+    // Five commands, and the listing that counts them.
+    assert_eq!(guard_events(&env, "development", OPENED), before + 5 + 1);
+
+    // Running the application, checking the manifest and writing a secret
+    // ask for nothing.
+    let before = guard_events(&env, "development", OPENED);
+    let echo: &[&str] = if cfg!(windows) {
+        &["run", "--", "cmd", "/C", "echo ran"]
+    } else {
+        &["run", "--", "sh", "-c", "echo ran"]
+    };
+    assert!(env.ok(echo).contains("ran"));
+    env.ok(&["check"]);
+    env.set("development", "database-password", "next");
+    assert_eq!(guard_events(&env, "development", OPENED), before + 1);
+
+    // Nothing of the password is in the log.
+    let audit = env.ok(&["audit", vault[0], vault[1], "-o", "json"]);
+    assert!(audit.contains("password set"), "{audit}");
+    assert!(!audit.contains(PASSWORD));
+}
+
+#[test]
+fn setup_without_a_terminal_prints_the_create_command_and_creates_nothing() {
     let env = Env::new();
     let out = env.run(&["setup"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out), "");
     let guide = stderr(&out);
-    assert!(guide.contains("need an interactive terminal"), "{guide}");
-    assert!(guide.contains("sourceorrery vault create development --protector passphrase"));
-    assert!(guide.contains("sourceorrery vault 2fa enable --vault development"));
-    assert!(guide.contains("sourceorrery run -- <your command>"));
+    for text in [
+        "sourceorrery vault create development --recovery-key-out development.recovery-key",
+        "--password-file FILE",
+        "--hashicorp-vault ADDRESS",
+        "--aws-secrets-manager REGION",
+        "--azure-key-vault URL",
+        "sourceorrery init --vault development",
+        "sourceorrery run -- <your command>",
+    ] {
+        assert!(guide.contains(text), "{text}: {guide}");
+    }
     assert_eq!(env.ok(&["vault", "list", "-o", "json"]).trim(), "[]");
     assert!(!env.project.path().join("sourceorrery.toml").exists());
 
-    let json = env.ok(&[
-        "setup", "--guide", "--vault", "staging", "--secret", "api-key", "-o", "json",
-    ]);
+    // --guide asks for the same where a terminal would show the screens.
+    let json = env.ok(&["setup", "--guide", "--vault", "staging", "-o", "json"]);
     let json: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(json["vault"], "staging");
-    let steps = json["steps"].as_array().unwrap();
-    assert_eq!(steps.len(), 6);
     assert_eq!(
-        steps[1]["commands"][0],
-        "sourceorrery secret set api-key --vault staging"
+        json["command"],
+        "sourceorrery vault create staging --recovery-key-out staging.recovery-key"
+    );
+    assert_eq!(json["options"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        json["then"][0],
+        "sourceorrery secret set NAME --vault staging"
+    );
+}
+
+/// The non-interactive create `setup --guide` prints: the password from a
+/// file and a connection, made with the vault in one transaction; a file
+/// that cannot be read creates nothing.
+#[test]
+fn vault_create_sets_the_password_from_a_file_with_the_vault() {
+    let env = Env::new();
+    let password = env.file("password.txt", PASSWORD);
+    let key = env.key_file("guarded");
+    let created: serde_json::Value = serde_json::from_str(&env.ok(&[
+        "vault",
+        "create",
+        "guarded",
+        "--no-keyring",
+        "--recovery-key-out",
+        key.to_str().unwrap(),
+        "--password-file",
+        &password,
+        "--hashicorp-vault",
+        "https://vault.example.com:8200",
+        "-o",
+        "json",
+    ]))
+    .unwrap();
+    assert_eq!(created["view_check"]["password"], true);
+    assert_eq!(created["view_check"]["authenticator"], false);
+    assert_eq!(created["connections"].as_array().unwrap().len(), 1);
+    assert_eq!(created["keys"][0]["kind"], "recovery");
+    let audit = env.ok(&["audit", "--vault", "guarded", "-o", "json"]);
+    for detail in ["password set", "hashicorp-vault"] {
+        assert!(audit.contains(detail), "{detail}: {audit}");
+    }
+    assert!(!audit.contains(PASSWORD));
+
+    let text = env.run(&[
+        "vault",
+        "create",
+        "plain",
+        "--no-keyring",
+        "--recovery-key-out",
+        env.key_file("plain").to_str().unwrap(),
+        "--password-file",
+        &password,
+        "--hashicorp-vault",
+        "https://vault.example.com:8200",
+        "--hashicorp-vault-mount",
+        "kv",
+    ]);
+    assert!(text.status.success(), "{}", stderr(&text));
+    for line in [
+        "view check: password",
+        "hashicorp-vault https://vault.example.com:8200 kv (ambient credentials)",
+    ] {
+        assert!(stderr(&text).contains(line), "{line}: {}", stderr(&text));
+    }
+
+    let empty = env.file("empty.txt", "");
+    let refused_key = env.key_file("nothing");
+    let out = env.run(&[
+        "vault",
+        "create",
+        "nothing",
+        "--no-keyring",
+        "--recovery-key-out",
+        refused_key.to_str().unwrap(),
+        "--password-file",
+        &empty,
+    ]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("is empty"), "{}", stderr(&out));
+    assert!(!refused_key.exists());
+    assert!(!env.ok(&["vault", "list"]).contains("nothing"));
+
+    // Without a terminal, a vault to create needs its name.
+    let out = env.run(&["vault", "create"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("name the vault to create"),
+        "{}",
+        stderr(&out)
     );
 }

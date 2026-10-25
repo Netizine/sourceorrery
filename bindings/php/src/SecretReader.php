@@ -9,8 +9,8 @@ use FFI\CData;
 
 /**
  * A read-only handle on one vault, unlocked the way the CLI unlocks it: OS
- * credential store, then `OpenOptions::$passphrase`, SOURCEORRERY_PASSPHRASE,
- * then `OpenOptions::$passphraseFile` / SOURCEORRERY_PASSPHRASE_FILE. Never
+ * credential store, then `OpenOptions::$recoveryKey`, SOURCEORRERY_RECOVERY_KEY,
+ * then `OpenOptions::$recoveryKeyFile` / SOURCEORRERY_RECOVERY_KEY_FILE. Never
  * prompts.
  *
  * ```php
@@ -37,12 +37,12 @@ final class SecretReader
         $ffi = Native::ffi();
         [$namePtr, $nameLen] = Native::arg($vault);
         [$jsonPtr, $jsonLen] = Native::arg($options->toJson());
-        [$passPtr, $passLen] = Native::arg($options->passphrase);
+        [$keyPtr, $keyLen] = Native::arg($options->recoveryKey);
         $out = $ffi->new('so_reader*');
         try {
-            Native::check($ffi->so_reader_open($namePtr, $nameLen, $jsonPtr, $jsonLen, $passPtr, $passLen, FFI::addr($out)));
+            Native::check($ffi->so_reader_open($namePtr, $nameLen, $jsonPtr, $jsonLen, $keyPtr, $keyLen, FFI::addr($out)));
         } finally {
-            Native::release($passPtr, $passLen);
+            Native::release($keyPtr, $keyLen);
             Native::release($jsonPtr, $jsonLen);
             Native::release($namePtr, $nameLen);
         }

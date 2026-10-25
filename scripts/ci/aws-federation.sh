@@ -18,6 +18,11 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 export SOURCEORRERY_HOME="$work/home"
 export HOME="$work/empty-home"           # no ~/.aws files
+# The vault opens with its recovery key; nothing touches the OS credential
+# store. The job's SOURCEORRERY_RECOVERY_KEY is the fixture vault's, and the
+# CLI would try it first.
+unset SOURCEORRERY_RECOVERY_KEY
+export SOURCEORRERY_KEYRING=off SOURCEORRERY_RECOVERY_KEY_FILE="$work/remote.key"
 mkdir -p "$SOURCEORRERY_HOME" "$HOME" "$work/project"
 pass() { echo "PASS  $1"; }
 fail() { echo "FAIL  $1"; exit 1; }
@@ -29,24 +34,25 @@ run_as() { # VAR=value... -- args
      NO_COLOR=1 AWS_REGION="$region" AWS_EC2_METADATA_DISABLED=true "${vars[@]}" "$cli" "$@")
 }
 
+# A connection without a stored access key: every identity below is the
+# environment's.
+run_as -- vault create remote --no-keyring --recovery-key-out "$work/remote.key" \
+  --aws-secrets-manager "$region" --aws-secrets-manager-prefix "federation-$$/" \
+  --aws-secrets-manager-endpoint "$endpoint" > /dev/null
 cat > "$work/project/sourceorrery.toml" <<TOML
 [project]
 name = "federation"
 vault = "remote"
 
 [secrets.database-password]
-
-[vaults.remote]
-provider = "aws-secrets-manager"
-region = "$region"
-prefix = "federation-$$/"
-endpoint_url = "$endpoint"
 TOML
-printf 'federation-fixture-value' | run_as AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test -- secret set database-password --vault remote --stdin > /dev/null
+printf 'federation-fixture-value' | run_as AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test -- secret set database-password --vault remote --stdin --storage aws-secrets-manager > /dev/null
 
-# A web identity token: the emulator's STS accepts any JWT shape.
+# A web identity token: the emulator's STS accepts any JWT shape. The role is
+# in the account the `test` access key maps to (LocalStack's default): the
+# emulator keeps accounts apart, so a role elsewhere would see no secrets.
 printf 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOmV4YW1wbGUvYXBwIn0.sig' > "$work/web-identity.jwt"
-out="$(run_as AWS_WEB_IDENTITY_TOKEN_FILE="$work/web-identity.jwt" AWS_ROLE_ARN="arn:aws:iam::123456789012:role/sourceorrery-ci" AWS_ENDPOINT_URL="$endpoint" -- secret get database-password --vault remote --reveal -o json)"
+out="$(run_as AWS_WEB_IDENTITY_TOKEN_FILE="$work/web-identity.jwt" AWS_ROLE_ARN="arn:aws:iam::000000000000:role/sourceorrery-ci" AWS_ENDPOINT_URL="$endpoint" -- secret get database-password --vault remote --reveal -o json)"
 grep -q '"value": *"federation-fixture-value"' <<<"$out" && pass "web identity exchanged at STS reads the secret" || fail "web identity: $out"
 
 if run_as -- secret get database-password --vault remote -o json > /dev/null 2> "$work/err.json"; then

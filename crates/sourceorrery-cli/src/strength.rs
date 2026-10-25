@@ -49,8 +49,8 @@ impl Score {
         }
     }
 
-    /// The least score `vault create`, `vault passphrase set` and the
-    /// set-up wizard accept without `--allow-weak`.
+    /// The least score a password typed on the setup screens is accepted
+    /// at.
     pub const REQUIRED: Self = Self::Good;
 }
 

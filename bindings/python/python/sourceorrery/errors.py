@@ -67,13 +67,16 @@ class VaultNotFoundError(SourceOrreryError):
 
 
 class VaultLockedError(SourceOrreryError):
-    """``locked``: no protector or passphrase source could unlock the vault."""
+    """``locked``: neither this machine's key nor a recovery key could open the vault."""
 
     default_code = "locked"
 
 
 class MigrationRequiredError(SourceOrreryError):
-    """``migration_required``: run ``sourceorrery vault migrate <name>`` first."""
+    """``migration_required``: the vault was written by an earlier release.
+
+    This release cannot read it; recreate it with ``sourceorrery setup``.
+    """
 
     default_code = "migration_required"
 
@@ -132,7 +135,7 @@ class IntegrityError(SourceOrreryError):
 
 
 class UnsupportedError(SourceOrreryError):
-    """``unsupported``: no OS credential store here; use a passphrase."""
+    """``unsupported``: no OS credential store here; use the vault's recovery key."""
 
     default_code = "unsupported"
 

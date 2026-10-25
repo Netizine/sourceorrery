@@ -265,7 +265,7 @@ pub fn issue(
     now: OffsetDateTime,
 ) -> Result<Issued> {
     if !client
-        .capabilities()
+        .capabilities_of(name)?
         .contains(&Capability::PerVersionProperties)
     {
         return Err(SecretError::Unsupported(format!(

@@ -84,7 +84,7 @@ impl Transport {
             .user_agent(concat!("sourceorrery/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::none())
             .https_only(address.starts_with("https://"));
-        if sourceorrery_core::remote::is_loopback_url(address) {
+        if sourceorrery_core::connection::is_loopback_url(address) {
             builder = builder.no_proxy();
         }
         if let Some(pem) = ca_pem {
@@ -93,7 +93,8 @@ impl Transport {
                     "VAULT_CACERT is not a PEM certificate: {err}"
                 ))
             })?;
-            builder = builder.add_root_certificate(cert);
+            // Trusted in addition to the operating system's roots.
+            builder = builder.tls_certs_merge([cert]);
         }
         let http = builder
             .build()
@@ -205,7 +206,19 @@ fn unavailable(err: reqwest::Error) -> SecretError {
     let reason = if err.is_timeout() {
         "the request timed out".to_owned()
     } else if err.is_connect() {
-        format!("cannot connect: {}", err.without_url())
+        let err = err.without_url();
+        // The innermost cause says why: a refused certificate, a refused
+        // connection. It names no URL.
+        let mut cause: &dyn std::error::Error = &err;
+        while let Some(next) = cause.source() {
+            cause = next;
+        }
+        let cause = sourceorrery_core::text::foreign(&cause.to_string());
+        if cause == err.to_string() {
+            format!("cannot connect: {err}")
+        } else {
+            format!("cannot connect: {err} ({cause})")
+        }
     } else {
         err.without_url().to_string()
     };

@@ -28,7 +28,7 @@ jobs:
     outputs:
       code: ${{ steps.classify.outputs.code }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # A pull request's merge commit and its first parent, the base.
           fetch-depth: 2
@@ -45,7 +45,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -58,7 +58,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -78,7 +78,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -86,7 +86,8 @@ jobs:
       - name: Build
         run: cargo build --workspace --locked
       - name: Test
-        # Tests use passphrase protectors only; no OS keyring is required on CI.
+        # Tests use recovery keys and an in-memory credential store; no OS
+        # keyring is required on CI.
         run: cargo test --workspace --locked
       - name: Build without OS keyring support (headless servers)
         run: cargo build -p sourceorrery-cli --no-default-features --locked
@@ -97,7 +98,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -136,7 +137,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -157,8 +158,8 @@ jobs:
 
   # ---------------------------------------------------------------------
   # SDKs: every binding builds, its tests pass and its example runs against
-  # a vault the CLI created in the job (passphrase protector,
-  # SOURCEORRERY_PASSPHRASE in the environment). See docs/sdks/index.md.
+  # a vault the CLI created in the job (opening with its recovery key,
+  # SOURCEORRERY_RECOVERY_KEY in the environment). See docs/sdks/index.md.
   # ---------------------------------------------------------------------
 
   sdk-rust:
@@ -171,7 +172,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/sdk-fixture
       - name: Example
         shell: bash
@@ -197,9 +198,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/sdk-fixture
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Build and install the wheel
@@ -237,7 +238,7 @@ jobs:
         working-directory: bindings/node
         shell: bash
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/sdk-fixture
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -266,7 +267,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/sdk-fixture
       - name: Compile and run (cc / c++)
         if: runner.os != 'Windows'
@@ -285,12 +286,15 @@ jobs:
           ./get_secret_cpp "$SOURCEORRERY_TEST_VAULT" database-password
           python3 tests/conformance/sdk/harness.py --runner c
           python3 tests/conformance/sdk/harness.py --runner cpp
-      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
-        if: runner.os == 'Windows'
       - name: Compile and run (MSVC)
         if: runner.os == 'Windows'
         shell: cmd
+        # The Visual Studio developer environment, from the runner's own
+        # installation (no action: the ones that do this still run on Node 20).
         run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSROOT=%%i
+          if not defined VSROOT exit /b 1
+          call "%VSROOT%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64 -no_logo || exit /b 1
           set INC=/I crates/sourceorrery-ffi/include /I bindings/cpp/include
           cl /nologo /W4 /WX %INC% crates/sourceorrery-ffi/examples/get_secret.c /Fe:get_secret_c.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
           cl /nologo /std:c++17 /EHsc /W4 /WX %INC% bindings/cpp/examples/get_secret.cpp /Fe:get_secret_cpp.exe /link "%SOURCEORRERY_NATIVE_DIR%/sourceorrery_ffi.dll.lib" || exit /b 1
@@ -325,7 +329,7 @@ jobs:
         working-directory: bindings/go
         shell: bash
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/sdk-fixture
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -363,9 +367,9 @@ jobs:
         working-directory: bindings/java
         shell: bash
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/sdk-fixture
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "25"
@@ -388,7 +392,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/sdk-fixture
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -418,7 +422,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/sdk-fixture
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
@@ -452,7 +456,7 @@ jobs:
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -464,16 +468,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    # rustsec/audit-check reports through a check run (and an issue on push).
+    # cargo-audit itself, as rustsec/audit-check ran it: a vulnerability in
+    # Cargo.lock fails the job, a warning (unmaintained, yanked) is printed.
+    # The action still runs on Node 20.
     permissions:
       contents: read
-      checks: write
-      issues: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tool: cargo-audit@0.22.2
+      - run: cargo audit
 
   # Workflow hygiene: zizmor fails on an unpinned third-party action, on a
   # `run:` step that expands an expression, and on the other high-severity
@@ -486,7 +491,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
         with:
           version: 1.31.1
@@ -503,13 +508,13 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: python3 -m unittest -v scripts/release/package_managers_test.py
       - run: python3 -m unittest -v scripts/release/npm_platform_packages_test.py
       - run: python3 -m unittest -v scripts/release/set_version_test.py
       - run: python3 -m unittest -v scripts/release/test_publish_crates.py
       - run: python3 -m unittest -v scripts/ci/abi_check_test.py
-      - run: python3 -m unittest -v scripts/ci/moto_version_timestamps_test.py
+      - run: python3 -m unittest -v scripts/ci/azure_vault_test.py
 
   # ADR 0007: the library built from this commit must still pass the
   # conformance contract of the latest release: its C runner, compiled
@@ -524,7 +529,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -571,7 +576,7 @@ jobs:
           cd previous
           python3 tests/conformance/sdk/harness.py --command "$GITHUB_WORKSPACE/build/conformance_c_previous"
 
-  # The OS-keyring protector against a real credential store, headless: a
+  # This machine's key in a real credential store, headless: a
   # temporary keychain on macOS, GNOME Keyring under a private session bus
   # on Linux, Credential Manager on Windows. The same scripts are what a
   # person runs in a desktop session (docs/threat-model.md); this keeps the
@@ -587,7 +592,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
@@ -655,7 +660,7 @@ jobs:
       SOURCEORRERY_VAULT_TEST_ADDR: http://127.0.0.1:8200
       VAULT_TOKEN: root
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Wait for the dev server
         run: |
           for _ in $(seq 1 30); do
@@ -666,24 +671,21 @@ jobs:
       - uses: ./.github/actions/sdk-fixture
       - name: Lifecycle conformance, canaries and error mapping against the server
         run: cargo test --locked -p sourceorrery-provider-vault
-      - name: A remote vault in the manifest, through the CLI and the SDK harness
-        # The CLI writes the fixture through the provider; the Rust and C
-        # runners read it back through `manifest`, the way an application
-        # does (the scenarios marked `requires: remote`).
+      - name: Secrets the vault keeps at the server, through the CLI and the SDK harness
+        # The fixture vault again, made with a connection to the server that
+        # stores its token: the CLI keeps the remote fixture there, and the
+        # Rust and C runners read it back through the same vault (the
+        # scenarios marked `requires: remote`), with no VAULT_TOKEN in the
+        # environment.
         run: |
-          curl -sf -o /dev/null -X POST -H "X-Vault-Token: root"             -d '{"type":"kv","options":{"version":"2"}}' http://127.0.0.1:8200/v1/sys/mounts/harness-remote
-          remote="$RUNNER_TEMP/remote-project"
-          mkdir -p "$remote"
-          printf '[project]\nname = "remote-project"\nvault = "remote"\n\n[vaults.remote]\nprovider = "hashicorp-vault"\naddress = "http://127.0.0.1:8200"\nmount = "harness-remote"\n' > "$remote/sourceorrery.toml"
-          cd "$remote"
-          printf 'remote-secret-value' | "$SOURCEORRERY_CLI" secret set database-password --vault remote --stdin --content-type text/plain --tag env=remote
-          printf 'old' | "$SOURCEORRERY_CLI" secret set rotated-key --vault remote --stdin
-          printf 'new' | "$SOURCEORRERY_CLI" secret set rotated-key --vault remote --stdin
-          "$SOURCEORRERY_CLI" secret update rotated-key --vault remote --disable
-          "$SOURCEORRERY_CLI" vault list
-          "$SOURCEORRERY_CLI" check
-          cd "$GITHUB_WORKSPACE"
-          export SOURCEORRERY_TEST_REMOTE_VAULT=remote SOURCEORRERY_TEST_REMOTE_MANIFEST="$remote/sourceorrery.toml"
+          curl -sf -o /dev/null -X POST -H "X-Vault-Token: root" -d '{"type":"kv","options":{"version":"2"}}' http://127.0.0.1:8200/v1/sys/mounts/harness-remote
+          printf 'root' > "$RUNNER_TEMP/vault-token"
+          unset VAULT_TOKEN
+          env -u GITHUB_ENV bash scripts/ci/fixture-vault.sh "$RUNNER_TEMP/remote-home" \
+            --hashicorp-vault http://127.0.0.1:8200 --hashicorp-vault-mount harness-remote \
+            --hashicorp-vault-token-file "$RUNNER_TEMP/vault-token" > "$RUNNER_TEMP/remote-fixture.env"
+          . "$RUNNER_TEMP/remote-fixture.env"
+          rm -f "$RUNNER_TEMP/vault-token" "$RUNNER_TEMP/remote-fixture.env"
           cargo build --release --locked -p sourceorrery --example conformance
           python3 tests/conformance/sdk/harness.py --runner rust --remote --remote-per-version
           mkdir -p build
@@ -699,54 +701,135 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    # moto's server mode emulates Secrets Manager with no licence; the
-    # LocalStack image needs an auth token since its 2026 releases.
-    services:
-      moto:
-        image: motoserver/moto:5.2.4
-        ports:
-          - 4566:5000
+    # LocalStack, started by lstk with the image pinned in .lstk/config.toml.
+    # Its CI auth token is a repository secret, which pull requests from
+    # forks never receive (they run no code with it): there the emulator
+    # steps are skipped with a warning and run again once merged. Any other
+    # run without the token fails. Only the steps that run lstk see it.
     env:
-      SOURCEORRERY_AWS_TEST_ENDPOINT: http://127.0.0.1:4566
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_REGION: us-east-1
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Correct Moto's stored version timestamps
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select the emulator
+        id: emulator
         env:
-          MOTO_CONTAINER_ID: ${{ job.services.moto.id }}
-        run: python3 scripts/ci/moto-version-timestamps.py --container "$MOTO_CONTAINER_ID"
-      - name: Wait for the emulator
-        run: |
-          for _ in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:4566/moto-api/ > /dev/null; then exit 0; fi
-            sleep 2
-          done
-          echo "the emulator did not come up"; exit 1
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: bash scripts/ci/localstack.sh select aws
+      - name: Start LocalStack (lstk returns once it is ready)
+        if: steps.emulator.outputs.available == 'true'
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+        run: bash scripts/ci/localstack.sh start aws
       - uses: ./.github/actions/sdk-fixture
       - name: Lifecycle conformance (without per-version properties) and the provider's own tests
-        run: cargo test --locked -p sourceorrery-provider-aws
-      - name: A remote vault in the manifest, through the CLI and the SDK harness
+        # --show-output prints the warning a test gives for an emulator
+        # divergence (tests/live.rs) as a workflow annotation.
+        run: cargo test --locked -p sourceorrery-provider-aws -- --show-output
+      - name: Secrets the vault keeps at the emulator, through the CLI and the SDK harness
+        if: steps.emulator.outputs.available == 'true'
+        # As in provider-vault: the connection stores the access key, and the
+        # environment has none. AWS keeps properties per secret, so no
+        # --remote-per-version.
         run: |
-          remote="$RUNNER_TEMP/remote-aws-project"
-          mkdir -p "$remote"
-          printf '[project]\nname = "remote-project"\nvault = "remote"\n\n[vaults.remote]\nprovider = "aws-secrets-manager"\nregion = "us-east-1"\nprefix = "harness/"\nendpoint_url = "http://127.0.0.1:4566"\n' > "$remote/sourceorrery.toml"
-          cd "$remote"
-          printf 'remote-secret-value' | "$SOURCEORRERY_CLI" secret set database-password --vault remote --stdin --content-type text/plain --tag env=remote
-          printf 'old' | "$SOURCEORRERY_CLI" secret set rotated-key --vault remote --stdin
-          printf 'new' | "$SOURCEORRERY_CLI" secret set rotated-key --vault remote --stdin
-          "$SOURCEORRERY_CLI" vault list
-          "$SOURCEORRERY_CLI" check
-          cd "$GITHUB_WORKSPACE"
-          export SOURCEORRERY_TEST_REMOTE_VAULT=remote SOURCEORRERY_TEST_REMOTE_MANIFEST="$remote/sourceorrery.toml"
+          printf 'test' > "$RUNNER_TEMP/aws-secret-access-key"
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+          env -u GITHUB_ENV bash scripts/ci/fixture-vault.sh "$RUNNER_TEMP/remote-home" \
+            --aws-secrets-manager us-east-1 --aws-secrets-manager-prefix harness/ \
+            --aws-secrets-manager-endpoint http://127.0.0.1:4566 \
+            --aws-access-key-id test --aws-secret-access-key-file "$RUNNER_TEMP/aws-secret-access-key" \
+            > "$RUNNER_TEMP/remote-fixture.env"
+          . "$RUNNER_TEMP/remote-fixture.env"
+          rm -f "$RUNNER_TEMP/aws-secret-access-key" "$RUNNER_TEMP/remote-fixture.env"
           cargo build --release --locked -p sourceorrery --example conformance
           python3 tests/conformance/sdk/harness.py --runner rust --remote
           mkdir -p build
           cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
           LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" python3 tests/conformance/sdk/harness.py --runner c --remote
       - name: Platform identity (web identity at STS) and no-credentials refusal
+        if: steps.emulator.outputs.available == 'true'
         run: bash scripts/ci/aws-federation.sh
+      - name: LocalStack logs
+        if: always() && steps.emulator.outputs.available == 'true'
+        env:
+          # Only to remove it from the files uploaded below.
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+        run: bash scripts/ci/localstack.sh logs aws
+      - name: Keep the LocalStack logs of a failed run
+        if: failure() && steps.emulator.outputs.available == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: localstack-logs-provider-aws
+          path: ${{ runner.temp }}/localstack/
+          if-no-files-found: warn
+          retention-days: 7
+
+  provider-azure:
+    name: provider Azure Key Vault
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    # LocalStack for Azure, started by lstk from .lstk/azure.toml (image
+    # pinned by digest, role-based access enforced). Its auth token is the
+    # repository secret LOCALSTACK_AZURE_AUTH_TOKEN, given only to the steps
+    # that run lstk; pull requests from forks never receive it, so there the
+    # emulator steps are skipped with a warning. The identity is the
+    # emulator's placeholder service principal, exported by `select`.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select the emulator
+        id: emulator
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AZURE_AUTH_TOKEN }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: bash scripts/ci/localstack.sh select azure
+      - name: Start LocalStack for Azure (lstk returns once it is ready)
+        if: steps.emulator.outputs.available == 'true'
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AZURE_AUTH_TOKEN }}
+        run: bash scripts/ci/localstack.sh start azure
+      - uses: ./.github/actions/sdk-fixture
+      - name: Lifecycle conformance (with per-version properties) and the provider's own tests
+        run: cargo test --locked -p sourceorrery-provider-azure -- --show-output
+      - name: Secrets the vault keeps at the emulator, through the CLI and the SDK harness
+        if: steps.emulator.outputs.available == 'true'
+        # As in provider-vault: the connection stores the service principal,
+        # and the environment has none. AZURE_AUTHORITY_HOST stays: it names
+        # the emulator's sign-in authority.
+        run: |
+          vault_url="$(python3 scripts/ci/azure-vault.py harness-remote)"
+          printf '%s' "$AZURE_CLIENT_SECRET" > "$RUNNER_TEMP/azure-client-secret"
+          tenant="$AZURE_TENANT_ID" client="$AZURE_CLIENT_ID"
+          unset AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET
+          env -u GITHUB_ENV bash scripts/ci/fixture-vault.sh "$RUNNER_TEMP/remote-home" \
+            --azure-key-vault "$vault_url" --azure-tenant-id "$tenant" --azure-client-id "$client" \
+            --azure-client-secret-file "$RUNNER_TEMP/azure-client-secret" > "$RUNNER_TEMP/remote-fixture.env"
+          . "$RUNNER_TEMP/remote-fixture.env"
+          rm -f "$RUNNER_TEMP/azure-client-secret" "$RUNNER_TEMP/remote-fixture.env"
+          cargo build --release --locked -p sourceorrery --example conformance
+          python3 tests/conformance/sdk/harness.py --runner rust --remote --remote-per-version
+          mkdir -p build
+          cc -Wall -Wextra -Werror -I crates/sourceorrery-ffi/include crates/sourceorrery-ffi/examples/conformance.c -L "$SOURCEORRERY_NATIVE_DIR" -lsourceorrery_ffi -o build/conformance_c
+          LD_LIBRARY_PATH="$SOURCEORRERY_NATIVE_DIR" python3 tests/conformance/sdk/harness.py --runner c --remote --remote-per-version
+      - name: A service principal reads, an identity without a role and no identity are refused
+        if: steps.emulator.outputs.available == 'true'
+        run: bash scripts/ci/azure-federation.sh
+      - name: LocalStack logs
+        if: always() && steps.emulator.outputs.available == 'true'
+        env:
+          # Only to remove it from the files uploaded below.
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AZURE_AUTH_TOKEN }}
+        run: bash scripts/ci/localstack.sh logs azure
+      - name: Keep the LocalStack logs of a failed run
+        if: failure() && steps.emulator.outputs.available == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: localstack-logs-provider-azure
+          path: ${{ runner.temp }}/localstack/
+          if-no-files-found: warn
+          retention-days: 7
 
   ci:
     name: CI
@@ -775,6 +858,7 @@ jobs:
       - keyring
       - provider-vault
       - provider-aws
+      - provider-azure
     steps:
       - name: Every job passed or was skipped
         env:

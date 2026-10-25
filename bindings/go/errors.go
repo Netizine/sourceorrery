@@ -72,11 +72,12 @@ var (
 	ErrInvalidArgument error = &sentinelError{"invalid_argument"}
 	// ErrPermissionDenied: authenticated but not authorised.
 	ErrPermissionDenied error = &sentinelError{"permission_denied"}
-	// ErrLocked: no protector or passphrase source could unlock the vault.
+	// ErrLocked: neither this machine's key nor a recovery key could open the vault.
 	ErrLocked error = &sentinelError{"locked"}
 	// ErrVaultNotFound: no vault file with that name in the home directory.
 	ErrVaultNotFound error = &sentinelError{"vault_not_found"}
-	// ErrMigrationRequired: run `sourceorrery vault migrate <name>` first.
+	// ErrMigrationRequired: the vault was written by an earlier release, which
+	// this one cannot read; recreate it with `sourceorrery setup`.
 	ErrMigrationRequired error = &sentinelError{"migration_required"}
 	// ErrVaultMismatch: the file found for the vault holds another vault
 	// (renamed, copied or swapped in); move it back or restore a backup.

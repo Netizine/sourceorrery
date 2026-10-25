@@ -1,102 +1,92 @@
-# Remote providers
+# Providers
 
-A SourceOrrery vault is normally an encrypted file in the home directory.
-A **remote vault** is a secrets service of another vendor served behind the
-same contract ([ADR 0008](../adr/0008-remote-providers.md)): the CLI, the
-Rust client and every SDK read it with the same calls, the same error codes
-and the same policy rules as a local vault. There is no SourceOrrery server;
-the provider's own service is the remote end.
+A SourceOrrery vault is an encrypted file in the home directory. It can
+also keep secrets at a secrets service of another vendor, through a
+**connection**: HashiCorp Vault, AWS Secrets Manager or Azure Key Vault,
+each served behind the same contract as the vault file
+([ADR 0008](../adr/0008-remote-providers.md)). The vault is the catalog of
+its secrets either way: it records where each one is kept, and the CLI,
+the Rust client and every SDK read it with the same calls, the same error
+codes and the same policy rules wherever it is kept. There is no
+SourceOrrery server; the provider's own service is the remote end.
 
-| Provider | `provider =` | Addressing keys | Status |
-|----------|--------------|-----------------|--------|
-| [HashiCorp Vault](hashicorp-vault.md), KV v2 | `"hashicorp-vault"` | `address` (`https://`, or `http://` on localhost), `mount`, optional `namespace` | implemented for 0.2.0 |
-| [AWS Secrets Manager](aws-secrets-manager.md) | `"aws-secrets-manager"` | `region`, optional `prefix`, optional `endpoint_url` | implemented for 0.2.0 |
+| Provider | Connection settings | What it cannot express |
+|----------|---------------------|------------------------|
+| [HashiCorp Vault](hashicorp-vault.md), KV v2 | `address` (`https://`, or `http://` to this machine), `mount` (default `secret`), optional `namespace` | nothing the contract needs |
+| [AWS Secrets Manager](aws-secrets-manager.md) | `region`, optional `prefix`, optional `endpoint_url` | properties per version (they are per secret), so no rotation |
+| [Azure Key Vault](azure-key-vault.md) | `vault_url` (`https://`) | removing a version's time window |
 
-Opening a vault whose provider this build leaves out (its Cargo feature
-off) fails with `unsupported`, naming the provider; a provider that has not
-shipped yet is refused the same way.
+A build that leaves a provider out (its Cargo feature off) shows it as
+unavailable on the setup screens and refuses a connection to it with
+`unsupported`, naming the provider.
 
-## Declaring a remote vault
+## Connecting a vault
 
-A remote vault is a `[vaults.<name>]` table in `sourceorrery.toml`. The
-name is an ordinary vault name and is used everywhere a local vault's would
-be: `[project].vault`, `[secrets.<name>].vault`, `--vault`, and
-`sourceorrery://<name>/<secret>` references.
+A vault has at most one connection per provider. It is added on the
+[setup screens](../cli.md#setup-a-vault-on-screens) (Storage, then
+Connections, with **Test connection**) or with `vault create`'s flags:
 
-```toml
-[project]
-name = "my-application"
-vault = "development"                 # a local vault file, as before
-
-[secrets.payment-api-key]
-vault = "production"                  # resolved from the remote vault below
-
-[vaults.production]
-provider = "hashicorp-vault"
-address = "https://vault.example.com:8200"
-mount = "secret"
-namespace = "platform"                # Vault Enterprise only
-
-[vaults.aws-shared]
-provider = "aws-secrets-manager"
-region = "eu-west-1"
-prefix = "myapp/"                     # every secret name is placed under it
-# endpoint_url = "http://localhost:4566"   # a private endpoint or an emulator
+```bash
+sourceorrery vault create production --recovery-key-out production.recovery-key \
+  --hashicorp-vault https://vault.example.com:8200 --hashicorp-vault-namespace platform \
+  --aws-secrets-manager eu-west-1 --aws-secrets-manager-prefix myapp/ \
+  --azure-key-vault https://myapp-kv.vault.azure.net
 ```
 
-A vault name without a table is a local vault file, so a manifest written
-before remote vaults existed is valid and means what it meant.
+A secret goes to a provider when it is created there: `secret set NAME
+--storage aws-secrets-manager`, `import .env --storage hashicorp-vault`,
+or the storage field of a new secret in the `ui` and in `init`'s screens.
+Its new versions follow it. The manifest only names the vault and the
+secrets; where each is kept is the vault's record, so moving a secret
+between storages never touches a project.
 
-**The manifest never holds a credential.** Each provider's table has only
-the keys above; any other key (`token`, `access_key_id`, `client_secret`, a
-sub-table, a key from another provider) is a parse error that names the key
-and never repeats the text. A URL with user information
-(`https://user:pass@host`) or a query string is refused. Credentials come
-from where the provider's own tools find them:
+**Credentials.** A connection signs in either the way the provider's own
+tools do on the machine, or with credentials stored in the vault, sealed
+under its key, read from files only (`--hashicorp-vault-token-file`,
+`--aws-secret-access-key-file`, `--azure-client-secret-file`) or typed as
+dots on the setup screens, never shown again:
 
-| Provider | Credentials |
-|----------|-------------|
+| Provider | This machine's sign-in |
+|----------|------------------------|
 | HashiCorp Vault | `VAULT_TOKEN`, `~/.vault-token` from `vault login`, an AppRole, a JWT or the pod's service account token |
 | AWS Secrets Manager | the AWS default credential chain: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, an instance or task role, or a web identity |
+| Azure Key Vault | the first of: a service principal (`AZURE_CLIENT_SECRET`), workload identity federation (`AZURE_FEDERATED_TOKEN_FILE`), the Azure CLI or Azure Developer CLI, a managed identity |
 
-[enterprise.md](../enterprise.md) covers the workload identity set-up per
-platform (GitHub Actions, Kubernetes, VMs), who decides what, and what a
-revocation reaches.
+A connection's settings are checked before it is stored: a URL is
+`https://`, or `http://` to this machine; one with user information or a
+query string is refused. [enterprise.md](../enterprise.md) covers the
+workload identity set-up per platform (GitHub Actions, Kubernetes, VMs),
+who decides what, and what a revocation reaches.
 
-## Opening a remote vault
+## Reading and changing a provider's secrets
 
-* **CLI.** Commands that use the contract (`secret get`, `secret set`,
-  `secret list`, `check`, `run`, `import`) work against a remote vault the
-  identity may use; `vault list` shows remote vaults with their provider
-  and location, and `vault info` shows what the provider reports. Commands
-  about the vault file itself (`vault create`, `vault protector`,
-  `vault destroy`, `vault migrate`, `audit --verify`, `audit
-  --acknowledge`, `audit export`, `backup`, `restore`, `ui`) refuse a
-  remote vault by name with a message saying they work on local vaults
-  only; the provider's own service holds its audit trail, and `audit
-  --vault <remote>` prints where it is and the query that shows
-  SourceOrrery's operations there (each provider page, "Audit trail").
-* **Rust.** `OpenOptions::manifest(path)` names the manifest to resolve
-  through; by default `SecretReader::open` uses the nearest
-  `sourceorrery.toml` above the current directory, like `sourceorrery run`.
-  `Project::load` always resolves through the manifest it loads.
-  `SecretReader::provider()` says which provider serves the vault.
-* **C ABI and SDKs.** `so_reader_open` takes the same through the
-  `"manifest"` key of `options_json`; each SDK exposes it as a `manifest`
-  option next to `home` and `passphrase_file`.
+* **CLI.** Every `secret` command, `check`, `run`, `import` and the `ui`
+  reach a secret wherever it is kept; the vault sends the call through the
+  connection and records it in its own audit log, with the provider's
+  outcome. `vault export` carries the connections (their credentials still
+  sealed) and the catalog; the provider keeps the values.
+* **Rust.** `SecretReader::open` and `Project::load` open the vault and
+  read through it; no provider is contacted until a secret it keeps is
+  read.
+* **C ABI and SDKs.** The same, through `so_reader_open` and every SDK's
+  open call: nothing changes for an application when a secret moves to a
+  provider.
+
+The provider's own service holds its audit trail as well: `sourceorrery
+audit` says where it is and the query that shows SourceOrrery's
+operations there (each provider page, "Audit trail").
 
 ## Error codes
 
-Two codes exist for remote providers; both are append-only additions
+Two codes exist for providers; both are append-only additions
 ([ADR 0007](../adr/0007-versioning-and-compatibility.md)) that older SDKs
 report as their base error type with the code preserved:
 
 | Code | Meaning | Hint says |
 |------|---------|-----------|
-| `unauthenticated` | the provider has no credentials for this process, or they expired | where the provider's own tools take credentials from (never the manifest) |
-| `provider_unavailable` | the provider could not be reached or answered with a server error; transient | check reachability and the address in the manifest's `[vaults.<name>]` table, then retry |
+| `unauthenticated` | the provider has no credentials for this process, or they expired | where the provider's own tools take credentials from, or to store them in the vault's connection |
+| `provider_unavailable` | the provider could not be reached or answered with a server error; transient | check reachability and the address in the vault's connection, then retry |
 
 A provider's "forbidden" is the existing `permission_denied`, a missing
 secret `not_found`, and a provider this build does not include
-`unsupported`. `audit_events` on a remote vault is `unsupported` too: the
-provider's own service keeps the log (Vault audit devices, CloudTrail).
+`unsupported`, as is something its service cannot express.

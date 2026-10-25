@@ -1,33 +1,45 @@
-//! Drawing the wizard. A function of its state: nothing here reads a
-//! vault, and hidden fields are drawn as dots from their length alone.
+//! Drawing the setup wizard. A function of its state: nothing here reads a
+//! vault, and the hidden fields are drawn as dots from their length alone.
+//! What is shown once by design (a generated password, the authenticator
+//! key and its QR code, a new recovery key) is drawn from the wizard's
+//! memory until the review commits it.
 //!
-//! The look is the browser's: the site's header bar, an uppercase step
-//! rail, a title and a few lines of explanation per step, the controls as a
-//! form (the focused one on the selection colour with the accent bar),
-//! messages as callouts, a footer of keys.
+//! The look is the browser's and `init`'s: the header bar, an uppercase step
+//! rail, a title and a few lines of explanation per screen, the controls as
+//! a form (the focused one on the selection colour with the accent bar),
+//! messages as callouts, a footer of keys. The authenticator screen has two
+//! columns: the QR code on the left, the key, the code field and the buttons
+//! on the right, so the controls stay on a small screen.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Margin};
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::Style;
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use sourceorrery_core::Provider;
+use sourceorrery_storage::CredentialSource;
 
 use super::backend::Backend;
-use super::wizard::{Control, Message, RECOVERY_CODES, Step, Wizard};
+use super::wizard::{Control, Field, Form, Message, PROVIDERS, Step, Wizard};
 use crate::output::sanitize;
 use crate::strength::{Estimate, Score};
 use crate::ui::theme::{Callout, Theme};
 
 /// Width of a form's label column.
-const LABEL_WIDTH: usize = 22;
-
+const LABEL_WIDTH: usize = 20;
 /// Cells in the strength meter.
 const METER: usize = 10;
+/// The footer's last words, where they fit.
+const NOTE: &str = "nothing is saved until the review";
 
 pub fn draw<B: Backend>(frame: &mut Frame<'_>, wizard: &Wizard<B>, theme: &Theme) {
     frame.render_widget(Block::new().style(theme.screen), frame.area());
-    let message_height = u16::from(wizard.message.is_some()) * 2;
+    let qr = qr_lines(wizard, theme);
+    // Beside the QR code the message goes in the right column, so the code
+    // keeps every row a 24-line terminal has.
+    let message_below = qr.is_none();
+    let message_height = u16::from(message_below && wizard.message.is_some()) * 2;
     let [header, rail, _, body, message, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -40,15 +52,61 @@ pub fn draw<B: Backend>(frame: &mut Frame<'_>, wizard: &Wizard<B>, theme: &Theme
     frame.render_widget(header_bar(wizard, theme), header);
     frame.render_widget(rail_line(wizard, theme), rail);
 
-    let lines = body_lines(wizard, theme);
+    let mut area = body.inner(Margin::new(2, 0));
+    if let Some(qr) = qr {
+        let width = qr.iter().map(Line::width).max().unwrap_or(0) + 2;
+        let [left, right] = Layout::horizontal([
+            Constraint::Length(u16::try_from(width).unwrap_or(u16::MAX)),
+            Constraint::Min(0),
+        ])
+        .areas(area);
+        frame.render_widget(Paragraph::new(qr), left);
+        area = right;
+    }
+    let (mut lines, focus_line) = body_lines(wizard, theme);
+    if !message_below && let Some(message) = &wizard.message {
+        lines.push(Line::from(""));
+        lines.push(callout_line(message, theme));
+    }
+    let scroll = scroll_for(&lines, focus_line, area);
     frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        body.inner(Margin::new(2, 0)),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
+        area,
     );
-    if let Some(text) = &wizard.message {
+    if message_below && let Some(text) = &wizard.message {
         frame.render_widget(callout(text, theme), message);
     }
-    frame.render_widget(footer_line(wizard, theme), footer);
+    frame.render_widget(footer_line(wizard, theme, footer.width), footer);
+}
+
+/// The rows to scroll by so the focused line is on screen: none while it
+/// fits, else enough to bring it to the bottom edge.
+fn scroll_for(lines: &[Line<'_>], focus_line: Option<usize>, area: Rect) -> u16 {
+    let (Some(focus), true) = (focus_line, area.width > 0) else {
+        return 0;
+    };
+    let width = usize::from(area.width);
+    let rows_through: usize = lines
+        .iter()
+        .take(focus + 1)
+        .map(|line| line.width().div_ceil(width).max(1))
+        .sum();
+    let height = usize::from(area.height);
+    u16::try_from(rows_through.saturating_sub(height)).unwrap_or(u16::MAX)
+}
+
+/// The vault's name, once there is one to show.
+fn vault_name<B: Backend>(wizard: &Wizard<B>) -> Option<&str> {
+    if let Some(editing) = &wizard.editing {
+        return Some(&editing.name);
+    }
+    if let Some(chosen) = &wizard.chosen {
+        return Some(chosen);
+    }
+    (!matches!(wizard.step, Step::Start | Step::Name) && !wizard.name.is_empty())
+        .then_some(wizard.name.as_str())
 }
 
 fn header_bar<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Paragraph<'static> {
@@ -56,17 +114,16 @@ fn header_bar<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Paragraph<'stati
         Span::styled(" SourceOrrery ", theme.title),
         Span::styled(" setup", theme.muted),
     ];
-    if let Some(vault) = &wizard.vault {
+    if let Some(name) = vault_name(wizard) {
         spans.push(Span::styled("  ·  vault ", theme.muted));
-        spans.push(Span::styled(
-            sanitize(&vault.name).into_owned(),
-            theme.vault,
-        ));
-        if vault.keyring {
-            spans.push(Span::styled("  ·  OS keyring + passphrase", theme.muted));
-        } else {
-            spans.push(Span::styled("  ·  passphrase", theme.muted));
-        }
+        spans.push(Span::styled(sanitize(name).into_owned(), theme.vault));
+        let doing = match (&wizard.editing, wizard.step) {
+            (_, Step::Done) => "",
+            (Some(_), _) => "  ·  changing",
+            (None, Step::Unlock) => "  ·  opening",
+            (None, _) => "  ·  new",
+        };
+        spans.push(Span::styled(doing, theme.muted));
     }
     Paragraph::new(Line::from(spans)).style(theme.bar)
 }
@@ -74,7 +131,10 @@ fn header_bar<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Paragraph<'stati
 fn rail_line<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
     for (i, step) in Step::RAIL.into_iter().enumerate() {
-        let (mark, style) = if step == wizard.step {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let (mark, style) = if step == wizard.step.rail_step() {
             ("▶", theme.tab)
         } else if wizard.step.is_past(step) {
             ("✓", theme.muted)
@@ -83,20 +143,19 @@ fn rail_line<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Line<'static> {
         };
         spans.push(Span::styled(format!("{mark} {} ", i + 1), theme.muted));
         spans.push(Span::styled(step.title(), style));
-        spans.push(Span::raw("    "));
     }
     Line::from(spans)
 }
 
-fn footer_line<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Line<'static> {
+fn footer_line<B: Backend>(wizard: &Wizard<B>, theme: &Theme, width: u16) -> Line<'static> {
     let pairs: &[(&str, &str)] = match wizard.step {
-        Step::Welcome => &[("Enter", "begin"), ("Esc q", "leave")],
-        Step::Done => &[("Enter Esc q", "leave")],
+        Step::Done => &[("Enter Esc", "leave")],
+        Step::Start => &[("Tab ↓ ↑", "move"), ("Enter", "open"), ("Esc", "leave")],
         _ => &[
             ("Tab ↓ ↑", "move"),
-            ("Space", "tick / choose"),
+            ("Space", "tick"),
             ("Enter", "next / press"),
-            ("Esc", "dismiss"),
+            ("Esc", "back"),
             ("Ctrl-C", "leave"),
         ],
     };
@@ -105,10 +164,10 @@ fn footer_line<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Line<'static> {
         spans.push(Span::styled((*keys).to_owned(), theme.key));
         spans.push(Span::styled(format!(" {what}   "), theme.muted));
     }
-    spans.push(Span::styled(
-        "values typed here go to the vault and nowhere else",
-        theme.muted,
-    ));
+    let used: usize = spans.iter().map(Span::width).sum();
+    if wizard.step != Step::Done && used + NOTE.len() <= usize::from(width) {
+        spans.push(Span::styled(NOTE, theme.muted));
+    }
     Line::from(spans).style(theme.bar)
 }
 
@@ -136,393 +195,503 @@ fn callout(message: &Message, theme: &Theme) -> Paragraph<'static> {
     .block(callout_block(&style))
 }
 
+fn callout_line(message: &Message, theme: &Theme) -> Line<'static> {
+    let (style, title, text) = match message {
+        Message::Info(text) => (theme.info, "NOTE", text),
+        Message::Error(text) => (theme.error, "ERROR", text),
+    };
+    Line::from(vec![
+        Span::styled(format!(" {title} "), style.title),
+        Span::styled(format!(" {}", sanitize(text)), style.panel),
+    ])
+}
+
+/// The QR code of the authenticator being enrolled, while it waits for a
+/// code.
+fn qr_lines<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Option<Vec<Line<'static>>> {
+    if wizard.step != Step::Authenticator || wizard.keeps_authenticator() || wizard.verified() {
+        return None;
+    }
+    let (_, uri) = wizard.enrolment()?;
+    Some(match crate::qr::render(&uri) {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|row| Line::from(Span::styled(row, theme.screen)))
+            .collect(),
+        Err(err) => vec![Line::from(Span::styled(
+            format!("cannot draw the QR code: {err}"),
+            theme.error.title,
+        ))],
+    })
+}
+
 // ---------------------------------------------------------------------------
-// The body of each step
+// The body of each screen
 // ---------------------------------------------------------------------------
 
-fn body_lines<B: Backend>(wizard: &Wizard<B>, theme: &Theme) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from(Span::styled(
-            wizard.step.title().to_uppercase(),
-            theme.label,
-        )),
-        Line::from(""),
-    ];
+/// The body's lines, and which of them holds the focused control.
+fn body_lines<B: Backend>(
+    wizard: &Wizard<B>,
+    theme: &Theme,
+) -> (Vec<Line<'static>>, Option<usize>) {
+    let title = match wizard.step {
+        Step::Start => "VAULT".to_owned(),
+        Step::Unlock => "OPEN THE VAULT".to_owned(),
+        Step::Password => "VIEW CHECK  ·  PASSWORD".to_owned(),
+        Step::Authenticator => "VIEW CHECK  ·  AUTHENTICATOR".to_owned(),
+        Step::Connections => "STORAGE  ·  CONNECTIONS".to_owned(),
+        step => step.title().to_uppercase(),
+    };
+    let mut lines = vec![Line::from(Span::styled(title, theme.label)), Line::from("")];
     match wizard.step {
-        Step::Welcome => welcome(&mut lines, theme),
-        Step::Vault => vault(wizard, &mut lines, theme),
-        Step::Secret => secret(wizard, &mut lines, theme),
-        Step::Recovery => recovery(wizard, &mut lines, theme),
-        Step::SecondFactor => second_factor(wizard, &mut lines, theme),
-        Step::Guard => guard(wizard, &mut lines, theme),
-        Step::Project => project(wizard, &mut lines, theme),
+        Step::Start => start(wizard, &mut lines, theme),
+        Step::Unlock => unlock(wizard, &mut lines, theme),
+        Step::Name => name(wizard, &mut lines, theme),
+        Step::ViewCheck => view_check(&mut lines, theme),
+        Step::Password => password(wizard, &mut lines, theme),
+        Step::Authenticator => authenticator(wizard, &mut lines, theme),
+        Step::RecoveryKey => recovery_key(wizard, &mut lines, theme),
+        Step::Storage => storage(wizard, &mut lines, theme),
+        Step::Connections => prose(
+            &mut lines,
+            theme,
+            &[
+                "How each provider is reached. Credentials are this machine's sign-in (the",
+                "provider's own: environment, CLI login, workload identity) or stored in the",
+                "vault, sealed under its key. Typed ones are dots and go to the vault at review.",
+            ],
+        ),
+        Step::Review => review(wizard, &mut lines, theme),
         Step::Done => done(wizard, &mut lines, theme),
     }
     lines.push(Line::from(""));
+    let mut focus_line = None;
+    let focused = wizard.focused();
     for control in wizard.controls() {
+        if let Some(heading) = control_heading(wizard, control, theme) {
+            lines.extend(heading);
+        }
+        if control == focused {
+            focus_line = Some(lines.len());
+        }
         lines.push(control_line(wizard, control, theme));
         if let Some(extra) = control_extra(wizard, control, theme) {
             lines.extend(extra);
         }
     }
-    lines
+    (lines, focus_line)
 }
 
+/// One paragraph, from `text`'s pieces joined by spaces; the screen wraps
+/// it to its width.
 fn prose(lines: &mut Vec<Line<'static>>, theme: &Theme, text: &[&str]) {
-    for t in text {
-        lines.push(Line::from(Span::styled((*t).to_owned(), theme.muted)));
-    }
+    lines.push(Line::from(Span::styled(text.join(" "), theme.muted)));
 }
 
-fn welcome(lines: &mut Vec<Line<'static>>, theme: &Theme) {
-    lines.push(Line::from(
-        "From the first vault to the first run, in six short steps:",
-    ));
-    lines.push(Line::from(""));
-    for (i, (what, why)) in [
-        (
-            "Vault",
-            "an encrypted file for this machine, with a strong passphrase",
-        ),
-        (
-            "First secret",
-            "a database password, typed with a strength meter or generated",
-        ),
-        (
-            "Recovery",
-            "codes that unlock the vault if the passphrase is lost, and a hint",
-        ),
-        (
-            "Second factor",
-            "an authenticator app, enrolled from a QR code",
-        ),
-        (
-            "Reveal guard",
-            "what showing a value or exporting the vault must ask for",
-        ),
-        (
-            "Project",
-            "the manifest that replaces .env, checked, and the run command",
-        ),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {}  ", i + 1), theme.key),
-            Span::raw(format!("{what:<14}")),
-            Span::styled(why, theme.muted),
-        ]));
-    }
-    lines.push(Line::from(""));
-    prose(
-        lines,
-        theme,
-        &[
-            "Nothing you type as a secret is echoed or kept by this screen; it goes to the vault.",
-            "Every step can be redone later with a command; the summary at the end names them.",
-        ],
-    );
+/// An authenticator key in groups of four, as apps take it typed.
+pub fn key_groups(key: &str) -> String {
+    key.as_bytes()
+        .chunks(4)
+        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
-fn vault<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
-    prose(
-        lines,
-        theme,
-        &[
-            "A vault is one encrypted file in your home directory. Its passphrase derives the",
-            "key, so it must be strong and it cannot be recovered: the next step gives you",
-            "recovery codes for the day it is forgotten.",
-        ],
-    );
-    if wizard.vault_exists() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("A vault named ", theme.caution),
-            Span::styled(sanitize(&wizard.vault_name).into_owned(), theme.vault),
-            Span::styled(
-                " exists already: continue to use it (it may ask for its passphrase), or type \
-                 another name.",
-                theme.caution,
-            ),
-        ]));
-    } else if let Some(store) = wizard.keyring_store {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled(format!("{store} "), theme.vault),
-            Span::styled(
-                "can hold a second key on this machine, so day-to-day use does not prompt; \
-                 the passphrase stays the way in everywhere else.",
-                theme.muted,
-            ),
-        ]));
-    }
-}
-
-fn secret<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
-    prose(
-        lines,
-        theme,
-        &[
-            "The first secret is your database password. A database password cannot be weak:",
-            "type one and watch the meter until it reads \"good\", or let the wizard generate",
-            "one and store it without ever showing it (read it later with",
-        ],
-    );
+fn row(lines: &mut Vec<Line<'static>>, theme: &Theme, label: &str, value: String) {
     lines.push(Line::from(vec![
-        Span::styled(
-            format!(
-                " sourceorrery secret get {} --reveal ",
-                sanitize(&wizard.secret_name)
-            ),
-            theme.code,
-        ),
-        Span::styled(" or hand it to your program with ", theme.muted),
-        Span::styled(" sourceorrery run ", theme.code),
-        Span::styled(").", theme.muted),
+        Span::styled(format!("{label:<LABEL_WIDTH$}"), theme.muted),
+        Span::raw(value),
     ]));
 }
 
-fn recovery<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
-    prose(
-        lines,
-        theme,
-        &[
-            "Nothing can recover a lost passphrase: the key is derived from it. What can be",
-            "done is to have other ways in, made now. Each recovery code unlocks the vault once",
-            "typed at the passphrase prompt (case and hyphens do not matter); together they",
-            "are a second passphrase, so keep them apart from this machine.",
-        ],
-    );
-    if let Some(codes) = &wizard.codes {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            format!("YOUR {} RECOVERY CODES  ·  shown once", codes.len()),
-            theme.label,
-        )));
-        for code in codes {
-            lines.push(Line::from(vec![
-                Span::raw("    "),
-                Span::styled(format!(" {} ", code.as_str()), theme.code),
-            ]));
-        }
-    } else {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            format!(
-                "The hint is optional: a reminder shown at the prompt, stored in clear in the \
-                 vault file. {RECOVERY_CODES} codes are issued; run `vault recovery codes` to replace them."
+fn this_machine<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    let line = match &wizard.store {
+        Some(store) => Line::from(vec![
+            Span::styled(format!("{} ", sanitize(store)), theme.vault),
+            Span::styled(
+                "keeps this machine's key, so this machine opens the vault without asking.",
+                theme.muted,
             ),
-            theme.muted,
-        )));
-    }
+        ]),
+        None => Line::from(Span::styled(
+            "This machine has no credential store: the vault opens with its recovery key.",
+            theme.caution,
+        )),
+    };
+    lines.push(line);
 }
 
-fn second_factor<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
-    let Some(enrolment) = &wizard.enrolment else {
+fn start<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    if wizard.vaults.is_empty() {
         prose(
             lines,
             theme,
             &[
-                "An authenticator app (any that speaks TOTP) can be asked for a six-digit code",
-                "before a value is shown or the vault exported. The key is sealed inside the vault,",
-                "so it travels with the file and never through a server.",
+                "There is no vault on this machine yet. A vault is one encrypted file in your home",
+                "directory holding your secrets, or the catalog of those a provider keeps.",
             ],
         );
-        return;
-    };
-    // The code needs the rows: the explanation makes way for it.
-    lines.pop();
-    lines.push(Line::from(Span::styled(
-        "Scan this with the authenticator app, then type the code it shows.",
-        theme.caution,
-    )));
-    {
-        match crate::qr::render(&enrolment.uri) {
-            Ok(rows) => {
-                for row in rows {
-                    lines.push(Line::from(vec![
-                        Span::raw("    "),
-                        Span::styled(row, theme.qr),
-                    ]));
-                }
-            }
-            Err(err) => lines.push(Line::from(Span::styled(
-                format!("cannot draw the QR code: {err}"),
-                theme.error.title,
-            ))),
-        }
+    } else {
+        prose(
+            lines,
+            theme,
+            &[
+                "Pick a vault to change its view check, its recovery key or where its secrets",
+                "are kept, or create a new one.",
+            ],
+        );
+    }
+    lines.push(Line::from(""));
+    this_machine(wizard, lines, theme);
+}
+
+fn unlock<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    let name = sanitize(wizard.chosen.as_deref().unwrap_or_default()).into_owned();
+    if wizard.needs_key {
         lines.push(Line::from(vec![
-            Span::styled("Cannot scan? Enter this key by hand:  ", theme.muted),
-            Span::styled(format!(" {} ", *enrolment.key), theme.code),
+            Span::styled("This machine cannot open ", theme.muted),
+            Span::styled(name, theme.vault),
+            Span::styled(
+                " by itself. Type its recovery key: it opens the vault and passes",
+                theme.muted,
+            ),
+        ]));
+        prose(
+            lines,
+            theme,
+            &["the view check by itself. It is checked and forgotten, never kept."],
+        );
+        return;
+    }
+    lines.push(Line::from(vec![
+        Span::styled("Changing ", theme.muted),
+        Span::styled(name, theme.vault),
+        Span::styled(
+            " asks its view check first: without it anyone at this machine",
+            theme.muted,
+        ),
+    ]));
+    prose(lines, theme, &["could switch the check off."]);
+    if let Some(hint) = wizard.pending_hint() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Hint  ", theme.muted),
+            Span::raw(sanitize(hint).into_owned()),
         ]));
     }
 }
 
-fn guard<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+fn name<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
     prose(
         lines,
         theme,
         &[
-            "Unlocking the vault lets your program read its secrets. The reveal guard is a",
-            "second check for the moments a person asks to see one: `secret get --reveal`,",
-            "`backup`, and every change to how the vault unlocks. It never applies to `run`,",
-            "`check` or the SDKs, so your application keeps starting without a prompt while",
-            "an API key read out at the keyboard, by you or by an agent, asks for more.",
+            "The new vault's name: letters, digits, hyphens and underscores, up to 64. It is",
+            "how commands, sourceorrery.toml and the SDKs name it.",
         ],
     );
     lines.push(Line::from(""));
-    let what = match wizard.second_factor {
-        Some(true) => "The second factor is enrolled, so a code can be asked for too.",
-        _ => "No second factor was enrolled, so only the passphrase can be asked for.",
-    };
-    lines.push(Line::from(Span::styled(what, theme.muted)));
+    this_machine(wizard, lines, theme);
 }
 
-fn project<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+fn view_check(lines: &mut Vec<Line<'static>>, theme: &Theme) {
     prose(
         lines,
         theme,
         &[
-            "The manifest, sourceorrery.toml, declares which secrets your project needs and",
-            "which vault holds them. It never holds a value, so it is safe to commit.",
+            "The view check is asked before a person sees a value or the vault's contents:",
+            "`secret get --reveal`, `ui`, `audit`. It is a check, not encryption. `run`, `check`,",
+            "`init` and the SDKs never ask it, so programs start without a prompt while a key",
+            "read out at the keyboard, by you or by an agent, asks for more.",
+        ],
+    );
+}
+
+fn password<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    prose(
+        lines,
+        theme,
+        &[
+            "Type a password that rates \"good\" or better, or let the wizard generate one. It is",
+            "hashed with Argon2id and sealed in the vault; the hint is shown when it is asked.",
+        ],
+    );
+    if wizard.had().password && wizard.keep_password {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Untick to set a new password.",
+            theme.muted,
+        )));
+    }
+}
+
+fn authenticator<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    if wizard.keeps_authenticator() {
+        prose(
+            lines,
+            theme,
+            &[
+                "The vault asks for a code from the authenticator app enrolled. Untick to",
+                "enrol another app: the one enrolled stops working at the review.",
+            ],
+        );
+        return;
+    }
+    if wizard.verified() {
+        lines.push(Line::from(Span::styled(
+            "The app's code matched: the key is saved with the vault at the review.",
+            theme.status("enabled"),
+        )));
+        return;
+    }
+    lines.push(Line::from(Span::styled(
+        "Scan the code with an authenticator app, then type the code it shows.",
+        theme.caution,
+    )));
+    if let Some((key, _)) = wizard.enrolment() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Cannot scan? Enter this key by hand:",
+            theme.muted,
+        )));
+        lines.push(Line::from(Span::styled(
+            format!(" {} ", key_groups(&key)),
+            theme.code,
+        )));
+    }
+}
+
+fn recovery_key<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    prose(
+        lines,
+        theme,
+        &[
+            "The recovery key opens the vault on any machine and passes the view check by",
+            "itself. Nothing else can recover the vault when this machine's key is gone:",
+            "write it down and keep it apart from this machine.",
         ],
     );
     lines.push(Line::from(""));
-    let Some(project) = &wizard.project else {
+    let Some(key) = &wizard.recovery else {
         lines.push(Line::from(Span::styled(
-            "The manifest could not be written; press Finish to try again.",
-            theme.caution,
+            "The vault keeps its recovery key.",
+            theme.muted,
         )));
         return;
     };
-    lines.push(Line::from(vec![
-        Span::styled(
-            if project.written {
-                "Wrote "
-            } else {
-                "Kept the existing "
-            },
-            theme.muted,
-        ),
-        Span::styled(format!(" {} ", project.manifest.display()), theme.code),
-    ]));
-    lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        format!("{:<24}{:<28}{}", "SECRET", "ENVIRONMENT VARIABLE", "STATUS"),
+        "YOUR RECOVERY KEY  ·  shown once",
         theme.label,
     )));
-    for row in &project.rows {
-        let style = if row.status == "ok" {
-            theme.status("enabled")
+    lines.push(Line::from(vec![
+        Span::raw("    "),
+        Span::styled(format!(" {} ", key.as_str()), theme.code),
+    ]));
+    if !wizard.creating() {
+        lines.push(Line::from(Span::styled(
+            "The current key stops working at the review.",
+            theme.caution,
+        )));
+    }
+}
+
+fn storage<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    prose(
+        lines,
+        theme,
+        &[
+            "Where this vault's secrets may be kept. The vault itself is always one; each",
+            "provider ticked becomes a connection, and a secret picks its storage when it is set.",
+        ],
+    );
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::raw("  [x] "),
+        Span::raw(format!("{:<LABEL_WIDTH$}", "SourceOrrery vault")),
+        Span::styled("always: the encrypted file", theme.muted),
+    ]));
+    for provider in PROVIDERS {
+        if !wizard.available.contains(&provider) {
+            lines.push(Line::from(vec![
+                Span::styled("  [-] ", theme.muted),
+                Span::styled(
+                    format!("{:<LABEL_WIDTH$}", provider.display_name()),
+                    theme.muted,
+                ),
+                Span::styled("not in this build", theme.muted),
+            ]));
+        }
+    }
+}
+
+/// What the view check will ask for, as the review describes it.
+fn view_summary<B: Backend>(wizard: &Wizard<B>) -> String {
+    let had = wizard.had();
+    if !wizard.ask_password {
+        return if had.password {
+            "none (the password is removed)".to_owned()
         } else {
-            theme.status("expired")
+            "none".to_owned()
         };
-        lines.push(Line::from(vec![
-            Span::raw(format!(
-                "{:<24}{:<28}",
-                sanitize(&row.name),
-                sanitize(&row.env)
-            )),
-            Span::styled(sanitize(&row.status).into_owned(), style),
-        ]));
+    }
+    let password = if had.password && wizard.keep_password {
+        "the current password"
+    } else if wizard.generated.is_some() {
+        "the generated password"
+    } else {
+        "the password typed"
+    };
+    let code = match (
+        wizard.ask_code,
+        had.authenticator,
+        wizard.keeps_authenticator(),
+    ) {
+        (false, true, _) => " (the authenticator is removed)",
+        (false, false, _) => "",
+        (true, _, true) => " and a code from the enrolled app",
+        (true, _, false) => " and a code from the app verified",
+    };
+    format!("{password}{code}")
+}
+
+fn connection_summary(form: &Form) -> (String, String) {
+    let settings = form.settings();
+    let place = match &settings {
+        sourceorrery_core::ConnectionSettings::HashicorpVault { address, mount, .. } => {
+            format!("{address}, mount {mount}")
+        }
+        sourceorrery_core::ConnectionSettings::AwsSecretsManager { region, .. } => region.clone(),
+        sourceorrery_core::ConnectionSettings::AzureKeyVault { vault_url } => vault_url.clone(),
+    };
+    let credentials = if form.stored {
+        "credentials stored in the vault"
+    } else {
+        "this machine's sign-in"
+    };
+    let what = match &form.existing {
+        None => "new",
+        Some(info)
+            if info.settings == settings
+                && (info.credentials == CredentialSource::Stored) == form.stored
+                && (!form.stored || form.keeps_credentials()) =>
+        {
+            "as it is"
+        }
+        Some(_) => "changed",
+    };
+    (
+        format!("{} ({what})", form.provider.display_name()),
+        format!("  {}, {credentials}", sanitize(&place)),
+    )
+}
+
+fn review<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
+    let name = sanitize(vault_name(wizard).unwrap_or_default()).into_owned();
+    if wizard.creating() {
+        prose(
+            lines,
+            theme,
+            &[
+                "Nothing has been written yet. [ Create vault ] makes it, with all of this, at once.",
+            ],
+        );
+    } else {
+        prose(
+            lines,
+            theme,
+            &["Nothing has been changed yet. [ Save changes ] makes every change at once."],
+        );
+    }
+    lines.push(Line::from(""));
+    row(lines, theme, "vault", name);
+    if let Some(editing) = &wizard.editing {
+        row(lines, theme, "file", sanitize(&editing.path).into_owned());
+    } else {
+        row(
+            lines,
+            theme,
+            "this machine",
+            wizard.store.as_ref().map_or_else(
+                || "no credential store: it opens with the recovery key".to_owned(),
+                |store| format!("opens it without asking ({})", sanitize(store)),
+            ),
+        );
+    }
+    row(lines, theme, "view check", view_summary(wizard));
+    row(
+        lines,
+        theme,
+        "recovery key",
+        match (wizard.creating(), wizard.new_recovery) {
+            (true, _) => "the key shown, which you wrote down".to_owned(),
+            (false, true) => "a new key; the current one stops working".to_owned(),
+            (false, false) => "kept".to_owned(),
+        },
+    );
+    row(lines, theme, "storage", "SourceOrrery vault".to_owned());
+    for form in &wizard.forms {
+        if wizard.is_ticked(form.provider) {
+            let (provider, how) = connection_summary(form);
+            row(lines, theme, "", provider);
+            row(lines, theme, "", how);
+        } else if form.existing.is_some() {
+            lines.push(Line::from(vec![
+                Span::raw(format!("{:<LABEL_WIDTH$}", "")),
+                Span::styled(
+                    format!(
+                        "{}: the connection is removed",
+                        form.provider.display_name()
+                    ),
+                    theme.caution,
+                ),
+            ]));
+        }
     }
 }
 
 fn done<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &Theme) {
-    let vault = wizard
-        .vault
-        .as_ref()
-        .map_or("development", |v| v.name.as_str());
-    let vault = sanitize(vault).into_owned();
-    let secret = sanitize(wizard.stored.as_deref().unwrap_or("database-password")).into_owned();
-    let mut row = |label: &str, value: String| {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{label:<LABEL_WIDTH$}"), theme.muted),
-            Span::raw(value),
-        ]));
+    let Some(committed) = &wizard.committed else {
+        return;
     };
+    let name = sanitize(&committed.name).into_owned();
+    row(lines, theme, "vault", name.clone());
+    row(lines, theme, "file", sanitize(&committed.path).into_owned());
     row(
-        "vault",
-        wizard.vault.as_ref().map_or_else(
-            || "none".to_owned(),
-            |v| {
-                format!(
-                    "{}  ({})",
-                    v.name,
-                    if v.keyring {
-                        "OS keyring and passphrase"
-                    } else {
-                        "passphrase"
-                    }
-                )
-            },
-        ),
+        lines,
+        theme,
+        "view check",
+        committed.view.describe().to_owned(),
     );
     row(
-        "file",
-        wizard
-            .vault
-            .as_ref()
-            .map_or_else(|| "none".to_owned(), |v| v.path.clone()),
-    );
-    row("first secret", secret.clone());
-    row(
-        "recovery",
-        match wizard.recovery {
-            Some(r) => format!(
-                "{} recovery code{}{}",
-                r.codes,
-                if r.codes == 1 { "" } else { "s" },
-                if r.hint { ", a passphrase hint" } else { "" }
-            ),
-            None => "none".to_owned(),
+        lines,
+        theme,
+        "this machine",
+        if committed.this_machine {
+            "opens it without asking".to_owned()
+        } else {
+            "opens it with the recovery key".to_owned()
         },
     );
-    row(
-        "second factor",
-        match wizard.second_factor {
-            Some(true) => "enrolled and verified".to_owned(),
-            _ => "not enrolled  (sourceorrery vault 2fa enable)".to_owned(),
-        },
+    let mut storages = vec!["SourceOrrery vault".to_owned()];
+    storages.extend(
+        committed
+            .connections
+            .iter()
+            .map(|c| c.settings.provider().display_name().to_owned()),
     );
-    row(
-        "reveal guard",
-        wizard
-            .guard
-            .map_or_else(|| "unchanged".to_owned(), |g| g.describe().to_owned()),
-    );
-    row(
-        "manifest",
-        wizard.project.as_ref().map_or_else(
-            || "not written  (sourceorrery init)".to_owned(),
-            |p| p.manifest.display().to_string(),
-        ),
-    );
+    row(lines, theme, "storage", storages.join(", "));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("NEXT", theme.label)));
-    let commands: [(&str, String); 4] = [
+    for (what, command) in [
         (
-            "start your program with the secret in its environment",
-            "sourceorrery run -- <your command>".to_owned(),
+            "browse the vault, add and change secrets",
+            format!("sourceorrery ui --vault {name}"),
         ),
         (
-            "see a value (the guard asks for what you chose)",
-            format!("sourceorrery secret get {secret} --vault {vault} --reveal"),
+            "declare a project's secrets in sourceorrery.toml",
+            format!("sourceorrery init --vault {name}"),
         ),
-        (
-            "add a secret, browse, or check before a deploy",
-            format!(
-                "sourceorrery secret set NAME --vault {vault}   ·   sourceorrery ui   ·   sourceorrery check"
-            ),
-        ),
-        (
-            "headless (WSL, Docker, CI): the passphrase from a file",
-            "SOURCEORRERY_PASSPHRASE_FILE=/run/secrets/vault sourceorrery run -- <command>"
-                .to_owned(),
-        ),
-    ];
-    for (what, command) in commands {
+    ] {
         lines.push(Line::from(Span::styled(what.to_owned(), theme.muted)));
         lines.push(Line::from(vec![
             Span::raw("    "),
@@ -537,106 +706,122 @@ fn done<B: Backend>(wizard: &Wizard<B>, lines: &mut Vec<Line<'static>>, theme: &
 
 fn label(control: Control) -> &'static str {
     match control {
-        Control::VaultName => "Vault name",
-        Control::Keyring => "Also unlock with",
-        Control::Passphrase => "Passphrase",
-        Control::PassphraseConfirm | Control::SecretConfirm => "Confirm",
-        Control::SecretName => "Secret name",
-        Control::SecretValue => "Value",
-        Control::Hint => "Passphrase hint",
-        Control::Code => "Code from the app",
-        Control::GuardChoice => "Ask for",
+        Control::UnlockKey => "Recovery key",
+        Control::UnlockPassword | Control::Password => "Password",
+        Control::UnlockCode | Control::Code => "Code from the app",
+        Control::Name => "Vault name",
+        Control::Confirm => "Confirm",
+        Control::Hint => "Hint",
         _ => "",
     }
 }
 
 fn button_text<B: Backend>(wizard: &Wizard<B>, control: Control) -> &'static str {
     match control {
-        Control::Start => "Begin",
-        Control::GeneratePassphrase if wizard.generated_passphrase.is_some() => "Type one instead",
-        Control::GeneratePassphrase => "Generate a passphrase for me",
-        Control::CreateVault if wizard.vault_exists() => "Use this vault",
-        Control::CreateVault => "Create the vault",
-        Control::GenerateSecret if wizard.secret_generated => "Type one instead",
-        Control::GenerateSecret => "Generate a strong value for me",
-        Control::StoreSecret => "Store the secret",
-        Control::ShowCodes => "Show my recovery codes",
-        Control::FinishRecovery => "Continue",
-        Control::Enrol => "Enrol an authenticator app",
+        Control::CreateNew => "Create a new vault",
+        Control::Leave | Control::Exit => "Leave",
+        Control::OpenVault => "Open",
+        Control::Continue => "Continue",
+        Control::Generate if wizard.generated.is_some() => "Type one instead",
+        Control::Generate => "Generate a password for me",
         Control::Verify => "Verify the code",
-        Control::SkipSecondFactor => "Skip",
-        Control::SetGuard => "Set the guard",
-        Control::Finish => "Finish",
-        Control::Exit => "Leave",
+        Control::Commit if wizard.creating() => "Create vault",
+        Control::Commit => "Save changes",
+        Control::Form(_, Field::Test) => "Test connection",
         _ => "",
+    }
+}
+
+fn tick(on: bool) -> &'static str {
+    if on { "[x]" } else { "[ ]" }
+}
+
+fn toggle_text<B: Backend>(wizard: &Wizard<B>, control: Control) -> String {
+    let (on, text) = match control {
+        Control::AskPassword => (wizard.ask_password, "Ask for a password"),
+        Control::AskCode => (
+            wizard.ask_code,
+            "And a code from an authenticator app, on top of the password",
+        ),
+        Control::KeepPassword => (wizard.keep_password, "Keep the current password"),
+        Control::Written => (
+            wizard.generated_written,
+            "I have written the password down or kept it in a password manager",
+        ),
+        Control::KeepAuthenticator => (
+            wizard.keep_authenticator,
+            "Keep the authenticator app enrolled",
+        ),
+        Control::NewRecoveryKey => (
+            wizard.new_recovery,
+            "Make a new recovery key (the current one stops working)",
+        ),
+        Control::RecoveryWritten => (
+            wizard.recovery_written,
+            "I have written it down and will keep it apart from this machine",
+        ),
+        Control::Provider(i) => {
+            let provider = PROVIDERS[i];
+            return format!(
+                "{} {:<LABEL_WIDTH$}{}",
+                tick(wizard.ticked[i]),
+                provider.display_name(),
+                provider_note(wizard, provider)
+            );
+        }
+        _ => (false, ""),
+    };
+    format!("{} {text}", tick(on))
+}
+
+fn provider_note<B: Backend>(wizard: &Wizard<B>, provider: Provider) -> &'static str {
+    let connected = wizard.editing.as_ref().is_some_and(|e| {
+        e.connections
+            .iter()
+            .any(|c| c.settings.provider() == provider)
+    });
+    match (connected, provider) {
+        (true, _) => "connected",
+        (false, Provider::HashicorpVault) => "KV v2 on a Vault server",
+        (false, Provider::AwsSecretsManager) => "a region of an AWS account",
+        (false, Provider::AzureKeyVault) => "one Key Vault",
     }
 }
 
 fn control_line<B: Backend>(wizard: &Wizard<B>, control: Control, theme: &Theme) -> Line<'static> {
     let focused = wizard.focused() == control;
-    let marker = Span::styled(if focused { "▌ " } else { "  " }, theme.marker);
-    let mut spans = vec![marker];
+    let mut spans = vec![Span::styled(
+        if focused { "▌ " } else { "  " },
+        theme.marker,
+    )];
     if control.is_text() {
-        spans.push(Span::styled(
-            format!("{:<LABEL_WIDTH$}", label(control)),
-            theme.muted,
-        ));
-        let text = if control.is_hidden() {
-            "•".repeat(wizard.hidden_len(control))
-        } else {
-            match control {
-                Control::VaultName => sanitize(&wizard.vault_name).into_owned(),
-                Control::SecretName => sanitize(&wizard.secret_name).into_owned(),
-                Control::Hint => sanitize(&wizard.hint).into_owned(),
-                Control::Code => wizard.code.clone(),
-                _ => String::new(),
-            }
-        };
-        spans.push(Span::raw(text));
-        if focused {
-            spans.push(Span::styled("▌", theme.key));
-        }
-        match wizard.confirm_state(control) {
-            Some(true) => spans.push(Span::styled("   matches", theme.status("enabled"))),
-            Some(false) => spans.push(Span::styled("   does not match", theme.status("expired"))),
-            None => {}
+        text_spans(wizard, control, focused, theme, &mut spans);
+    } else if control.is_toggle() {
+        match control {
+            Control::Form(i, Field::Source) => source_spans(&wizard.forms[i], theme, &mut spans),
+            _ => spans.push(Span::raw(toggle_text(wizard, control))),
         }
     } else {
         match control {
-            Control::Keyring => {
-                spans.push(Span::styled(
-                    format!("{:<LABEL_WIDTH$}", label(control)),
-                    theme.muted,
-                ));
-                spans.push(Span::raw(format!(
-                    "[{}] {}",
-                    if wizard.keyring { "x" } else { " " },
-                    wizard.keyring_store.unwrap_or("the OS credential store")
-                )));
-            }
-            Control::PassphraseWritten => spans.push(Span::raw(format!(
-                "[{}] I have written the passphrase down or stored it in a password manager",
-                if wizard.passphrase_written { "x" } else { " " }
-            ))),
-            Control::CodesWritten => spans.push(Span::raw(format!(
-                "[{}] I have written these codes down and will keep them apart from this machine",
-                if wizard.codes_written { "x" } else { " " }
-            ))),
-            Control::GuardChoice => {
-                spans.push(Span::styled(
-                    format!("{:<LABEL_WIDTH$}", label(control)),
-                    theme.muted,
-                ));
-                let options = wizard.guard_options();
-                let (_, chosen) = options[wizard.guard_choice.min(options.len() - 1)];
-                spans.push(Span::raw(format!("(•) {chosen}")));
-                spans.push(Span::styled("   Space for the next choice", theme.muted));
-            }
-            _ => {
-                spans.push(Span::styled(
-                    format!("[ {} ]", button_text(wizard, control)),
-                    theme.key,
-                ));
+            Control::Vault(i) => spans.push(Span::styled(
+                sanitize(&wizard.vaults[i]).into_owned(),
+                theme.vault,
+            )),
+            _ => spans.push(Span::styled(
+                format!("[ {} ]", button_text(wizard, control)),
+                theme.key,
+            )),
+        }
+        if let Control::Form(i, Field::Test) = control {
+            match &wizard.forms[i].tested {
+                Some(Ok(())) => {
+                    spans.push(Span::styled("   reached", theme.status("enabled")));
+                }
+                Some(Err(err)) => spans.push(Span::styled(
+                    format!("   {}", sanitize(err)),
+                    theme.status("expired"),
+                )),
+                None => {}
             }
         }
     }
@@ -648,21 +833,124 @@ fn control_line<B: Backend>(wizard: &Wizard<B>, control: Control, theme: &Theme)
     }
 }
 
+fn source_spans(form: &Form, theme: &Theme, spans: &mut Vec<Span<'static>>) {
+    spans.push(Span::styled(
+        format!("{:<LABEL_WIDTH$}", form.label(Field::Source)),
+        theme.muted,
+    ));
+    let (ambient, stored) = if form.stored {
+        ("( )", "(•)")
+    } else {
+        ("(•)", "( )")
+    };
+    spans.push(Span::raw(format!(
+        "{ambient} this machine's sign-in  {stored} stored in the vault"
+    )));
+}
+
+/// The label, the text (dots for a hidden field) and what is said about
+/// it, for a text control.
+fn text_spans<B: Backend>(
+    wizard: &Wizard<B>,
+    control: Control,
+    focused: bool,
+    theme: &Theme,
+    spans: &mut Vec<Span<'static>>,
+) {
+    let label = match control {
+        Control::Form(i, field) => wizard.forms[i].label(field),
+        _ => label(control),
+    };
+    spans.push(Span::styled(format!("{label:<LABEL_WIDTH$}"), theme.muted));
+    let text = if control.is_hidden() {
+        "•".repeat(wizard.hidden_len(control))
+    } else {
+        let shown = match control {
+            Control::UnlockCode => &wizard.unlock_code,
+            Control::Name => &wizard.name,
+            Control::Hint => &wizard.hint,
+            Control::Code => &wizard.code,
+            Control::Form(i, field) => wizard.forms[i].text(field),
+            _ => "",
+        };
+        sanitize(shown).into_owned()
+    };
+    spans.push(Span::raw(text));
+    if focused {
+        spans.push(Span::styled("▌", theme.key));
+    }
+    match control {
+        Control::Confirm => match wizard.confirm_state() {
+            Some(true) => spans.push(Span::styled("   matches", theme.status("enabled"))),
+            Some(false) => {
+                spans.push(Span::styled("   does not match", theme.status("expired")));
+            }
+            None => {}
+        },
+        Control::Name => {
+            if let Some(problem) = wizard.name_problem() {
+                spans.push(Span::styled(
+                    format!("   {}", sanitize(&problem)),
+                    theme.caution,
+                ));
+            }
+        }
+        Control::Hint if wizard.hint.is_empty() => {
+            spans.push(Span::styled(
+                "optional: shown when the password is asked",
+                theme.muted,
+            ));
+        }
+        Control::Form(i, field) => {
+            let form = &wizard.forms[i];
+            let note = match field {
+                Field::Third | Field::Second if form.text(field).is_empty() => "optional",
+                Field::Secret if form.keeps_credentials() => "empty keeps the stored ones",
+                _ => "",
+            };
+            spans.push(Span::styled(note, theme.muted));
+        }
+        _ => {}
+    }
+}
+
+/// Lines drawn before a control: a provider's name over its form.
+fn control_heading<B: Backend>(
+    wizard: &Wizard<B>,
+    control: Control,
+    theme: &Theme,
+) -> Option<Vec<Line<'static>>> {
+    let Control::Form(i, Field::Location) = control else {
+        return None;
+    };
+    let form = &wizard.forms[i];
+    let mut spans = vec![Span::styled(
+        form.provider.display_name().to_uppercase(),
+        theme.label,
+    )];
+    if let Some(existing) = &form.existing {
+        spans.push(Span::styled(
+            format!("  ·  connection {}", sanitize(&existing.id)),
+            theme.muted,
+        ));
+    }
+    Some(vec![Line::from(""), Line::from(spans)])
+}
+
 /// Lines drawn under a control: the strength meter, the generated
-/// passphrase, the choices not chosen.
+/// password.
 fn control_extra<B: Backend>(
     wizard: &Wizard<B>,
     control: Control,
     theme: &Theme,
 ) -> Option<Vec<Line<'static>>> {
     match control {
-        Control::Passphrase => Some(meter_lines(wizard.passphrase_estimate.as_ref(), theme)),
-        Control::SecretValue => Some(meter_lines(wizard.secret_estimate.as_ref(), theme)),
-        Control::GeneratePassphrase => {
-            let generated = wizard.generated_passphrase.as_ref()?;
+        Control::Password => Some(meter_lines(wizard.estimate.as_ref(), theme)),
+        Control::Generate => {
+            let generated = wizard.generated.as_ref()?;
             Some(vec![
                 Line::from(vec![
-                    Span::raw(format!("  {:<LABEL_WIDTH$}", "Your passphrase")),
+                    Span::raw(format!("  {:<LABEL_WIDTH$}", "Your password")),
                     Span::styled(format!(" {} ", generated.as_str()), theme.code),
                     Span::styled("   shown once", theme.caution),
                 ]),
@@ -674,29 +962,6 @@ fn control_extra<B: Backend>(
                     theme.muted,
                 )),
             ])
-        }
-        Control::GenerateSecret if wizard.secret_generated => Some(vec![Line::from(Span::styled(
-            format!(
-                "  {:<LABEL_WIDTH$}a 24-character value will be generated and stored; it is never shown here",
-                ""
-            ),
-            theme.muted,
-        ))]),
-        Control::GuardChoice => {
-            let options = wizard.guard_options();
-            Some(
-                options
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| *i != wizard.guard_choice)
-                    .map(|(_, (_, text))| {
-                        Line::from(Span::styled(
-                            format!("  {:<LABEL_WIDTH$}( ) {text}", ""),
-                            theme.muted,
-                        ))
-                    })
-                    .collect(),
-            )
         }
         _ => None,
     }

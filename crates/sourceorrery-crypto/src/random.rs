@@ -41,9 +41,9 @@ fn random_index(bound: usize) -> Result<usize> {
 
 /// A recovery code: [`CODE_GROUPS`] groups of [`CODE_GROUP_LEN`] characters
 /// from an alphabet without look-alikes, separated by hyphens
-/// (`7K3QX-M9ZT2-...`), [`CODE_BITS`] bits of entropy. The code is a
-/// passphrase: it unlocks the vault, so it is zeroised when dropped and
-/// shown to its owner once.
+/// (`7K3QX-M9ZT2-...`), [`CODE_BITS`] bits of entropy: a vault's recovery
+/// key. It opens the vault, so it is zeroised when dropped and shown to
+/// its owner once.
 pub fn recovery_code() -> Result<Zeroizing<String>> {
     let mut code = Zeroizing::new(String::with_capacity(CODE_GROUPS * (CODE_GROUP_LEN + 1)));
     for group in 0..CODE_GROUPS {
@@ -57,12 +57,10 @@ pub fn recovery_code() -> Result<Zeroizing<String>> {
     Ok(code)
 }
 
-/// The form a typed passphrase takes as a recovery code, when it has the
-/// shape of one: [`CODE_GROUPS`] × [`CODE_GROUP_LEN`] characters of the
-/// code alphabet once normalised, typed with at most a few separators.
-/// `None` for anything else, so a passphrase that happens to be 25 letters
-/// long is never mistaken for a code: an unlock tries the passphrase as
-/// typed first and this form second.
+/// The form a typed recovery key takes, when it has the shape of one:
+/// [`CODE_GROUPS`] × [`CODE_GROUP_LEN`] characters of the code alphabet
+/// once normalised, typed with at most a few separators. `None` for
+/// anything else, which no recovery key can be.
 pub fn recovery_code_form(typed: &str) -> Option<Zeroizing<String>> {
     let expected = CODE_GROUPS * CODE_GROUP_LEN;
     if typed.len() > expected + CODE_GROUPS + 4 {

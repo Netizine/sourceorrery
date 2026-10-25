@@ -9,11 +9,7 @@
   <Property Name="sonar.python.version">3.11,3.12,3.13,3.14</Property>
   <Property Name="sonar.typescript.tsconfigPaths">bindings/node/tsconfig.json,site/tsconfig.json</Property>
 
-  <Property Name="sonar.rust.lcov.reportPaths">coverage/rust-combined.lcov</Property>
-  <Property Name="sonar.python.coverage.reportPaths">coverage/python.xml</Property>
-  <Property Name="sonar.javascript.lcov.reportPaths">coverage/node/lcov.info,coverage/site/lcov.info</Property>
-  <Property Name="sonar.go.coverage.reportPaths">coverage/go.out</Property>
-  <Property Name="sonar.coverage.jacoco.xmlReportPaths">bindings/java/target/site/jacoco/jacoco.xml</Property>
+  <!-- Module-specific coverage paths are in SourceOrrery.Analysis.Source.csproj. -->
   <Property Name="sonar.cs.opencover.reportsPaths">coverage/dotnet.xml</Property>
   <Property Name="sonar.coverageReportPaths">coverage/cpp.xml,coverage/php.xml</Property>
 
@@ -21,5 +17,5 @@
   <Property Name="sonar.java.source">22</Property>
   <Property Name="sonar.java.binaries">bindings/java/target/classes</Property>
   <Property Name="sonar.java.test.binaries">bindings/java/target/test-classes</Property>
-  <Property Name="sonar.java.test.libraries">bindings/java/target/sonar-libraries/*.jar</Property>
+  <Property Name="sonar.java.test.libraries">bindings/java/target/classes,bindings/java/target/sonar-libraries/*.jar</Property>
 </SonarQubeAnalysisProperties>

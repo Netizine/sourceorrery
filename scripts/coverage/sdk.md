@@ -51,12 +51,14 @@ an ordinary wheel installation would measure a different source tree.
 | Report | Format | Sonar property |
 | --- | --- | --- |
 | `coverage/python.xml` | Cobertura | `sonar.python.coverage.reportPaths` |
+| `coverage/tooling-python.xml` | Cobertura | `sonar.python.coverage.reportPaths` |
 | `coverage/node/lcov.info` | LCOV | `sonar.javascript.lcov.reportPaths` |
 | `coverage/site/lcov.info` | LCOV | `sonar.javascript.lcov.reportPaths` |
+| `coverage/tooling-node/lcov.info` | LCOV | `sonar.javascript.lcov.reportPaths` |
 | `coverage/go.out` | Go coverprofile | `sonar.go.coverage.reportPaths` |
 | `coverage/php.xml` | Sonar generic coverage XML | `sonar.coverageReportPaths` |
 
-Pass both JavaScript reports as a comma-separated list. Add the PHP report to
+Pass the JavaScript reports as a comma-separated list. Add the PHP report to
 any other generic coverage reports, such as C++. It is not Clover and must not
 be assigned to `sonar.php.coverage.reportPaths`.
 
@@ -68,10 +70,17 @@ JavaScript and Python reports cover their checked-in wrapper code.
 ## Scope and validation
 
 The site report measures the production modules in `site/plugins`, `site/src/lib`,
-and `site/scripts` exercised by the Node tests. It includes unexecuted modules as
-uncovered. It does not measure Astro component rendering or browser interaction.
+and `site/scripts` exercised by the Node tests and the existing site build/link
+checks. It merges those executions and includes unexecuted modules as uncovered.
+It does not instrument Astro component templates or browser interaction.
 Node SDK coverage measures `bindings/node/lib`, excluding the generated native
 loader. Go measures the SDK package, excluding examples and conformance programs.
+
+`bash scripts/coverage/tooling.sh` measures the existing Python CI, release,
+coverage and scanner-helper tests plus the Node prerequisite-check tests. It
+does not run real publishing commands or require a vault. The full runner also
+records its actual Python report conversion and inventory checks. Tooling has
+separate reports from the SDK, so one run cannot overwrite the other's results.
 
 PHP starts Xdebug before the existing runner loads the SDK, filters to SDK source,
 and converts its line data without replacing the runner or masking its exit

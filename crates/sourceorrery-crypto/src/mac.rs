@@ -32,6 +32,21 @@ pub fn derive_subkey(key: &SymmetricKey, label: &str) -> SymmetricKey {
     SymmetricKey::from_bytes(out)
 }
 
+/// Derive a 256-bit key from a generated, high-entropy secret (a recovery
+/// key, never a password a person chose) with HKDF-SHA256: `salt` as the
+/// HKDF salt and `label` as the info string.
+///
+/// Fast by design: the secret's own entropy is what resists guessing, so a
+/// slow hash would add nothing. A secret a person chose goes through
+/// Argon2id ([`crate::kdf::derive_key`]) instead.
+pub fn derive_from_secret(secret: &[u8], salt: &[u8], label: &str) -> SymmetricKey {
+    let hkdf = Hkdf::<Sha256>::new(Some(salt), secret);
+    let mut out = zeroize::Zeroizing::new([0u8; KEY_LEN]);
+    hkdf.expand(label.as_bytes(), out.as_mut_slice())
+        .expect("a 32-byte HKDF output is always within the expansion limit");
+    SymmetricKey::from_bytes(*out)
+}
+
 fn hmac(key: &SymmetricKey, data: &[u8]) -> HmacSha256 {
     let mut mac =
         HmacSha256::new_from_slice(key.expose()).expect("HMAC accepts keys of any length");
@@ -90,6 +105,53 @@ mod tests {
         assert_eq!(
             hex::encode(sub.expose()),
             "cf9941092b80e1dbe641be211be39d3db199c0a121e807dbfa8ed794fea695e3"
+        );
+    }
+
+    #[test]
+    fn secret_derivation_is_salted_and_label_separated() {
+        let a = derive_from_secret(b"ABCDE12345", &[1u8; 16], "sourceorrery/v4/recovery-key/x");
+        let b = derive_from_secret(b"ABCDE12345", &[1u8; 16], "sourceorrery/v4/recovery-key/x");
+        assert_eq!(a, b);
+        assert_ne!(
+            a,
+            derive_from_secret(b"ABCDE12345", &[2u8; 16], "sourceorrery/v4/recovery-key/x")
+        );
+        assert_ne!(
+            a,
+            derive_from_secret(b"ABCDE12345", &[1u8; 16], "sourceorrery/v4/recovery-key/y")
+        );
+        assert_ne!(
+            a,
+            derive_from_secret(b"ABCDE12346", &[1u8; 16], "sourceorrery/v4/recovery-key/x")
+        );
+    }
+
+    #[test]
+    fn salted_hkdf_sha256_known_answer() {
+        // RFC 5869, test case 1: IKM = 0x0b * 22, salt = 0x00..=0x0c,
+        // info = 0xf0..=0xf9; the first 32 bytes of its OKM. That info is
+        // not UTF-8, so the crate is pinned to the RFC here and the wrapper
+        // to the crate with a UTF-8 label below.
+        let ikm = [0x0bu8; 22];
+        let salt: Vec<u8> = (0x00..=0x0c).collect();
+        let info: Vec<u8> = (0xf0..=0xf9).collect();
+        let mut okm = [0u8; KEY_LEN];
+        Hkdf::<Sha256>::new(Some(&salt), &ikm)
+            .expand(&info, &mut okm)
+            .unwrap();
+        assert_eq!(
+            hex::encode(okm),
+            "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
+        );
+
+        let mut same = [0u8; KEY_LEN];
+        Hkdf::<Sha256>::new(Some(&salt), &ikm)
+            .expand(b"recovery", &mut same)
+            .unwrap();
+        assert_eq!(
+            derive_from_secret(&ikm, &salt, "recovery"),
+            SymmetricKey::from_bytes(same)
         );
     }
 

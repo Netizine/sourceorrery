@@ -15,8 +15,8 @@ int main(int argc, char** argv) {
     const std::string vault = argc > 1 ? argv[1] : "development";
     const std::string name = argc > 2 ? argv[2] : "database-password";
     try {
-        // Unlocked by the OS credential store, then SOURCEORRERY_PASSPHRASE,
-        // then SOURCEORRERY_PASSPHRASE_FILE; never a prompt.
+        // Unlocked by the OS credential store, then SOURCEORRERY_RECOVERY_KEY,
+        // then SOURCEORRERY_RECOVERY_KEY_FILE; never a prompt.
         auto reader = sourceorrery::Reader::open(vault);
         auto secret = reader.get(name);  // newest accessible version
         std::cout << name << " version " << secret.version() << " from vault " << vault << ": "

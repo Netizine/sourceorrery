@@ -1,9 +1,9 @@
 pub mod audit;
 pub mod audit_export;
-pub mod backup;
 pub mod completions;
-pub mod guard;
+pub mod connections;
 pub mod import;
+pub mod init;
 pub mod project;
 pub mod rotate;
 pub mod secret;
@@ -17,6 +17,13 @@ use anyhow::anyhow;
 /// Prefix of the tags SourceOrrery writes for itself (rotation state, the
 /// origin of a restored version); not for a `--tag` argument.
 pub const RESERVED_TAG_PREFIX: &str = "sourceorrery.";
+
+/// Stdin and stdout are a terminal, so a command may show its screens.
+#[cfg(feature = "ui")]
+pub fn on_a_terminal() -> bool {
+    use std::io::IsTerminal as _;
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
 
 /// Parse repeated `key=value` tag arguments.
 pub fn parse_tags(raw: &[String]) -> anyhow::Result<BTreeMap<String, String>> {

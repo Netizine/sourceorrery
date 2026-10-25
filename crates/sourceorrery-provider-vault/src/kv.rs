@@ -273,8 +273,10 @@ impl Metadata {
                 .map(|t| parse_time(t, "expires_on"))
                 .transpose()?,
             created_on,
+            // `updated_on` is the writer's clock, `created_on` the server's:
+            // a skew between them never puts the update before the version.
             updated_on: match props.updated_on.as_deref() {
-                Some(t) => parse_time(t, "updated_on")?,
+                Some(t) => parse_time(t, "updated_on")?.max(created_on),
                 None => created_on,
             },
             recovery_level: RecoveryLevel::Recoverable,
@@ -385,6 +387,20 @@ mod tests {
         let json = serde_json::to_string(&props).unwrap();
         assert!(!json.contains("expires_on"));
         assert_eq!(serde_json::from_str::<VersionProps>(&json).unwrap(), props);
+    }
+
+    #[test]
+    fn an_update_stamped_by_a_slower_clock_is_never_before_the_version() {
+        // The server created version 1 at 10:00:00.200 by its clock; the
+        // client that updated it a moment later had 10:00:00.150 on its own.
+        let text = r#"{"data":{"created_time":"2026-10-23T10:00:00.2Z","current_version":1,
+            "custom_metadata":{"sourceorrery.v1":"{\"content_type\":\"text/plain\",\"updated_on\":\"2026-10-23T10:00:00.15Z\"}"},
+            "oldest_version":1,"updated_time":"2026-10-23T10:00:00.2Z",
+            "versions":{"1":{"created_time":"2026-10-23T10:00:00.2Z","deletion_time":"","destroyed":false}}}}"#;
+        let meta: MetadataResponse = serde_json::from_str(text).unwrap();
+        let v1 = meta.data.properties("prod", "k", 1).unwrap();
+        assert_eq!(v1.content_type.as_deref(), Some("text/plain"));
+        assert_eq!(v1.updated_on, v1.created_on);
     }
 
     #[test]

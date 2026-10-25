@@ -53,21 +53,19 @@ Other platforms build the sdist, which needs Rust 1.91.1+ and a C compiler.
 ## Unlocking
 
 `SecretReader("development")` finds the vault under `SOURCEORRERY_HOME`
-(or the platform data directory) and unlocks it like the CLI: the OS
-credential store first, then `SOURCEORRERY_PASSPHRASE`, then the file named
-by `SOURCEORRERY_PASSPHRASE_FILE`; never an interactive prompt. On servers,
-in containers and in CI, give the vault a passphrase protector and pass the
-passphrase as a file
+(or the platform data directory) and opens it like the CLI: this machine's
+key in the OS credential store first, then `SOURCEORRERY_RECOVERY_KEY`, then
+the file named by `SOURCEORRERY_RECOVERY_KEY_FILE`; never an interactive
+prompt, and never the vault's view check. On servers,
+in containers and in CI, where this machine's key is not available, pass
+the vault's recovery key as a file
 ([Headless](https://sourceorrery.ai/guides/headless/)).
 
-A vault that the project's `sourceorrery.toml` declares in a
-`[vaults.<name>]` table is remote: `SecretReader` opens it at its provider
-instead of as a local file. Pass `manifest=` to name the manifest; the
-default is the nearest `sourceorrery.toml` above the current directory.
-Credentials come from the provider's own environment, never from the
-manifest: HashiCorp Vault is the first provider, and its credential comes
-from `VAULT_TOKEN` or the other sources
-[the provider documents](../../docs/providers/hashicorp-vault.md).
+A secret that one of the vault's connections stores (HashiCorp Vault, AWS
+Secrets Manager or Azure Key Vault) is read at that provider by the same
+calls, with the credentials the connection stores or the ones the
+provider's own tools find in the environment
+([providers](../../docs/providers/)).
 
 ## Errors and values
 

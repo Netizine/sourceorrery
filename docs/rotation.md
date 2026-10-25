@@ -7,8 +7,9 @@ steps: **issue** a new value, **validate** it, **activate** it, and
 command you name in the manifest; SourceOrrery runs it the way `run` runs a
 program, with the value only in the child's environment, and records each
 step as an ordinary audited operation on the vault. The workflow works
-against any vault whose properties are per version: a local vault and
-[HashiCorp Vault](providers/hashicorp-vault.md); on
+against any vault whose properties are per version: a local vault,
+[HashiCorp Vault](providers/hashicorp-vault.md) and
+[Azure Key Vault](providers/azure-key-vault.md); on
 [AWS Secrets Manager](providers/aws-secrets-manager.md) it is `unsupported`
 (below).
 
@@ -32,8 +33,10 @@ Every hook also receives `SOURCEORRERY_SECRET` (the secret's name),
 `SOURCEORRERY_ROTATION_STEP` (`issue`, `validate` or `retire`),
 `SOURCEORRERY_PROJECT` (the manifest's project name) and, for `validate`
 and `retire`, `SOURCEORRERY_VERSION` (the version the value belongs to).
-The variables that unlock a vault (`SOURCEORRERY_PASSPHRASE`,
-`SOURCEORRERY_PASSPHRASE_FILE`) are removed from the hook's environment.
+The variables that open a vault or answer its view check
+(`SOURCEORRERY_RECOVERY_KEY`, `SOURCEORRERY_RECOVERY_KEY_FILE`,
+`SOURCEORRERY_PASSWORD`, `SOURCEORRERY_PASSWORD_FILE`, `SOURCEORRERY_TOTP`)
+are removed from the hook's environment.
 Hooks inherit the terminal for their own output; SourceOrrery prints
 version ids and states, never a value.
 
@@ -110,8 +113,8 @@ names explicitly.
 ## What is recorded
 
 The state lives in tags on the versions, so it survives a crash, is visible
-in `secret versions` and `secret rotate --step status`, and travels with a
-backup:
+in `secret versions` and `secret rotate --step status`, and travels with
+an exported copy of the vault (`vault export`):
 
 | Tag | On | Value |
 |-----|----|-------|

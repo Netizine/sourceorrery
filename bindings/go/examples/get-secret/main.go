@@ -1,7 +1,7 @@
 // Read one secret and report its size, never its value.
 //
 //	go get github.com/netizine/sourceorrery/bindings/go
-//	export SOURCEORRERY_PASSPHRASE=...   # or rely on the OS credential store
+//	export SOURCEORRERY_RECOVERY_KEY=...   # or rely on the OS credential store
 //	CGO_LDFLAGS="-L/path/to/sourceorrery_ffi" go run . development database-password
 package main
 
@@ -34,8 +34,8 @@ func main() {
 }
 
 func run(vault, name string) error {
-	// Unlocked by the OS credential store, then SOURCEORRERY_PASSPHRASE,
-	// then SOURCEORRERY_PASSPHRASE_FILE; never a prompt.
+	// Unlocked by the OS credential store, then SOURCEORRERY_RECOVERY_KEY,
+	// then SOURCEORRERY_RECOVERY_KEY_FILE; never a prompt.
 	reader, err := sourceorrery.Open(vault, nil)
 	if err != nil {
 		return err

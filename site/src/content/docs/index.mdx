@@ -46,7 +46,7 @@ needs. Read them through an SDK, or inject them into a child process at launch.
 <div class="so-feature-grid">
   <FeatureCard title="Encrypted local storage" icon="vault">
     Secret values are encrypted with XChaCha20-Poly1305 in a SQLite vault.
-    Protect the vault key with your OS credential store, a passphrase, or both.
+    This machine's key lives in your OS credential store; a recovery key opens the vault anywhere else.
   </FeatureCard>
   <FeatureCard title="References in your repository" icon="link">
     Declare which secrets your project needs in its manifest.
@@ -68,7 +68,7 @@ needs. Read them through an SDK, or inject them into a child process at launch.
 your project directory. The secret prompt is hidden; values are never command-line arguments.
 
 ```bash title="Create a development vault"
-sourceorrery vault create development
+sourceorrery setup                     # the vault, its recovery key, its checks and storage
 sourceorrery secret set database-password --vault development
 sourceorrery secret list --vault development
 ```

@@ -20,7 +20,7 @@ crate-type = ["cdylib"]
 [features]
 default = ["os-keyring", "remote"]
 os-keyring = ["sourceorrery/os-keyring"]
-# Every remote provider a manifest can name (`[vaults.<name>]`).
+# Every remote provider a vault's connection can reach.
 remote = ["sourceorrery/remote"]
 
 [dependencies]

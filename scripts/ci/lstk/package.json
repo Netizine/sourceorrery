@@ -1,0 +1,8 @@
+{
+  "name": "sourceorrery-ci-lstk",
+  "private": true,
+  "description": "The LocalStack CLI for the AWS provider jobs; installed with npm ci so the lock file's integrity hashes pin it.",
+  "dependencies": {
+    "@localstack/lstk": "1.4.1"
+  }
+}

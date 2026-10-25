@@ -226,8 +226,10 @@ pub(super) fn vaults(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
             Line::from(""),
             Line::from("No vaults in this home directory."),
             Line::from(vec![
-                Span::styled("Create one with  ", theme.muted),
-                Span::styled(" sourceorrery vault create development ", theme.code),
+                Span::styled("n", theme.key),
+                Span::styled(" creates one on the setup screens, as  ", theme.muted),
+                Span::styled(" sourceorrery setup ", theme.code),
+                Span::styled("  does.", theme.muted),
             ]),
             Line::from(""),
         ]

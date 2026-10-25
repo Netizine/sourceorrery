@@ -68,9 +68,12 @@ class SourceOrreryException extends RuntimeException
 
 /** `vault_not_found`: no vault file with that name in the home directory. */
 class VaultNotFoundException extends SourceOrreryException {}
-/** `locked`: no protector or passphrase source could unlock the vault. */
+/** `locked`: neither this machine's key nor a recovery key could open the vault. */
 class VaultLockedException extends SourceOrreryException {}
-/** `migration_required`: run `sourceorrery vault migrate <name>` first. */
+/**
+ * `migration_required`: the vault was written by an earlier release, which this one
+ * cannot read; recreate it with `sourceorrery setup`.
+ */
 class MigrationRequiredException extends SourceOrreryException {}
 /** `vault_mismatch`: the file found for the vault holds another vault (renamed, copied or swapped in). */
 class VaultMismatchException extends SourceOrreryException {}

@@ -1,0 +1,9 @@
+# LocalStack for the AWS Secrets Manager provider tests (`lstk start` from the
+# repository root): the provider-aws job in ci.yml and coverage.yml, and local
+# runs (docs/providers/aws-secrets-manager.md). The image tag is pinned so a
+# new emulator release cannot change test results without a reviewed commit.
+# Every start is fresh: nothing here enables persistence or a snapshot.
+[[containers]]
+type = "aws"
+tag = "2026.10.0"
+port = "4566"

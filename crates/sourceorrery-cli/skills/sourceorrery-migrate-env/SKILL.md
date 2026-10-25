@@ -43,9 +43,9 @@ Copy this into your notes and tick it off:
 
 Run `sourceorrery --version`; if it is missing, install it
 ([references/install.md](references/install.md)). Then
-`sourceorrery vault list`. If there is no `development` vault, run
-`sourceorrery vault create development`; if it asks for a passphrase,
-stop and ask the user to run it themselves.
+`sourceorrery vault list`. If there is no `development` vault, ask the
+user to run `sourceorrery setup` in their own terminal and wait: it shows
+the vault's recovery key once, which only they should see.
 
 ### 2. Find and plan the env files
 
@@ -72,7 +72,7 @@ Plan one vault per environment:
 | File | Vault | Action |
 |------|-------|--------|
 | `.env`, `.env.local`, `.env.development` | `development` | `sourceorrery import .env` |
-| `.env.test` | `test` (create it) | `sourceorrery --vault test import .env.test` |
+| `.env.test` | `test` (the user creates it with `sourceorrery setup`) | `sourceorrery --vault test import .env.test` |
 | `.env.staging`, `.env.production` | `staging`, `production` | **ask first**: these values belong on the machines that run that environment |
 | `.env.example`, `.env.sample`, `.env.template` | none: they hold no real values | `sourceorrery import .env.example --manifest-only` |
 | `.env.vault`, `*.env.enc` or other encrypted files | none | stop and ask the user |
@@ -93,9 +93,8 @@ sourceorrery check
 `import` stores each non-empty value as a secret (`DATABASE_URL` becomes
 `database-url`) and declares it in `sourceorrery.toml`, creating the file
 if needed. Secrets already in the vault are left alone, so it is safe to
-run again. If `sourceorrery.toml` still has the `database-password`
-example from `sourceorrery init` and the project has no such secret,
-delete that entry. `check` must report every secret `ok`.
+run again. `check` must report every secret `ok`; it reads metadata
+only, and never asks the vault's view check.
 
 ### 4. Convert the code
 
@@ -166,5 +165,6 @@ steps.
 - Tell the user which keys were migrated, which were skipped and why,
   which files changed, which were deleted, and what is left for them:
   rotating leaked values, and how teammates set up their own vault (each
-  machine has its own; they run `sourceorrery vault create` and
-  `sourceorrery secret set` or import their own `.env`).
+  machine has its own; they run `sourceorrery setup`, then
+  `sourceorrery secret set` or import their own `.env`, or bring a copy
+  of the vault with `vault export` and `vault import`).

@@ -49,19 +49,27 @@ public sealed unsafe class Project : IDisposable
         options ??= new OpenOptions();
         var manifestBytes = NativeLibraryLoader.Utf8(manifest);
         var json = NativeLibraryLoader.Utf8(options.ToJson())!;
-        var passphrase = NativeLibraryLoader.Utf8(options.Passphrase);
-        nint handle;
-        fixed (byte* manifestPtr = manifestBytes)
-        fixed (byte* jsonPtr = json)
-        fixed (byte* passPtr = passphrase)
+        var recoveryKey = NativeLibraryLoader.Utf8(options.RecoveryKey);
+        nint handle = nint.Zero;
+        try
         {
-            Interop.Check(NativeMethods.so_project_load(
-                manifestPtr, (nuint)(manifestBytes?.Length ?? 0),
-                jsonPtr, (nuint)json.Length,
-                passPtr, (nuint)(passphrase?.Length ?? 0),
-                &handle));
+            fixed (byte* manifestPtr = manifestBytes)
+            fixed (byte* jsonPtr = json)
+            fixed (byte* keyPtr = recoveryKey)
+            {
+                Interop.Check(NativeMethods.so_project_load(
+                    manifestPtr, (nuint)(manifestBytes?.Length ?? 0),
+                    jsonPtr, (nuint)json.Length,
+                    keyPtr, (nuint)(recoveryKey?.Length ?? 0),
+                    &handle));
+            }
         }
-        Array.Clear(passphrase ?? Array.Empty<byte>());
+        finally
+        {
+            // The library keeps its own copy; a wrong recovery key must be cleared too.
+            Array.Clear(recoveryKey ?? Array.Empty<byte>());
+        }
+        var secrets = new List<ProjectSecret>();
         try
         {
             SoBytes infoJson = default;
@@ -69,25 +77,43 @@ public sealed unsafe class Project : IDisposable
             var info = JsonSerializer.Deserialize(Interop.TakeString(ref infoJson), SourceOrreryJsonContext.Default.ProjectInfoDto)
                 ?? throw new SourceOrreryException("empty project document", "storage");
             var count = checked((int)NativeMethods.so_project_count(handle));
-            var secrets = new List<ProjectSecret>(count);
             for (var index = 0; index < count; index++)
             {
                 SoBytes entryJson = default;
                 SoBytes value = default;
                 Interop.Check(NativeMethods.so_project_entry(handle, (nuint)index, &entryJson, &value));
-                var entry = JsonSerializer.Deserialize(Interop.TakeString(ref entryJson), SourceOrreryJsonContext.Default.ProjectEntryDto)
-                    ?? throw new SourceOrreryException("empty project entry", "storage");
-                secrets.Add(new ProjectSecret
+                // Owned before the entry is parsed, so a parse failure still zeroises it.
+                var secretValue = new SecretValue(value);
+                try
                 {
-                    Name = entry.Name,
-                    Env = entry.Env,
-                    Reference = entry.Reference,
-                    Required = entry.Required,
-                    Properties = SecretProperties.FromDto(entry.Properties),
-                    Value = new SecretValue(value),
-                });
+                    var entry = JsonSerializer.Deserialize(Interop.TakeString(ref entryJson), SourceOrreryJsonContext.Default.ProjectEntryDto)
+                        ?? throw new SourceOrreryException("empty project entry", "storage");
+                    secrets.Add(new ProjectSecret
+                    {
+                        Name = entry.Name,
+                        Env = entry.Env,
+                        Reference = entry.Reference,
+                        Required = entry.Required,
+                        Properties = SecretProperties.FromDto(entry.Properties),
+                        Value = secretValue,
+                    });
+                }
+                catch
+                {
+                    secretValue.Dispose();
+                    throw;
+                }
             }
             return new Project(info.Name, info.ManifestPath, secrets);
+        }
+        catch
+        {
+            // Values already read belong to no project: zeroise them now.
+            foreach (var secret in secrets)
+            {
+                secret.Value.Dispose();
+            }
+            throw;
         }
         finally
         {

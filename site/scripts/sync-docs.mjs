@@ -7,7 +7,9 @@
 //   - takes the title from the first H1 and removes that H1 from the body,
 //   - derives a description from the first paragraph (or a configured one),
 //   - rewrites relative links between docs to site URLs,
-//   - turns `<!-- tabs -->` blocks into Starlight <Tabs> (see convertTabs).
+//   - turns `<!-- tabs -->` blocks into Starlight <Tabs> (see convertTabs),
+//   - turns `<!-- walkthrough: NAME -->` lines into the Walkthrough
+//     component (see convertWalkthroughs).
 //
 // Pages carry no `editUrl`: the site has no "Edit page" link.
 //
@@ -17,6 +19,7 @@
 import { access, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { walkthroughs } from '../src/lib/walkthroughs.mjs';
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(siteRoot, '..');
@@ -59,7 +62,7 @@ const PAGES = {
 	'docs/getting-started.md': {
 		dest: 'guides/first-run.md',
 		description:
-			'The guided first run, sourceorrery setup, and the same six steps as commands: a vault with a strong passphrase, a first database password, recovery codes and a hint, an authenticator app, the reveal guard and the project manifest.',
+			'The first run: a vault on the setup screens (its recovery key, an optional view check, its storage), its secrets, a project manifest written from the vault, and run.',
 	},
 	'docs/ai-agents.md': {
 		dest: 'guides/ai-agents.md',
@@ -74,7 +77,7 @@ const PAGES = {
 	'docs/cli.md': {
 		dest: 'reference/cli.md',
 		description:
-			'Every sourceorrery command and option: setup, vault, secret, audit, init, import, check, run, backup, restore, ui and completions, plus global options, unlocking, the reveal guard and exit codes.',
+			'Every sourceorrery command and option: setup, vault, secret, audit, init, import, check, run, ui and completions, plus global options, opening a vault, the view check and exit codes.',
 	},
 	'docs/vault-format.md': {
 		dest: 'reference/vault-format.md',
@@ -84,7 +87,7 @@ const PAGES = {
 	'docs/roadmap.md': {
 		dest: 'roadmap.md',
 		description:
-			'Where SourceOrrery stands in 0.2.0: local vaults, read-only SDKs, remote providers, guided setup and supply-chain work, with authenticated local isolation still planned.',
+			'Where SourceOrrery stands: local vaults that keep each secret in their file or at a provider, read-only SDKs, guided setup and supply-chain work, with authenticated local isolation still planned.',
 	},
 	'docs/release.md': {
 		dest: 'reference/release.md',
@@ -94,7 +97,7 @@ const PAGES = {
 	'docs/providers/index.md': {
 		dest: 'providers/index.md',
 		description:
-			'Remote vaults: a secrets service of another vendor behind the same contract as a local vault, declared in sourceorrery.toml without a credential, opened by the CLI and every SDK with the same calls and error codes.',
+			'Storage per secret: a vault keeps a secret at HashiCorp Vault, AWS Secrets Manager or Azure Key Vault through a connection it holds, behind the same contract, read by the CLI and every SDK with the same calls and error codes.',
 	},
 	'docs/providers/hashicorp-vault.md': {
 		dest: 'providers/hashicorp-vault.md',
@@ -106,6 +109,11 @@ const PAGES = {
 		description:
 			'The AWS Secrets Manager provider: secrets under a prefix as a SourceOrrery vault, the default credential chain, how versions, tags and deletion map onto the service, and what differs from a local vault.',
 	},
+	'docs/providers/azure-key-vault.md': {
+		dest: 'providers/azure-key-vault.md',
+		description:
+			'The Azure Key Vault provider: one key vault as a SourceOrrery vault, the identities it signs in with, how versions, attributes, tags and soft delete map onto Key Vault, and what differs from a local vault.',
+	},
 	'docs/rotation.md': {
 		dest: 'guides/rotation.md',
 		description:
@@ -114,12 +122,12 @@ const PAGES = {
 	'docs/enterprise.md': {
 		dest: 'guides/enterprise.md',
 		description:
-			'Identity, policy and revocation through the remote providers: who decides what, the workload identity set-up for GitHub Actions, Kubernetes and VMs, what a revocation reaches, and checking what an identity may read.',
+			'Identity, policy and revocation through the providers: who decides what, the workload identity set-up for GitHub Actions, Kubernetes and VMs, what a revocation reaches, and checking what an identity may read.',
 	},
 	'docs/sdks/index.md': {
 		dest: 'sdks/index.md',
 		description:
-			'The read-only client for ten languages: what every SDK does, how it unlocks a vault, the typed errors with hints, and how values are guarded.',
+			'The read-only client for ten languages: what every SDK does, how it opens a vault, the typed errors with hints, and how values are guarded.',
 	},
 	'docs/sdks/python.md': {
 		dest: 'sdks/python.md',
@@ -185,10 +193,13 @@ const ADR_DEST_DIR = 'decisions';
 
 const GENERATED_IGNORE = path.join(outDir, '.gitignore');
 
+/** Code-unit order: the same on every machine, unlike `localeCompare`. */
+const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
 async function main() {
 	const adrFiles = (await readdir(path.join(repoRoot, ADR_SOURCE_DIR)))
 		.filter((name) => /^\d{4}-.*\.md$/.test(name))
-		.sort();
+		.sort(byCodeUnit);
 	for (const name of adrFiles) {
 		PAGES[`${ADR_SOURCE_DIR}/${name}`] = { dest: `${ADR_DEST_DIR}/${name}`, adr: true };
 	}
@@ -242,9 +253,12 @@ async function syncPage(source, page) {
 	const body = raw.slice(h1.index + h1[0].length).replace(/^\n+/, '');
 
 	const description = page.description ?? deriveDescription(body, page);
-	const { markdown: rewritten, tabs } = convertTabs(rewriteLinks(body, source), source);
-	// A page with platform tabs needs MDX for the <Tabs> component; the rest stay Markdown.
-	const dest = tabs ? page.dest.replace(/\.md$/, '.mdx') : page.dest;
+	const { markdown: tabbed, tabs } = convertTabs(rewriteLinks(body, source), source);
+	const { markdown: rewritten, walkthrough } = convertWalkthroughs(tabbed, source);
+	// A page with platform tabs or a walkthrough needs MDX for its components;
+	// the rest stay Markdown.
+	const mdx = tabs || walkthrough;
+	const dest = mdx ? page.dest.replace(/\.md$/, '.mdx') : page.dest;
 
 	const frontmatter = {
 		title,
@@ -264,18 +278,24 @@ async function syncPage(source, page) {
 	}
 
 	const note = `Generated from ${source} by site/scripts/sync-docs.mjs. Edit the source file, not this copy.`;
+	const destination = path.join(outDir, dest);
+	const component = path
+		.relative(path.dirname(destination), path.join(siteRoot, 'src', 'components', 'Walkthrough.astro'))
+		.split(path.sep)
+		.join('/');
 	const output = [
 		'---',
 		yaml(frontmatter),
 		'---',
-		tabs ? `{/* ${note} */}` : `<!-- ${note} -->`,
+		mdx ? `{/* ${note} */}` : `<!-- ${note} -->`,
 		'',
-		...(tabs ? ["import { Tabs, TabItem } from '@astrojs/starlight/components';", ''] : []),
+		...(tabs ? ["import { Tabs, TabItem } from '@astrojs/starlight/components';"] : []),
+		...(walkthrough ? [`import Walkthrough from '${component}';`] : []),
+		...(mdx ? [''] : []),
 		rewritten.trimEnd(),
 		'',
 	].join('\n');
 
-	const destination = path.join(outDir, dest);
 	await mkdir(path.dirname(destination), { recursive: true });
 	await writeFile(destination, output);
 	return { dest, adr };
@@ -332,6 +352,23 @@ function convertTabs(markdown, source) {
 		return `${open}\n${body.join('\n')}\n</Tabs>\n`;
 	});
 	return { markdown: converted, tabs };
+}
+
+/**
+ * Walkthroughs. A line `<!-- walkthrough: NAME -->` in docs/ is invisible on
+ * GitHub; on the site it becomes the Walkthrough component, the screens of
+ * NAME in src/lib/walkthroughs.mjs.
+ */
+const WALKTHROUGH_LINE = /^<!-- walkthrough: ([\w-]+) -->[ \t]*$/gm;
+
+function convertWalkthroughs(markdown, source) {
+	let walkthrough = false;
+	const converted = markdown.replace(WALKTHROUGH_LINE, (match, name) => {
+		if (!walkthroughs[name]) throw new Error(`${source}: no walkthrough named ${name}`);
+		walkthrough = true;
+		return `<Walkthrough name=${JSON.stringify(name)} />`;
+	});
+	return { markdown: converted, walkthrough };
 }
 
 /** Rewrite relative Markdown links so they resolve on the site. Fenced code is left alone. */
@@ -460,7 +497,7 @@ function yaml(value, indent = '') {
 
 async function writeDecisionsIndex(adrs) {
 	const rows = adrs
-		.sort((a, b) => a.number.localeCompare(b.number))
+		.sort((a, b) => byCodeUnit(a.number, b.number))
 		.map((adr) => `| [${adr.number}](${adr.href}) | [${adr.title.replace(/^ADR \d{4}:\s*/, '')}](${adr.href}) | ${adr.status} | ${adr.date} |`);
 	const dest = `${ADR_DEST_DIR}/index.md`;
 	const output = [

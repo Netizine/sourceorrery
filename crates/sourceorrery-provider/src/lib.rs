@@ -17,22 +17,32 @@
 //! Neither adapter interprets a call: arguments, results and errors pass
 //! through unchanged, and a value is only ever held in `SecretBytes`.
 //!
-//! [`open_remote`] is where a vault that `sourceorrery.toml` declares as
-//! remote (`[vaults.<name>]`, a [`RemoteVault`]) becomes a client: it picks
-//! the provider the table names and wraps it in [`Blocking`]. The remote
-//! providers themselves are separate crates built on [`AsyncSecretClient`]
-//! (see `docs/adr/0008-remote-providers.md`).
+//! [`open_connection`] is where a connection ([`ConnectionSettings`] and,
+//! when stored, its [`Credentials`]) becomes a client: it picks the provider
+//! the settings name and wraps it in [`Blocking`]. The remote providers
+//! themselves are separate crates built on [`AsyncSecretClient`] (see
+//! `docs/adr/0008-remote-providers.md`).
+//!
+//! [`Routed`] is a vault over every storage it uses (ADR 0009): a
+//! [`SecretClient`] over the local vault that sends each call to the vault
+//! file or to the connection that stores the secret, records what a
+//! provider did in the vault's log, and keeps the vault's catalog in step.
+//! It is dispatch only, like the adapters.
 
 #![forbid(unsafe_code)]
 
 mod blocking;
 mod local;
 mod remote;
+mod routed;
 
 pub use blocking::Blocking;
 pub use local::AsyncLocal;
-pub use remote::{Remote, not_built_in, open_remote};
-pub use sourceorrery_core::{AsyncSecretClient, Provider, RemoteVault, SecretClient};
+pub use remote::{Remote, not_built_in, open_connection};
+pub use routed::{ConnectionClient, MissingSecret, Opener, Routed};
+pub use sourceorrery_core::{
+    AsyncSecretClient, ConnectionSettings, Credentials, Provider, SecretClient,
+};
 
 #[cfg(test)]
 mod tests;

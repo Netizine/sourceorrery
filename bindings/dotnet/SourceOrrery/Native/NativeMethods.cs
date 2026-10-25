@@ -29,50 +29,50 @@ internal static unsafe partial class NativeMethods
     public static partial uint so_abi_version();
 
     [LibraryImport(LibraryName)]
-    public static partial byte* so_contract_version();
+    public static partial nint so_contract_version();
 
     [LibraryImport(LibraryName)]
     public static partial void so_bytes_free(SoBytes* bytes);
 
     [LibraryImport(LibraryName)]
-    public static partial byte* so_last_error_code();
+    public static partial nint so_last_error_code();
 
     [LibraryImport(LibraryName)]
-    public static partial byte* so_last_error_message();
+    public static partial nint so_last_error_message();
 
     [LibraryImport(LibraryName)]
-    public static partial byte* so_last_error_hint();
+    public static partial nint so_last_error_hint();
 
     [LibraryImport(LibraryName)]
     public static partial int so_reader_open(
         byte* name, nuint nameLen,
         byte* optionsJson, nuint optionsJsonLen,
-        byte* passphrase, nuint passphraseLen,
+        byte* recoveryKey, nuint recoveryKeyLen,
         nint* outHandle);
 
     [LibraryImport(LibraryName)]
     public static partial void so_reader_close(nint handle);
 
     [LibraryImport(LibraryName)]
-    public static partial int so_reader_descriptor(nint handle, SoBytes* outJson);
+    public static partial int so_reader_descriptor(ReaderHandle handle, SoBytes* outJson);
 
     [LibraryImport(LibraryName)]
     public static partial int so_reader_get(
-        nint handle,
+        ReaderHandle handle,
         byte* name, nuint nameLen,
         byte* version, nuint versionLen,
         SoBytes* outPropertiesJson, SoBytes* outValue);
 
     [LibraryImport(LibraryName)]
     public static partial int so_reader_properties(
-        nint handle,
+        ReaderHandle handle,
         byte* name, nuint nameLen,
         byte* version, nuint versionLen,
         SoBytes* outPropertiesJson);
 
     [LibraryImport(LibraryName)]
     public static partial int so_reader_resolve(
-        nint handle,
+        ReaderHandle handle,
         byte* reference, nuint referenceLen,
         SoBytes* outPropertiesJson, SoBytes* outValue);
 
@@ -80,7 +80,7 @@ internal static unsafe partial class NativeMethods
     public static partial int so_project_load(
         byte* manifestPath, nuint manifestPathLen,
         byte* optionsJson, nuint optionsJsonLen,
-        byte* passphrase, nuint passphraseLen,
+        byte* recoveryKey, nuint recoveryKeyLen,
         nint* outHandle);
 
     [LibraryImport(LibraryName)]

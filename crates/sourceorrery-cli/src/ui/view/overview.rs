@@ -1,6 +1,7 @@
 //! The Overview: the vault at a glance. Everything here comes from what the
 //! session already holds (the secret and deleted lists, the audit log, the
-//! chain verification, the protectors), so drawing it reads nothing.
+//! chain verification, the vault's keys, its view check, connections and
+//! project folders), so drawing it reads nothing.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -10,9 +11,9 @@ use ratatui::widgets::Paragraph;
 use sourceorrery_core::timestamp;
 use time::OffsetDateTime;
 
-use super::{long_time, rows, rule, short_time};
+use super::{deletion, long_time, rows, rule, short_time};
 use crate::output::sanitize;
-use crate::ui::session::{AUDIT_LIMIT, Session};
+use crate::ui::session::{AUDIT_LIMIT, ProjectStatus, Session};
 use crate::ui::stats::{self, Change};
 use crate::ui::theme::Theme;
 
@@ -27,6 +28,9 @@ const KEY_WIDTH: usize = 16;
 
 /// Width of the key column under the activity chart, whose keys are longer.
 const ACTIVITY_KEY_WIDTH: usize = 20;
+
+/// Width of the key column in the narrower panels of the bottom row.
+const NARROW_KEY_WIDTH: usize = 11;
 
 pub(super) fn draw(frame: &mut Frame<'_>, session: &Session, theme: &Theme, area: Rect) {
     let now = timestamp::now();
@@ -89,12 +93,43 @@ pub(super) fn draw(frame: &mut Frame<'_>, session: &Session, theme: &Theme, area
     );
     draw_activity(frame, session, theme, activity, now);
 
+    let [vault, _, check, _, storage, _, projects] = Layout::horizontal([
+        Constraint::Fill(4),
+        Constraint::Length(3),
+        Constraint::Fill(4),
+        Constraint::Length(3),
+        Constraint::Fill(7),
+        Constraint::Length(3),
+        Constraint::Fill(3),
+    ])
+    .areas(bottom);
     panel(
         frame,
         theme,
-        bottom,
+        vault,
         title("Vault", None, theme),
         vault_lines(session, theme),
+    );
+    panel(
+        frame,
+        theme,
+        check,
+        title("View check", None, theme),
+        check_lines(session, theme),
+    );
+    panel(
+        frame,
+        theme,
+        storage,
+        title("Storage", Some(1 + session.connections.len()), theme),
+        storage_lines(session, theme),
+    );
+    panel(
+        frame,
+        theme,
+        projects,
+        title("Projects", Some(session.projects.len()), theme),
+        project_lines(session, theme),
     );
 }
 
@@ -197,7 +232,43 @@ fn secret_lines(
             Span::styled(format!(" ({})", sanitize(&d.properties.name)), theme.muted),
         ]));
     }
+    lines.push(storage_counts(session, theme));
     lines
+}
+
+/// `vault 5 · HashiCorp Vault 2`: the live secrets by where they are kept.
+fn storage_counts(session: &Session, theme: &Theme) -> Line<'static> {
+    let at_connections = session
+        .secrets
+        .iter()
+        .filter(|p| session.storage.contains_key(&p.name))
+        .count();
+    let mut spans = vec![
+        Span::styled("kept in     ", theme.muted),
+        Span::raw(format!("vault {}", session.secrets.len() - at_connections)),
+    ];
+    for connection in &session.connections {
+        let n = session
+            .secrets
+            .iter()
+            .filter(|p| session.storage.get(&p.name) == Some(&connection.id))
+            .count();
+        spans.push(Span::styled(" · ", theme.muted));
+        spans.push(Span::raw(format!(
+            "{} {n}",
+            short_provider(connection.settings.provider())
+        )));
+    }
+    Line::from(spans)
+}
+
+/// A provider in a few letters, for a crowded line.
+pub(super) fn short_provider(provider: sourceorrery_core::Provider) -> &'static str {
+    match provider {
+        sourceorrery_core::Provider::HashicorpVault => "HashiCorp",
+        sourceorrery_core::Provider::AwsSecretsManager => "AWS",
+        sourceorrery_core::Provider::AzureKeyVault => "Azure",
+    }
 }
 
 fn expiry_lines(session: &Session, theme: &Theme, now: OffsetDateTime) -> Vec<Line<'static>> {
@@ -442,15 +513,20 @@ fn draw_activity(
     frame.render_widget(Paragraph::new(lines), rows(area, 2, area.height));
 }
 
+fn narrow(key: &str, value: Vec<Span<'static>>, theme: &Theme) -> Line<'static> {
+    field_in(NARROW_KEY_WIDTH, key, value, theme)
+}
+
+/// `2026-10-21`.
+fn date(at: OffsetDateTime) -> String {
+    short_time(at).chars().take(10).collect()
+}
+
 fn vault_lines(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
     let vault = &session.vault;
     let mut lines = vec![
-        field(
-            "created",
-            vec![Span::raw(long_time(vault.created_on))],
-            theme,
-        ),
-        field(
+        narrow("created", vec![Span::raw(date(vault.created_on))], theme),
+        narrow(
             "file",
             vec![Span::raw(
                 vault
@@ -461,23 +537,189 @@ fn vault_lines(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
             )],
             theme,
         ),
+        narrow("deleting", vec![Span::raw(deletion(session))], theme),
     ];
-    for p in session.protectors().unwrap_or_default() {
-        lines.push(field(
-            "protector",
-            vec![
-                Span::raw(sanitize(&p.label).into_owned()),
-                Span::styled(
-                    format!(
-                        "  {} · added {}",
-                        sanitize(&p.kind),
-                        short_time(p.created_on)
-                    ),
-                    theme.muted,
-                ),
-            ],
+    for key in session.keys().unwrap_or_default() {
+        let opens = match key.kind.as_str() {
+            "this-machine" => "this machine".to_owned(),
+            "recovery" => "recovery key".to_owned(),
+            other => sanitize(other).into_owned(),
+        };
+        lines.push(narrow("opens with", vec![Span::raw(opens)], theme));
+    }
+    lines
+}
+
+fn check_lines(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
+    if session.is_blocked() {
+        return unread(theme);
+    }
+    let view = &session.view;
+    let check =
+        |key: &str, value: Vec<Span<'static>>, theme: &Theme| field_in(10, key, value, theme);
+    let yes_no = |on: bool, yes: &str| {
+        if on {
+            Span::raw(yes.to_owned())
+        } else {
+            Span::styled("none", theme.muted)
+        }
+    };
+    let mut lines = vec![
+        check("password", vec![yes_no(view.check.password, "set")], theme),
+        check(
+            "hint",
+            vec![yes_no(view.check.password && view.hint, "set")],
+            theme,
+        ),
+        check(
+            "code",
+            vec![match &view.authenticator {
+                Some(a) if a.verified => Span::raw("app, verified"),
+                Some(_) => Span::styled("not verified", theme.caution),
+                None => Span::styled("none", theme.muted),
+            }],
+            theme,
+        ),
+    ];
+    if let Some(key) = session
+        .keys()
+        .unwrap_or_default()
+        .iter()
+        .find(|k| k.kind == "recovery")
+    {
+        lines.push(check(
+            "recovery",
+            vec![Span::raw(date(key.created_on))],
             theme,
         ));
     }
+    lines.push(Line::from(vec![
+        Span::styled("c", theme.key),
+        Span::styled(" changes it", theme.muted),
+    ]));
+    lines
+}
+
+fn storage_lines(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
+    if session.is_blocked() {
+        return unread(theme);
+    }
+    let count = |id: Option<&str>| {
+        session
+            .secrets
+            .iter()
+            .filter(|p| session.storage.get(&p.name).map(String::as_str) == id)
+            .count()
+    };
+    let secrets = |n: usize| {
+        if n == 1 {
+            "1 secret".to_owned()
+        } else {
+            format!("{n} secrets")
+        }
+    };
+    let mut lines = vec![narrow(
+        "vault",
+        vec![Span::raw(format!("the file · {}", secrets(count(None))))],
+        theme,
+    )];
+    for c in &session.connections {
+        let provider = c.settings.provider();
+        let target = match &c.settings {
+            sourceorrery_core::ConnectionSettings::HashicorpVault { address, .. } => address,
+            sourceorrery_core::ConnectionSettings::AwsSecretsManager { region, .. } => region,
+            sourceorrery_core::ConnectionSettings::AzureKeyVault { vault_url } => vault_url,
+        };
+        let unreachable = session.unreachable.iter().find(|u| u.connection == c.id);
+        let test = match (&c.last_test, unreachable) {
+            (_, Some(u)) => Span::styled(format!("unreachable ({})", u.code), theme.error.bar),
+            (Some(t), None) if t.outcome == "ok" => Span::styled(
+                format!("tested {}", date(t.tested_on)),
+                theme.status("enabled"),
+            ),
+            (Some(t), None) => Span::styled(
+                format!("test failed: {}", sanitize(&t.outcome)),
+                theme.caution,
+            ),
+            (None, None) => Span::styled("untested", theme.muted),
+        };
+        let signs_in = match c.credentials {
+            sourceorrery_storage::CredentialSource::Stored => "stored",
+            sourceorrery_storage::CredentialSource::Ambient => "sign-in",
+        };
+        lines.push(narrow(
+            short_provider(provider),
+            vec![
+                Span::raw(format!(
+                    "{} · {signs_in} · ",
+                    secrets(count(Some(c.id.as_str())))
+                )),
+                test,
+            ],
+            theme,
+        ));
+        lines.push(narrow(
+            "",
+            vec![Span::styled(sanitize(target).into_owned(), theme.muted)],
+            theme,
+        ));
+    }
+    lines
+}
+
+fn project_lines(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
+    if session.is_blocked() {
+        return unread(theme);
+    }
+    if session.projects.is_empty() {
+        return vec![
+            Line::from(Span::styled("none yet: run", theme.muted)),
+            Line::from(vec![
+                Span::styled("sourceorrery init", theme.code),
+                Span::styled(" in a folder", theme.muted),
+            ]),
+        ];
+    }
+    let missing = session
+        .projects
+        .iter()
+        .filter(|p| p.status == ProjectStatus::Missing)
+        .count();
+    let unreadable = session
+        .projects
+        .iter()
+        .filter(|p| matches!(p.status, ProjectStatus::Unreadable(_)))
+        .count();
+    let found = session.projects.len() - missing - unreadable;
+    let mut lines = vec![
+        narrow(
+            "found",
+            vec![Span::styled(format!("✓ {found}"), theme.status("enabled"))],
+            theme,
+        ),
+        narrow(
+            "missing",
+            vec![Span::styled(
+                format!("✗ {missing}"),
+                if missing > 0 {
+                    theme.error.bar
+                } else {
+                    theme.muted
+                },
+            )],
+            theme,
+        ),
+    ];
+    if unreadable > 0 {
+        lines.push(narrow(
+            "unreadable",
+            vec![Span::styled(unreadable.to_string(), theme.caution)],
+            theme,
+        ));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("3", theme.key),
+        Span::styled(" lists them", theme.muted),
+    ]));
     lines
 }

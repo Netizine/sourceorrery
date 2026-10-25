@@ -75,8 +75,8 @@ int main(void) {
     so_reader *reader = NULL;
     so_bytes properties = {NULL, 0}, value = {NULL, 0};
 
-    /* NULL options: SOURCEORRERY_HOME, the OS credential store, then
-       SOURCEORRERY_PASSPHRASE and SOURCEORRERY_PASSPHRASE_FILE. */
+    /* NULL options: SOURCEORRERY_HOME, this machine's key in the OS credential
+       store, then SOURCEORRERY_RECOVERY_KEY and SOURCEORRERY_RECOVERY_KEY_FILE. */
     if (so_reader_open((const uint8_t *)vault, strlen(vault), NULL, 0, NULL, 0, &reader) != SO_STATUS_OK) {
         fprintf(stderr, "[%s] %s\n  %s\n", so_last_error_code(), so_last_error_message(), so_last_error_hint());
         return 1;
@@ -99,13 +99,13 @@ int main(void) {
 
 | Function | Does |
 |----------|------|
-| `so_reader_open(name, options_json, passphrase, &reader)` | opens a vault. `options_json` (nullable) is `{"home": "...", "passphrase_file": "...", "environment": true}`; `passphrase` (nullable) is tried after the OS credential store and before the environment. |
+| `so_reader_open(name, options_json, recovery_key, &reader)` | opens a vault. `options_json` (nullable) is `{"home": "...", "recovery_key_file": "...", "environment": true}`; `recovery_key` (nullable) is tried after this machine's key in the OS credential store and before the environment. Never a prompt, never the vault's view check; a secret a connection of the vault stores is read at that provider. |
 | `so_reader_get(reader, name, version, &properties_json, &value)` | the newest accessible version (`version` NULL) or exactly `version` |
 | `so_reader_properties(reader, name, version, &properties_json)` | metadata only, policy not applied |
 | `so_reader_resolve(reader, reference, &properties_json, &value)` | `sourceorrery://vault/name[/version]` |
 | `so_reader_descriptor(reader, &json)` | vault descriptor (no values) |
 | `so_reader_close(reader)` | zeroises the vault key |
-| `so_project_load(manifest_path, options_json, passphrase, &project)`, `so_project_count`, `so_project_info`, `so_project_entry(project, i, &entry_json, &value)`, `so_project_free` | the secrets a `sourceorrery.toml` declares, like `sourceorrery run` |
+| `so_project_load(manifest_path, options_json, recovery_key, &project)`, `so_project_count`, `so_project_info`, `so_project_entry(project, i, &entry_json, &value)`, `so_project_free` | the secrets a `sourceorrery.toml` declares, like `sourceorrery run` |
 | `so_last_error_code()`, `so_last_error_message()`, `so_last_error_hint()` | per-thread error state after `SO_STATUS_ERROR`; the hint says what to do |
 | `so_bytes_free(&bytes)` | zeroise and free any output buffer; NULL-safe and idempotent |
 
@@ -139,8 +139,8 @@ The libraries land in `target/release` and the header is
 `crates/sourceorrery-ffi/include/sourceorrery.h`: use those two
 directories where the install steps above use the unpacked archive's
 directory and its `include/`. `cargo build --release -p sourceorrery-ffi
---no-default-features` leaves out the OS credential store, for hosts that
-only use passphrases. CI checks that the committed header is exactly what
+--no-default-features` leaves out the OS credential store and the
+providers, for hosts that open vaults with their recovery keys only. CI checks that the committed header is exactly what
 cbindgen generates from the source.
 
 `crates/sourceorrery-ffi/examples/get_secret.c` is the complete example

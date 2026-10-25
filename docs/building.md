@@ -73,17 +73,17 @@ Each SDK needs its own toolchain on top:
 
 ## Get the code
 
-Until 0.2.0 is published, build `main`. After publication, use
-`git checkout v0.2.0` in place of `git checkout main` for the release source.
+Check out the `v0.2.0` tag to build the published release source.
+Use `main` when contributing changes toward the next release.
 
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout main
+git checkout v0.2.0
 ```
 
 A build from source carries the version committed in the repository;
-the current `main` branch is stamped **0.2.0**. To set the version for a
+the `v0.2.0` release tag is stamped **0.2.0**. To set the version for a
 local build, use Python 3.11 or newer:
 
 ```bash
@@ -123,8 +123,8 @@ cargo install --locked --path crates/sourceorrery-cli
 
 | Crate | Default features | Without them |
 |-------|------------------|--------------|
-| `sourceorrery-cli` | `os-keyring`, `ui` | `--no-default-features`: passphrase protectors only and no `sourceorrery ui`; add `--features ui` to keep the browser |
-| `sourceorrery-ffi`, `sourceorrery` | `os-keyring` | `--no-default-features`: passphrase protectors only |
+| `sourceorrery-cli` | `os-keyring`, `ui`, `remote`, `otlp` | `--no-default-features`: vaults open with their recovery keys only, no screens (`ui`, `setup`'s and `init`'s), no providers and no OTLP export; add `--features ui` to keep the screens |
+| `sourceorrery-ffi`, `sourceorrery` | `os-keyring`, `remote` | `--no-default-features`: vaults open with their recovery keys only, and no providers |
 
 A build without `os-keyring` needs no D-Bus headers on Linux and suits
 servers and containers, which have no credential store
@@ -140,16 +140,17 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-The tests use passphrase vaults in temporary directories; they never touch
-your credential store or your own vaults.
+The tests open vaults in temporary directories with their recovery keys
+(or an in-memory credential store); they never touch your credential store
+or your own vaults.
 
 ### The OS-keyring path
 
 `scripts/dev/keyring-smoke.sh` (macOS, Linux) and
-`scripts/dev/keyring-smoke.ps1` (Windows) exercise the OS-keyring
-protector against this machine's credential store, in an isolated home:
-create, read, add and remove protectors, destroy with and without
-`--keep-os-key`, with the store inspected after each step. They print PASS
+`scripts/dev/keyring-smoke.ps1` (Windows) exercise this machine's key in
+its credential store, in an isolated home: create a vault, read through
+the store, open it elsewhere with the recovery key, destroy with and
+without `--keep-os-key`, with the store inspected after each step. They print PASS
 or FAIL per check and never a value; exit 2 means the store is not
 available in this session (no desktop, no session bus). CI runs them
 headlessly on all three platforms (the `keyring` job); run one by hand in a
@@ -175,7 +176,7 @@ eval "$(bash scripts/ci/fixture-vault.sh)"
 ```
 
 `scripts/ci/fixture-vault.sh` creates a throwaway home directory with a
-vault named `ci`, protected by a fixed test passphrase, holding a secret in
+vault named `ci` that opens with its recovery key, holding a secret in
 every state the tests check: two versions of `database-password`, a
 disabled newest version, an expired, a not-yet-valid and a deleted secret.
 It prints `export` lines, which `eval` applies to the current shell only:
@@ -183,15 +184,16 @@ It prints `export` lines, which `eval` applies to the current shell only:
 | Variable | Value |
 |----------|-------|
 | `SOURCEORRERY_HOME` | the throwaway home directory |
-| `SOURCEORRERY_PASSPHRASE` | the test passphrase |
+| `SOURCEORRERY_RECOVERY_KEY` | the vault's recovery key |
 | `SOURCEORRERY_TEST_VAULT` | `ci` |
 | `SOURCEORRERY_TEST_MANIFEST` | a `sourceorrery.toml` that names the `ci` vault |
 | `SOURCEORRERY_TEST_OLD_VERSION` | the oldest version of `database-password` |
 | `SOURCEORRERY_NATIVE_DIR` | `target/release`, where the C ABI library is |
 | `SOURCEORRERY_CLI` | the CLI that created the vault |
+| `SOURCEORRERY_TEST_REMOTE_MANIFEST` | given one provider's `vault create` flags after the home, a manifest naming secrets kept at that provider through the vault's connection (the provider jobs) |
 
 Run each SDK's tests from that shell. Never put real secrets in this vault:
-its passphrase is in the repository.
+its recovery key is in that shell's environment and the job's log.
 
 ### Each SDK
 

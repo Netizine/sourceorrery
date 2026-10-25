@@ -21,10 +21,9 @@ class Reader:
         self,
         vault: str,
         home: str | None = None,
-        passphrase: bytes | None = None,
-        passphrase_file: str | None = None,
+        recovery_key: bytes | None = None,
+        recovery_key_file: str | None = None,
         environment: bool = True,
-        manifest: str | None = None,
     ) -> None: ...
     @property
     def vault_name(self) -> str: ...
@@ -41,8 +40,8 @@ class Reader:
 def load_project(
     manifest: str | None = None,
     home: str | None = None,
-    passphrase: bytes | None = None,
-    passphrase_file: str | None = None,
+    recovery_key: bytes | None = None,
+    recovery_key_file: str | None = None,
     environment: bool = True,
 ) -> tuple[str, list[tuple[str, SecretValue]]]: ...
 def contract_version() -> str: ...

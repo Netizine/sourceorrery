@@ -6,6 +6,111 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+**Breaking: vaults from earlier releases are not read.** A vault file of
+schema 1, 2 or 3 is refused with `migration_required`, never rewritten:
+recreate it with `sourceorrery setup` and set its secrets again (ADR 0009).
+How a vault opens, what it asks and where it keeps secrets change
+together, so the CLI, the Rust API, the C ABI's open options and every
+SDK's open options change with them (ADR 0007: a minor release;
+`SO_ABI_VERSION` is 2 and `CONTRACT_VERSION` `"2"`, so an SDK refuses a
+native library of an earlier release).
+
+### Changed
+
+* **Keys.** A vault's key is kept twice: as this machine's key in the OS
+  credential store, managed for you, and under one **recovery key** (125
+  bits), shown once when the vault is made. It opens the vault anywhere
+  else (WSL, a container, CI, another machine, an exported copy):
+  `SOURCEORRERY_RECOVERY_KEY`, `--recovery-key-file` /
+  `SOURCEORRERY_RECOVERY_KEY_FILE`, or a prompt. Passphrase protectors,
+  recovery codes, `SOURCEORRERY_PASSPHRASE` and `--passphrase-file` are
+  gone. The SDKs take `recovery_key` and `recovery_key_file` options (C:
+  `so_reader_open(name, options_json, recovery_key, ..)` with
+  `{"home", "recovery_key_file", "environment"}`) and never prompt.
+* **The view check** replaces the reveal guard and the second factor: an
+  optional password (Argon2id, with a hint) and an authenticator app's
+  code on top, asked before a person views the vault or reveals a value
+  (`ui`, `secret list`, `secret get`, `secret versions`, `audit`). It is a
+  check, not encryption: `run`, `check`, `init` and every SDK never ask
+  it. `SOURCEORRERY_PASSWORD`, `--password-file` and `--code` /
+  `SOURCEORRERY_TOTP` answer it; a refusal is `permission_denied`, and
+  repeated wrong answers wait longer each time. Its records are part of
+  the vault's settings, which the audit chain checkpoints like a secret's
+  rows, so a vault whose settings were replaced by an older copy (to
+  switch the check off, say) refuses to open.
+* **Storage per secret.** A vault keeps each secret in its own file or at
+  HashiCorp Vault, AWS Secrets Manager or Azure Key Vault through a
+  connection it holds (settings, and credentials sealed under the vault
+  key). `secret set` and `import` take `--storage`; every other command
+  and the SDKs find the secret where it is. `[vaults.<name>]` manifest
+  tables and the per-secret `vault` override are refused with a message
+  saying where that moved; a manifest names a vault and its secrets only.
+* **Setup on screens.** `sourceorrery setup` (and `vault create NAME`, or
+  `c` in the browser, for an existing vault) walks through the name, the
+  recovery key, the view check and the storage, testing each connection,
+  and commits everything in one transaction at the review.
+  `vault create NAME` with flags does the same without a terminal
+  (`--recovery-key-out`, `--password-file`, `--no-keyring`, one flag set
+  per provider), and `setup --guide` prints that command.
+* **`init`** writes or extends `sourceorrery.toml` from the vault's
+  catalog: on a terminal, screens to tick secrets (with **All**) and add
+  new ones, stored in the vault as they are added; without one,
+  `--all` or `--secret NAME`. An existing manifest is edited in place. The
+  vault records the project's folder and each secret's description.
+* **The browser** (`ui`) shows where each secret is kept, the vault's
+  projects (found or missing, `x` forgets one), the view check and the
+  connections, adds secrets at a chosen storage (`a`), and opens the setup
+  screens (`c`, `n`).
+* **Export and import** replace backup and restore: `vault export --out
+  FILE` writes a copy that opens with the recovery key only, and
+  `vault import FILE` brings it onto a machine, verified, with this
+  machine's key added.
+* Removed commands: `vault protector`, `vault passphrase`, `vault 2fa`,
+  `vault recovery`, `vault guard`, `vault info` (folded into `vault list`
+  and the browser's Overview), `vault migrate`, `backup` and `restore`.
+
+### Added
+
+* Azure Key Vault provider (crate `sourceorrery-provider-azure`, feature
+  `provider-azure`, part of `remote` and on by default), reached through a
+  vault's connection (`vault create --azure-key-vault URL`). It signs in
+  with a service principal the connection stores, or the first identity
+  the environment provides: a service principal, workload identity
+  federation, the Azure CLI or Azure Developer CLI, or a managed identity.
+  Properties belong to one version, as in the contract, so rotation works;
+  a version's time window can be replaced but not removed
+  (`docs/providers/azure-key-vault.md`).
+* `Capability::ClearableTimeWindow`: whether `update_secret_properties` can
+  remove a version's `not_before` and `expires_on`. The local vault,
+  HashiCorp Vault and AWS Secrets Manager report it; Azure Key Vault does
+  not, and refuses the removal with `unsupported`.
+
+### Changed
+
+* The HashiCorp Vault provider and `audit export --format otlp` verify a
+  server's certificate against the operating system's certificate store
+  instead of a bundled copy of Mozilla's, as the Azure provider does
+  (`VAULT_CACERT` is trusted in addition). All three providers now share
+  one HTTP client (`reqwest` 0.13) rather than carrying two versions. A
+  refused certificate's reason is in the Vault provider's error, and the
+  CLI no longer prints the TLS verifier's own report of it at the default
+  verbosity.
+
+### Fixed
+
+* HashiCorp Vault: an update made on a machine whose clock trails the Vault
+  server's no longer reports an `updated_on` earlier than the version's
+  `created_on`.
+
+* .NET SDK: `SecretReader.Dispose` waits for a call already running on
+  another thread instead of closing the native reader under it, and a
+  reader or value that becomes unreachable during a call can no longer be
+  freed by its finalizer mid-call. A recovery key is cleared when opening
+  or loading fails, and a value is zeroised if building its result fails.
+* Java SDK: the native library is extracted into a new directory that only
+  the current user can access on Linux and macOS, never over an existing
+  file, and the directory is removed at exit instead of being left behind.
+
 ## [0.2.0] - 2026-10-23
 
 This is a minor release because the Rust API changes: `Manifest` gains

@@ -1,6 +1,8 @@
 //! Smoke test of the C ABI from Rust: the exported `extern "C"` functions are
 //! called exactly as a C or P/Invoke caller would call them.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::ffi::CStr;
 use std::ptr;
 
@@ -13,10 +15,11 @@ use sourceorrery_ffi::{
     so_status, so_vault, so_vault_close, so_vault_create, so_vault_descriptor, so_vault_open,
 };
 
-const PASSPHRASE: &[u8] = b"smoke-test-passphrase";
+const WRONG_KEY: &[u8] = b"AAAAA-AAAAA-AAAAA-AAAAA-AAAAA";
 const CANARY: &str = "CANARY-7f3a9c2e-plaintext-must-never-appear";
-/// Cheap Argon2id parameters (`Argon2Params::TESTING`); never for real vaults.
-const TEST_OPTIONS: &str = r#"{"argon2":{"memory_kib":8192,"iterations":1,"parallelism":1}}"#;
+/// No key for this machine: a test never touches the real OS credential
+/// store, and its vaults open with their recovery keys.
+const TEST_OPTIONS: &str = r#"{"this_machine":false}"#;
 
 struct Arg(*const u8, usize);
 
@@ -69,12 +72,14 @@ fn take_json<T: serde::de::DeserializeOwned>(bytes: &mut so_bytes) -> T {
 
 struct Home {
     dir: tempfile::TempDir,
+    keys: RefCell<BTreeMap<String, Vec<u8>>>,
 }
 
 impl Home {
     fn new() -> Self {
         Self {
             dir: tempfile::tempdir().expect("temp dir"),
+            keys: RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -86,45 +91,56 @@ impl Home {
             .to_owned()
     }
 
-    fn create(
-        &self,
-        name: &str,
-        passphrase: &[u8],
-        options: &str,
-    ) -> Result<*mut so_vault, String> {
+    /// Create a vault, remembering the recovery key it returns.
+    fn create(&self, name: &str, options: &str) -> Result<*mut so_vault, String> {
         let home = self.path();
         let home = arg(&home);
-        let name = arg(name);
+        let name_arg = arg(name);
         let options = arg(options);
+        let mut key = so_bytes {
+            ptr: ptr::null_mut(),
+            len: 0,
+        };
         let mut handle: *mut so_vault = ptr::null_mut();
         // SAFETY: every pointer is backed by a live Rust value for the call.
         let status = unsafe {
             so_vault_create(
                 home.0,
                 home.1,
-                name.0,
-                name.1,
+                name_arg.0,
+                name_arg.1,
                 options.0,
                 options.1,
-                passphrase.as_ptr(),
-                passphrase.len(),
+                &raw mut key,
                 &raw mut handle,
             )
         };
         if status == so_status::SO_STATUS_OK {
             assert!(!handle.is_null());
+            let key = take(&mut key);
+            assert_eq!(key.len(), 29, "five groups of five and four hyphens");
+            self.keys.borrow_mut().insert(name.to_owned(), key);
             Ok(handle)
         } else {
             assert!(handle.is_null(), "out_handle must be NULL on failure");
+            assert!(
+                key.ptr.is_null(),
+                "out_recovery_key must be empty on failure"
+            );
             Err(last_code().expect("error code"))
         }
     }
 
-    fn open(&self, name: &str, passphrase: Option<&[u8]>) -> Result<*mut so_vault, String> {
+    /// The recovery key of a vault this home created.
+    fn key(&self, name: &str) -> Vec<u8> {
+        self.keys.borrow()[name].clone()
+    }
+
+    fn open(&self, name: &str, recovery_key: Option<&[u8]>) -> Result<*mut so_vault, String> {
         let home = self.path();
         let home = arg(&home);
         let name = arg(name);
-        let (pass_ptr, pass_len) = passphrase.map_or((ptr::null(), 0), |p| (p.as_ptr(), p.len()));
+        let (key_ptr, key_len) = recovery_key.map_or((ptr::null(), 0), |k| (k.as_ptr(), k.len()));
         let mut handle: *mut so_vault = ptr::null_mut();
         // SAFETY: every pointer is backed by a live Rust value for the call.
         let status = unsafe {
@@ -133,8 +149,8 @@ impl Home {
                 home.1,
                 name.0,
                 name.1,
-                pass_ptr,
-                pass_len,
+                key_ptr,
+                key_len,
                 &raw mut handle,
             )
         };
@@ -310,7 +326,7 @@ fn audit(handle: *const so_vault, query: &str) -> Result<Vec<AuditEvent>, String
 
 #[test]
 fn versions_are_reported() {
-    assert_eq!(so_abi_version(), 1);
+    assert_eq!(so_abi_version(), 2);
     let version = so_contract_version();
     assert!(!version.is_null());
     // SAFETY: so_contract_version returns a static NUL-terminated string.
@@ -321,7 +337,7 @@ fn versions_are_reported() {
 #[test]
 fn create_set_get_and_reopen() {
     let home = Home::new();
-    let vault = home.create("dev", PASSPHRASE, TEST_OPTIONS).unwrap();
+    let vault = home.create("dev", TEST_OPTIONS).unwrap();
 
     let v1 = set(vault, "db-password", b"one", "").unwrap();
     let v2 = set(
@@ -365,11 +381,11 @@ fn create_set_get_and_reopen() {
     let descriptor: serde_json::Value = take_json(&mut descriptor);
     assert_eq!(descriptor["name"], "dev");
     assert_eq!(descriptor["backend"], "encrypted-sqlite");
-    assert_eq!(descriptor["protectors"][0], "passphrase");
+    assert_eq!(descriptor["protectors"][0], "recovery");
 
     close(vault);
 
-    let reopened = home.open("dev", Some(PASSPHRASE)).unwrap();
+    let reopened = home.open("dev", Some(&home.key("dev"))).unwrap();
     let (_, value) = get(reopened, "db-password", None).unwrap();
     assert_eq!(value, b"two");
     close(reopened);
@@ -378,7 +394,7 @@ fn create_set_get_and_reopen() {
 #[test]
 fn policy_update_delete_recover_purge() {
     let home = Home::new();
-    let vault = home.create("dev", PASSPHRASE, TEST_OPTIONS).unwrap();
+    let vault = home.create("dev", TEST_OPTIONS).unwrap();
     let v1 = set(vault, "api-key", b"old", "").unwrap();
     let v2 = set(vault, "api-key", b"new", "").unwrap();
 
@@ -492,7 +508,7 @@ fn policy_update_delete_recover_purge() {
 #[test]
 fn errors_cross_the_boundary_with_their_codes() {
     let home = Home::new();
-    let vault = home.create("dev", PASSPHRASE, TEST_OPTIONS).unwrap();
+    let vault = home.create("dev", TEST_OPTIONS).unwrap();
 
     assert_eq!(get(vault, "missing", None).unwrap_err(), "not_found");
     assert!(last_message().contains("missing"));
@@ -567,39 +583,32 @@ fn errors_cross_the_boundary_with_their_codes() {
 #[test]
 fn vault_errors_and_failed_unlocks() {
     let home = Home::new();
-    let vault = home.create("dev", PASSPHRASE, TEST_OPTIONS).unwrap();
+    let vault = home.create("dev", TEST_OPTIONS).unwrap();
     assert_eq!(
-        home.create("dev", PASSPHRASE, TEST_OPTIONS).unwrap_err(),
+        home.create("dev", TEST_OPTIONS).unwrap_err(),
         "vault_exists"
     );
     assert_eq!(
-        home.create("Bad Name", PASSPHRASE, TEST_OPTIONS)
-            .unwrap_err(),
+        home.create("Bad Name", TEST_OPTIONS).unwrap_err(),
         "invalid_name"
     );
     assert_eq!(
-        home.create("short", PASSPHRASE, r#"{"retention_days":3}"#)
-            .unwrap_err(),
+        home.create("short", r#"{"retention_days":3}"#).unwrap_err(),
         "invalid_argument"
     );
     assert_eq!(
-        home.create("typo", PASSPHRASE, r#"{"retentionDays":30}"#)
-            .unwrap_err(),
+        home.create("typo", r#"{"retentionDays":30}"#).unwrap_err(),
         "invalid_argument"
     );
     assert_eq!(
-        home.create("empty-pass", b"", TEST_OPTIONS).unwrap_err(),
-        "invalid_argument"
-    );
-    assert_eq!(
-        home.open("nope", Some(PASSPHRASE)).unwrap_err(),
+        home.open("nope", Some(&home.key("dev"))).unwrap_err(),
         "vault_not_found"
     );
-    assert_eq!(home.open("dev", Some(b"wrong")).unwrap_err(), "locked");
+    assert_eq!(home.open("dev", Some(WRONG_KEY)).unwrap_err(), "locked");
     assert_eq!(
         home.open("dev", None).unwrap_err(),
         "locked",
-        "no keyring protector, no passphrase"
+        "no key for this machine, no recovery key"
     );
 
     // Failed unlocks are audited, and the audit filter works.
@@ -624,7 +633,7 @@ fn vault_errors_and_failed_unlocks() {
 #[test]
 fn values_never_appear_in_metadata_errors_or_audit() {
     let home = Home::new();
-    let vault = home.create("dev", PASSPHRASE, TEST_OPTIONS).unwrap();
+    let vault = home.create("dev", TEST_OPTIONS).unwrap();
     let props = set(vault, "canary", CANARY.as_bytes(), "").unwrap();
     let props_json = serde_json::to_string(&props).unwrap();
     assert!(!props_json.contains(CANARY));
@@ -642,7 +651,8 @@ fn values_never_appear_in_metadata_errors_or_audit() {
     let events = audit(vault, "").unwrap();
     let dump = serde_json::to_string(&events).unwrap();
     assert!(!dump.contains(CANARY));
-    assert!(!dump.contains(std::str::from_utf8(PASSPHRASE).unwrap()));
+    let key = home.key("dev");
+    assert!(!dump.contains(std::str::from_utf8(&key).unwrap()));
     assert!(
         events
             .iter()
@@ -655,7 +665,7 @@ fn values_never_appear_in_metadata_errors_or_audit() {
 #[test]
 fn handle_is_shared_between_threads() {
     let home = Home::new();
-    let vault = home.create("dev", PASSPHRASE, TEST_OPTIONS).unwrap();
+    let vault = home.create("dev", TEST_OPTIONS).unwrap();
     set(vault, "shared", b"value", "").unwrap();
     let address = vault as usize;
     let workers: Vec<_> = (0..4)
@@ -711,7 +721,7 @@ fn uninitialised_output_slots_are_initialised_on_failure() {
     let home = Home::new();
     let home_path = home.path();
     let home_arg = arg(&home_path);
-    let name = arg("no_such_vault"); // an invalid name fails before any I/O
+    let name = arg("no such vault"); // an invalid name fails before any I/O
     let mut handle = std::mem::MaybeUninit::<*mut so_vault>::uninit();
     // SAFETY: as above.
     let status = unsafe {

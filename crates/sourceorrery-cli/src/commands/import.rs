@@ -20,7 +20,10 @@ use sourceorrery_core::{
 };
 use zeroize::Zeroizing;
 
+use sourceorrery_storage::SecretStorage;
+
 use crate::cli::ImportArgs;
+use crate::commands::connections;
 use crate::commands::project::MANIFEST_HEADER;
 use crate::context::{Ctx, Opened};
 use crate::dotenv::{self, Assignment};
@@ -89,8 +92,20 @@ pub fn run(ctx: &Ctx, args: &ImportArgs) -> anyhow::Result<()> {
     } else {
         open_vault(ctx, &vault_name, args.dry_run)?
     };
+    let storage = match (&vault, &args.storage) {
+        (Some(vault), Some(value)) => Some(connections::storage(vault.vault(), value)?),
+        _ => None,
+    };
     for (row, assignment) in rows.iter_mut().zip(&selected) {
-        store(row, assignment, vault.as_ref(), args, &vault_name, &source);
+        store(
+            row,
+            assignment,
+            vault.as_ref(),
+            storage.as_ref(),
+            args,
+            &vault_name,
+            &source,
+        );
     }
 
     let mut manifest_written = None;
@@ -311,6 +326,7 @@ fn store(
     row: &mut Row,
     assignment: &Assignment,
     vault: Option<&Opened>,
+    storage: Option<&SecretStorage>,
     args: &ImportArgs,
     vault_name: &str,
     source: &str,
@@ -360,7 +376,11 @@ fn store(
         tags: BTreeMap::from([("imported-from".to_owned(), source.to_owned())]),
         ..SetSecretOptions::default()
     };
-    match vault.set_secret(&secret, assignment.value.clone(), options) {
+    let stored = match storage {
+        Some(storage) => vault.set_secret_in(storage, &secret, assignment.value.clone(), options),
+        None => vault.set_secret(&secret, assignment.value.clone(), options),
+    };
+    match stored {
         Ok(_) => row.vault = Cow::Borrowed("stored"),
         Err(err) => {
             row.vault = Cow::Borrowed(err.code());

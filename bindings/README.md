@@ -68,20 +68,19 @@ in `bindings/go`). Never edit it by hand.
 
   ```json
   // so_reader_open / so_project_load options_json (every field optional)
-  {"home": "/path/to/home", "passphrase_file": "/run/secrets/vault", "environment": true,
-   "manifest": "/path/to/sourceorrery.toml"}
+  {"home": "/path/to/home", "recovery_key_file": "/run/secrets/vault", "environment": true}
 
   // so_vault_create options_json (every field optional)
-  {"recovery_level": "recoverable", "retention_days": 90,
-   "argon2": {"memory_kib": 65536, "iterations": 3, "parallelism": 1}}
+  {"recovery_level": "recoverable", "retention_days": 90, "this_machine": true}
 
   // so_audit_events query_json (every field optional)
   {"secret_name": "db-password", "operation": "secret_get",
    "since": "2026-10-20T00:00:00Z", "limit": 100}
   ```
 
-  `argon2` tunes the passphrase protector's key derivation. Leave it unset
-  outside tests; the defaults are the interactive parameters.
+  `this_machine` (default `true`) keeps a key for this machine in the OS
+  credential store; `false`, or a machine without one, leaves the vault
+  opening with its recovery key only.
 * **Errors**: every fallible call returns `so_status` (`SO_STATUS_OK = 0`,
   `SO_STATUS_ERROR = 1`, `SO_STATUS_PANIC = 2`). On failure the stable code
   (`SecretError::code()`: `not_found`, `version_not_found`, `deleted`,
@@ -119,13 +118,13 @@ in `bindings/go`). Never edit it by hand.
 
 | C function | Client method | Notes |
 |------------|---------------|-------|
-| `so_reader_open(name, options_json, passphrase, out_reader)` | `SecretReader::open_with` | OS credential store, then `passphrase`, then `SOURCEORRERY_PASSPHRASE`, then the passphrase file; never a prompt. A vault that `manifest` (default: the nearest `sourceorrery.toml`) declares in `[vaults.<name>]` is opened at its remote provider instead |
+| `so_reader_open(name, options_json, recovery_key, out_reader)` | `SecretReader::open_with` | this machine's key in the OS credential store, then `recovery_key`, then `SOURCEORRERY_RECOVERY_KEY`, then the recovery-key file; never a prompt, never the view check. A secret one of the vault's connections stores is read at that provider |
 | `so_reader_close(reader)` | drop | zeroises the vault key |
-| `so_reader_descriptor(reader, out_json)` | `descriptor` | name, id, path, protectors |
+| `so_reader_descriptor(reader, out_json)` | `descriptor` | name, id, path, the kinds of key that open it (`protectors`) |
 | `so_reader_get(reader, name, version?, out_props, out_value)` | `get` / `get_version` | `NULL` version → newest accessible |
 | `so_reader_properties(reader, name, version?, out_props)` | `properties` | no policy |
 | `so_reader_resolve(reader, reference, out_props, out_value)` | `resolve` | reference must name the reader's vault |
-| `so_project_load(manifest_path?, options_json, passphrase, out_project)` | `Project::load` | like `sourceorrery run` |
+| `so_project_load(manifest_path?, options_json, recovery_key, out_project)` | `Project::load` | like `sourceorrery run` |
 | `so_project_count`, `so_project_info(project, out_json)`, `so_project_entry(project, i, out_entry_json, out_value)`, `so_project_free` | `Project` accessors | entry JSON: `name`, `env`, `reference`, `required`, `properties` |
 | `so_last_error_code`, `so_last_error_message`, `so_last_error_hint`, `so_last_error_clear` | — | per thread |
 | `so_bytes_free` | — | zeroise + free |
@@ -135,10 +134,10 @@ in `bindings/go`). Never edit it by hand.
 
 | C function | `SecretClient` method | Notes |
 |------------|------------------------|-------|
-| `so_vault_create(home, name, options_json, passphrase, out_handle)` | `VaultRegistry::create` | `passphrase == NULL` → OS-keyring protector |
-| `so_vault_open(home, name, passphrase, out_handle)` | `VaultRegistry::open` | keyring first, then the passphrase once; `NULL` → keyring only |
+| `so_vault_create(home, name, options_json, out_recovery_key, out_handle)` | `VaultRegistry::create` | `*out_recovery_key` receives the recovery key, once; free it with `so_bytes_free` |
+| `so_vault_open(home, name, recovery_key, out_handle)` | `VaultRegistry::open` | this machine's key first, then the recovery key once; `NULL` → this machine only |
 | `so_vault_close(handle)` | drop | zeroises the vault key |
-| `so_vault_descriptor(handle, out_json)` | `SqliteVault::descriptor` | name, id, backend, path, protectors |
+| `so_vault_descriptor(handle, out_json)` | `SqliteVault::descriptor` | name, id, backend, path, the kinds of key that open it |
 | `so_secret_set(handle, name, value, options_json, out_props)` | `set_secret` | new immutable version |
 | `so_secret_get(handle, name, version?, out_props, out_value)` | `get_secret` | `NULL` version → newest accessible |
 | `so_secret_get_properties(handle, name, version?, out_props)` | `get_secret_properties` | no policy |
@@ -153,7 +152,7 @@ in `bindings/go`). Never edit it by hand.
 | `so_audit_events(handle, query_json, out_json)` | `audit_events` | newest first |
 
 `home` is the SourceOrrery home directory (`NULL` or empty: `SOURCEORRERY_HOME`
-or the platform data directory). Every `name`, `version`, `passphrase` and
+or the platform data directory). Every `name`, `version`, `recovery_key` and
 JSON argument is a `(ptr, len)` pair; see the header for exact signatures.
 
 ### Examples

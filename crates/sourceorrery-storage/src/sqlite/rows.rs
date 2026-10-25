@@ -23,6 +23,13 @@ pub(super) struct SecretRow {
     pub(super) deleted_on: Option<i64>,
     pub(super) scheduled_purge_on: Option<i64>,
     pub(super) recovery_id: Option<String>,
+    /// The connection that stores the value, or `None` for the file. A row
+    /// with a storage is a catalog entry: no versions, and its deletion
+    /// state is the provider's.
+    pub(super) storage: Option<String>,
+    /// What the secret is for, as its owner wrote it; in local and catalog
+    /// rows alike, since it belongs to the vault's catalog, not to a value.
+    pub(super) description: Option<String>,
 }
 
 impl SecretRow {
@@ -34,8 +41,28 @@ impl SecretRow {
             deleted_on: self.deleted_on,
             scheduled_purge_on: self.scheduled_purge_on,
             recovery_id: self.recovery_id.as_deref(),
+            storage: self.storage.as_deref(),
+            description: self.description.as_deref(),
         }
     }
+
+    /// This row, when its value is in the file; the refusal a local
+    /// operation gives a secret stored through a connection otherwise.
+    pub(super) fn local(self, name: &str) -> Result<Self> {
+        match &self.storage {
+            None => Ok(self),
+            Some(connection) => Err(stored_elsewhere(name, connection)),
+        }
+    }
+}
+
+/// The refusal a local operation gives a secret whose value a connection
+/// stores: the file holds no version of it.
+pub(super) fn stored_elsewhere(name: &str, connection: &str) -> SecretError {
+    SecretError::Unsupported(format!(
+        "secret '{name}' is stored through connection {connection}, not in the vault file; \
+         reach it through the vault's storage routing"
+    ))
 }
 
 /// The verified metadata of one version. It carries no ciphertext: the
@@ -128,17 +155,21 @@ impl RawVersion {
 /// A `secrets` row as stored, with its tag, before verification.
 pub(super) type StoredSecretRow = (SecretRow, Option<Vec<u8>>);
 
-const SECRET_COLUMNS: &str = "created_on, deleted_on, scheduled_purge_on, recovery_id, tag";
+const SECRET_COLUMNS: &str =
+    "created_on, deleted_on, scheduled_purge_on, recovery_id, storage, description, tag";
 
-fn stored_secret_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSecretRow> {
+/// A `secrets` row read with [`SECRET_COLUMNS`] starting at `offset`.
+fn stored_secret_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<StoredSecretRow> {
     Ok((
         SecretRow {
-            created_on: row.get(0)?,
-            deleted_on: row.get(1)?,
-            scheduled_purge_on: row.get(2)?,
-            recovery_id: row.get(3)?,
+            created_on: row.get(offset)?,
+            deleted_on: row.get(offset + 1)?,
+            scheduled_purge_on: row.get(offset + 2)?,
+            recovery_id: row.get(offset + 3)?,
+            storage: row.get(offset + 4)?,
+            description: row.get(offset + 5)?,
         },
-        row.get(4)?,
+        row.get(offset + 6)?,
     ))
 }
 
@@ -147,10 +178,21 @@ pub(super) fn query_secret_row(conn: &Connection, name: &str) -> Result<Option<S
     conn.query_row(
         &format!("SELECT {SECRET_COLUMNS} FROM secrets WHERE name = ?1"),
         params![name],
-        stored_secret_row,
+        |row| stored_secret_row(row, 0),
     )
     .optional()
     .map_err(db)
+}
+
+/// The names of the `secrets` rows whose value the connection `id`
+/// stores, unverified, in order.
+pub(super) fn query_names_at(conn: &Connection, id: &str) -> Result<Vec<String>> {
+    conn.prepare("SELECT name FROM secrets WHERE storage = ?1 ORDER BY name")
+        .map_err(db)?
+        .query_map(params![id], |row| row.get(0))
+        .map_err(db)?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(db)
 }
 
 /// Every name in `secrets` that sorts after `after`, in order.
@@ -181,17 +223,7 @@ pub(super) fn query_secret_rows(
         .map_err(db)?;
     let rows = stmt
         .query_map(params![after, through], |row| {
-            let name: String = row.get(0)?;
-            let (secret, tag) = (
-                SecretRow {
-                    created_on: row.get(1)?,
-                    deleted_on: row.get(2)?,
-                    scheduled_purge_on: row.get(3)?,
-                    recovery_id: row.get(4)?,
-                },
-                row.get(5)?,
-            );
-            Ok((name, (secret, tag)))
+            Ok((row.get::<_, String>(0)?, stored_secret_row(row, 1)?))
         })
         .map_err(db)?
         .collect::<rusqlite::Result<_>>()
@@ -219,9 +251,8 @@ fn raw_version(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<RawVe
 
 /// The unverified metadata of every version of `name`, newest first.
 ///
-/// This is the metadata projection only; see [`RawVersion`]. Callers other
-/// than the schema migration (which tags rows before any checkpoint exists)
-/// must go through [`SqliteVault::load_versions`], which applies the tag and
+/// This is the metadata projection only; see [`RawVersion`]. Callers must
+/// go through [`SqliteVault::load_versions`], which applies the tag and
 /// checkpoint rules.
 pub(super) fn query_raw_versions(conn: &Connection, name: &str) -> Result<Vec<RawVersion>> {
     let mut stmt = conn
@@ -384,7 +415,8 @@ impl SqliteVault {
         }
     }
 
-    /// Load a live (not deleted) secret row or the matching error.
+    /// Load a live (not deleted) secret row stored in the file, or the
+    /// matching error.
     pub(super) fn require_live(&self, conn: &Connection, name: &str) -> Result<SecretRow> {
         match self.load_secret_row(conn, name)? {
             None => Err(SecretError::NotFound {
@@ -393,16 +425,17 @@ impl SqliteVault {
             Some(row) if row.deleted_on.is_some() => Err(SecretError::Deleted {
                 name: name.to_owned(),
             }),
-            Some(row) => Ok(row),
+            Some(row) => row.local(name),
         }
     }
 
-    /// Load a deleted secret row or the matching error.
+    /// Load a deleted secret row stored in the file, or the matching error.
     pub(super) fn require_deleted(&self, conn: &Connection, name: &str) -> Result<SecretRow> {
         match self.load_secret_row(conn, name)? {
             None => Err(SecretError::NotFound {
                 name: name.to_owned(),
             }),
+            Some(row) if row.storage.is_some() => row.local(name),
             Some(row) if row.deleted_on.is_none() => Err(SecretError::NotDeleted {
                 name: name.to_owned(),
             }),
@@ -572,8 +605,15 @@ impl SqliteVault {
     ) -> Result<[u8; MAC_LEN]> {
         let tag = integrity::secret_tag(&self.metadata_key, &row.fields(&self.meta.id, name));
         conn.execute(
-            "INSERT INTO secrets (name, created_on, tag) VALUES (?1, ?2, ?3)",
-            params![name, row.created_on, tag.as_slice()],
+            "INSERT INTO secrets (name, created_on, storage, description, tag)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                name,
+                row.created_on,
+                row.storage,
+                row.description,
+                tag.as_slice()
+            ],
         )
         .map_err(db)?;
         Ok(tag)
@@ -598,6 +638,22 @@ impl SqliteVault {
                 row.recovery_id,
                 tag.as_slice()
             ],
+        )
+        .map_err(db)?;
+        Ok(tag)
+    }
+
+    /// Write a `secrets` row's description together with its tag.
+    pub(super) fn write_secret_description(
+        &self,
+        conn: &Connection,
+        name: &str,
+        row: &SecretRow,
+    ) -> Result<[u8; MAC_LEN]> {
+        let tag = integrity::secret_tag(&self.metadata_key, &row.fields(&self.meta.id, name));
+        conn.execute(
+            "UPDATE secrets SET description = ?2, tag = ?3 WHERE name = ?1",
+            params![name, row.description, tag.as_slice()],
         )
         .map_err(db)?;
         Ok(tag)

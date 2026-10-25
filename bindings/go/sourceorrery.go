@@ -10,9 +10,10 @@
 //	connect(secret.Value.Text())
 //
 // The package only reads: there is no way to create, change or delete a
-// secret, and no protector or audit management. Vaults are created, and
-// secrets stored, with the sourceorrery command-line tool, which is
-// installed separately and need not be present where the program runs; see
+// secret, and no key, check, connection or audit management. Vaults are
+// created, and secrets stored, with the sourceorrery command-line tool,
+// which is installed separately and need not be present where the program
+// runs; see
 // https://sourceorrery.ai/getting-started/ and the Go guide at
 // https://sourceorrery.ai/sdks/go/.
 //
@@ -53,29 +54,23 @@ import (
 
 // OpenOptions says how to find and unlock a vault. The zero value reproduces
 // the CLI: vaults under SOURCEORRERY_HOME, unlocked by the OS credential
-// store, then SOURCEORRERY_PASSPHRASE, then SOURCEORRERY_PASSPHRASE_FILE.
+// store, then SOURCEORRERY_RECOVERY_KEY, then SOURCEORRERY_RECOVERY_KEY_FILE.
+// A secret one of the vault's connections stores is read at that provider.
 type OpenOptions struct {
 	// Home is the directory holding the vaults/ folder; empty honours SOURCEORRERY_HOME.
 	Home string
-	// Passphrase is tried before the environment sources. Wipe it after use.
-	Passphrase []byte
-	// PassphraseFile holds the passphrase; replaces SOURCEORRERY_PASSPHRASE_FILE.
-	PassphraseFile string
-	// IgnoreEnvironment skips SOURCEORRERY_PASSPHRASE and SOURCEORRERY_PASSPHRASE_FILE.
+	// RecoveryKey is tried before the environment sources. Wipe it after use.
+	RecoveryKey []byte
+	// RecoveryKeyFile holds the recovery key; replaces SOURCEORRERY_RECOVERY_KEY_FILE.
+	RecoveryKeyFile string
+	// IgnoreEnvironment skips SOURCEORRERY_RECOVERY_KEY and SOURCEORRERY_RECOVERY_KEY_FILE.
 	IgnoreEnvironment bool
-	// Manifest is the sourceorrery.toml whose [vaults.<name>] tables say
-	// which vaults are remote and where; empty uses the nearest one above
-	// the current directory. A vault with a table is opened at its provider
-	// instead of as a local file. Credentials come from the provider's own
-	// environment, never from the manifest.
-	Manifest string
 }
 
 type readerOptionsJSON struct {
-	Home           string `json:"home,omitempty"`
-	PassphraseFile string `json:"passphrase_file,omitempty"`
-	Environment    bool   `json:"environment"`
-	Manifest       string `json:"manifest,omitempty"`
+	Home            string `json:"home,omitempty"`
+	RecoveryKeyFile string `json:"recovery_key_file,omitempty"`
+	Environment     bool   `json:"environment"`
 }
 
 func (o *OpenOptions) json() []byte {
@@ -84,19 +79,18 @@ func (o *OpenOptions) json() []byte {
 		opts = *o
 	}
 	text, _ := json.Marshal(readerOptionsJSON{
-		Home:           opts.Home,
-		PassphraseFile: opts.PassphraseFile,
-		Environment:    !opts.IgnoreEnvironment,
-		Manifest:       opts.Manifest,
+		Home:            opts.Home,
+		RecoveryKeyFile: opts.RecoveryKeyFile,
+		Environment:     !opts.IgnoreEnvironment,
 	})
 	return text
 }
 
-func (o *OpenOptions) passphrase() []byte {
+func (o *OpenOptions) recoveryKey() []byte {
 	if o == nil {
 		return nil
 	}
-	return o.Passphrase
+	return o.RecoveryKey
 }
 
 // SecretProperties is the metadata of one version. It never contains the value.
@@ -161,21 +155,21 @@ func (h *readerHandle) close() {
 }
 
 // Open opens vault with the given options (nil: the CLI's defaults). The
-// unlock order is the OS credential store, opts.Passphrase,
-// SOURCEORRERY_PASSPHRASE, then opts.PassphraseFile or
-// SOURCEORRERY_PASSPHRASE_FILE. It never prompts.
+// unlock order is the OS credential store, opts.RecoveryKey,
+// SOURCEORRERY_RECOVERY_KEY, then opts.RecoveryKeyFile or
+// SOURCEORRERY_RECOVERY_KEY_FILE. It never prompts.
 func Open(vault string, opts *OpenOptions) (*Reader, error) {
 	if err := requireAbi(); err != nil {
 		return nil, err
 	}
 	optionsJSON := opts.json()
-	passphrase := opts.passphrase()
+	recoveryKey := opts.recoveryKey()
 	var handle *C.so_reader
 	err := call(func() C.so_status {
 		return C.so_reader_open(
 			bytesPtr([]byte(vault)), C.size_t(len(vault)),
 			bytesPtr(optionsJSON), C.size_t(len(optionsJSON)),
-			bytesPtr(passphrase), C.size_t(len(passphrase)),
+			bytesPtr(recoveryKey), C.size_t(len(recoveryKey)),
 			&handle)
 	})
 	if err != nil {

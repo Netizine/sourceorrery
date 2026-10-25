@@ -6,9 +6,11 @@ saying what to do. No message ever contains a secret value.
 
 | Code | Meaning | What to do |
 |------|---------|------------|
-| `vault_not_found` | No vault file with that name in the home directory | `sourceorrery vault list`; create it with `sourceorrery vault create <name>`, or check `SOURCEORRERY_HOME` and `--vault` |
-| `locked` | Nothing could unlock the vault | On a desktop the OS credential store should do it. Headless: the user adds a passphrase protector and provides `SOURCEORRERY_PASSPHRASE_FILE` (see install.md, Headless). Never guess passphrases |
-| `unsupported` | No OS credential store on this machine | Use a passphrase protector (install.md, Headless) |
+| `vault_not_found` | No vault file with that name in the home directory | `sourceorrery vault list`; check `SOURCEORRERY_HOME` and `--vault`, or ask the user to create it (`sourceorrery setup`) |
+| `locked` | This machine has no key for the vault and no recovery key opened it | On the machine that created it the OS credential store does it. Elsewhere the user provides the recovery key in a file, `SOURCEORRERY_RECOVERY_KEY_FILE` (see install.md, Headless). Never ask to see a recovery key |
+| `permission_denied` | The vault's view check refused (or a provider's policy did) | Never set `SOURCEORRERY_PASSWORD`, `--password-file` or `--code` yourself: ask the user to run the command. `sourceorrery check` reads metadata without the check |
+| `unauthenticated` | A provider the vault keeps secrets at has no credentials for this process | The user signs in with the provider's own tools, or stores credentials in the vault's connection (`sourceorrery setup`) |
+| `unsupported` | Not available here: a provider this build leaves out, or something the secret's storage cannot express | Tell the user; the message names what |
 | `not_found` | The vault has no secret with that name | The user stores it: `sourceorrery secret set <name>`, or `sourceorrery import` from a `.env` file |
 | `version_not_found` | No such version | `sourceorrery secret versions <name>`; drop the version pin |
 | `disabled`, `expired`, `not_yet_valid` | Policy: the version may not be read now | The user decides: `secret update <name> --version <id> --enable`, a new `--expires`, or a new value |
@@ -16,8 +18,8 @@ saying what to do. No message ever contains a secret value.
 | `deleted_conflict` | Storing a name that is soft-deleted | Recover it, or (ask the user) purge it first |
 | `invalid_name` | Secret names: letters, digits, hyphens, at most 127 | Rename, e.g. `database_url` → `database-url` |
 | `manifest` | `sourceorrery.toml` is missing or invalid | Fix the file; `sourceorrery check` validates it. A `value` key is never allowed |
-| `migration_required` | The vault file is in an older format | Tell the user; migrating (`sourceorrery vault migrate <name>`) is their decision |
-| `vault_mismatch` | The file for one vault holds another vault (renamed, copied or swapped) | Tell the user; never work around it. Moving the file back or restoring a backup is their call |
+| `migration_required` | The vault file is from an earlier release, which this one cannot read | Tell the user: they recreate the vault (`sourceorrery setup`) and set its secrets again |
+| `vault_mismatch` | The file for one vault holds another vault (renamed, copied or swapped) | Tell the user; never work around it. Moving the file back or bringing in an exported copy is their call |
 | `crypto` | The vault file failed an integrity check, or its audit log was truncated | Stop and tell the user. Do not run `audit --acknowledge` yourself |
 
 `sourceorrery check` lists every secret the manifest needs with its

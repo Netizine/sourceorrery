@@ -9,29 +9,20 @@
  * connect({ password: secret.value.exposeText() });
  * ```
  *
- * The package only reads: no set, update, delete, recover, purge, protector
- * or audit management. Administration is the CLI's job.
+ * The package only reads: no set, update, delete, recover or purge, and no
+ * key, check, connection or audit management. Administration is the CLI's job.
  */
 
 /** Options accepted when opening a vault or loading a project. */
 export interface OpenOptions {
   /** Directory holding the `vaults/` folder. Default: `SOURCEORRERY_HOME` or the platform data directory. */
   home?: string;
-  /** A passphrase tried before the environment sources. Prefer `passphraseFile` or the environment in production. */
-  passphrase?: string | Buffer;
-  /** A file holding the passphrase (trailing newlines ignored); replaces `SOURCEORRERY_PASSPHRASE_FILE`. */
-  passphraseFile?: string;
-  /** Consult `SOURCEORRERY_PASSPHRASE` and `SOURCEORRERY_PASSPHRASE_FILE` (default `true`). */
+  /** A recovery key tried before the environment sources. Prefer `recoveryKeyFile` or the environment in production. */
+  recoveryKey?: string | Buffer;
+  /** A file holding the recovery key (trailing newlines ignored); replaces `SOURCEORRERY_RECOVERY_KEY_FILE`. */
+  recoveryKeyFile?: string;
+  /** Consult `SOURCEORRERY_RECOVERY_KEY` and `SOURCEORRERY_RECOVERY_KEY_FILE` (default `true`). */
   environment?: boolean;
-  /**
-   * The `sourceorrery.toml` whose `[vaults.<name>]` tables say which vaults
-   * are remote and where. Default: the nearest one above the current
-   * directory. A vault declared there is opened at its provider, with the
-   * credentials the provider's own tools expect from the environment (the
-   * manifest never holds any); a vault without a table is a local file.
-   * `Project.load` ignores it and uses the manifest it loads.
-   */
-  manifest?: string;
 }
 
 /** Metadata of one version. Never contains the value. */
@@ -94,9 +85,9 @@ export interface VaultDescriptor {
 
 /**
  * A read-only, thread-safe handle on one vault, unlocked the way the CLI
- * unlocks it: OS credential store, then `options.passphrase`,
- * `SOURCEORRERY_PASSPHRASE`, then `options.passphraseFile` /
- * `SOURCEORRERY_PASSPHRASE_FILE`. Never prompts.
+ * unlocks it: OS credential store, then `options.recoveryKey`,
+ * `SOURCEORRERY_RECOVERY_KEY`, then `options.recoveryKeyFile` /
+ * `SOURCEORRERY_RECOVERY_KEY_FILE`. Never prompts.
  */
 export class SecretReader {
   constructor(vault: string, options?: OpenOptions);

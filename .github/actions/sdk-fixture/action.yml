@@ -2,7 +2,7 @@ name: SDK fixture
 description: >-
   Builds the CLI and the C ABI (release) and creates the vault every SDK
   test suite and example reads, exporting SOURCEORRERY_HOME,
-  SOURCEORRERY_PASSPHRASE, SOURCEORRERY_NATIVE_DIR and the
+  SOURCEORRERY_RECOVERY_KEY, SOURCEORRERY_NATIVE_DIR and the
   SOURCEORRERY_TEST_* variables to the job environment.
 runs:
   using: composite

@@ -15,22 +15,29 @@ keywords = ["secrets", "vault", "async", "tokio", "provider"]
 [features]
 default = []
 # Every remote provider.
-remote = ["provider-vault", "provider-aws"]
+remote = ["provider-vault", "provider-aws", "provider-azure"]
 # HashiCorp Vault, KV version 2.
 provider-vault = ["dep:sourceorrery-provider-vault"]
 # AWS Secrets Manager.
 provider-aws = ["dep:sourceorrery-provider-aws"]
+# Azure Key Vault.
+provider-azure = ["dep:sourceorrery-provider-azure"]
 
 [dependencies]
 sourceorrery-core.workspace = true
+sourceorrery-storage.workspace = true
 sourceorrery-provider-vault = { workspace = true, optional = true }
 sourceorrery-provider-aws = { workspace = true, optional = true }
+sourceorrery-provider-azure = { workspace = true, optional = true }
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 time.workspace = true
+tempfile.workspace = true
+# Test-only back edge: Cargo strips path-only dev dependencies on publish.
+sourceorrery-conformance = { path = "../../tests/conformance" }
 
 [lints]
 workspace = true

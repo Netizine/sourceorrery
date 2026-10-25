@@ -80,8 +80,8 @@ int main(int argc, char **argv) {
     if (vault == NULL) vault = getenv("SOURCEORRERY_TEST_VAULT");
     if (vault == NULL) vault = "development";
     const char *home = arg_value(argc, argv, "home");
-    const char *passphrase = arg_value(argc, argv, "passphrase");
-    const char *passphrase_file = arg_value(argc, argv, "passphrase_file");
+    const char *recovery_key = arg_value(argc, argv, "recovery_key");
+    const char *recovery_key_file = arg_value(argc, argv, "recovery_key_file");
     const char *environment = arg_value(argc, argv, "environment");
     const char *name = arg_value(argc, argv, "name");
     const char *version = arg_value(argc, argv, "version");
@@ -90,15 +90,14 @@ int main(int argc, char **argv) {
 
     char options[4096] = "{";
     if (home != NULL) { strcat(options, "\"home\":"); json_string(options, sizeof options, home); strcat(options, ","); }
-    if (passphrase_file != NULL) { strcat(options, "\"passphrase_file\":"); json_string(options, sizeof options, passphrase_file); strcat(options, ","); }
-    if (manifest != NULL) { strcat(options, "\"manifest\":"); json_string(options, sizeof options, manifest); strcat(options, ","); }
+    if (recovery_key_file != NULL) { strcat(options, "\"recovery_key_file\":"); json_string(options, sizeof options, recovery_key_file); strcat(options, ","); }
     strcat(options, environment != NULL && strcmp(environment, "false") == 0 ? "\"environment\":false}" : "\"environment\":true}");
 
     so_bytes props = {NULL, 0}, value = {NULL, 0};
 
     if (strcmp(op, "load") == 0) {
         so_project *project = NULL;
-        if (so_project_load(u8(manifest), slen(manifest), u8(options), strlen(options), u8(passphrase), slen(passphrase), &project) != SO_STATUS_OK) {
+        if (so_project_load(u8(manifest), slen(manifest), u8(options), strlen(options), u8(recovery_key), slen(recovery_key), &project) != SO_STATUS_OK) {
             return report_error();
         }
         printf("outcome\tok\n");
@@ -125,7 +124,7 @@ int main(int argc, char **argv) {
     }
 
     so_reader *reader = NULL;
-    if (so_reader_open(u8(vault), strlen(vault), u8(options), strlen(options), u8(passphrase), slen(passphrase), &reader) != SO_STATUS_OK) {
+    if (so_reader_open(u8(vault), strlen(vault), u8(options), strlen(options), u8(recovery_key), slen(recovery_key), &reader) != SO_STATUS_OK) {
         return report_error();
     }
     int rc = 0;

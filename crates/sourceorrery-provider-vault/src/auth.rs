@@ -1,7 +1,7 @@
 //! How the provider gets a Vault token.
 //!
-//! Nothing here reads the manifest: credentials come from where Vault's own
-//! tools find them. In order: `VAULT_TOKEN`, the `vault` CLI's
+//! A connection either stores a token in the vault, or takes it from where
+//! Vault's own tools find it (ambient). In order: `VAULT_TOKEN`, the `vault` CLI's
 //! `~/.vault-token`, an AppRole (`VAULT_ROLE_ID` and `VAULT_SECRET_ID`), a
 //! JWT (`VAULT_AUTH_ROLE` with `VAULT_JWT_FILE` or `VAULT_JWT`) and the
 //! Kubernetes service account token (`VAULT_AUTH_ROLE` with the token file
@@ -12,7 +12,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use reqwest::Method;
-use sourceorrery_core::{Provider, Result, SecretBytes, SecretError};
+use sourceorrery_core::{Credentials, Provider, Result, SecretBytes, SecretError};
 
 use crate::http::Transport;
 
@@ -157,6 +157,20 @@ struct LoginAuth {
 }
 
 impl Auth {
+    /// The token a connection stores, or the ambient chain
+    /// ([`Auth::from_env`]) when it stores none. Credentials for another
+    /// provider are `invalid_argument`.
+    pub fn from_credentials(credentials: Option<&Credentials>) -> Result<Self> {
+        match credentials {
+            None => Self::from_env(),
+            Some(Credentials::VaultToken(token)) => Ok(Self::Token(Token::new(token.clone()))),
+            Some(other) => Err(SecretError::InvalidArgument(format!(
+                "the connection stores credentials for {}, not HashiCorp Vault",
+                other.provider().display_name()
+            ))),
+        }
+    }
+
     /// The first credential the environment offers, in the documented
     /// order; `unauthenticated` with a hint when there is none.
     pub fn from_env() -> Result<Self> {
@@ -344,5 +358,21 @@ mod tests {
             Auth::from_environment(&role_only).unwrap_err().code(),
             "unauthenticated"
         );
+    }
+
+    #[test]
+    fn a_stored_token_is_used_and_other_credentials_are_refused() {
+        let stored = Credentials::VaultToken(SecretBytes::from("hvs.stored"));
+        assert!(matches!(
+            Auth::from_credentials(Some(&stored)).unwrap(),
+            Auth::Token(token) if token.expose() == "hvs.stored"
+        ));
+        let aws = Credentials::AwsAccessKey {
+            access_key_id: "AKIAEXAMPLE".to_owned(),
+            secret_access_key: SecretBytes::from("hunter2"),
+        };
+        let err = Auth::from_credentials(Some(&aws)).unwrap_err();
+        assert_eq!(err.code(), "invalid_argument");
+        assert!(!err.to_string().contains("hunter2"), "{err}");
     }
 }

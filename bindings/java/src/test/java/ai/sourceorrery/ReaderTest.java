@@ -6,12 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -22,14 +19,13 @@ import java.util.concurrent.Future;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import ai.sourceorrery.internal.Native;
 
 /** The Java SDK against the vault created by scripts/ci/fixture-vault.sh. */
 class ReaderTest {
     static String home;
-    static String passphrase;
+    static String recoveryKey;
     static String vault;
     static String manifest;
     static String oldVersion;
@@ -39,7 +35,7 @@ class ReaderTest {
     @BeforeAll
     static void fixture() {
         home = System.getenv("SOURCEORRERY_HOME");
-        passphrase = System.getenv("SOURCEORRERY_PASSPHRASE");
+        recoveryKey = System.getenv("SOURCEORRERY_RECOVERY_KEY");
         vault = System.getenv("SOURCEORRERY_TEST_VAULT");
         manifest = System.getenv("SOURCEORRERY_TEST_MANIFEST");
         oldVersion = System.getenv("SOURCEORRERY_TEST_OLD_VERSION");
@@ -47,15 +43,15 @@ class ReaderTest {
                 "run scripts/ci/fixture-vault.sh first");
     }
 
-    /** Unlocks through SOURCEORRERY_PASSPHRASE from the environment, like the CLI. */
+    /** Unlocks through SOURCEORRERY_RECOVERY_KEY from the environment, like the CLI. */
     private static SecretReader openReader() {
         return SecretReader.open(vault);
     }
 
     @Test
     void contractVersion() {
-        assertEquals("1", SourceOrrery.contractVersion());
-        assertEquals(1, SourceOrrery.abiVersion());
+        assertEquals("2", SourceOrrery.contractVersion());
+        assertEquals(2, SourceOrrery.abiVersion());
     }
 
     @Test
@@ -150,19 +146,19 @@ class ReaderTest {
         assertTrue(missing.hint().contains("sourceorrery vault create no-such-vault"));
         assertTrue(missing.hint().contains(home));
 
-        OpenOptions wrong = OpenOptions.defaults().withPassphrase("wrong-passphrase").withEnvironment(false);
+        OpenOptions wrong = OpenOptions.defaults().withRecoveryKey("wrong-recovery-key").withEnvironment(false);
         VaultLockedException locked = assertThrows(VaultLockedException.class, () -> SecretReader.open(vault, wrong));
-        assertTrue(locked.hint().contains("passphrase option: tried"));
-        assertTrue(locked.hint().contains("SOURCEORRERY_PASSPHRASE: not set"));
-        assertTrue(locked.hint().contains("--vault " + vault));
-        assertFalse(locked.getMessage().contains("wrong-passphrase"));
+        assertTrue(locked.hint().contains("recovery_key option: tried"));
+        assertTrue(locked.hint().contains("SOURCEORRERY_RECOVERY_KEY: not set"));
+        assertTrue(locked.hint().contains("sourceorrery vault create " + vault));
+        assertFalse(locked.getMessage().contains("wrong-recovery-key"));
 
-        OpenOptions explicit = OpenOptions.defaults().withHome(home).withPassphrase(passphrase).withEnvironment(false);
+        OpenOptions explicit = OpenOptions.defaults().withHome(home).withRecoveryKey(recoveryKey).withEnvironment(false);
         SecretReader reader = SecretReader.open(vault, explicit);
         assertEquals(vault, reader.vaultName());
         VaultDescriptor descriptor = reader.descriptor();
         assertEquals(vault, descriptor.name());
-        assertEquals(List.of("passphrase"), descriptor.protectors());
+        assertEquals(List.of("recovery"), descriptor.protectors());
         reader.close();
         assertTrue(reader.isClosed());
         assertThrows(IllegalStateException.class, () -> reader.get("database-password"));
@@ -226,59 +222,8 @@ class ReaderTest {
             assertEquals(2, project.secrets().size());
         }
         assertThrows(ManifestException.class, () -> Project.load(manifest + ".missing"));
-        OpenOptions wrong = OpenOptions.defaults().withPassphrase("wrong").withEnvironment(false);
+        OpenOptions wrong = OpenOptions.defaults().withRecoveryKey("wrong").withEnvironment(false);
         assertThrows(VaultLockedException.class, () -> Project.load(Optional.of(manifest), wrong));
-    }
-
-    /**
-     * A vault the manifest declares in {@code [vaults.<name>]} goes to its provider, whose credential
-     * comes from the environment, never the manifest.
-     */
-    @Test
-    void manifestDeclaresRemoteVaults(@TempDir Path dir) throws Exception {
-        Path remoteManifest = dir.resolve("sourceorrery.toml");
-        Files.writeString(remoteManifest, String.join("\n",
-                "[project]",
-                "name = \"demo\"",
-                "vault = \"" + vault + "\"",
-                "",
-                "[vaults.remote-x]",
-                "provider = \"hashicorp-vault\"",
-                "address = \"http://127.0.0.1:1\"",
-                "mount = \"secret\"",
-                ""));
-        OpenOptions options = OpenOptions.defaults().withManifest(remoteManifest);
-        assertEquals(Optional.of(remoteManifest.toString()), options.manifest());
-        assertTrue(options.toJson().contains("\"manifest\":"));
-
-        // Nothing listens on port 1. Without a Vault credential (VAULT_TOKEN, ~/.vault-token, AppRole,
-        // ...) the provider refuses before any request; with one it fails to connect. Java cannot set
-        // environment variables in-process, so whichever the environment produces is accepted, as long
-        // as the code matches the class and the message names the provider.
-        SourceOrreryException err = assertThrows(SourceOrreryException.class, () -> SecretReader.open("remote-x", options));
-        assertTrue(err.detail().contains("hashicorp-vault"), err.detail());
-        switch (err) {
-            case UnauthenticatedException unauthenticated -> {
-                assertEquals("unauthenticated", unauthenticated.code());
-                assertFalse(unauthenticated.isTransient());
-                assertTrue(unauthenticated.detail().contains("not authenticated to hashicorp-vault"), unauthenticated.detail());
-                assertTrue(unauthenticated.hint().contains("VAULT_TOKEN"), unauthenticated.hint());
-            }
-            case ProviderUnavailableException unavailable -> {
-                assertEquals("provider_unavailable", unavailable.code());
-                assertTrue(unavailable.isTransient());
-                assertTrue(unavailable.detail().contains("hashicorp-vault is unavailable"), unavailable.detail());
-                assertTrue(unavailable.hint().contains("[vaults.remote-x]"), unavailable.hint());
-            }
-            default -> fail("expected UnauthenticatedException or ProviderUnavailableException, got "
-                    + err.getClass().getName() + " (" + err.code() + "): " + err.getMessage());
-        }
-
-        // A vault without a table is still the local file.
-        try (SecretReader reader = SecretReader.open(vault, options); Secret secret = reader.get("database-password")) {
-            assertEquals(vault, reader.vaultName());
-            assertEquals(LATEST, secret.value().exposeText());
-        }
     }
 
     @Test

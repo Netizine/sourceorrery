@@ -1,11 +1,10 @@
 //! # HashiCorp Vault behind the SourceOrrery contract
 //!
 //! [`VaultClient`] implements `AsyncSecretClient` over a Vault server's KV
-//! version 2 secrets engine. Applications do not use it directly: the
-//! `sourceorrery` crate opens it for a vault that `sourceorrery.toml`
-//! declares with `provider = "hashicorp-vault"`, and the CLI, the C ABI and
-//! every SDK reach it through the `Blocking` adapter of
-//! `sourceorrery-provider`.
+//! version 2 secrets engine. Applications do not use it directly:
+//! `sourceorrery-provider` opens it for a connection with
+//! `provider = "hashicorp-vault"`, and the CLI, the C ABI and every SDK
+//! reach it through that crate's `Blocking` adapter.
 //!
 //! The mapping of secrets, versions, properties and soft delete onto KV v2
 //! is in [`kv`]; how a token is found is in [`auth`]. The transport never
@@ -25,9 +24,10 @@ use async_trait::async_trait;
 use reqwest::{Method, StatusCode};
 use sourceorrery_core::text;
 use sourceorrery_core::{
-    AsyncSecretClient, AuditEvent, AuditQuery, DeletedSecret, Provider, RecoveryLevel, RemoteVault,
-    Result, Secret, SecretBytes, SecretError, SecretProperties, SetSecretOptions,
-    UpdateSecretProperties, VaultDescriptor, policy, timestamp, validate_secret_name,
+    AsyncSecretClient, AuditEvent, AuditQuery, Capability, ConnectionSettings, DeletedSecret,
+    Provider, RecoveryLevel, Result, Secret, SecretBytes, SecretError, SecretProperties,
+    SetSecretOptions, UpdateSecretProperties, VaultDescriptor, policy, timestamp,
+    validate_secret_name,
 };
 use time::OffsetDateTime;
 
@@ -58,15 +58,15 @@ impl fmt::Debug for VaultClient {
     }
 }
 
-/// How a client reaches its server: the manifest's `[vaults.<name>]` table
-/// plus what the environment adds.
+/// How a client reaches its server: a connection's settings plus what the
+/// environment adds.
 #[derive(Debug, Clone)]
 pub struct Settings {
     /// `https://host:8200`.
     pub address: String,
     /// The KV v2 engine's mount path.
     pub mount: String,
-    /// Vault Enterprise namespace; `VAULT_NAMESPACE` when the manifest has
+    /// Vault Enterprise namespace; `VAULT_NAMESPACE` when the settings have
     /// none.
     pub namespace: Option<String>,
     /// A PEM root certificate for a private CA (`VAULT_CACERT`).
@@ -74,10 +74,10 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// Settings for a manifest table, completed from the environment
+    /// Settings for a connection, completed from the environment
     /// (`VAULT_NAMESPACE`, `VAULT_CACERT`).
-    pub fn from_manifest(remote: &RemoteVault) -> Result<Self> {
-        let RemoteVault::HashicorpVault {
+    pub fn from_connection(remote: &ConnectionSettings) -> Result<Self> {
+        let ConnectionSettings::HashicorpVault {
             address,
             mount,
             namespace,
@@ -422,6 +422,10 @@ impl AsyncSecretClient for VaultClient {
         &self.vault_name
     }
 
+    fn capabilities(&self) -> &'static [Capability] {
+        Provider::HashicorpVault.capabilities()
+    }
+
     async fn set_secret(
         &self,
         name: &str,
@@ -535,6 +539,9 @@ impl AsyncSecretClient for VaultClient {
         let mut properties = self.pick_version(name, &meta, version)?;
         let created_on = properties.created_on;
         update.apply(&mut properties, timestamp::now())?;
+        // The creation time is the server's clock, the update this
+        // machine's: an update never reads as earlier than the version.
+        properties.updated_on = properties.updated_on.max(created_on);
         let number: u64 = properties
             .version
             .parse()

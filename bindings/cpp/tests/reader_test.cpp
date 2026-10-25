@@ -2,8 +2,6 @@
 // Plain assertions: exits non-zero on the first failure.
 #define _CRT_SECURE_NO_WARNINGS 1 // std::getenv on MSVC
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -45,19 +43,6 @@ static std::string env(const char* name) {
     return value == nullptr ? std::string() : std::string(value);
 }
 
-// Sets (or, with nullptr, removes) a variable in this process's environment.
-static void set_env(const char* name, const char* value) {
-#ifdef _WIN32
-    _putenv_s(name, value == nullptr ? "" : value);
-#else
-    if (value == nullptr) {
-        unsetenv(name);
-    } else {
-        setenv(name, value, 1);
-    }
-#endif
-}
-
 int main() {
     // An SDK refuses a library built for another C ABI version with a typed
     // error (ADR 0007); the installed library matches.
@@ -71,7 +56,7 @@ int main() {
     }
 
     const std::string home = env("SOURCEORRERY_HOME");
-    const std::string passphrase = env("SOURCEORRERY_PASSPHRASE");
+    const std::string recovery_key = env("SOURCEORRERY_RECOVERY_KEY");
     const std::string vault = env("SOURCEORRERY_TEST_VAULT");
     const std::string manifest = env("SOURCEORRERY_TEST_MANIFEST");
     const std::string old_version = env("SOURCEORRERY_TEST_OLD_VERSION");
@@ -82,9 +67,9 @@ int main() {
     const std::string latest = "ci-secret-value";
     const std::string first = "first-version";
 
-    CHECK(so::contract_version() == "1");
+    CHECK(so::contract_version() == "2");
 
-    // Unlocked through SOURCEORRERY_PASSPHRASE from the environment.
+    // Unlocked through SOURCEORRERY_RECOVERY_KEY from the environment.
     auto reader = so::Reader::open(vault);
     CHECK(reader.vault_name() == vault);
     {
@@ -136,20 +121,20 @@ int main() {
     {
         expect_throw<so::VaultNotFoundError>([] { so::Reader::open("no-such-vault"); }, "vault_not_found", "sourceorrery vault create no-such-vault");
         so::OpenOptions wrong;
-        wrong.passphrase = "wrong-passphrase";
+        wrong.recovery_key = "wrong-recovery-key";
         wrong.environment = false;
-        expect_throw<so::VaultLockedError>([&] { so::Reader::open(vault, wrong); }, "locked", "passphrase option: tried");
+        expect_throw<so::VaultLockedError>([&] { so::Reader::open(vault, wrong); }, "locked", "recovery_key option: tried");
         try { so::Reader::open(vault, wrong); } catch (const so::Error& err) {
-            CHECK(err.hint().find("SOURCEORRERY_PASSPHRASE: not set") != std::string::npos);
-            CHECK(std::string(err.what()).find("wrong-passphrase") == std::string::npos);
+            CHECK(err.hint().find("SOURCEORRERY_RECOVERY_KEY: not set") != std::string::npos);
+            CHECK(std::string(err.what()).find("wrong-recovery-key") == std::string::npos);
         }
         so::OpenOptions explicit_options;
         explicit_options.home = home;
-        explicit_options.passphrase = passphrase;
+        explicit_options.recovery_key = recovery_key;
         explicit_options.environment = false;
         auto other = so::Reader::open(vault, explicit_options);
         CHECK(so::json_string_field(other.descriptor_json(), "name") == vault);
-        CHECK(other.descriptor_json().find("\"passphrase\"") != std::string::npos);
+        CHECK(other.descriptor_json().find("\"recovery\"") != std::string::npos);
         other.close();
         CHECK(other.closed());
         expect_throw<so::Error>([&] { other.get("database-password"); }, "invalid_argument");
@@ -185,67 +170,11 @@ int main() {
         CHECK(project.env("ROTATED")->closed());
         expect_throw<so::ManifestError>([&] { so::Project::load(manifest + ".missing"); }, "manifest");
         so::OpenOptions wrong;
-        wrong.passphrase = passphrase + "-wrong";
+        wrong.recovery_key = recovery_key + "-wrong";
         wrong.environment = false;
         expect_throw<so::VaultLockedError>([&] { so::Project::load(manifest, wrong); }, "locked");
     }
 
-    {
-        // A vault the manifest declares in [vaults.<name>] is opened at its
-        // remote provider (HashiCorp Vault, at an address where nothing
-        // listens); a vault without a table is still the local file.
-        // Written beside the fixture's own manifest: that directory belongs
-        // to this test run, unlike the shared temporary directory.
-        const auto dir = std::filesystem::path(manifest).parent_path() / "cpp-remote";
-        std::filesystem::create_directories(dir);
-        const std::string remote_manifest = (dir / "sourceorrery.toml").string();
-        {
-            std::ofstream out(remote_manifest);
-            out << "[project]\nname = \"demo\"\nvault = \"" << vault << "\"\n\n"
-                << "[vaults.remote-x]\nprovider = \"hashicorp-vault\"\n"
-                << "address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n";
-        }
-        so::OpenOptions with_manifest;
-        with_manifest.manifest = remote_manifest;
-        CHECK(with_manifest.to_json().find("\"manifest\":") != std::string::npos);
-        // With a credential the provider connects to the manifest's address:
-        // the failure is transient and names the vault's table.
-        const char* previous_token = std::getenv("VAULT_TOKEN");
-        const std::string saved_token = previous_token == nullptr ? std::string() : std::string(previous_token);
-        set_env("VAULT_TOKEN", "test-token");
-        expect_throw<so::ProviderUnavailableError>([&] { so::Reader::open("remote-x", with_manifest); }, "provider_unavailable", "[vaults.remote-x]");
-        try { so::Reader::open("remote-x", with_manifest); } catch (const so::Error& err) {
-            CHECK(err.message().find("hashicorp-vault is unavailable") != std::string::npos);
-            CHECK(err.kind() == so::ErrorKind::ProviderUnavailable);
-            CHECK(err.transient());
-        }
-        // Without VAULT_TOKEN the process is unauthenticated before any
-        // request is made, unless the developer has another Vault credential
-        // (such as ~/.vault-token), in which case the address is still
-        // unreachable.
-        set_env("VAULT_TOKEN", nullptr);
-        try {
-            so::Reader::open("remote-x", with_manifest);
-            std::cerr << "expected a remote error without VAULT_TOKEN\n";
-            ++failures;
-        } catch (const so::Error& err) {
-            if (err.code() == "unauthenticated") {
-                CHECK(dynamic_cast<const so::UnauthenticatedError*>(&err) != nullptr);
-                CHECK(err.message().find("not authenticated to hashicorp-vault") != std::string::npos);
-                CHECK(err.hint().find("VAULT_TOKEN") != std::string::npos);
-                CHECK(!err.transient());
-            } else {
-                CHECK(err.code() == "provider_unavailable");
-                CHECK(dynamic_cast<const so::ProviderUnavailableError*>(&err) != nullptr);
-                CHECK(err.transient());
-            }
-        }
-        set_env("VAULT_TOKEN", previous_token == nullptr ? nullptr : saved_token.c_str());
-        auto local = so::Reader::open(vault, with_manifest);
-        CHECK(local.get("database-password").value.text() == latest);
-        local.close();
-        std::filesystem::remove_all(dir);
-    }
     {
         // The remote provider codes have their own kinds and classes.
         CHECK(so::kind_for_code("unauthenticated") == so::ErrorKind::Unauthenticated);

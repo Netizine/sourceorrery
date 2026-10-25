@@ -1,7 +1,7 @@
 """Read one secret and report its size, never its value.
 
     pip install sourceorrery
-    export SOURCEORRERY_PASSPHRASE=...   # or rely on the OS credential store
+    export SOURCEORRERY_RECOVERY_KEY=...   # or rely on the OS credential store
     python get_secret.py development database-password
 """
 

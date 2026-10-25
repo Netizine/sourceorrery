@@ -44,6 +44,23 @@ Platform headings between `<!-- tabs: os -->` and `<!-- /tabs -->` in source
 Markdown become Starlight tabs. `syncKey="os"` remembers the selected platform
 across pages. They remain ordinary readable headings on GitHub.
 
+A line `<!-- walkthrough: setup -->` (or `browser`, `init`) in source Markdown
+becomes `src/components/Walkthrough.astro`: the CLI's own screens one at a
+time, in a dark or a light terminal following the site's theme, with a
+caption per screen. Authored MDX imports the component directly. The slides
+and captions are `src/lib/walkthroughs.mjs`; the screens are the CLI's design
+snapshots, copied into `public/walkthrough/` by `npm run walkthroughs`. After
+a change to the screens:
+
+```bash
+cargo test -p sourceorrery-cli ui::snapshot -- --ignored   # from the repository root
+npm run walkthroughs
+```
+
+The snapshots are drawn as a made-up person, `alex`, and the copy refuses a
+screen that shows this machine's user or host, a temporary folder or any
+other home directory: what it writes is published.
+
 Mark important information with GitHub alerts, which render as accessible,
 themed callouts on the website:
 

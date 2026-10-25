@@ -1,4 +1,4 @@
-# Vault file format (schema version 3)
+# Vault file format (schema version 4)
 
 A vault is a single SQLite database, `<home>/vaults/<name>.sorvault`, created
 with `PRAGMA foreign_keys = ON`, `PRAGMA secure_delete = ON` and a 5 s busy
@@ -13,7 +13,8 @@ override with `SOURCEORRERY_HOME` or `--home`.
 > This is a format reference, not a guide to editing a vault with SQL.
 > Values, policy metadata and audit checkpoints are authenticated; changing
 > rows outside the CLI or storage API can make the vault refuse access.
-> Keep backups and use the supported commands for changes.
+> Keep exported copies (`vault export`) and use the supported commands for
+> changes.
 
 ## Tables
 
@@ -21,28 +22,59 @@ override with `SOURCEORRERY_HOME` or `--home`.
 
 | key | value |
 |-----|-------|
-| `schema_version` | `3` |
+| `schema_version` | `4` |
 | `name` | vault name; covered by `settings_tag`. Opening a vault by name refuses a file whose name here is not the one asked for (`vault_mismatch`), so `<name>.sorvault` always holds the vault `<name>` |
 | `id` | 32 hex chars, random; bound into every AAD and every integrity tag |
 | `created_on` | Unix nanoseconds |
 | `recovery_level` | `"recoverable"` or `"purgeable"` (JSON string) |
 | `retention_days` | 7–90 |
-| `audit_head` | `<id>:<keyed>:<hex HMAC>` — the newest keyed audit row and the number of keyed rows; see *Audit chain* (a head written by an earlier build has no count, `<id>:<hex HMAC>`, and is replaced at the next keyed write) |
-| `settings_tag` | hex HMAC-SHA256 over the settings record (`schema_version`, `name`, `id`, `created_on`, `recovery_level`, `retention_days`, and `second_factor` and `reveal_guard` when present); verified on every unlock |
-| `second_factor` | present once a second factor is enrolled: JSON `{"nonce", "ciphertext", "enrolled_on", "verified", "last_counter"}`; the TOTP secret sealed with the vault key under the AAD `sourceorrery/v3/second-factor/<id>`, whether one code has been accepted since enrolment, and the last accepted step (a code for it or an earlier step is refused). Covered by `settings_tag` |
-| `reveal_guard` | present when a reveal or export must present something again: JSON `{"passphrase", "second_factor"}`. Covered by `settings_tag`, so a file edit cannot switch it off |
-| `passphrase_hint` | the hint shown at the passphrase prompt, in clear, **not** covered by any tag: nothing can authenticate it before unlock, so it is whatever the file says. At most 120 characters; a hint that itself unlocks the vault is refused when set |
+| `audit_head` | `<id>:<keyed>:<hex HMAC>` — the newest keyed audit row and the number of keyed rows; see *Audit chain* |
+| `settings_tag` | hex HMAC-SHA256 over the settings record (below); verified on every open, and checkpointed on the audit chain (see *Checkpoints*) |
+| `password` | present when the view check asks for a password: `{"nonce", "ciphertext"}`, the JSON `{"salt", "params", "hash"}` of its salted Argon2id hash sealed with the vault key under the AAD `sourceorrery/v4/password/<id>`. Covered by `settings_tag` |
+| `password_hint` | present when the password has a hint: the hint sealed the same way under `sourceorrery/v4/password-hint/<id>`. At most 120 characters, no control characters, and never the password. Covered by `settings_tag` |
+| `second_factor` | present once an authenticator is enrolled: `{"nonce", "ciphertext", "enrolled_on", "verified", "last_counter"}`; the TOTP secret sealed under `sourceorrery/v4/second-factor/<id>`, whether a code has been accepted since enrolment, and the last accepted step (a code for it or an earlier step is refused). Covered by `settings_tag` |
+| `check_failures` | present after a wrong answer to the view check: `{"count", "last_on"}`, the wrong answers in a row and when the last was given. Covered by `settings_tag` |
 
-### `key_protectors`
+### `key_wraps`
+
+The vault key wrapped once for this machine and once under the recovery
+key.
 
 | column | meaning |
 |--------|---------|
 | `id` | 16 hex chars, random |
-| `label` | unique human label (`os-keyring`, `passphrase`, `ci`, …); recovery codes are passphrase protectors labelled `recovery-1..N`, replaced as a set by `vault recovery codes` |
-| `kind_json` | `{"kind":"os-keyring","service":"sourceorrery","account":"vault/<vault id>/<id>"}` or `{"kind":"passphrase","salt":"<hex 16 bytes>","params":{"memory_kib":65536,"iterations":3,"parallelism":1}}` |
+| `kind_json` | `{"kind":"this-machine","service":"sourceorrery","account":"vault/<vault id>/<id>"}` (the key-encryption key is in that credential-store entry) or `{"kind":"recovery","salt":"<hex 16 bytes>"}` (one per vault) |
 | `wrapped_nonce` | 24-byte XChaCha20 nonce |
-| `wrapped_dek` | DEK encrypted under the protector's KEK; AAD `sourceorrery/v<schema>/protector/<vault id>/<protector id>`, so the wrapped key is bound to the on-disk format it was written for (`v3` now; an older `v<n>` only on protectors not yet re-wrapped since a migration) |
+| `wrapped_key` | the vault key encrypted under the wrap's key-encryption key; AAD `sourceorrery/v4/wrap/<vault id>/<wrap id>`, so a wrapped key is bound to this format, this vault and this wrap |
+| `created_on` | Unix nanoseconds; the recovery wrap's is when the recovery key was issued |
+
+### `connections`
+
+A vault's connections to providers: where a secret it does not keep in
+the file is kept.
+
+| column | meaning |
+|--------|---------|
+| `id` | 16 hex chars, random |
+| `kind` | the provider: `hashicorp-vault`, `aws-secrets-manager` or `azure-key-vault` (one connection per provider) |
+| `settings_json` | the provider's settings (address and mount, region and prefix, vault URL), as `ConnectionSettings`; a URL is `https://`, or `http://` to this machine |
+| `credential_source` | `ambient` (the provider's own sign-in on the machine) or `stored` |
+| `sealed_credentials` | when stored: `{"nonce", "ciphertext"}`, the credentials (a Vault token, an AWS access key, an Azure client secret, each length-prefixed after its kind) sealed under `sourceorrery/v4/connection/<vault id>/<id>` |
 | `created_on` | Unix nanoseconds |
+| `last_test_on`, `last_test_outcome` | the last connection test: when, and `ok` or the error code; cleared when the settings or credentials change |
+| `tag` | HMAC-SHA256 over the row (see *Metadata tags*) |
+
+### `projects`
+
+The project folders whose manifest `init` wrote from this vault.
+
+| column | meaning |
+|--------|---------|
+| `id` | 16 hex chars, random |
+| `path_mac` | HMAC-SHA256 under the metadata key over the folder's path (domain `sourceorrery/v4/project-path`): one record per folder, without the path in clear |
+| `sealed` | `{"nonce", "ciphertext"}`: the folder's path and the project's name, length-prefixed, sealed under `sourceorrery/v4/project/<vault id>/<id>` |
+| `linked_on` | Unix nanoseconds: when the folder was first recorded |
+| `tag` | HMAC-SHA256 over the row (see *Metadata tags*) |
 
 ### `secrets`
 
@@ -53,6 +85,8 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `deleted_on` | NULL while live |
 | `scheduled_purge_on` | `deleted_on + retention` |
 | `recovery_id` | `sourceorrery://<vault>/deletedsecrets/<name>` |
+| `storage` | the id of the connection that keeps the secret's value, or NULL for the vault file. A secret kept at a connection is a catalog entry: it has no versions here, and the vault's own operations refuse it (`unsupported`); its versions and value are the provider's |
+| `description` | what the secret is for, one line of at most 200 characters, or NULL |
 | `tag` | HMAC-SHA256 over the row (see *Metadata tags*) |
 
 ### `secret_versions`
@@ -77,7 +111,7 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `id` | autoincrement |
 | `occurred_on` | Unix nanoseconds |
 | `actor` | `user:<name>`, `system:sourceorrery`, … |
-| `operation` | `vault_create`, `vault_open`, `vault_migrate`, `protector_add`, `protector_remove`, `secret_set`, `secret_get`, `secret_list`, `secret_update`, `secret_delete`, `secret_recover`, `secret_purge`, `audit_verify` |
+| `operation` | `vault_create`, `vault_open`, `protector_add`, `secret_set`, `secret_get`, `secret_list`, `secret_inspect`, `secret_update`, `secret_delete`, `secret_recover`, `secret_purge`, `audit_verify`, `guard`, `vault_change`, `vault_export`, `vault_import`, `connection_test`, `project_link`, `project_unlink` (a call to a provider is recorded by the vault under the operation it was); `protector_remove`, `vault_migrate`, `vault_backup` and `secret_restore` are names an earlier release wrote |
 | `secret_name`, `version` | optional |
 | `outcome` | `success`, `denied`, `failure` |
 | `detail` | error code or short note; **never a value** |
@@ -86,48 +120,66 @@ override with `SOURCEORRERY_HOME` or `--home`.
 | `keyed` | 1 when `k` is the metadata key, 0 when it is the all-zero key |
 | `state_tag` | checkpoint of the `secrets` row named by `secret_name` after this event: the row's new `tag`, or the empty blob when the row was removed; NULL when the event did not change it (see *Checkpoints*) |
 | `version_tag` | checkpoint of the `secret_versions` row named by `secret_name` + `version`, likewise |
+| `settings_tag` | checkpoint of the settings record after this event: the 32 bytes of `vault_meta.settings_tag` as the event left it; NULL when the event did not rewrite the record (see *Checkpoints*) |
 
 Index `audit_checkpoints` on `(secret_name, id)` covers the rows where
-either checkpoint column is set, so finding a secret's checkpoints does not
-scan its reads. Index `audit_verifications` on `id` covers the
+either row checkpoint column is set, so finding a secret's checkpoints does
+not scan its reads. Index `audit_verifications` on `id` covers the
 `audit_verify` rows (truncations and acknowledgements), which every unlock
-and operation consults.
+and operation consults. Index `audit_settings` on `id` covers the rows that
+carry a settings checkpoint, so the newest is found without a scan.
 
 ## Key hierarchy
 
 ```
-DEK (32 random bytes) ── XChaCha20-Poly1305 ──► each value
-  │
+DEK (32 random bytes) ── XChaCha20-Poly1305 ──► each value, the view check's
+  │                                              records, stored credentials,
+  │                                              project paths and names
   └─ HKDF-SHA256(ikm = DEK, salt = none, info = "sourceorrery/v2/metadata")
-         └──► metadata key ── HMAC-SHA256 ──► metadata tags, audit chain, audit head
+         └──► metadata key ── HMAC-SHA256 ──► metadata tags, project path MACs,
+                                               audit chain, audit head, settings
   ▲ wrapped by
-KEK per protector:
-  os-keyring  : 32 random bytes stored in the OS credential store
-                service "sourceorrery", account "vault/<vault id>/<protector id>"
-  passphrase  : Argon2id(passphrase, salt, params) → 32 bytes
+KEK per wrap:
+  this-machine : 32 random bytes in the OS credential store,
+                 service "sourceorrery", account "vault/<vault id>/<wrap id>"
+  recovery     : HKDF-SHA256(the recovery key's 125 bits, salt,
+                 info "sourceorrery/v4/recovery-key/<vault id>") → 32 bytes
 ```
 
 The metadata key is never stored; it is re-derived from the DEK on every
-unlock. Nothing that can be read from the file allows computing it.
+open. Nothing that can be read from the file allows computing it.
 
-Unlock order: every `os-keyring` protector is tried first (no interaction);
-then the passphrase provider is asked up to three times and each passphrase is
-tried against every passphrase protector. Every failed attempt is an audit row
+The recovery key is 25 characters in five groups from an alphabet without
+look-alikes (125 random bits); case, spaces, hyphens and the look-alike
+letters do not matter when it is typed. Being random and long, it needs no
+password hashing.
+
+Opening order: every `this-machine` wrap whose credential-store entry is
+present is tried first (no interaction); then the recovery-key provider is
+asked up to three times. Every failed attempt is an audit row
 (`vault_open` / `denied`); giving up writes `vault_open` / `failure`.
+
+The view check is not part of the key hierarchy: the vault opens without
+it, and it guards nothing cryptographically. Its password hash is salted
+Argon2id with the parameters stored beside it, capped before they are run
+(1 GiB, 64 passes, 16 lanes).
 
 ## What is encrypted
 
-Only `secret_versions.ciphertext` and `key_protectors.wrapped_dek`.
-Names, tags, timestamps, flags and audit rows are plaintext. Since schema 2
-the mutable plaintext is **authenticated**, so it can be read without the
-key but not changed without detection, and since schema 3 each row is also
-**bound to the audit chain**, so an older authentic copy of it cannot be
-put back (see [threat-model.md](threat-model.md)).
+`secret_versions.ciphertext`, `key_wraps.wrapped_key`, the view check's
+`password`, `password_hint` and `second_factor` records, a connection's
+`sealed_credentials` and a project's `sealed` path and name. Names, tags,
+descriptions, timestamps, flags, connection settings and audit rows are
+plaintext. The mutable plaintext is **authenticated**, so it can be read
+without the key but not changed without detection, and each `secrets` and
+`secret_versions` row, like the settings record, is also **bound to the
+audit chain**, so an older authentic copy of it cannot be put back (see
+[threat-model.md](threat-model.md)).
 
 ## Metadata tags
 
-Every `secrets` and `secret_versions` row carries `tag =
-HMAC-SHA256(metadata key, canonical(row))`. The tag is written with every
+Every `secrets`, `secret_versions`, `connections` and `projects` row
+carries `tag = HMAC-SHA256(metadata key, canonical(row))`. The tag is written with every
 insert and update and verified on every read; a row whose tag does not
 verify is refused with error code `crypto` ("metadata integrity check failed
 for `<name>`") and a `failure` audit row. Nothing is ever repaired or
@@ -154,7 +206,6 @@ row has afterwards, as a *checkpoint* in the event itself:
 | `secret_delete` (soft) | deleted-state tag | |
 | `secret_recover` | live-state tag | |
 | `secret_delete` (purgeable vault), `secret_purge`, retention purge | empty blob: the row is gone | |
-| `vault_migrate` (one per row, detail `checkpoint`) | the row's tag as found | the row's tag as found |
 
 Both columns are part of the row's chain hash, so a checkpoint cannot be
 edited, inserted or removed without breaking the chain, and only keyed
@@ -187,6 +238,39 @@ Because the newest checkpoint is what matters, every operation first checks
 that the chain head still names the newest keyed row; a shortened chain is
 not consulted (see *Audit chain*).
 
+### The settings record
+
+The settings record (below) is checkpointed in the same way, in the
+`settings_tag` column: every event that rewrites the record carries the
+tag the record has afterwards.
+
+| event | why it rewrites the record |
+|-------|----------------------------|
+| `vault_create` | the first record |
+| `guard` | the password, its hint or the authenticator set, changed, verified or removed; every answer to the view check that is weighed, right or wrong (`check_failures` counts the wrong ones, an accepted code advances `last_counter`; a refused answer is `denied` and carries the checkpoint all the same) |
+| `vault_change` | a connection added, changed or removed (one event each, also on the setup screens) |
+| `connection_test` | the last test kept in the connection's row, failed or not |
+| `project_link`, `project_unlink` | a project row added, renamed or removed |
+| `vault_export` | in the copy: the view check left out |
+| `vault_import` | when the copy takes a new name |
+| `audit_verify` / `success` (an acknowledgement) | it does not: it records the record as it stands (see below) |
+
+The vault opens only when `vault_meta.settings_tag` equals the `settings_tag`
+of the newest keyed event that carries one, and that event's hash verifies;
+otherwise the open is refused with `crypto` and recorded as `vault_open` /
+`failure` (`settings integrity check failed: …`). Every change to the record,
+every answer to the view check and every read of the connections and
+projects judges the record the same way before using it, so a record put
+back while a vault is open is never built on. As for rows there is no
+accept-if-none case.
+
+While a detected truncation waits to be acknowledged the record is judged by
+its tag alone: the missing events may have held its newest checkpoint. A
+blocked vault refuses every change then, except what weighing the view check
+writes (its answers are still weighed, so that the owner can acknowledge).
+The acknowledgement records the record as it stands, so the vault opens
+again with the settings the owner accepted along with the surviving history.
+
 ### Canonical encoding
 
 A record is encoded as a sequence of fields in a fixed order. Strings and
@@ -199,15 +283,26 @@ from one kind of row, or another vault, never verifies for a different one.
 | record | domain | fields, in order |
 |--------|--------|------------------|
 | version | `sourceorrery/v2/version` | vault id, name, version, seq, enabled, content_type?, tags_json, not_before?, expires_on?, created_on, updated_on |
-| secret | `sourceorrery/v2/secret` | vault id, name, created_on, deleted_on?, scheduled_purge_on?, recovery_id? |
-| audit row | `sourceorrery/v3/audit` | vault id, prev_hash, id, occurred_on, actor, operation, secret_name?, version?, outcome, detail?, keyed, state_tag?, version_tag? |
+| secret | `sourceorrery/v2/secret` | vault id, name, created_on, deleted_on?, scheduled_purge_on?, recovery_id?, storage?, description? |
+| connection | `sourceorrery/v4/connection` | vault id, id, kind, settings_json, credential_source, sealed_credentials?, created_on, last_test_on?, last_test_outcome? |
+| project | `sourceorrery/v4/project` | vault id, id, path_mac, sealed, linked_on |
+| project path | `sourceorrery/v4/project-path` | vault id, path (the key is the metadata key; the MAC is the row's `path_mac`) |
+| audit row | `sourceorrery/v4/audit` | vault id, prev_hash, id, occurred_on, actor, operation, secret_name?, version?, outcome, detail?, keyed, state_tag?, version_tag?, settings_tag? |
 | audit head | `sourceorrery/v2/audit-head` | vault id, id, hash |
-| settings | `sourceorrery/v2/settings` | vault id, schema_version, name, created_on, recovery_level, retention_days, then `"second_factor"` and its JSON when enrolled, then `"reveal_guard"` and its JSON when set (each keyed and appended only when present, so a vault without them keeps the tag it always had) |
+| settings | `sourceorrery/v2/settings` | vault id, schema_version, name, created_on, recovery_level, retention_days, then each of `"password"`, `"password_hint"`, `"second_factor"` and `"check_failures"` followed by its stored JSON when present, then `"connections"`, their count and each connection's id and tag in id order when there are any, then `"projects"` the same way |
 
-`?` marks an optional field (`state_tag?` and `version_tag?` are optional
-byte strings); timestamps are their stored Unix-nanosecond integers. The
-audit-row domain changed to `v3` when the checkpoint fields were added;
-the migration re-chains every existing row under it.
+`?` marks an optional field (`state_tag?`, `version_tag?` and
+`settings_tag?` are optional byte strings); timestamps are their stored
+Unix-nanosecond integers.
+
+The connections and projects are listed in the settings record by id and
+tag, so a row added, removed, or replaced by an older authentic copy of
+itself breaks the settings tag and the vault refuses to open. An older
+authentic copy of the *whole* record (its `vault_meta` keys and its
+connections and projects rows together) verifies by its tag, but it is not
+the record the chain checkpointed last, so it is refused as well (see *The
+settings record*). Only an older copy of the whole file, log included, goes
+undetected ([threat model](threat-model.md), *Snapshot rollback*).
 
 ## Audit chain
 
@@ -266,10 +361,9 @@ Only an unlock *for inspection* (`SqliteVault::open_with` with
 `allow_quarantined`, `VaultRegistry::open_for_inspection`; the CLI's
 `sourceorrery audit` command) gets a handle to such a vault. It writes
 `vault_open` / `success` with detail `inspection (truncation
-unacknowledged)`, skips the retention purge and the protector re-wrap an
-unlock normally performs, and the handle still refuses every secret and
-protector operation; it can read the log, verify the chain and
-acknowledge. A chain head found stale at an inspection unlock is recorded
+unacknowledged)`, skips the retention purge an open normally performs,
+and the handle still refuses every secret operation; it can read the log,
+verify the chain and acknowledge. A chain head found stale at an inspection unlock is recorded
 rather than refused, so a truncation can be reviewed and acknowledged in
 one session. On a vault with nothing to acknowledge an inspection unlock
 is an ordinary unlock.
@@ -287,11 +381,6 @@ truncation before it; the truncation rows stay on the chain and keep
 counting in `truncations`. Removing the acknowledgement is another
 truncation and un-acknowledges what it covered.
 
-A `vault migrate` of a schema 2 file that recorded a truncation in its own
-time (schema 2 noted truncations without blocking) completes, re-chains
-that row under the key, and leaves the migrated vault blocked until the
-truncation is acknowledged.
-
 `SqliteVault::verify_audit_chain()` (`sourceorrery audit --verify`) walks
 the whole log and reports: rows, keyed and unkeyed counts, `first_broken`
 (the first row whose link or hash fails), `truncations` (keyed
@@ -303,40 +392,11 @@ truncation is still a truncation. The check is read-only.
 ## Compatibility
 
 `schema_version` is checked on open. A **newer** schema is refused with a
-clear error. An **older** schema is refused too (`migration_required`):
-migrating is an explicit, one-way command, `sourceorrery vault migrate`,
-because the legacy format carries no integrity data and its contents can
-only be taken on trust. A legacy file found under another vault's name is not
-migrated (`vault_mismatch`): the migration would bind whatever name it finds
-into the settings tag for good.
-
-The migration is guarded by the key wrapping. Since schema 2 the vault key
-is wrapped under an AAD that names the format, so a file whose marker was
-edited back to an older number cannot be unwrapped as that older format:
-the protector that unlocks it reports the format it was bound to, every
-OS-keyring protector is checked the same way, and a key bound to a newer
-schema than the marker aborts the migration with `crypto`. Only a key
-genuinely wrapped under the marker's AAD enters the migration.
-
-The migration brings schema 1 and schema 2 files to schema 3 in one
-transaction: a schema 1 file first gains the integrity columns and a tag on
-every row; both then gain the checkpoint columns, every audit row is
-re-chained under the current encoding (keyed), one `vault_migrate`
-checkpoint event is recorded per `secrets` row and per `secret_versions`
-row with the tag the row has (a row with no tag gets no checkpoint and
-stays refused), `settings_tag` is written, every key the migration holds is
-re-wrapped under the new AAD and `schema_version` is bumped; a final
-`vault_migrate` row records `schema <n> -> 3`. A schema 2 file whose audit
-head is stale is refused, as an unlock would be, rather than re-chained;
-the refusal records the truncation, and the migration that follows leaves
-the vault blocked until it is acknowledged (see *Acknowledging a
-truncation*). A passphrase protector that was not used for the migration
-is re-wrapped the next time it unlocks the vault.
-
-Argon2 parameters stored on a protector are capped before they are run
-(1 GiB, 64 passes, 16 lanes; a protector beyond the ceiling is skipped) and
-at most eight passphrase protectors are tried per attempt; `vault protector
-add` refuses a ninth, so every installed passphrase can unlock.
+clear error. An **older** one (schemas 1–3, written by earlier releases)
+is refused with `migration_required`: those files are not read, and such a
+vault is recreated (`sourceorrery setup`) and its secrets set again. The
+wrapping AAD names the format, so a file whose marker was edited to
+another number cannot be opened as that format either.
 
 ## Creating a vault
 
@@ -344,22 +404,26 @@ The vault file is created exclusively (`O_EXCL` / `CREATE_NEW`) before
 anything is written to it, so of several processes creating the same name
 at once exactly one owns the file; the others fail with `vault_exists` and
 never touch it. Only the owner removes the file again if the rest of
-creation (for example installing an OS-keyring protector) fails.
+creation (for example keeping this machine's key in the credential store,
+or the settings the setup screens chose) fails.
 
-## Backups
+## Exporting and importing
 
-A vault file can be copied as it is: it is encrypted, and it unlocks
-wherever one of its protectors is available, which for an OS-keyring
-protector means the same machine and user. `sourceorrery backup` writes a
-portable alternative, every secret and version sealed under a passphrase
-of its own, in the format described in [Backup file format](backup-format.md).
+`vault export` writes a consistent copy of the file with SQLite's online
+backup and then removes from the copy what belongs to this machine and
+this vault's owner: every `this-machine` wrap and the view check's
+records. The copy opens only with the recovery key, and its own log
+records the export. `vault import` opens such a copy with its recovery
+key, verifies its name, settings and chain, adds a `this-machine` wrap
+for the new machine and registers it; it comes with no view check.
 
 ## Deleting a vault
 
-`sourceorrery vault destroy <name>` reads the protector table (no unlock
-needed) and removes the file. An OS-keyring entry listed there is deleted
-only when its account is exactly `vault/<this vault id>/<protector id>` and
-no other vault file in the same home references it; otherwise it is kept and
-reported, because protector metadata is unauthenticated until the vault is
-unlocked and must not be allowed to point deletion at another vault's key.
+`sourceorrery vault destroy <name>` reads the `key_wraps` table (no
+opening needed) and removes the file. A credential-store entry listed there
+is deleted only when its account is exactly `vault/<this vault id>/<wrap
+id>` and no other vault file in the same home references it; otherwise it
+is kept and reported, because wrap metadata is unauthenticated until the
+vault is open and must not be allowed to point deletion at another vault's
+key.
 `--keep-os-key` skips credential-store deletion altogether.

@@ -1,156 +1,144 @@
-//! `sourceorrery vault ...`
+//! `sourceorrery vault ...`: create (or, on the setup screens, change),
+//! list, export, import and destroy (ADR 0009, section 7). A vault's view
+//! check, recovery key and connections change on the setup screens
+//! (`ui::setup`), and its details show in the `ui` browser.
 
-use std::io::{IsTerminal, Write as _};
+use std::io::Write as _;
+use std::path::Path;
 
 use anyhow::anyhow;
-use sourceorrery_core::RecoveryLevel;
-use sourceorrery_storage::{CreateVaultOptions, ProtectorSpec, keystore};
+use sourceorrery_core::{RecoveryLevel, SecretClient as _};
+use sourceorrery_storage::{
+    Argon2Params, ConnectionChange, CreateVaultOptions, PasswordChange, SettingsChange,
+};
 
 use crate::cli::{
-    PassphraseCommand, ProtectorAddArgs, ProtectorChoice, ProtectorCommand, ProtectorRemoveArgs,
-    VaultCommand, VaultCreateArgs, VaultDestroyArgs, VaultMigrateArgs,
+    VaultCommand, VaultCreateArgs, VaultDestroyArgs, VaultExportArgs, VaultImportArgs,
 };
+use crate::commands::connections;
 use crate::context::Ctx;
 use crate::output::{self, Table};
-use crate::{prompt, strength};
+use crate::prompt;
 
 pub fn run(ctx: &Ctx, cmd: &VaultCommand) -> anyhow::Result<()> {
     match cmd {
         VaultCommand::Create(args) => create(ctx, args),
         VaultCommand::List => list(ctx),
-        VaultCommand::Info => info(ctx),
-        VaultCommand::Protector(cmd) => protector(ctx, cmd),
-        VaultCommand::Passphrase(cmd) => passphrase(ctx, cmd),
-        VaultCommand::TwoFactor(cmd) => crate::commands::guard::two_factor(ctx, cmd),
-        VaultCommand::Guard(args) => crate::commands::guard::guard(ctx, args),
-        VaultCommand::Recovery(cmd) => crate::commands::guard::recovery(ctx, cmd),
+        VaultCommand::Export(args) => export(ctx, args),
+        VaultCommand::Import(args) => import(ctx, args),
         VaultCommand::Destroy(args) => destroy(ctx, args),
-        VaultCommand::Migrate(args) => migrate(ctx, args),
     }
 }
 
-/// `vault passphrase generate` and `vault passphrase check`: neither opens
-/// a vault; the generated passphrase is written to stdout once, as a
-/// password manager's generator would, and nothing is kept.
-fn passphrase(ctx: &Ctx, cmd: &PassphraseCommand) -> anyhow::Result<()> {
-    match cmd {
-        PassphraseCommand::Generate(args) => {
-            if args.length < 12 {
-                return Err(anyhow!("a generated passphrase has at least 12 characters"));
-            }
-            let text = sourceorrery_crypto::random_passphrase(args.length)?;
-            let bits = sourceorrery_crypto::random::passphrase_bits(args.length);
-            if ctx.json() {
-                return output::json(&serde_json::json!({
-                    "passphrase": *text,
-                    "length": args.length,
-                    "bits": bits,
-                }));
-            }
-            let mut stdout = std::io::stdout().lock();
-            stdout.write_all(text.as_bytes())?;
-            stdout.write_all(b"\n")?;
-            stdout.flush()?;
-            drop(stdout);
+/// Write a recovery key to `path`, readable by the current user only. The
+/// file is created new: an existing one is never overwritten.
+fn write_recovery_key(path: &Path, key: &str) -> anyhow::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|err| anyhow!("cannot create {}: {err}", path.display()))?;
+    file.write_all(key.as_bytes())?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
+/// Show a recovery key once: into `out` when given, else on stdout (or in
+/// the JSON body).
+fn show_recovery_key(
+    ctx: &Ctx,
+    vault: &str,
+    key: &str,
+    out: Option<&Path>,
+    body: &mut serde_json::Value,
+) -> anyhow::Result<()> {
+    if let Some(path) = out {
+        write_recovery_key(path, key)?;
+        body["recovery_key_file"] = serde_json::Value::String(path.display().to_string());
+        if !ctx.json() {
             output::note(&format!(
-                "{} characters, about {bits} bits of entropy; shown once and not stored",
-                args.length
+                "the recovery key of vault '{vault}' is in {} (readable by you only); keep a copy \
+                 apart from this machine and delete the file",
+                path.display()
             ));
-            Ok(())
         }
-        PassphraseCommand::Set(args) => crate::commands::guard::passphrase_set(ctx, args),
-        PassphraseCommand::Hint(args) => crate::commands::guard::passphrase_hint(ctx, args),
-        PassphraseCommand::Check => {
-            let text = if std::io::stdin().is_terminal() {
-                prompt::read_hidden("Passphrase to estimate: ")?
-            } else {
-                prompt::read_value(&prompt::ValueSource {
-                    from_file: None,
-                    stdin: true,
-                    keep_trailing_newline: false,
-                    confirm: false,
-                    allow_empty: true,
-                })?
-            };
-            let estimate = strength::estimate(text.expose_utf8().unwrap_or_default());
-            drop(text);
-            if ctx.json() {
-                return output::json(&serde_json::json!({
-                    "score": estimate.score as u8,
-                    "label": estimate.score.label(),
-                    "bits": estimate.bits,
-                    "acceptable": estimate.acceptable(),
-                    "warnings": estimate.warnings,
-                }));
-            }
-            let mut table = Table::new(["FIELD", "VALUE"]);
-            table.row([
-                "score".to_owned(),
-                format!("{} ({})", estimate.score as u8, estimate.score.label()),
-            ]);
-            table.row(["bits".to_owned(), estimate.bits.to_string()]);
-            table.row([
-                "acceptable".to_owned(),
-                if estimate.acceptable() { "yes" } else { "no" }.to_owned(),
-            ]);
-            table.row([
-                "weakened by".to_owned(),
-                if estimate.warnings.is_empty() {
-                    "-".to_owned()
-                } else {
-                    estimate.warnings.join(", ")
-                },
-            ]);
-            table.print()
-        }
+        return Ok(());
     }
-}
-
-fn migrate(ctx: &Ctx, args: &VaultMigrateArgs) -> anyhow::Result<()> {
-    Ctx::refuse_remote(&args.name, "vault migrate")?;
-    let unlocker = ctx.unlocker();
-    let vault = ctx.registry.migrate(&args.name, &unlocker)?;
-    let descriptor = vault.descriptor()?;
     if ctx.json() {
-        return output::json(&descriptor);
+        body["recovery_key"] = serde_json::Value::String(key.to_owned());
+        return Ok(());
     }
-    output::success(&format!(
-        "Vault '{}' is at the current on-disk format (schema {})",
-        descriptor.name,
-        sourceorrery_storage::SCHEMA_VERSION
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{key}")?;
+    stdout.flush()?;
+    drop(stdout);
+    output::note(&format!(
+        "that is the recovery key of vault '{vault}', shown once: it opens the vault wherever \
+         this machine's key cannot (WSL, a container, CI, another machine, an exported copy) \
+         and passes its view check. Write it down and keep it apart from this machine."
     ));
     Ok(())
 }
 
-fn choose_protector(
-    ctx: &Ctx,
-    choice: Option<ProtectorChoice>,
-    allow_weak: bool,
-) -> anyhow::Result<ProtectorSpec> {
-    let choice = match choice {
-        Some(c) => c,
-        None if keystore::available() => ProtectorChoice::OsKeyring,
-        None => {
-            output::note(&format!(
-                "{} is not available{}; falling back to a passphrase protector",
-                keystore::STORE_NAME,
-                keystore::unavailable_reason()
-                    .map(|r| format!(" ({r})"))
-                    .unwrap_or_default()
-            ));
-            ProtectorChoice::Passphrase
-        }
-    };
-    match choice {
-        ProtectorChoice::OsKeyring => Ok(ProtectorSpec::OsKeyring),
-        ProtectorChoice::Passphrase => {
-            let passphrase = ctx.new_passphrase("for this vault", allow_weak)?;
-            Ok(ProtectorSpec::passphrase(passphrase))
-        }
-    }
+/// `vault create` shows the setup screens: on a terminal, without JSON, and
+/// without any flag of a non-interactive create.
+#[cfg(feature = "ui")]
+fn on_screens(ctx: &Ctx, args: &VaultCreateArgs) -> bool {
+    !ctx.json()
+        && args.recovery_key_out.is_none()
+        && !args.no_keyring
+        && !args.purgeable
+        // The flag's default: the screens create vaults that way.
+        && args.retention_days == 90
+        && ctx.password_file.is_none()
+        && args.connections.is_empty()
+        && crate::commands::on_a_terminal()
 }
 
+/// What a non-interactive create gives the new vault: the password from
+/// `--password-file` and a connection per provider flag set.
+fn created_settings(ctx: &Ctx, args: &VaultCreateArgs) -> anyhow::Result<SettingsChange> {
+    let password = ctx
+        .password_file
+        .as_deref()
+        .map(Ctx::password_from_file)
+        .transpose()?;
+    Ok(SettingsChange {
+        password: password.map_or(PasswordChange::Keep, |password| PasswordChange::Set {
+            password,
+            hint: None,
+            params: Argon2Params::default(),
+        }),
+        connections: connections::requested(&args.connections)?
+            .into_iter()
+            .map(|(settings, credentials)| ConnectionChange::Add {
+                settings,
+                credentials,
+            })
+            .collect(),
+        ..SettingsChange::default()
+    })
+}
+
+/// `vault create`: the setup screens, or a vault created at once with what
+/// the flags give it, in one transaction (a vault that cannot take its
+/// password or a connection is removed again).
 fn create(ctx: &Ctx, args: &VaultCreateArgs) -> anyhow::Result<()> {
+    #[cfg(feature = "ui")]
+    if on_screens(ctx, args) {
+        return crate::ui::setup::run(ctx, args.name.as_deref(), args.theme);
+    }
+    let Some(name) = args.name.as_deref() else {
+        return Err(anyhow!(
+            "name the vault to create: `sourceorrery vault create NAME` (in a terminal, without \
+             flags, it shows the setup screens; `sourceorrery setup --guide` shows the flags)"
+        ));
+    };
     let options = CreateVaultOptions {
         recovery_level: if args.purgeable {
             RecoveryLevel::Purgeable
@@ -158,75 +146,227 @@ fn create(ctx: &Ctx, args: &VaultCreateArgs) -> anyhow::Result<()> {
             RecoveryLevel::Recoverable
         },
         retention_days: args.retention_days,
+        this_machine: !args.no_keyring,
     };
-    let spec = choose_protector(ctx, args.protector, args.allow_weak)?;
-    let kind = spec.kind_label();
-    let vault = ctx.registry.create(&args.name, options, spec)?;
-    let descriptor = vault.descriptor()?;
-    if ctx.json() {
-        return output::json(&descriptor);
+    if let Some(path) = &args.recovery_key_out
+        && path.exists()
+    {
+        return Err(anyhow!(
+            "{} exists already; the recovery key is never written over a file",
+            path.display()
+        ));
     }
-    let how = match kind {
-        "os-keyring" => format!("key protected by {}", keystore::STORE_NAME),
-        _ => "key protected by passphrase".to_owned(),
+    // Read before the vault exists, so a wrong flag or file creates nothing.
+    let change = created_settings(ctx, args)?;
+    let created = ctx.registry.create(name, options)?;
+    if let Err(err) = created.vault.change_settings(&change) {
+        // No half-made vault is left behind: it goes again.
+        drop(created);
+        let _ = ctx.registry.destroy(name, false);
+        return Err(anyhow!("vault '{name}' was not created: {err}"));
+    }
+    drop(change);
+    let descriptor = created.vault.descriptor()?;
+    let check = created.vault.view_check()?;
+    let added = created.vault.connections()?;
+    // The keys that open it, by kind and id (never a credential-store
+    // account): what a script checks the credential store against.
+    let keys = created.vault.wraps()?;
+    let mut body = serde_json::json!({
+        "vault": descriptor,
+        "this_machine": created.this_machine,
+        "keys": keys,
+        "view_check": check,
+        "connections": added,
+    });
+    if !ctx.json() {
+        output::success(&format!(
+            "Vault '{}' created\n  {}",
+            descriptor.name,
+            descriptor
+                .path
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        ));
+        if created.this_machine {
+            eprintln!(
+                "  this machine opens it without asking ({})",
+                ctx.registry.store().name()
+            );
+        } else if !args.no_keyring {
+            output::note(&format!(
+                "{} is not available{}; the vault opens with its recovery key only",
+                ctx.registry.store().name(),
+                ctx.registry
+                    .store()
+                    .unavailable_reason()
+                    .map(|r| format!(" ({r})"))
+                    .unwrap_or_default()
+            ));
+        }
+        if !check.is_none() {
+            eprintln!("  view check: {}", check.describe());
+        }
+        for connection in &added {
+            eprintln!(
+                "  connection {}: {}",
+                connection.id,
+                connections::describe(connection)
+            );
+        }
+    }
+    show_recovery_key(
+        ctx,
+        &descriptor.name,
+        created.recovery_key.as_str(),
+        args.recovery_key_out.as_deref(),
+        &mut body,
+    )?;
+    if ctx.json() {
+        return output::json(&body);
+    }
+    Ok(())
+}
+
+/// `vault export`: no view check is asked, since the copy opens with the
+/// recovery key only. What the copy leaves out is read before it is made,
+/// to say so.
+fn export(ctx: &Ctx, args: &VaultExportArgs) -> anyhow::Result<()> {
+    let name = match &args.name {
+        Some(name) => name.clone(),
+        None => ctx.vault_name()?,
     };
+    let vault = ctx.open_local(&name)?;
+    let check = vault.view_check()?;
+    let left_out: Vec<&str> = [
+        (
+            vault
+                .wraps()?
+                .iter()
+                .any(|wrap| wrap.kind == "this-machine"),
+            "this machine's key",
+        ),
+        (check.password, "the password"),
+        (vault.password_hint()?.is_some(), "its hint"),
+        (check.authenticator, "the authenticator"),
+    ]
+    .into_iter()
+    .filter_map(|(present, what)| present.then_some(what))
+    .collect();
+    vault.export_to(&args.out)?;
+    let name = vault.vault_name();
+    if ctx.json() {
+        return output::json(&serde_json::json!({
+            "vault": name,
+            "file": args.out.display().to_string(),
+            "left_out": left_out,
+        }));
+    }
     output::success(&format!(
-        "Vault '{}' created ({how})\n  {}",
-        descriptor.name,
+        "Vault '{name}' exported to {}",
+        args.out.display()
+    ));
+    eprintln!("  the copy opens with the recovery key only");
+    if !left_out.is_empty() {
+        eprintln!("  left out of it: {}", left_out.join(", "));
+    }
+    Ok(())
+}
+
+/// `vault import`: the copy opens with its recovery key only (the
+/// environment, `--recovery-key-file` or the prompt), and the vault comes
+/// with no view check. `--password-file` sets one at once; otherwise the
+/// output says how.
+fn import(ctx: &Ctx, args: &VaultImportArgs) -> anyhow::Result<()> {
+    let unlocker = ctx.unlocker();
+    let imported = ctx
+        .registry
+        .import_from(&args.file, &unlocker, args.name.as_deref())?;
+    let vault = imported.vault;
+    let name = vault.vault_name().to_owned();
+    if let Some(file) = &ctx.password_file {
+        let set = Ctx::password_from_file(file).and_then(|password| {
+            Ok(vault.set_password(&password, None, Argon2Params::default())?)
+        });
+        if let Err(err) = set {
+            return Err(anyhow!(
+                "vault '{name}' was imported, but its password was not set: {err}"
+            ));
+        }
+    }
+    let descriptor = vault.descriptor()?;
+    let check = vault.view_check()?;
+    let connected = vault.connections()?;
+    if ctx.json() {
+        return output::json(&serde_json::json!({
+            "vault": descriptor,
+            "renamed_from": imported.renamed_from,
+            "this_machine": imported.this_machine,
+            "view_check": check,
+            "connections": connected,
+        }));
+    }
+    output::success(&format!(
+        "Vault '{name}' imported\n  {}",
         descriptor
             .path
             .as_deref()
             .map(|p| p.display().to_string())
             .unwrap_or_default()
     ));
-    if kind == "os-keyring" {
+    if let Some(original) = &imported.renamed_from {
+        eprintln!("  exported as '{}'", output::sanitize(original));
+    }
+    if imported.this_machine {
         eprintln!(
-            "  tip: add a passphrase protector for WSL, Docker or CI:\n  \
-             sourceorrery vault protector add --kind passphrase --vault {}",
-            descriptor.name
+            "  this machine opens it without asking ({})",
+            ctx.registry.store().name()
         );
+    } else {
+        output::note(&format!(
+            "{} is not available; the vault opens with its recovery key only",
+            ctx.registry.store().name()
+        ));
+    }
+    for connection in &connected {
+        eprintln!(
+            "  connection {}: {}",
+            connection.id,
+            connections::describe(connection)
+        );
+    }
+    if check.is_none() {
+        output::note(&format!(
+            "it has no view check; set one on the setup screens: sourceorrery vault create {name}"
+        ));
+    } else {
+        eprintln!("  viewing it asks for: {}", check.describe());
     }
     Ok(())
 }
 
-/// One line of `vault list`: a vault file in the home directory, or a
-/// remote vault the nearest manifest declares.
+/// One line of `vault list`: a vault file in the home directory.
 #[derive(serde::Serialize)]
 struct VaultRow {
     name: String,
     kind: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    path: Option<std::path::PathBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provider: Option<sourceorrery_core::Provider>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    location: Option<String>,
+    path: std::path::PathBuf,
 }
 
 fn list(ctx: &Ctx) -> anyhow::Result<()> {
-    let mut rows: Vec<VaultRow> = ctx
+    let rows: Vec<VaultRow> = ctx
         .registry
         .list()?
         .into_iter()
         .map(|name| {
             Ok(VaultRow {
-                path: Some(ctx.registry.vault_path(&name)?),
+                path: ctx.registry.vault_path(&name)?,
                 name,
                 kind: "local",
-                provider: None,
-                location: None,
             })
         })
         .collect::<anyhow::Result<_>>()?;
-    for (name, remote) in Ctx::remote_vaults()? {
-        rows.push(VaultRow {
-            name,
-            kind: "remote",
-            path: None,
-            provider: Some(remote.provider()),
-            location: Some(remote.location()),
-        });
-    }
     if ctx.json() {
         return output::json(&rows);
     }
@@ -239,148 +379,16 @@ fn list(ctx: &Ctx) -> anyhow::Result<()> {
     }
     let mut table = Table::new(["NAME", "KIND", "LOCATION"]);
     for row in rows {
-        let kind = match row.provider {
-            Some(provider) => provider.name().to_owned(),
-            None => row.kind.to_owned(),
-        };
-        let location = row
-            .path
-            .map(|p| p.display().to_string())
-            .or(row.location)
-            .unwrap_or_default();
-        table.row([row.name, kind, location]);
-    }
-    table.print()
-}
-
-fn info(ctx: &Ctx) -> anyhow::Result<()> {
-    let vault = ctx.open_default()?;
-    let descriptor = vault.descriptor()?;
-    let protectors = match vault.local() {
-        Some(local) => local.protectors()?,
-        None => Vec::new(),
-    };
-    if ctx.json() {
-        let mut body = serde_json::json!({
-            "vault": descriptor,
-            "protectors": protectors,
-        });
-        if let Some(local) = vault.local() {
-            body["guard"] = serde_json::to_value(local.reveal_guard()?)?;
-            body["second_factor"] = serde_json::to_value(local.second_factor()?)?;
-            body["recovery_codes"] =
-                serde_json::to_value(crate::commands::guard::recovery_labels(local)?)?;
-            body["passphrase_hint"] = serde_json::to_value(local.passphrase_hint())?;
-        }
-        return output::json(&body);
-    }
-    let mut table = Table::new(["FIELD", "VALUE"]);
-    table.row(["name".into(), descriptor.name.clone()]);
-    table.row(["id".into(), descriptor.id.clone()]);
-    table.row(["backend".into(), descriptor.backend.clone()]);
-    table.row([
-        "path".into(),
-        descriptor
-            .path
-            .as_deref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default(),
-    ]);
-    // A remote provider does not report when its vault was created.
-    table.row([
-        "created".into(),
-        if descriptor.created_on == time::OffsetDateTime::UNIX_EPOCH {
-            "-".to_owned()
-        } else {
-            output::fmt_time(descriptor.created_on)
-        },
-    ]);
-    table.row([
-        "recovery".into(),
-        format!("{:?}", descriptor.recovery_level).to_lowercase(),
-    ]);
-    table.row([
-        "retention".into(),
-        format!("{} days", descriptor.retention_days),
-    ]);
-    if let Some(local) = vault.local() {
-        crate::commands::guard::info_rows(local, &mut table)?;
-    }
-    table.print()?;
-    if vault.local().is_none() {
-        return Ok(());
-    }
-    println!();
-    protector_table(&protectors)
-}
-
-fn protector_table(protectors: &[sourceorrery_storage::ProtectorInfo]) -> anyhow::Result<()> {
-    let mut table = Table::new(["PROTECTOR", "KIND", "ID", "ADDED"]);
-    for p in protectors {
         table.row([
-            p.label.clone(),
-            p.kind.clone(),
-            p.id.clone(),
-            output::fmt_time(p.created_on),
+            row.name,
+            row.kind.to_owned(),
+            row.path.display().to_string(),
         ]);
     }
     table.print()
 }
 
-fn protector(ctx: &Ctx, cmd: &ProtectorCommand) -> anyhow::Result<()> {
-    match cmd {
-        ProtectorCommand::List => {
-            let vault = ctx.open_local_default("vault protector")?;
-            let protectors = vault.protectors()?;
-            if ctx.json() {
-                return output::json(&protectors);
-            }
-            protector_table(&protectors)
-        }
-        ProtectorCommand::Add(ProtectorAddArgs {
-            kind,
-            label,
-            allow_weak,
-        }) => {
-            let vault = ctx.open_local_default("vault protector")?;
-            // Another way to unlock the vault: a guarded change.
-            crate::commands::guard::enforce(ctx, &vault, "add a protector")?;
-            let spec = match kind {
-                ProtectorChoice::OsKeyring => ProtectorSpec::OsKeyring,
-                ProtectorChoice::Passphrase => ProtectorSpec::passphrase(
-                    ctx.new_passphrase("for the new protector", *allow_weak)?,
-                ),
-            };
-            let info = vault.add_protector(spec, label.as_deref())?;
-            if ctx.json() {
-                return output::json(&info);
-            }
-            output::success(&format!(
-                "Protector '{}' ({}) added to vault '{}'",
-                info.label,
-                info.kind,
-                vault.descriptor()?.name
-            ));
-            Ok(())
-        }
-        ProtectorCommand::Remove(ProtectorRemoveArgs { protector }) => {
-            let vault = ctx.open_local_default("vault protector")?;
-            crate::commands::guard::enforce(ctx, &vault, "remove a protector")?;
-            let note = vault.remove_protector(protector)?;
-            if ctx.json() {
-                return output::json(&serde_json::json!({ "removed": protector, "note": note }));
-            }
-            output::success(&format!("Protector '{protector}' removed"));
-            if let Some(note) = note {
-                output::note(&note);
-            }
-            Ok(())
-        }
-    }
-}
-
 fn destroy(ctx: &Ctx, args: &VaultDestroyArgs) -> anyhow::Result<()> {
-    Ctx::refuse_remote(&args.name, "vault destroy")?;
     if !ctx.registry.exists(&args.name) {
         return Err(sourceorrery_core::SecretError::VaultNotFound {
             name: args.name.clone(),
@@ -400,7 +408,7 @@ fn destroy(ctx: &Ctx, args: &VaultDestroyArgs) -> anyhow::Result<()> {
         return output::json(&serde_json::json!({ "destroyed": args.name, "keyring": report }));
     }
     output::success(&format!("Vault '{}' destroyed", args.name));
-    // Account names come from the file's protector records, unverified.
+    // Account names come from the file's key records, unverified.
     for account in &report.removed_keys {
         eprintln!("  removed OS-keyring entry {}", output::sanitize(account));
     }

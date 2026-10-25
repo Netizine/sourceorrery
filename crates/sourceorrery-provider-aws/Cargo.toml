@@ -24,6 +24,8 @@ tracing.workspace = true
 # Test-only back edge: Cargo strips path-only dev dependencies on publish.
 sourceorrery-provider = { path = "../sourceorrery-provider" }
 sourceorrery-conformance = { path = "../../tests/conformance" }
+sourceorrery-storage = { path = "../sourceorrery-storage", default-features = false }
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 
 [lints]

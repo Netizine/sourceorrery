@@ -108,6 +108,7 @@ export default defineConfig({
 						{ label: 'Overview', slug: 'providers' },
 						{ label: 'HashiCorp Vault', slug: 'providers/hashicorp-vault' },
 						{ label: 'AWS Secrets Manager', slug: 'providers/aws-secrets-manager' },
+						{ label: 'Azure Key Vault', slug: 'providers/azure-key-vault' },
 					],
 				},
 				{

@@ -5,6 +5,7 @@ description: Install SourceOrrery 0.2.0 from the package registries, the GitHub 
 
 import { Steps, TabItem, Tabs } from '@astrojs/starlight/components';
 import Aside from '../../components/Aside.astro';
+import Walkthrough from '../../components/Walkthrough.astro';
 
 SourceOrrery 0.2.0 is an encrypted local vault with a
 cloud-secrets-manager-style lifecycle, a CLI with an interactive vault manager, and
@@ -18,9 +19,8 @@ secrets; the planned broker is not part of this release.
 </Aside>
 
 <Aside type="note" title="Documentation for 0.2.0">
-This walkthrough is prepared for **0.2.0**, including guided setup,
-`.env` import, agent integrations and optional [remote providers](/providers/).
-Until that version is published, use [a source build](#from-source).
+This walkthrough covers the [**0.2.0 release**](https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0), including guided setup,
+`.env` import, agent integrations and secrets kept at [providers](/providers/).
 Check `sourceorrery --version` before following it. The authenticated
 local broker remains on the [roadmap](/roadmap/).
 </Aside>
@@ -78,20 +78,21 @@ it installs is the released file.
 <Tabs syncKey="os">
 <TabItem label="Windows">
 
-```powershell
-winget install Netizine.SourceOrrery
-```
-
-or, with [Scoop](https://scoop.sh):
+With [Scoop](https://scoop.sh):
 
 ```powershell
 scoop bucket add sourceorrery https://github.com/Netizine/scoop-sourceorrery
 scoop install sourceorrery
 ```
 
-WinGet lists a new version once the community repository has merged its
-submission, usually a few days after a release; the Scoop bucket has it at
-once. The binaries are not code-signed yet, so SmartScreen may ask the
+The [WinGet submission for 0.2.0](https://github.com/microsoft/winget-pkgs/pull/460455)
+is awaiting catalog approval. Once it is merged, install with:
+
+```powershell
+winget install Netizine.SourceOrrery
+```
+
+The binaries are not code-signed yet, so SmartScreen may ask the
 first time `sourceorrery` runs (*More info → Run anyway*); the hash check
 above, the release's `SHA256SUMS` and `gh attestation verify` are how to
 check a download in the meantime.
@@ -202,8 +203,8 @@ sourceorrery --help
 ```
 
 The OS credential store on Linux is Secret Service over D-Bus. On a server
-or in a container there is none: use a passphrase protector, as described in
-[Headless: WSL, Docker, CI](/guides/headless/).
+or in a container there is none: the vault opens with its recovery key, as
+described in [Headless: WSL, Docker, CI](/guides/headless/).
 
 </TabItem>
 </Tabs>
@@ -225,13 +226,12 @@ a C compiler, and on Linux `libdbus-1-dev` and `pkg-config`, build
 from the repository and install the CLI into
 `~/.cargo/bin`, which rustup put on your `PATH`.
 
-Until 0.2.0 is published, build `main`. After publication, use
-`git checkout v0.2.0` in place of `git checkout main` for the release source.
+Check out the `v0.2.0` tag to build the published release source.
 
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout main
+git checkout v0.2.0
 python scripts/release/set-version.py 0.2.0 --keep-node-links
 cargo install --locked --path crates/sourceorrery-cli
 sourceorrery --help
@@ -243,16 +243,17 @@ Windows). [Building from source](/guides/building-from-source/) covers the
 C ABI, every SDK and the test suites.
 
 <Aside>
-Headless servers without a credential store can build without OS-keyring
-support and use passphrase protectors only:
+Headless servers without a credential store can build without it and
+open vaults with their recovery keys only:
 
 ```bash
 cargo build --release -p sourceorrery-cli --no-default-features
 ```
 
 See [Headless: WSL, Docker, CI](/guides/headless/).
-This minimal build also omits the interactive `ui` command; add
-`--features ui` if you need it without OS-keyring support.
+This minimal build also omits the screens (`ui`, `setup`'s and `init`'s)
+and the providers; add `--features ui` or `--features remote` if you need
+them without the credential store.
 </Aside>
 
 ## Set up a project
@@ -264,13 +265,17 @@ directory:
 sourceorrery setup
 ```
 
-Six screens take you from a vault with a strong passphrase to a running
-program: the vault, a first database password (typed against a strength
-meter or generated, never shown), recovery codes and a hint, an
-authenticator app as a second factor, the reveal guard, and the manifest.
-[First run](/guides/first-run/) walks through each screen and gives the
-same steps as commands, which the wizard prints where there is no
-terminal. The sections below are the manual path.
+The screens make the vault: its name, this machine's key in the OS
+credential store and a recovery key shown once, an optional view check (a
+password, and an authenticator code on top, asked before anyone views the
+vault or reveals a value), and where it keeps secrets: its own file, or
+HashiCorp Vault, AWS Secrets Manager or Azure Key Vault through a
+connection it holds. Nothing is written until the review confirms.
+[First run](/guides/first-run/) walks through each step;
+`sourceorrery setup --guide` prints the one command that does the same
+where there is no terminal. The sections below are the manual path.
+
+<Walkthrough name="setup" />
 
 ## First vault to first run
 
@@ -291,11 +296,12 @@ development credential for the walkthrough.
    `~/.local/share/sourceorrery` on Linux). Every value in it is encrypted
    with a vault key that never touches the disk in the clear.
 
-   By default the vault key is protected by the OS credential store (Windows
-   Credential Manager, macOS Keychain, Secret Service), so there is nothing
-   to type later. Where no store is available, or with
-   `--protector passphrase`, you are asked for a passphrase twice. Argon2id
-   derives a key that wraps the randomly generated vault key.
+   The vault key is kept twice: as this machine's key in the OS credential
+   store (Windows Credential Manager, macOS Keychain, Secret Service), so
+   there is nothing to type later, and under the vault's **recovery key**,
+   which the command prints once (or writes to `--recovery-key-out FILE`).
+   Keep it apart from this machine: it opens the vault anywhere else, and
+   nothing else does when this machine's key is gone.
 
 2. **Store a secret.**
 
@@ -341,8 +347,10 @@ development credential for the walkthrough.
    sourceorrery init
    ```
 
-   This writes `sourceorrery.toml` next to your code. It is the committed,
-   value-free replacement for `.env`:
+   On a terminal, `init` lists the vault's secrets to tick, adds any new
+   ones the project needs and writes `sourceorrery.toml` next to your code
+   after a review (`init --all` or `--secret NAME` without a terminal). It
+   is the committed, value-free replacement for `.env`:
 
    ```toml
    [project]
@@ -354,8 +362,7 @@ development credential for the walkthrough.
    purpose = "Database authentication"   # documentation only
    ```
 
-   If the project already has a manifest, edit its entries instead of
-   running `init --force`, which would replace it.
+   If the project already has a manifest, `init` adds to it in place.
 
    A `value = ...` key, or any other unknown key, is a parse error. Keep
    actual credentials out of names, comments and `purpose` fields too:
@@ -388,7 +395,8 @@ development credential for the walkthrough.
 <Aside type="caution" title="What this does not protect against">
 Environment variables are visible to processes with permission to inspect
 the child. Code running as your OS user can use the same OS credential
-store or a passphrase available to it. SourceOrrery encrypts the values it
+store or a recovery key available to it, and `run` never asks the view
+check. SourceOrrery encrypts the values it
 stores and audits vault operations, but cannot prevent your application
 from logging a value or an agent from reading an existing `.env` file.
 The [threat model](/security/threat-model/) explains this boundary.
@@ -397,8 +405,9 @@ The [threat model](/security/threat-model/) explains this boundary.
 ## Where to next
 
 - `sourceorrery ui` opens the interactive vault manager: dashboards,
-  secrets and their versions, deleted secrets and the audit log, all
-  without ever showing a value ([CLI reference](/reference/cli/#ui)).
+  secrets and their versions, where each is kept, the projects built from
+  the vault, deleted secrets and the audit log, all without ever showing a
+  value ([CLI reference](/reference/cli/#ui)).
 - [SDKs](/sdks/) to read the same secrets from Python, JavaScript/TypeScript,
   Rust, Java, .NET, Go, C, C++ or PHP.
 - [CLI reference](/reference/cli/) for every command and option, including
@@ -441,8 +450,10 @@ Confirm which version your terminal runs:
 sourceorrery --version
 ```
 
-Keep your existing vault files and OS credential-store entries; an update
-does not require creating a new vault.
+An update keeps your vault files and OS credential-store entries. A
+release that changes the vault format says so in its notes and refuses a
+file from an earlier release with `migration_required`, never rewriting it;
+recreate such a vault with `sourceorrery setup`.
 
 **SDKs update separately** through your application's package manager.
 For example, use `python -m pip install --upgrade sourceorrery` in your
@@ -457,6 +468,6 @@ construct `Manifest` or `OpenOptions` directly, or match `AuditOperation`,
 may need source changes. Review the release notes and rebuild against the
 updated SDK. Patch releases within the same `0.x` series preserve the public
 API; a minor release can introduce documented breaking changes. Vault-file
-compatibility is separate, with any schema upgrade performed explicitly by
-`vault migrate`. See the [compatibility policy](/decisions/0007-versioning-and-compatibility/).
+compatibility is separate: a file from an earlier format is refused with
+`migration_required`. See the [compatibility policy](/decisions/0007-versioning-and-compatibility/).
 </Aside>

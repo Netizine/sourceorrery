@@ -10,7 +10,9 @@ use crate::cli::{
     SecretCommand, SecretGetArgs, SecretListArgs, SecretNameArgs, SecretPurgeArgs, SecretSetArgs,
     SecretUpdateArgs,
 };
-use crate::commands::parse_tags;
+use sourceorrery_storage::SecretStorage;
+
+use crate::commands::{connections, parse_tags};
 use crate::context::Ctx;
 use crate::output::{self, Table};
 use crate::prompt;
@@ -42,16 +44,44 @@ fn set(ctx: &Ctx, args: &SecretSetArgs) -> anyhow::Result<()> {
         expires_on: args.expires.as_deref().map(timestamp::parse).transpose()?,
     };
     options.validate()?;
-    // Open the vault first so a wrong passphrase is reported before we ask
-    // for the value.
-    let vault = ctx.open_default()?;
-    let value = prompt::read_secret_value(args)?;
-    let props = vault.set_secret(&args.name, value, options)?;
-    if ctx.json() {
-        return output::json(&props);
+    if let Some(description) = &args.description {
+        sourceorrery_storage::validate_description(description)?;
     }
+    // Open the vault, and find the storage, first, so that what cannot be
+    // done is reported before we ask for the value.
+    let vault = ctx.open_default()?;
+    let storage = args
+        .storage
+        .as_deref()
+        .map(|value| connections::storage(vault.vault(), value))
+        .transpose()?;
+    let value = prompt::read_secret_value(args)?;
+    let props = match &storage {
+        Some(storage) => vault.set_secret_in(storage, &args.name, value, options)?,
+        None => vault.set_secret(&args.name, value, options)?,
+    };
+    if let Some(description) = &args.description {
+        vault
+            .vault()
+            .set_description(&props.name, Some(description))?;
+    }
+    if ctx.json() {
+        let mut body = serde_json::to_value(&props)?;
+        if let Some(description) = &args.description {
+            body["description"] = serde_json::Value::String(description.clone());
+        }
+        return output::json(&body);
+    }
+    let at = match vault.vault().storage_of(&props.name)? {
+        Some(SecretStorage::Connection(id)) => vault
+            .vault()
+            .connection(&id)
+            .map(|c| format!(" (kept at {})", c.settings.provider().display_name()))
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
     output::success(&format!(
-        "Stored '{}' as version {} in vault '{}'",
+        "Stored '{}' as version {} in vault '{}'{at}",
         props.name, props.version, props.vault
     ));
     Ok(())
@@ -59,6 +89,10 @@ fn set(ctx: &Ctx, args: &SecretSetArgs) -> anyhow::Result<()> {
 
 fn get(ctx: &Ctx, args: &SecretGetArgs) -> anyhow::Result<()> {
     let vault = ctx.open_default()?;
+    // Viewing a secret, and above all revealing it, is what the view
+    // check is for; the application's reads (`run`, the SDKs) are not
+    // asked.
+    ctx.check_view_opened(&vault)?;
     if !args.reveal {
         let props = vault.get_secret_properties(&args.name, args.version.as_deref())?;
         if ctx.json() {
@@ -67,11 +101,6 @@ fn get(ctx: &Ctx, args: &SecretGetArgs) -> anyhow::Result<()> {
         output::properties_block(&props)?;
         eprintln!("(value not shown; pass --reveal to print it)");
         return Ok(());
-    }
-    // A reveal is what the vault's guard protects; the application's reads
-    // (`run`, the SDKs) are not asked.
-    if let Some(local) = vault.local() {
-        crate::commands::guard::enforce(ctx, local, "reveal a secret")?;
     }
     let secret = vault.get_secret(&args.name, args.version.as_deref())?;
     if ctx.json() {
@@ -99,6 +128,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 fn list(ctx: &Ctx, args: &SecretListArgs) -> anyhow::Result<()> {
     let vault = ctx.open_default()?;
+    ctx.check_view_opened(&vault)?;
     // Without --limit or --after the whole listing is one call and, in JSON,
     // one array, as before; with either, one page and its continuation.
     let paged = args.limit.is_some() || args.after.is_some();
@@ -190,6 +220,7 @@ fn continuation_hint(token: Option<&ContinuationToken>, limit: Option<usize>, fl
 }
 fn versions(ctx: &Ctx, args: &SecretNameArgs) -> anyhow::Result<()> {
     let vault = ctx.open_default()?;
+    ctx.check_view_opened(&vault)?;
     let versions = vault.list_properties_of_secret_versions(&args.name)?;
     if ctx.json() {
         return output::json(&versions);

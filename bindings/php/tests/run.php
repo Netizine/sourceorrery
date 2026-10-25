@@ -37,7 +37,7 @@ $env = static function (string $name): string {
     return $value;
 };
 $home = $env('SOURCEORRERY_HOME');
-$passphrase = $env('SOURCEORRERY_PASSPHRASE');
+$recoveryKey = $env('SOURCEORRERY_RECOVERY_KEY');
 $vault = $env('SOURCEORRERY_TEST_VAULT');
 $manifest = $env('SOURCEORRERY_TEST_MANIFEST');
 $oldVersion = $env('SOURCEORRERY_TEST_OLD_VERSION');
@@ -70,10 +70,10 @@ function expectThrow(callable $f, string $class, string $code, string $hintConta
     }
 }
 
-check(SourceOrrery::contractVersion() === '1', 'contract version');
-check(SourceOrrery::abiVersion() === 1, 'abi version');
+check(SourceOrrery::contractVersion() === '2', 'contract version');
+check(SourceOrrery::abiVersion() === 2, 'abi version');
 
-// Unlocked through SOURCEORRERY_PASSPHRASE from the environment, like the CLI.
+// Unlocked through SOURCEORRERY_RECOVERY_KEY from the environment, like the CLI.
 $reader = SecretReader::open($vault);
 check($reader->vaultName() === $vault, 'vault name');
 
@@ -145,18 +145,18 @@ expectThrow(fn() => $reader->get('bad_name'), InvalidNameException::class, 'inva
 $vaultMissing = expectThrow(fn() => SecretReader::open('no-such-vault'), VaultNotFoundException::class, 'vault_not_found', 'sourceorrery vault create no-such-vault');
 check($vaultMissing !== null && str_contains($vaultMissing->hint, $home), 'vault hint names home');
 $locked = expectThrow(
-    fn() => SecretReader::open($vault, new OpenOptions(passphrase: 'wrong-passphrase', environment: false)),
+    fn() => SecretReader::open($vault, new OpenOptions(recoveryKey: 'wrong-recovery-key', environment: false)),
     VaultLockedException::class,
     'locked',
-    'passphrase option: tried',
+    'recovery_key option: tried',
 );
-check($locked !== null && str_contains($locked->hint, 'SOURCEORRERY_PASSPHRASE: not set'), 'locked hint sources');
-check($locked !== null && str_contains($locked->hint, "--vault $vault"), 'locked hint vault');
-check($locked !== null && !str_contains($locked->getMessage(), 'wrong-passphrase'), 'locked never echoes the passphrase');
+check($locked !== null && str_contains($locked->hint, 'SOURCEORRERY_RECOVERY_KEY: not set'), 'locked hint sources');
+check($locked !== null && str_contains($locked->hint, "sourceorrery vault create $vault"), 'locked hint vault');
+check($locked !== null && !str_contains($locked->getMessage(), 'wrong-recovery-key'), 'locked never echoes the recovery key');
 
-$explicit = SecretReader::open($vault, new OpenOptions(home: $home, passphrase: $passphrase, environment: false));
+$explicit = SecretReader::open($vault, new OpenOptions(home: $home, recoveryKey: $recoveryKey, environment: false));
 $descriptor = $explicit->descriptor();
-check($descriptor['name'] === $vault && in_array('passphrase', $descriptor['protectors'], true), 'descriptor');
+check($descriptor['name'] === $vault && in_array('recovery', $descriptor['protectors'], true), 'descriptor');
 $explicit->close();
 check($explicit->isClosed(), 'reader closed');
 try {
@@ -181,53 +181,7 @@ check($entry !== null && $entry->required && $entry->env === 'ROTATED' && $entry
 $project->close();
 check($project->env('ROTATED')?->isClosed() === true, 'project closed');
 expectThrow(fn() => Project::load($manifest . '.missing'), ManifestException::class, 'manifest');
-expectThrow(fn() => Project::load($manifest, new OpenOptions(passphrase: 'wrong', environment: false)), VaultLockedException::class, 'locked');
-
-// A vault the manifest declares in [vaults.<name>] is opened at its remote
-// provider (HashiCorp Vault, at an address where nothing listens); a vault
-// without a table is still the local file.
-$remoteDir = sys_get_temp_dir() . '/sourceorrery-php-remote-' . getmypid();
-mkdir($remoteDir, 0700, true);
-$remoteManifest = "$remoteDir/sourceorrery.toml";
-file_put_contents(
-    $remoteManifest,
-    "[project]\nname = \"demo\"\nvault = \"$vault\"\n\n"
-    . "[vaults.remote-x]\nprovider = \"hashicorp-vault\"\n"
-    . "address = \"http://127.0.0.1:1\"\nmount = \"secret\"\n",
-);
-$withManifest = new OpenOptions(manifest: $remoteManifest);
-check(str_contains($withManifest->toJson(), '"manifest":'), 'manifest reaches the options document');
-// With a credential the provider connects to the manifest's address: the
-// failure is transient and names the vault's table.
-$previousToken = getenv('VAULT_TOKEN');
-putenv('VAULT_TOKEN=test-token');
-$remote = expectThrow(fn() => SecretReader::open('remote-x', $withManifest), ProviderUnavailableException::class, 'provider_unavailable', '[vaults.remote-x]');
-check($remote !== null && str_contains($remote->detail, 'hashicorp-vault is unavailable'), 'remote detail names the provider');
-check($remote !== null && $remote->isTransient(), 'provider_unavailable is transient');
-// Without VAULT_TOKEN the process is unauthenticated before any request is
-// made, unless the developer has another Vault credential (such as
-// ~/.vault-token), in which case the address is still unreachable.
-putenv('VAULT_TOKEN');
-try {
-    SecretReader::open('remote-x', $withManifest);
-    check(false, 'expected a remote error without VAULT_TOKEN');
-} catch (SourceOrreryException $e) {
-    if ($e->code() === 'unauthenticated') {
-        check($e instanceof UnauthenticatedException, 'unauthenticated is typed');
-        check(str_contains($e->detail, 'not authenticated to hashicorp-vault'), 'unauthenticated detail names the provider');
-        check(str_contains($e->hint, 'VAULT_TOKEN'), 'unauthenticated hint names VAULT_TOKEN');
-        check(!$e->isTransient(), 'unauthenticated is not transient');
-    } else {
-        check($e->code() === 'provider_unavailable', "expected unauthenticated or provider_unavailable, got {$e->code()}");
-        check($e instanceof ProviderUnavailableException && $e->isTransient(), 'provider_unavailable is typed and transient');
-    }
-}
-putenv(is_string($previousToken) ? "VAULT_TOKEN=$previousToken" : 'VAULT_TOKEN');
-$local = SecretReader::open($vault, $withManifest);
-check($local->get('database-password')->value->expose() === LATEST, 'a vault without a table stays local');
-$local->close();
-unlink($remoteManifest);
-rmdir($remoteDir);
+expectThrow(fn() => Project::load($manifest, new OpenOptions(recoveryKey: 'wrong', environment: false)), VaultLockedException::class, 'locked');
 
 $unauthenticated = SourceOrreryException::forCode('unauthenticated', 'm', 'h');
 check($unauthenticated instanceof UnauthenticatedException && !$unauthenticated->isTransient(), 'unauthenticated is typed and not transient');

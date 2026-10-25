@@ -41,8 +41,9 @@ and the [C guide](https://sourceorrery.ai/sdks/c/).
 
 ## Features
 
-`os-keyring` (default) enables the OS credential store; without it
-(`--no-default-features`) only passphrase protectors are available.
+`os-keyring` (default) enables the OS credential store and `remote`
+(default) the providers; without them (`--no-default-features`) vaults open
+with their recovery keys only.
 
 ## Stability
 

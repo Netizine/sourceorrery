@@ -42,7 +42,7 @@ class NativeCoverageEnvironmentTests(unittest.TestCase):
                 "CGO_LDFLAGS": '-pthread "-Wl,--as-needed"',
                 "SOURCEORRERY_NATIVE_DIR": native.as_posix(),
                 **{name: "fixture-only" for name in (
-                    "SOURCEORRERY_HOME", "SOURCEORRERY_PASSPHRASE", "SOURCEORRERY_TEST_VAULT",
+                    "SOURCEORRERY_HOME", "SOURCEORRERY_RECOVERY_KEY", "SOURCEORRERY_TEST_VAULT",
                     "SOURCEORRERY_TEST_MANIFEST", "SOURCEORRERY_TEST_OLD_VERSION",
                 )},
             })
@@ -121,7 +121,7 @@ exit 73
                     "CARGO_LLVM_COV_TARGET_DIR": "unrelated-caller-report",
                     "SOURCEORRERY_COVERAGE_PYTHON": "python3",
                     "SOURCEORRERY_HOME": fixture.as_posix(),
-                    "SOURCEORRERY_PASSPHRASE": "fixture-only",
+                    "SOURCEORRERY_RECOVERY_KEY": "fixture-only",
                     "SOURCEORRERY_TEST_VAULT": "ci",
                     "SOURCEORRERY_TEST_MANIFEST": manifest.as_posix(),
                     "SOURCEORRERY_TEST_OLD_VERSION": "fixture-only",

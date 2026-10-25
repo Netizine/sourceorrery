@@ -46,8 +46,8 @@ function run(string $op, array $kv): array
     $vault = $kv['vault'] ?? (getenv('SOURCEORRERY_TEST_VAULT') ?: 'development');
     $options = new OpenOptions(
         home: $kv['home'] ?? null,
-        passphrase: $kv['passphrase'] ?? null,
-        passphraseFile: $kv['passphrase_file'] ?? null,
+        recoveryKey: $kv['recovery_key'] ?? null,
+        recoveryKeyFile: $kv['recovery_key_file'] ?? null,
         environment: ($kv['environment'] ?? 'true') !== 'false',
     );
     if ($op === 'load') {

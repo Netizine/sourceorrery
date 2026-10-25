@@ -6,10 +6,10 @@ cd "$repo"
 stage=all
 check_only=false
 no_build=false
-while [ "$#" -gt 0 ]; do
+while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --check) check_only=true ;;
-    --stage) if [ "$#" -lt 2 ]; then echo '--stage needs a value' >&2; exit 2; fi; shift; stage="$1" ;;
+    --stage) if [[ "$#" -lt 2 ]]; then echo '--stage needs a value' >&2; exit 2; fi; shift; stage="$1" ;;
     --no-build) no_build=true ;;
     --help|-h)
       echo 'Usage: bash scripts/coverage/run.sh [--check] [--stage all|collect|dotnet|verify] [--no-build]'
@@ -21,8 +21,8 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 case "$stage" in all|collect|dotnet|verify) ;; *) echo 'Invalid coverage stage; use --help' >&2; exit 2 ;; esac
-if "$no_build" && [ "$stage" != dotnet ]; then echo '--no-build is only valid with --stage dotnet' >&2; exit 2; fi
-if [ "$(uname -s)" != Linux ]; then
+if "$no_build" && [[ "$stage" != dotnet ]]; then echo '--no-build is only valid with --stage dotnet' >&2; exit 2; fi
+if [[ "$(uname -s)" != Linux ]]; then
   echo 'Full coverage requires Ubuntu/Linux. On Windows: pwsh scripts/coverage/run.ps1 -Check' >&2
   echo 'GitHub Actions generates all reports automatically after a push; local coverage is optional.' >&2
   exit 2
@@ -32,22 +32,22 @@ export SOURCEORRERY_COVERAGE_PYTHON="$python_command"
 missing=()
 need() { command -v "$1" >/dev/null || missing+=("$1: $2"); }
 need "$python_command" 'install Python 3.12 or set SOURCEORRERY_COVERAGE_PYTHON'
-if [ "$stage" != verify ]; then
+if [[ "$stage" != verify ]]; then
   need dotnet 'install the .NET 10 SDK'
 fi
-if [ "$stage" = all ] || [ "$stage" = collect ]; then
+if [[ "$stage" = all ]] || [[ "$stage" = collect ]]; then
   for tool in cargo rustc rustup node npm go java mvn php gcc g++ gcov gcovr lcov pkg-config; do
     need "$tool" 'see docs/coverage.md for the Ubuntu prerequisites'
   done
 fi
-if [ "${#missing[@]}" -gt 0 ]; then
+if [[ "${#missing[@]}" -gt 0 ]]; then
   printf 'Missing prerequisite: %s\n' "${missing[@]}" >&2
   exit 2
 fi
-if [ "$stage" != verify ]; then
+if [[ "$stage" != verify ]]; then
   dotnet --list-sdks | grep -q '^10\.' || missing+=('the .NET 10 SDK')
 fi
-if [ "$stage" = all ] || [ "$stage" = collect ]; then
+if [[ "$stage" = all ]] || [[ "$stage" = collect ]]; then
   node scripts/coverage/check-node.mjs || missing+=('resolve the Node/dependency checks above')
   "$python_command" -c 'import sys, coverage, pytest; assert sys.version_info >= (3, 11); assert hasattr(coverage, "Coverage")' 2>/dev/null || missing+=('Python coverage/pytest: pip install --require-hashes --only-binary :all: -r scripts/coverage/requirements.txt')
   "$python_command" - <<'PY' || missing+=('resolve the language toolchain versions above')
@@ -78,9 +78,9 @@ PY
   rustup component list --installed | grep -q '^llvm-tools' || missing+=('LLVM tools: rustup component add llvm-tools-preview')
   pkg-config --exists dbus-1 || missing+=('libdbus-1-dev')
   XDEBUG_MODE=coverage php -d ffi.enable=1 -r 'exit(PHP_VERSION_ID >= 80200 && extension_loaded("ffi") && extension_loaded("xdebug") && in_array("coverage", xdebug_info("mode"), true) ? 0 : 1);' || missing+=('PHP >=8.2 with FFI and Xdebug coverage')
-  [ -f bindings/node/node_modules/@napi-rs/cli/package.json ] || missing+=('run npm ci --ignore-scripts --prefix bindings/node')
+  [[ -f bindings/node/node_modules/@napi-rs/cli/package.json ]] || missing+=('run npm ci --ignore-scripts --prefix bindings/node')
 fi
-if [ "${#missing[@]}" -gt 0 ]; then
+if [[ "${#missing[@]}" -gt 0 ]]; then
   printf 'Missing prerequisite: %s\n' "${missing[@]}" >&2
   exit 2
 fi
@@ -89,7 +89,7 @@ if "$check_only"; then
   exit 0
 fi
 mkdir -p coverage
-if [ "$stage" = all ]; then
+if [[ "$stage" = all ]]; then
   # Always create a new test vault, independent of the caller's personal vault.
   CARGO_TARGET_DIR="$repo/target/coverage-fixture" cargo build --locked -p sourceorrery-cli -p sourceorrery-ffi
   fixture="$(mktemp -d "$repo/coverage/fixture.XXXXXX")"
@@ -100,31 +100,36 @@ if [ "$stage" = all ]; then
     case "$entry" in SOURCEORRERY_*=*) export "$entry" ;; *) echo 'Unexpected SDK fixture environment entry' >&2; exit 1 ;; esac
   done < "$fixture_env"
 fi
-if [ "$stage" = all ] || [ "$stage" = collect ]; then
-  if [ -z "${SOURCEORRERY_VAULT_TEST_ADDR:-}" ] || [ -z "${SOURCEORRERY_AWS_TEST_ENDPOINT:-}" ]; then
-    echo 'Provider server tests need disposable Vault/Moto endpoints; absent endpoints leave those paths uncovered.'
+if [[ "$stage" = all ]] || [[ "$stage" = collect ]]; then
+  if [[ -z "${SOURCEORRERY_VAULT_TEST_ADDR:-}" ]] || [[ -z "${SOURCEORRERY_AWS_TEST_ENDPOINT:-}" ]]; then
+    echo 'Provider server tests need disposable Vault/LocalStack endpoints; absent endpoints leave those paths uncovered.'
+  fi
+  if [[ ! -f coverage/rust-azure.lcov ]]; then
+    echo 'No coverage/rust-azure.lcov: run native.sh azure with the Azure emulator first, or its live paths stay uncovered.'
     echo 'The GitHub coverage job supplies both services. See docs/coverage.md for local options.'
   fi
   npm run sync --prefix site
   npm run astro --prefix site -- sync
-  "$python_command" -m unittest discover -s scripts/coverage -p 'test_*.py'
-  node --test scripts/coverage/*.test.mjs
-  "$python_command" scripts/sonar/check-scope.py
+  bash scripts/coverage/tooling.sh
   bash scripts/coverage/native.sh
   bash scripts/coverage/native.sh python
   bash scripts/coverage/native.sh node
   npm run typecheck --prefix bindings/node
-  lcov --add-tracefile coverage/rust.lcov --add-tracefile coverage/rust-python.lcov \
-    --add-tracefile coverage/rust-node.lcov --output-file coverage/rust-combined.lcov
+  rust_reports=(--add-tracefile coverage/rust.lcov --add-tracefile coverage/rust-python.lcov
+    --add-tracefile coverage/rust-node.lcov)
+  if [[ -f coverage/rust-azure.lcov ]]; then rust_reports+=(--add-tracefile coverage/rust-azure.lcov); fi
+  lcov "${rust_reports[@]}" --output-file coverage/rust-combined.lcov
+  "$python_command" -m coverage run --append --rcfile=scripts/coverage/tooling.coveragerc \
+    scripts/sonar/prepare-reports.py
   bash scripts/coverage/sdk.sh site
   bash scripts/coverage/sdk.sh go
   bash scripts/coverage/sdk.sh php
   mvn --batch-mode --no-transfer-progress -f bindings/java/pom.xml -Pcoverage clean verify
   mvn --batch-mode --no-transfer-progress -f bindings/java/pom.xml \
     org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies \
-    -DincludeScope=test -DoutputDirectory=target/sonar-libraries
+    -DincludeScope=test "-DoutputDirectory=$repo/bindings/java/target/sonar-libraries"
 fi
-if [ "$stage" = all ] || [ "$stage" = dotnet ]; then
+if [[ "$stage" = all ]] || [[ "$stage" = dotnet ]]; then
   : "${SOURCEORRERY_HOME:?Create the SDK test fixture first}"
   : "${SOURCEORRERY_NATIVE_DIR:?Build the SDK test C ABI first}"
   options=()
@@ -132,7 +137,11 @@ if [ "$stage" = all ] || [ "$stage" = dotnet ]; then
   dotnet test bindings/dotnet/SourceOrrery.Tests/SourceOrrery.Tests.csproj \
     -c Release -p:CollectCoverage=true "${options[@]}"
 fi
-if [ "$stage" = all ] || [ "$stage" = verify ]; then
+if [[ "$stage" = all ]] || [[ "$stage" = verify ]]; then
+  "$python_command" -m coverage run --append --rcfile=scripts/coverage/tooling.coveragerc \
+    scripts/sonar/check-reports.py
+  "$python_command" -m coverage xml --rcfile=scripts/coverage/tooling.coveragerc
+  # Validate the final XML too, after recording the validator's own execution.
   "$python_command" scripts/sonar/check-reports.py
   echo 'Coverage reports are ready in coverage/ and bindings/java/target/site/jacoco/. Nothing was uploaded.'
 fi

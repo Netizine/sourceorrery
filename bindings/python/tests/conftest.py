@@ -18,7 +18,7 @@ import pytest
 @dataclass(frozen=True)
 class Fixture:
     home: str
-    passphrase: str
+    recovery_key: str
     vault: str
     manifest: str
     old_version: str
@@ -33,7 +33,7 @@ def fixture() -> Fixture:
     try:
         return Fixture(
             home=os.environ["SOURCEORRERY_HOME"],
-            passphrase=os.environ["SOURCEORRERY_PASSPHRASE"],
+            recovery_key=os.environ["SOURCEORRERY_RECOVERY_KEY"],
             vault=os.environ["SOURCEORRERY_TEST_VAULT"],
             manifest=os.environ["SOURCEORRERY_TEST_MANIFEST"],
             old_version=os.environ["SOURCEORRERY_TEST_OLD_VERSION"],
