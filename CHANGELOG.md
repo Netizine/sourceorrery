@@ -157,6 +157,16 @@ is in `docs/security-remediation-validation.md`).
 
 ### Fixed
 
+* A manifest whose `retire_after` ends in a character longer than one byte
+  (`7é`) made the CLI panic, and each SDK's project load fail with an
+  internal error; it is refused as an invalid grace period. Found by the
+  bounded fuzz tests that now run in CI over the parsers of manifests,
+  references, provider replies and vault files.
+* The Linux packages (the CLI, the C ABI and the .NET and Java packages that
+  carry it, the Node addon) are built on Ubuntu 22.04 and need glibc 2.34
+  (Ubuntu 22.04, Debian 12, RHEL 9, Amazon Linux 2023 and the images built
+  on them); built on 24.04 they needed 2.39. Every platform's minimum is in the architecture's
+  platform matrix.
 * Every operation counted the vault's keyed audit rows with a scan of the
   whole log, three times, so reads slowed as their own audit rows
   accumulated (91 ms a read at 100,000 events on a laptop, 22 ms now; a

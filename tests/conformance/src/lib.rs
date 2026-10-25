@@ -7,6 +7,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod fuzz;
 pub mod lifecycle;
 pub mod live;
 

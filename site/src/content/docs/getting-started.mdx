@@ -189,8 +189,10 @@ whether to allow it in your system's security settings.
 <TabItem label="Linux">
 
 x64 shown. On arm64, use `aarch64-unknown-linux-gnu` in the archive name
-instead of `x86_64-unknown-linux-gnu`. The builds are for glibc-based
-distributions.
+instead of `x86_64-unknown-linux-gnu`. The builds are for glibc 2.34 or
+newer (Ubuntu 22.04, Debian 12, RHEL 9, Amazon Linux 2023 and later); musl systems such as Alpine are
+not supported. Every platform's minimum is in the
+[platform matrix](/architecture/#8-platform-matrix).
 
 ```bash
 set -eu

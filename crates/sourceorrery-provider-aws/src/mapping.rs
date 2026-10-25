@@ -672,4 +672,36 @@ mod tests {
         let unchanged = SecretProps::from_properties(&props, created);
         assert_eq!(unchanged.updated_on, None);
     }
+
+    /// Bounded fuzz (B31): whatever tags Secrets Manager returns (anyone
+    /// with `TagResource` can write them) are read as properties or an
+    /// error, never a panic, and a value marked as base64 decodes or fails.
+    #[test]
+    fn whatever_tags_come_back_are_properties_or_an_error_never_a_panic() {
+        let seeds = [
+            ("env", "prod"),
+            (TAG_DISABLED, "true"),
+            (TAG_NOT_BEFORE, "2026-01-01T00:00:00Z"),
+            (TAG_EXPIRES_ON, "2027-06-30T00:00:00.123456789Z"),
+            (TAG_CONTENT_TYPE, "text/plain"),
+            ("aws:cloudformation:stack-name", "s"),
+        ];
+        let mut m = sourceorrery_conformance::fuzz::Mutator::new(0x5EED_0A35);
+        for _ in 0..5000 {
+            let tags: Vec<Tag> = seeds
+                .iter()
+                .map(|(key, value)| {
+                    let key = if m.below(3) == 0 {
+                        m.mutate(key)
+                    } else {
+                        (*key).to_owned()
+                    };
+                    Tag::builder().key(key).value(m.mutate(value)).build()
+                })
+                .collect();
+            if let Ok(props) = SecretProps::from_tags(&tags) {
+                let _ = props.to_tags();
+            }
+        }
+    }
 }

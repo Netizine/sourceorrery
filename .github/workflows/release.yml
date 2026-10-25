@@ -254,6 +254,12 @@ jobs:
   # ---------------------------------------------------------------------
   # Native artefacts: the CLI and the C ABI for the six Tier 1 targets.
   # ---------------------------------------------------------------------
+  # The Linux builds run on Ubuntu 22.04: a binary needs the glibc symbol
+  # versions it was linked against, so this sets the floor of the CLI, the
+  # C ABI and every package that carries it (.NET, Java): glibc 2.34
+  # (Debian 12, Ubuntu 22.04, RHEL 9 and the images built on them). On
+  # ubuntu-latest (24.04) it was 2.39.
+  # docs/architecture.md (Platform matrix) records each floor.
   native:
     name: native (${{ matrix.target }})
     needs: preflight
@@ -262,8 +268,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  rid: linux-x64,   jdir: linux-x86_64,    archive: tar.gz }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, rid: linux-arm64, jdir: linux-aarch64,   archive: tar.gz }
+          - { os: ubuntu-22.04,     target: x86_64-unknown-linux-gnu,  rid: linux-x64,   jdir: linux-x86_64,    archive: tar.gz }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, rid: linux-arm64, jdir: linux-aarch64,   archive: tar.gz }
           - { os: macos-latest,     target: aarch64-apple-darwin,      rid: osx-arm64,   jdir: macos-aarch64,   archive: tar.gz }
           - { os: macos-15-intel,   target: x86_64-apple-darwin,       rid: osx-x64,     jdir: macos-x86_64,    archive: tar.gz }
           - { os: windows-latest,   target: x86_64-pc-windows-msvc,    rid: win-x64,     jdir: windows-x86_64,  archive: zip }
@@ -277,6 +283,10 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
+      # set-version.py needs Python 3.11 (tomllib); Ubuntu 22.04's is 3.10.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
       - name: Linux build dependencies (Secret Service)
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
@@ -421,8 +431,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,    target: x86_64-unknown-linux-gnu }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          # Ubuntu 22.04 for the glibc floor, as for the native job.
+          - { os: ubuntu-22.04,     target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
           - { os: macos-latest,     target: aarch64-apple-darwin }
           - { os: macos-15-intel,   target: x86_64-apple-darwin }
           - { os: windows-latest,   target: x86_64-pc-windows-msvc }
@@ -446,6 +457,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: bindings/node/package-lock.json
+      # set-version.py needs Python 3.11 (tomllib); Ubuntu 22.04's is 3.10.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
       - name: Linux build dependencies (Secret Service)
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config

@@ -1057,3 +1057,65 @@ One commit: the checks and the new write order share the tag plan.
   pass with and without default features; clippy clean for both.
 * **Not run here:** the matrix on Linux and macOS (CI's `msrv` job runs it
   on Linux).
+
+### B31 — platforms, packaged binaries and bounded fuzzing
+
+* **Closes, as far as one Windows machine and Docker reach:** REC09's
+  platform part; runtime evidence for SR04–SR08 is in B12–B15 and B28.
+  What only CI or other machines can run is listed at the end and blocks
+  sign-off.
+* **Found: the Linux packages needed glibc 2.39.** Read from the headers of
+  the v0.2.0 release's own binaries (each archive verified with `gh
+  attestation verify` against the release workflow and the v0.2.0 commit;
+  nothing extracted was run on the host): the Linux CLI and C ABI, x64 and
+  arm64, need `GLIBC_2.39`, because they are built on `ubuntu-latest`
+  (24.04), and so do the .NET and Java packages that carry the library and
+  the Node addon built the same way. The released 0.2.0 CLI does not start
+  on Debian 12 (`GLIBC_2.38' not found`), the base of most language
+  container images; only the Python wheels (manylinux 2.28) did. The docs
+  said "glibc-based distributions".
+* **Changed:** `release.yml` builds the Linux CLI, C ABI and Node addon on
+  `ubuntu-22.04` and `ubuntu-22.04-arm` (with Python 3.12 set up there,
+  since `set-version.py` needs 3.11 and 22.04 has 3.10). Built so in an
+  `ubuntu:22.04` container, the CLI and the C ABI need `GLIBC_2.34`, and
+  the CLI runs, creates a vault, stores and reads a secret on Debian 12,
+  Ubuntu 22.04 and Rocky Linux 9 (glibc 2.34). The architecture's platform
+  matrix now states every floor: Linux glibc 2.34 (wheels 2.28), musl not
+  supported; macOS 11.0 on Apple silicon and 10.12 on Intel (the binaries'
+  `LC_BUILD_VERSION`); Windows 10 / Server 2016, x64 and arm64 (Rust's
+  minimum for its MSVC targets; the PE headers say 6.0). Getting started
+  says so for the Linux archive.
+* **Bounded fuzzing:** `sourceorrery_conformance::fuzz::Mutator`, a
+  deterministic mutator (deletes, inserts, repeats and replaces a few
+  bytes of a valid seed), and tests that require a value or an error,
+  never a panic: the core's manifest, reference, timestamp and grace-period
+  parsers (5,000 cases each); a vault file with one field of one row
+  mangled per copy (300 copies over the settings, key wraps, rows, values,
+  version tags and audit fields: every copy opens, reads, lists and
+  verifies as the stored value or an error, never another value); what
+  HashiCorp Vault (properties documents, intents, deletion marker, times,
+  value JSON), Secrets Manager (tags) and Key Vault (tags, identifiers,
+  base64 values) return, 5,000 cases each. They run in CI's ordinary test
+  jobs. **They found a panic:** `rotation::parse_grace` split off the last
+  byte, so a manifest whose `retire_after` ends in a character longer than
+  one byte (`7é`) made the CLI panic (`run`, `check`) and each SDK's project
+  load fail with an internal error (the C ABI catches the panic). It reads
+  the last character now; the grace test has the cases. Miri and sanitizers
+  were not added: the `unsafe` code is the C ABI and `sourceorrery-os`,
+  whose tests call into SQLite and the Windows API, which Miri cannot run.
+* **Also checked:** the C ABI refuses another ABI: the current .NET SDK
+  against the v0.2.0 `sourceorrery_ffi.dll` (verified as above) fails with
+  `abi_mismatch` ("implements C ABI version 1; this SDK was built for
+  version 2"), and opens with this branch's library.
+* **Tests run:** the glibc reads and the container runs above (Docker,
+  `ubuntu:22.04`, `debian:12`, `rockylinux:9`); the fuzz tests (core,
+  conformance, and the three providers) on stable, and the providers' on
+  1.91.1; clippy clean for the changed crates.
+* **Owed (blocks sign-off):** macOS runs of everything (no Mac here); the
+  Linux and macOS SDK suites and conformance runners for Node, Go, C, C++,
+  PHP, Java and .NET (CI's `sdk-*` jobs; Rust, Python, .NET and Java ran on
+  Windows in B28, PHP in a Linux container in B12); the OS credential-store
+  smoke tests (CI's `keyring` job; not run on this machine by the owner's
+  rule); the Azure live suite (CI); a second Windows account against SR04's
+  files; real AWS, Azure and HashiCorp services (emulators and a dev server
+  only); the release workflow on its new runners (a hosted dry run).

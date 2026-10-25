@@ -718,4 +718,61 @@ mod tests {
         assert!(deleted.scheduled_purge_on.unwrap() > deleted.deleted_on);
         assert_eq!(properties_key(7), "sourceorrery.v7");
     }
+
+    /// Bounded fuzz (B31): whatever a server, or whoever can write its
+    /// metadata, sends is read as a value or an error, never a panic: the
+    /// properties documents, intents and deletion marker in
+    /// `custom_metadata`, version times, and a value's JSON.
+    #[test]
+    fn whatever_a_server_sends_is_a_value_or_an_error_never_a_panic() {
+        let document = VersionProps {
+            disabled: true,
+            content_type: Some("text/plain".into()),
+            tags: BTreeMap::from([("team".into(), "payments".into())]),
+            not_before: Some("2026-10-25T12:00:00.000000000Z".into()),
+            expires_on: Some("2027-06-30T00:00:00.000000000Z".into()),
+            updated_on: None,
+        }
+        .document()
+        .unwrap();
+        let marker = r#"{"deleted_on":"2026-10-25T12:00:00Z","versions":[1,2]}"#;
+        let value = r#"{"value":"hello","content_type":"text/plain","encoding":"base64"}"#;
+        let mut m = sourceorrery_conformance::fuzz::Mutator::new(0x9E37_79B9_7F4A_7C15);
+        for _ in 0..5000 {
+            let mut custom = BTreeMap::new();
+            custom.insert(properties_key(1), m.mutate(&document));
+            custom.insert(m.mutate(&intent_key(1, "n0")), m.mutate(&document));
+            custom.insert(m.mutate(&intent_key(2, "n1")), m.mutate(&document));
+            custom.insert(DELETED_KEY.to_owned(), m.mutate(marker));
+            let meta = Metadata {
+                current_version: m.number() % 4,
+                custom_metadata: Some(custom),
+                versions: BTreeMap::from([
+                    (
+                        m.mutate("1"),
+                        VersionMeta {
+                            created_time: m.mutate("2026-10-25T12:00:00.123456Z"),
+                            deletion_time: m.mutate(""),
+                            destroyed: m.below(5) == 0,
+                        },
+                    ),
+                    ("2".to_owned(), VersionMeta::default()),
+                ]),
+            };
+            let _ = meta.live_versions();
+            for version in 0..3 {
+                let _ = meta.version_props(version);
+                let _ = meta.intents_for(version);
+                let _ = meta.effective_props(version);
+                let _ = meta.properties("v", "k", version);
+            }
+            if let Ok(Some(marker)) = meta.deleted_marker() {
+                let _ = meta.deleted_secret("v", "k", &marker);
+            }
+            if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(&m.mutate(value)) {
+                let _ = decode_value(map, "k");
+            }
+            let _ = parse_time(&m.mutate("2026-10-25T12:00:00Z"), "t");
+        }
+    }
 }

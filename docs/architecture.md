@@ -419,7 +419,15 @@ Three rules keep the layer thin ([ADR 0006](adr/0006-binding-technologies.md)):
 
 Every release builds the CLI, the C ABI and the SDK packages for the six
 Tier 1 targets on native runners (Windows arm64 is cross-compiled); CI
-runs every test on Ubuntu, Windows and macOS. A working binary does not
+runs every test on Ubuntu, Windows and macOS.
+
+What a released package needs, read from the binaries' own headers:
+
+| Platform | Oldest that runs the packages |
+|---|---|
+| Linux, glibc | glibc 2.34 (Ubuntu 22.04, Debian 12, RHEL and Rocky Linux 9, Amazon Linux 2023, Fedora 35 and later, and the container images built on them) for the CLI, the C ABI and the packages that carry it (.NET, Java, Go, C, C++, PHP) and the Node addon: they are built on Ubuntu 22.04, and run on Debian 12, Ubuntu 22.04 and Rocky Linux 9. The Python wheels need glibc 2.28 (`manylinux_2_28`). Alpine and other musl systems are not supported |
+| macOS | 11.0 on Apple silicon, 10.12 on Intel |
+| Windows | Windows 10 and Windows Server 2016, x64 and arm64: the oldest Rust's MSVC targets support (the binaries' headers say 6.0, which the standard library no longer runs on) | A working binary does not
 guarantee a working credential backend; CI tests the recovery-key path
 everywhere and runs the OS-keyring smoke test against a real store on
 each platform (`scripts/dev/keyring-smoke.sh` and `.ps1`).
