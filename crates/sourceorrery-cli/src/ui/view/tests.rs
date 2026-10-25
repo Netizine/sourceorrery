@@ -54,7 +54,11 @@ fn draws_the_vault_its_views_and_its_secrets() {
     assert!(screen.contains("SECRETS  2"), "{screen}");
     assert!(screen.contains("▌ api-key"), "{screen}");
     assert!(screen.contains("database-password"), "{screen}");
-    assert!(screen.contains("01234567 "), "short version: {screen}");
+    app.update(Action::Open);
+    assert!(
+        render(&mut app, 120, 24).contains("01234567"),
+        "full version reachable in details"
+    );
     assert!(screen.contains("Enter details"), "{screen}");
     assert!(screen.contains(REASSURANCE.trim_end()), "{screen}");
 }
@@ -167,7 +171,10 @@ fn the_vault_list_marks_the_open_vault() {
     let (_, mut app) = app(&["a"]);
     app.update(Action::Show(Tab::Vaults));
     let screen = render(&mut app, 120, 14);
-    assert!(screen.contains("▌ development  open"), "{screen}");
+    assert!(
+        screen.contains("▌ development") && screen.contains("open"),
+        "{screen}"
+    );
     assert!(screen.contains("staging"), "{screen}");
     assert!(screen.contains("64 KiB"), "{screen}");
     assert!(screen.contains("Enter open"), "{screen}");
@@ -276,7 +283,7 @@ fn the_overview_shows_status_expiry_chain_activity_and_keys() {
     let fake = Fake::with(&["api-key", "database-password"]);
     fake.deleted_names.borrow_mut().push("old");
     let mut app = app_with(&fake);
-    let screen = render(&mut app, 130, 30);
+    let screen = render(&mut app, 130, 42);
     assert!(screen.contains("1 Overview"), "{screen}");
     assert!(screen.contains("SECRETS  2 live · 1 deleted"), "{screen}");
     assert!(screen.contains("enabled     2  █"), "{screen}");
@@ -557,4 +564,89 @@ fn bounded_forms_and_reviews_keep_controls_and_long_targets_reachable() {
     assert!(screen.contains("Enter confirm"));
     app.update(Action::Back);
     assert!(fake.writes.borrow().is_empty());
+}
+
+#[test]
+fn responsive_width_matrix_keeps_names_status_and_metadata_overflow_without_reads() {
+    let (fake, mut app) = app(&["selected-secret-with-a-long-name", "second"]);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    app.session.as_mut().unwrap().secrets[0]
+        .tags
+        .insert("long".into(), "界e\u{301}".repeat(80));
+    for width in [60, 80, 100, 120, 160] {
+        let screen = render(&mut app, width, 24);
+        assert!(
+            screen.contains("NAME") && screen.contains("STATUS"),
+            "{screen}"
+        );
+        assert!(screen.contains("enabled"), "{screen}");
+        assert!(
+            screen.contains("selected") || screen.contains("…"),
+            "{screen}"
+        );
+        assert!(
+            screen.contains("help") || screen.contains("keys"),
+            "{screen}"
+        );
+    }
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
+}
+
+#[test]
+fn compact_overview_reaches_every_section_and_resize_keeps_active_tab_and_state() {
+    let fake = Fake::with(&["a"]);
+    let mut app = app_with(&fake).with_read_only(true);
+    let reads = (
+        fake.lists.get(),
+        fake.inspects.get(),
+        fake.audit_reads.get(),
+    );
+    let mut seen = String::new();
+    for _ in 0..12 {
+        seen.push_str(&render(&mut app, 80, 24));
+        app.update(Action::PageDown);
+    }
+    for title in [
+        "AUDIT CHAIN",
+        "EXPIRY",
+        "SECRETS",
+        "VAULT",
+        "VIEW CHECK",
+        "STORAGE",
+        "PROJECTS",
+        "ACTIVITY",
+    ] {
+        assert!(seen.to_uppercase().contains(title), "{title}: {seen}");
+    }
+    for width in [60, 80, 100, 120, 160] {
+        for tab in Tab::ALL {
+            app.update(Action::Show(tab));
+            let screen = render(&mut app, width, 18);
+            assert!(
+                screen.contains(tab.title().split_whitespace().next().unwrap()),
+                "{screen}"
+            );
+            assert!(screen.contains("read-only"), "{screen}");
+            assert!(screen.contains("help") || screen.contains("keys"));
+        }
+    }
+    assert_eq!(
+        (
+            fake.lists.get(),
+            fake.inspects.get(),
+            fake.audit_reads.get()
+        ),
+        reads
+    );
 }

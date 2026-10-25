@@ -70,22 +70,25 @@ fn form_lines(form: &Form, theme: &Theme) -> Vec<Line<'static>> {
     for (i, field) in form.fields.iter().enumerate() {
         let focused = i == form.focus;
         let mut spans = vec![
-            Span::styled(format!("{:<LABEL_WIDTH$}", field.key.label()), theme.muted),
+            Span::styled(
+                format!("{:<LABEL_WIDTH$}", field.key.label()),
+                theme.cell(theme.muted, focused),
+            ),
             Span::raw(sanitize(&field.value).into_owned()),
         ];
         if focused {
             // A choice switches with space; only text has a cursor.
             if !matches!(field.key, FieldKey::Enabled | FieldKey::Storage) {
-                spans.push(Span::styled("▌", theme.key));
+                spans.push(Span::styled("▌", theme.cell(theme.key, focused)));
             }
             spans.push(Span::styled(
                 format!("   {}", field.key.hint()),
-                theme.muted,
+                theme.cell(theme.muted, focused),
             ));
         }
         let line = Line::from(spans);
         lines.push(if focused {
-            line.style(theme.selected)
+            line.style(theme.focused)
         } else {
             line
         });
@@ -122,7 +125,7 @@ fn confirm_lines(confirm: &Confirm, theme: &Theme) -> Vec<Line<'static>> {
                 Span::raw(sanitize(&confirm.typed).into_owned()),
                 Span::styled("▌", theme.key),
             ])
-            .style(theme.selected),
+            .style(theme.focused),
         );
         lines.push(Line::from(""));
     }

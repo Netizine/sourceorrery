@@ -584,7 +584,11 @@ fn entries(dir: &Path) -> Vec<VaultEntry> {
 }
 
 fn draw(app: &mut App, theme: &Theme, height: u16) -> Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(WIDTH, height)).unwrap();
+    draw_at(app, theme, WIDTH, height)
+}
+
+fn draw_at(app: &mut App, theme: &Theme, width: u16, height: u16) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| view::draw(frame, app, theme))
         .unwrap();
@@ -648,7 +652,11 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     let mut out = Vec::new();
     let mut app = App::new(vaults.clone());
     show(&mut app, vault);
-    out.push(("overview", draw(&mut app, theme, 32)));
+    out.push(("overview", draw(&mut app, theme, 40)));
+    out.push(("overview-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Bottom);
+    out.push(("overview-60-end", draw_at(&mut app, theme, 60, 18)));
+    app.update(Action::Top);
     app.update(Action::Add);
     for c in "github-app-key".chars() {
         app.update(Action::Input(c));
@@ -669,10 +677,13 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     app.update(Action::Show(Tab::Secrets));
     app.update(Action::Down);
     out.push(("secrets", draw(&mut app, theme, 18)));
+    out.push(("secrets-80", draw_at(&mut app, theme, 80, 24)));
+    out.push(("secrets-60", draw_at(&mut app, theme, 60, 18)));
     app.update(Action::Edit);
     app.update(Action::Down);
     app.update(Action::Down);
     out.push(("edit-form", draw(&mut app, theme, 26)));
+    out.push(("edit-form-60", draw_at(&mut app, theme, 60, 18)));
     app.update(Action::Back);
     app.update(Action::Toggle);
     out.push(("confirm-disable", draw(&mut app, theme, 22)));
@@ -700,6 +711,9 @@ fn screens(theme: &Theme) -> Vec<(&'static str, Buffer)> {
     app.update(Action::Show(Tab::Secrets));
     app.update(Action::Help);
     out.push(("help", draw(&mut app, theme, 46)));
+    out.push(("help-80", draw_at(&mut app, theme, 80, 24)));
+    app.update(Action::Bottom);
+    out.push(("help-60-end", draw_at(&mut app, theme, 60, 18)));
     app.update(Action::Help);
     app.update(Action::Refresh);
     disguise(&mut app);

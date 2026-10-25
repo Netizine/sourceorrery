@@ -56,7 +56,7 @@ const DARK: Paper = Paper {
     code: [0x2a, 0x27, 0x22],
     green: [0x7f, 0xa1, 0x74],
     blue: [0x6f, 0x93, 0xc8],
-    red: [0xc0, 0x6b, 0x62],
+    red: [0xd6, 0x81, 0x77],
     blue_bg: [0x1f, 0x2a, 0x3b],
     red_bg: [0x35, 0x22, 0x1f],
     taupe: [0xa7, 0x9a, 0x82],
@@ -77,12 +77,12 @@ const LIGHT: Paper = Paper {
     gray_5: [0xc9, 0xc2, 0xb4],
     selection: [0xd6, 0xe1, 0xf0],
     code: [0xe9, 0xe4, 0xd9],
-    green: [0x5c, 0x7a, 0x55],
+    green: [0x45, 0x64, 0x3e],
     blue: [0x3b, 0x5d, 0x93],
-    red: [0x9c, 0x4a, 0x42],
+    red: [0x88, 0x3e, 0x36],
     blue_bg: [0xe2, 0xe9, 0xf3],
     red_bg: [0xf1, 0xe1, 0xdc],
-    taupe: [0x9b, 0x8d, 0x75],
+    taupe: [0x6b, 0x58, 0x3c],
     panel: [0xfa, 0xf8, 0xf3],
 };
 
@@ -111,6 +111,9 @@ pub struct Theme {
     /// The thinner rule under the column headings.
     pub header_rule: Style,
     pub selected: Style,
+    pub focused: Style,
+    pub search_match: Style,
+    pub disabled_action: Style,
     /// The bar in front of the selected row (the site marks the current
     /// page the same way).
     pub marker: Style,
@@ -172,8 +175,12 @@ impl Theme {
     /// colour and dim would turn into patches of background, so the
     /// selected row is drawn plain.
     pub fn cell(&self, style: Style, selected: bool) -> Style {
-        if selected && self.reverse_selection {
-            Style::new()
+        if selected {
+            if self.reverse_selection {
+                Style::new()
+            } else {
+                Style::new().fg(self.selected.fg.unwrap_or(Color::Reset))
+            }
         } else {
             style
         }
@@ -186,7 +193,7 @@ impl Theme {
         let callout = |bar, panel| Callout {
             panel: Style::new().fg(c(p.text)).bg(c(panel)),
             bar: fg(bar),
-            title: fg(bar).add_modifier(bold),
+            title: fg(p.heading).add_modifier(bold),
         };
         Self {
             screen: Style::new().fg(c(p.text)).bg(c(p.bg)),
@@ -197,7 +204,12 @@ impl Theme {
             muted: fg(p.gray_3),
             rule: fg(p.gray_4),
             header_rule: fg(p.gray_5),
-            selected: Style::new().bg(c(p.selection)),
+            selected: Style::new().fg(c(p.text)).bg(c(p.selection)),
+            focused: fg(p.text)
+                .bg(c(p.selection))
+                .add_modifier(bold | Modifier::UNDERLINED),
+            search_match: fg(p.heading).add_modifier(bold | Modifier::UNDERLINED),
+            disabled_action: fg(p.gray_3),
             marker: fg(p.accent),
             key: fg(p.accent).add_modifier(bold),
             code: fg(p.heading).bg(c(p.code)),
@@ -233,6 +245,9 @@ impl Theme {
             rule: fg(Color::DarkGray),
             header_rule: fg(Color::DarkGray),
             selected: Style::new().add_modifier(Modifier::REVERSED),
+            focused: Style::new().add_modifier(Modifier::REVERSED | Modifier::UNDERLINED),
+            search_match: Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            disabled_action: Style::new().add_modifier(Modifier::DIM),
             marker: Style::new(),
             key: fg(Color::LightBlue),
             code: fg(Color::Cyan),
@@ -267,6 +282,9 @@ impl Theme {
             rule: dim,
             header_rule: dim,
             selected: Style::new().add_modifier(Modifier::REVERSED),
+            focused: Style::new().add_modifier(Modifier::REVERSED | Modifier::UNDERLINED),
+            search_match: Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            disabled_action: Style::new().add_modifier(Modifier::DIM),
             marker: Style::new(),
             key: bold,
             code: bold,
@@ -348,6 +366,71 @@ fn xterm_index(r: u8, g: u8, b: u8) -> u8 {
 mod tests {
     use super::*;
 
+    fn rgb(c: Color) -> [u8; 3] {
+        match c {
+            Color::Rgb(r, g, b) => [r, g, b],
+            Color::Indexed(i) if i >= 232 => [8 + 10 * (i - 232); 3],
+            Color::Indexed(i) if i >= 16 => {
+                let n = i - 16;
+                let levels = [0, 95, 135, 175, 215, 255];
+                [
+                    levels[usize::from(n / 36)],
+                    levels[usize::from((n / 6) % 6)],
+                    levels[usize::from(n % 6)],
+                ]
+            }
+            _ => panic!("controlled palette expected"),
+        }
+    }
+    fn contrast(a: Color, b: Color) -> f64 {
+        let luminance = |c| {
+            let [r, g, b] = rgb(c).map(|v| {
+                let v = f64::from(v) / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            });
+            0.2126 * r + 0.7152 * g + 0.0722 * b
+        };
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+    #[test]
+    fn meaningful_paper_text_and_selected_combinations_meet_readability_target() {
+        for choice in [UiTheme::Dark, UiTheme::Light] {
+            for truecolor in [true, false] {
+                let t = Theme::new(choice, true, truecolor);
+                for style in [
+                    t.screen,
+                    t.label,
+                    t.muted,
+                    t.key,
+                    t.caution,
+                    t.status("enabled"),
+                    t.status("disabled"),
+                    t.status("expired"),
+                    t.search_match,
+                    t.disabled_action,
+                ] {
+                    let ratio = contrast(style.fg.unwrap(), t.screen.bg.unwrap());
+                    assert!(ratio >= 4.5, "{choice:?} {truecolor} {style:?}: {ratio}");
+                    assert!(
+                        contrast(t.cell(style, true).fg.unwrap(), t.selected.bg.unwrap()) >= 4.5
+                    );
+                }
+                for c in [t.info, t.error] {
+                    assert!(
+                        contrast(c.title.fg.unwrap(), c.panel.bg.unwrap()) >= 4.5,
+                        "{choice:?} callout"
+                    );
+                }
+                assert!(contrast(t.focused.fg.unwrap(), t.focused.bg.unwrap()) >= 4.5);
+            }
+        }
+    }
+
     #[test]
     fn paper_colours_are_the_sites() {
         let dark = Theme::new(UiTheme::Dark, true, true);
@@ -396,6 +479,6 @@ mod tests {
         assert_eq!(terminal.cell(enabled, true), Style::new());
         assert_eq!(terminal.cell(terminal.muted, true), Style::new());
         let dark = Theme::new(UiTheme::Dark, true, true);
-        assert_eq!(dark.cell(dark.muted, true), dark.muted);
+        assert_eq!(dark.cell(dark.muted, true).fg, dark.selected.fg);
     }
 }

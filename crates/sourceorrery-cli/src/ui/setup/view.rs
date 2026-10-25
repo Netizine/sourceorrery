@@ -848,9 +848,14 @@ fn control_line<B: Backend>(wizard: &Wizard<B>, control: Control, theme: &Theme)
             }
         }
     }
+    if focused {
+        for span in &mut spans {
+            span.style = theme.cell(span.style, true);
+        }
+    }
     let line = Line::from(spans);
     if focused {
-        line.style(theme.selected)
+        line.style(theme.focused)
     } else {
         line
     }

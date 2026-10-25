@@ -8,6 +8,7 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Row};
 
+use super::columns::Columns;
 use super::secrets::no_match;
 use super::{Drawn, Ruled, dash, label, long_time, row, rows, rule, ruled_table, short_time};
 use crate::output::sanitize;
@@ -40,12 +41,19 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
         .as_ref()
         .map(|s| s.vault.name.clone())
         .unwrap_or_default();
-    let path_width = shown
-        .iter()
-        .map(|p| sanitize(&p.link.path.display().to_string()).chars().count())
-        .max()
-        .unwrap_or(0)
-        .clamp(4, 60);
+    let indices: &[usize] = if area.width >= 110 {
+        &[0, 1, 2, 3, 4]
+    } else if area.width >= 65 {
+        &[1, 3, 0]
+    } else {
+        &[1, 3]
+    };
+    let columns = Columns::new(
+        area.width,
+        indices,
+        &["PATH", "NAME", "SECRETS", "STATUS", "RECORDED UTC"],
+        &[0, 18, 8, 18, 16],
+    );
     let empty = if app.total(Tab::Projects) == Some(0) {
         vec![
             Line::from(""),
@@ -69,9 +77,9 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
         .map(|(i, p)| {
             let is_selected = selected == Some(i);
             let secrets = p.secrets().len();
-            Row::new([
-                Cell::from(sanitize(&p.link.path.display().to_string()).into_owned()),
-                Cell::from(sanitize(&p.link.name).into_owned()),
+            columns.row([
+                Cell::from(columns.text(0, &p.link.path.display().to_string())),
+                Cell::from(columns.text(1, &p.link.name)),
                 Cell::from(if secrets == 0 {
                     dash(theme, is_selected)
                 } else {
@@ -87,14 +95,8 @@ pub(super) fn list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) 
         .collect();
     let table = Ruled {
         label: label("Projects", app, Tab::Projects, shown.len(), theme),
-        headings: Row::new(["PATH", "NAME", "SECRETS", "STATUS", "RECORDED UTC"]),
-        widths: vec![
-            Constraint::Length(u16::try_from(path_width).unwrap_or(60)),
-            Constraint::Length(24),
-            Constraint::Length(8),
-            Constraint::Length(22),
-            Constraint::Fill(1),
-        ],
+        headings: columns.headings(),
+        widths: columns.widths.clone(),
         rows,
         empty,
         selectable: true,
@@ -185,7 +187,7 @@ pub(super) fn detail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect
         ]),
         headings: Row::new(["SECRET", "IN THE VAULT", "KEPT IN"]),
         widths: vec![
-            Constraint::Length(40),
+            Constraint::Fill(1),
             Constraint::Length(18),
             Constraint::Fill(1),
         ],

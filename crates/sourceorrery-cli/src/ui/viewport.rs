@@ -99,6 +99,29 @@ pub fn focus_row(lines: &[Line<'_>], focus: Option<usize>, width: u16) -> Option
     focus.map(|i| reflow(&lines[..i.min(lines.len())], width).len())
 }
 
+pub fn clip(text: &str, width: u16) -> String {
+    let span = Span::raw(text);
+    let width = usize::from(width);
+    if span.width() <= width {
+        return text.to_owned();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut result = String::new();
+    let mut used = 0;
+    for g in span.styled_graphemes(ratatui::style::Style::default()) {
+        let cells = Span::raw(g.symbol).width();
+        if used + cells >= width {
+            break;
+        }
+        result.push_str(g.symbol);
+        used += cells;
+    }
+    result.push('…');
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

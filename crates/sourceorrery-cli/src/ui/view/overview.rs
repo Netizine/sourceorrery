@@ -32,8 +32,18 @@ const ACTIVITY_KEY_WIDTH: usize = 20;
 /// Width of the key column in the narrower panels of the bottom row.
 const NARROW_KEY_WIDTH: usize = 11;
 
-pub(super) fn draw(frame: &mut Frame<'_>, session: &Session, theme: &Theme, area: Rect) {
+pub(super) fn draw(
+    frame: &mut Frame<'_>,
+    session: &Session,
+    theme: &Theme,
+    area: Rect,
+    viewport: &std::cell::RefCell<crate::ui::viewport::Viewport>,
+) {
     let now = timestamp::now();
+    if area.width < 110 || area.height < 29 {
+        compact(frame, session, theme, area, viewport);
+        return;
+    }
     let [top, _, middle, _, bottom] = Layout::vertical([
         Constraint::Length(8),
         Constraint::Length(1),
@@ -722,4 +732,94 @@ fn project_lines(session: &Session, theme: &Theme) -> Vec<Line<'static>> {
         Span::styled(" lists them", theme.muted),
     ]));
     lines
+}
+
+fn compact(
+    frame: &mut Frame<'_>,
+    session: &Session,
+    theme: &Theme,
+    area: Rect,
+    viewport: &std::cell::RefCell<crate::ui::viewport::Viewport>,
+) {
+    let now = timestamp::now();
+    let next = if session.is_blocked() {
+        Vec::new()
+    } else {
+        stats::upcoming(&session.secrets, now)
+    };
+    let mut lines = Vec::new();
+    for (title, body) in [
+        (chain_title(session, theme), chain_lines(session, theme)),
+        (
+            title("Expiry", None, theme),
+            expiry_lines(session, theme, now),
+        ),
+        (
+            secrets_title(session, theme),
+            secret_lines(session, theme, area.width, now),
+        ),
+        (
+            title("Upcoming", Some(next.len()), theme),
+            upcoming_lines(&next, theme, now),
+        ),
+        (title("Vault", None, theme), vault_lines(session, theme)),
+        (
+            title("View check", None, theme),
+            check_lines(session, theme),
+        ),
+        (title("Storage", None, theme), storage_lines(session, theme)),
+        (
+            title("Projects", None, theme),
+            project_lines(session, theme),
+        ),
+    ] {
+        lines.push(title);
+        lines.extend(body);
+        lines.push(Line::from(""));
+    }
+    let events = session.audit().unwrap_or_default();
+    let activity = stats::activity(events, now, ACTIVITY_DAYS);
+    lines.push(title(
+        &format!(
+            "Activity · {ACTIVITY_DAYS} days · {} events · {} denied · {} failures",
+            activity.events, activity.denied, activity.failures
+        ),
+        None,
+        theme,
+    ));
+    for (label, event) in [
+        ("last value read", activity.last_value_read),
+        ("last failed unlock", activity.last_failed_unlock),
+    ] {
+        lines.push(Line::from(format!(
+            "{label}: {}",
+            event.map_or_else(
+                || "not in the log".to_owned(),
+                |e| format!(
+                    "{} {} {}",
+                    long_time(e.occurred_on),
+                    sanitize(e.secret_name.as_deref().unwrap_or("")),
+                    sanitize(&e.actor.to_string())
+                )
+            )
+        )));
+    }
+    for day in activity.days {
+        lines.push(Line::from(format!(
+            "{}: {} events · {} denied · {} failures",
+            day.date, day.events, day.denied, day.failures
+        )));
+    }
+    let lines = crate::ui::viewport::reflow(&lines, area.width);
+    let content = rows(area, 0, area.height.saturating_sub(1));
+    let mut v = viewport.borrow_mut();
+    v.fit(lines.len(), usize::from(content.height), None);
+    frame.render_widget(
+        Paragraph::new(lines).scroll((u16::try_from(v.offset).unwrap_or(u16::MAX), 0)),
+        content,
+    );
+    frame.render_widget(
+        Line::from(format!("↑↓ PgUp/Dn Home/End · {}", v.position())).style(theme.muted),
+        rows(area, area.height.saturating_sub(1), 1),
+    );
 }

@@ -866,7 +866,13 @@ fn qr_fits_whole_or_manual_key_stays_reachable_on_short_screens() {
             seen.push_str(&screen);
             w.update(Action::Scroll(crate::ui::app::Action::PageDown));
         }
-        assert!(seen.contains("Enter this key by hand"), "{seen}");
+        assert!(
+            seen.contains("Cannot scan?") && seen.contains("hand:"),
+            "{seen}"
+        );
+        for group in view::key_groups(&w.enrolment().unwrap().0).split_whitespace() {
+            assert!(seen.contains(group));
+        }
         assert!(seen.contains("Esc"));
         assert!(!seen.contains(TYPED));
     }

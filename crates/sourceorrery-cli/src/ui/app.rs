@@ -174,6 +174,7 @@ pub struct App {
     pub help_view: super::viewport::Viewport,
     pub declarations: TableState,
     pub declaration_page: usize,
+    pub overview_view: std::cell::RefCell<super::viewport::Viewport>,
     pub message: Option<Message>,
     request: Option<Request>,
     quit: bool,
@@ -215,6 +216,7 @@ impl App {
             help_view: Default::default(),
             declarations: TableState::default(),
             declaration_page: 1,
+            overview_view: Default::default(),
             message: None,
             request: None,
             quit: false,
@@ -543,6 +545,10 @@ impl App {
     }
 
     fn move_by(&mut self, action: Action) {
+        if self.tab == Tab::Overview {
+            self.overview_view.borrow_mut().move_by(action);
+            return;
+        }
         let page = if self.tab == Tab::Projects && self.detail.is_some() {
             self.declaration_page
         } else {

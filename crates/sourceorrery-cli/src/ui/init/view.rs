@@ -411,10 +411,9 @@ fn tick(on: bool) -> &'static str {
 
 fn pad(text: &str, width: usize) -> String {
     let text = sanitize(text);
-    let count = text.chars().count();
+    let count = Span::raw(text.as_ref()).width();
     if count > width {
-        let cut: String = text.chars().take(width.saturating_sub(1)).collect();
-        format!("{cut}…")
+        crate::ui::viewport::clip(&text, u16::try_from(width).unwrap_or(u16::MAX))
     } else {
         format!("{text}{}", " ".repeat(width - count))
     }
@@ -498,9 +497,14 @@ fn control_line<B: Backend>(wizard: &Wizard<B>, control: Control, theme: &Theme)
             )),
         }
     }
+    if focused {
+        for span in &mut spans {
+            span.style = theme.cell(span.style, true);
+        }
+    }
     let line = Line::from(spans);
     if focused {
-        line.style(theme.selected)
+        line.style(theme.focused)
     } else {
         line
     }

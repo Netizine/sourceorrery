@@ -8,6 +8,7 @@
 //! sidebar uses for the current page, messages drawn as callouts, and a
 //! footer bar.
 
+mod columns;
 mod dialog;
 mod lists;
 mod overview;
@@ -58,8 +59,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &mut App, theme: &Theme) {
         Constraint::Length(1),
     ])
     .areas(frame.area());
-    frame.render_widget(header_bar(app, theme), header);
-    frame.render_widget(tab_bar(app, theme), tabs);
+    frame.render_widget(header_bar(app, theme, header.width), header);
+    frame.render_widget(tab_bar(app, theme, tabs.width), tabs);
 
     let drawn = draw_body(frame, app, theme, body.inner(Margin::new(2, 0)));
     if let Some(drawn) = drawn {
@@ -101,7 +102,13 @@ fn draw_body(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Opt
             } else {
                 0
             };
-            overview::draw(frame, session, theme, rows(area, used, area.height));
+            overview::draw(
+                frame,
+                session,
+                theme,
+                rows(area, used, area.height),
+                &app.overview_view,
+            );
             None
         }
         Tab::Secrets | Tab::Projects | Tab::Deleted if session.is_blocked() => {
@@ -182,7 +189,33 @@ fn closed_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
     }
 }
 
-fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
+fn header_bar(app: &App, theme: &Theme, width: u16) -> Paragraph<'static> {
+    if width < 110 {
+        let (name, state) = match &app.session {
+            Some(s) => (
+                s.vault.name.as_str(),
+                if s.is_blocked() {
+                    "BLOCKED"
+                } else if app.is_read_only() {
+                    "read-only"
+                } else {
+                    ""
+                },
+            ),
+            None => app
+                .locked
+                .as_ref()
+                .map_or(("—", "closed"), |l| (l.vault.as_str(), "locked")),
+        };
+        let remaining = width.saturating_sub(u16::try_from(26 + state.len()).unwrap_or(u16::MAX));
+        let name = crate::ui::viewport::clip(&output::sanitize(name), remaining);
+        return Paragraph::new(Line::from(vec![
+            Span::styled(" SourceOrrery  vault ", theme.title),
+            Span::styled(name, theme.vault),
+            Span::styled(format!(" · {state}"), theme.key),
+        ]))
+        .style(theme.bar);
+    }
     let mut spans = vec![Span::styled(" SourceOrrery ", theme.title)];
     match &app.session {
         Some(session) => {
@@ -192,7 +225,7 @@ fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
                 output::sanitize(&vault.name).into_owned(),
                 theme.vault,
             ));
-            if !session.is_blocked() {
+            if !session.is_blocked() && width >= 110 {
                 let check = match (
                     session.view.check.password,
                     session.view.check.authenticator,
@@ -205,6 +238,9 @@ fn header_bar(app: &App, theme: &Theme) -> Paragraph<'static> {
                     format!("  ·  {check}  ·  storage: {}", storages(session)),
                     theme.muted,
                 ));
+            }
+            if session.is_blocked() {
+                spans.push(Span::styled(" · BLOCKED", theme.error.title));
             }
             if app.is_read_only() {
                 spans.push(Span::styled("  ·  read-only", theme.muted));
@@ -247,7 +283,17 @@ fn deletion(session: &Session) -> String {
     }
 }
 
-fn tab_bar(app: &App, theme: &Theme) -> Line<'static> {
+fn tab_bar(app: &App, theme: &Theme, width: u16) -> Line<'static> {
+    let labels = [
+        "Overview", "Secrets", "Projects", "Deleted", "Audit", "Vaults",
+    ];
+    if width < 72 {
+        let index = Tab::ALL.iter().position(|t| *t == app.tab).unwrap_or(0) + 1;
+        return Line::from(vec![
+            Span::styled(format!(" {index} {} ", app.tab.title()), theme.tab),
+            Span::styled(" Tab ← → views", theme.muted),
+        ]);
+    }
     let mut spans = vec![Span::raw(" ")];
     for (i, tab) in Tab::ALL.into_iter().enumerate() {
         let style = if tab == app.tab {
@@ -256,11 +302,16 @@ fn tab_bar(app: &App, theme: &Theme) -> Line<'static> {
             Style::new()
         };
         spans.push(Span::styled(format!("{} ", i + 1), theme.muted));
-        spans.push(Span::styled(tab.title(), style));
-        if let Some(total) = app.total(tab) {
+        spans.push(Span::styled(
+            if width < 110 { labels[i] } else { tab.title() },
+            style,
+        ));
+        if width >= 110
+            && let Some(total) = app.total(tab)
+        {
             spans.push(Span::styled(format!(" {total}"), theme.muted));
         }
-        spans.push(Span::raw("   "));
+        spans.push(Span::raw(if width < 110 { "  " } else { "   " }));
     }
     Line::from(spans)
 }
@@ -350,7 +401,10 @@ fn label(title: &str, app: &App, tab: Tab, shown: usize, theme: &Theme) -> Line<
     ];
     if filtered {
         spans.push(Span::styled("    / ", theme.key));
-        spans.push(Span::raw(output::sanitize(&list.query).into_owned()));
+        spans.push(Span::styled(
+            output::sanitize(&list.query).into_owned(),
+            theme.search_match,
+        ));
         if app.editing {
             spans.push(Span::styled("▌", theme.key));
         }
@@ -583,8 +637,40 @@ fn view_hints(app: &App, changes: bool) -> &'static [(&'static str, &'static str
 }
 
 fn draw_footer(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    let all = hints(app);
+    let mut pairs = all.to_vec();
+    let normal = app.mode() == crate::ui::app::Mode::Normal;
+    if normal {
+        // F2 is wired in B08; leave the space budget for it now.
+        pairs.retain(|(key, _)| !matches!(*key, "?" | "q" | "Esc"));
+        pairs.push(("?", "help"));
+        pairs.push((
+            if app.detail.is_some() { "Esc" } else { "q" },
+            if app.detail.is_some() { "back" } else { "quit" },
+        ));
+    }
+    let essential: usize = if normal {
+        pairs.len().saturating_sub(2)
+    } else {
+        pairs.len()
+    };
+    let tail = if normal { &pairs[essential..] } else { &[] };
+    let tail_width: usize = tail
+        .iter()
+        .map(|(k, v)| k.chars().count() + v.chars().count() + 4)
+        .sum();
     let mut spans = vec![Span::raw(" ")];
-    for (keys, what) in hints(app) {
+    let mut used = 1;
+    for (keys, what) in &pairs[..essential] {
+        let needed = Line::from(format!("{keys} {what}   ")).width();
+        if used + needed + tail_width > usize::from(area.width) {
+            continue;
+        }
+        spans.push(Span::styled(*keys, theme.key));
+        spans.push(Span::raw(format!(" {what}   ")));
+        used += needed;
+    }
+    for (keys, what) in tail {
         spans.push(Span::styled(*keys, theme.key));
         spans.push(Span::raw(format!(" {what}   ")));
     }
@@ -760,7 +846,7 @@ fn long_time(ts: OffsetDateTime) -> String {
 
 /// `-` in the muted style, for a missing value.
 fn dash(theme: &Theme, selected: bool) -> Span<'static> {
-    Span::styled("-", theme.cell(theme.muted, selected))
+    Span::styled("-", theme.cell(theme.disabled_action, selected))
 }
 
 #[cfg(test)]
