@@ -28,7 +28,9 @@ Rust:
 2. workload identity federation: `AZURE_FEDERATED_TOKEN_FILE` with
    `AZURE_TENANT_ID` and `AZURE_CLIENT_ID` (the path AKS and a GitHub
    Actions OIDC token written to a file take);
-3. the Azure CLI (`az login`), then the Azure Developer CLI;
+3. the Azure CLI (`az login`), then the Azure Developer CLI, started from
+   the system directory (never the working directory, so a checkout cannot
+   supply its own `az`) and without the variables that open a vault;
 4. a managed identity: App Service, Functions and Container Apps name their
    endpoint; on a virtual machine the instance metadata endpoint is used when
    it accepts a connection within a second. `AZURE_CLIENT_ID` names a
