@@ -24,13 +24,16 @@ jobs:
   # outputs code=false and every job below is skipped. The CI gate counts
   # skipped as passed, so a docs-only pull request merges after this job
   # and the gate alone, and docs.yml builds and link-checks the site.
-  # When the diff cannot be computed, everything runs.
+  # A change to the site's dependency graph also outputs deps=true: the
+  # dependency audit runs for it, the builds do not. When the diff cannot
+  # be computed, everything runs.
   # ---------------------------------------------------------------------
   changes:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      deps: ${{ steps.classify.outputs.deps }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -521,7 +524,7 @@ jobs:
   audit:
     name: dependency audit
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     # Every dependency graph (scripts/ci/dependency-audit.py, its inventory
     # in docs/supply-chain.md): cargo-audit for the three Cargo.lock files,
