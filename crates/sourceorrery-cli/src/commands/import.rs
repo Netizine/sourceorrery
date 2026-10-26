@@ -156,6 +156,32 @@ fn read_file(path: &Path) -> anyhow::Result<Vec<Assignment>> {
     dotenv::parse(text).map_err(|err| anyhow!("{}: {err}", path.display()))
 }
 
+/// `key` when it may be repeated: text shaped like a variable name. A key is
+/// file text, and on a line that is not really an assignment (a wrapped
+/// value, a stray connection string) the text before `=` can be part of a
+/// secret, so anything else is never shown.
+fn shown_key(key: &str) -> Option<&str> {
+    let shaped = !key.is_empty()
+        && key.len() <= 128
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'));
+    shaped.then_some(key)
+}
+
+/// The key of `a` when it may be repeated ([`shown_key`]) and `a` is an
+/// assignment at all: a line whose value is `=` alone is the end of base64
+/// text wrapped onto a line of its own (`...NA==`), so its "key" is part of
+/// a value too, however much it looks like a name.
+fn shown_assignment(a: &Assignment) -> Option<&str> {
+    let value = a.value.expose();
+    let padding = !value.is_empty() && value.iter().all(|&b| b == b'=');
+    shown_key(&a.key).filter(|_| !padding)
+}
+
+const NOT_SHOWN: &str =
+    "the text before `=` is not a variable name, and it is not shown in case it is part of a value";
+
 fn check_duplicates(assignments: &[Assignment]) -> anyhow::Result<()> {
     let mut lines: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for a in assignments {
@@ -166,6 +192,7 @@ fn check_duplicates(assignments: &[Assignment]) -> anyhow::Result<()> {
         .filter(|(_, l)| l.len() > 1)
         .map(|(key, l)| {
             let l: Vec<String> = l.iter().map(ToString::to_string).collect();
+            let key = shown_key(key).unwrap_or("the same text, not shown,");
             format!("{key} (lines {})", l.join(", "))
         })
         .collect();
@@ -230,8 +257,9 @@ fn plan_rows(
     Ok(selected
         .iter()
         .map(|a| {
+            let shown = shown_assignment(a);
             let mut row = Row {
-                key: a.key.clone(),
+                key: shown.map_or_else(|| "(not shown)".to_owned(), str::to_owned),
                 line: a.line,
                 secret: None,
                 env: None,
@@ -240,10 +268,10 @@ fn plan_rows(
                 note: None,
                 failed: false,
             };
-            let Some(secret) = secret_name_for_env(&a.key) else {
+            let Some(secret) = shown.and_then(secret_name_for_env) else {
                 row.vault = Cow::Borrowed("skipped");
                 row.manifest = "-";
-                row.note = Some(invalid_key_reason(&a.key));
+                row.note = Some(shown.map_or_else(|| NOT_SHOWN.to_owned(), invalid_key_reason));
                 return row;
             };
             if let Some(entry) = declared.iter().find(|e| e.name == secret) {

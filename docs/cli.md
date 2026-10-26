@@ -450,7 +450,12 @@ original variable (`apiKey` → `env = "apiKey"`).
 
 Nothing the command prints contains a value: the table (or `-o json`)
 lists each key, its secret name, what happened in the vault and in the
-manifest, and a note. A secret the vault already holds is left as it is
+manifest, and a note. A "key" is file text, and on a line that is not
+really an assignment (a connection string or the end of wrapped base64 on
+a line of its own) the text before `=` can be part of a value, so a key
+that is not shaped like a variable name, or whose value is only `=`
+padding, is shown as `(not shown)`, in the table, in JSON and in errors,
+and skipped. A secret the vault already holds is left as it is
 (`--overwrite` stores a new version), so the command can be run again.
 Keys that cannot become manifest entries are reported and skipped: an
 invalid environment variable name, a name starting with `SOURCEORRERY_`,

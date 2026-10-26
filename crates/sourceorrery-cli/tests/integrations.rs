@@ -459,6 +459,55 @@ fn import_refuses_ambiguous_files_without_quoting_them() {
     assert!(!env.path("sourceorrery.toml").exists());
 }
 
+/// The text before `=` on a line that is not really an assignment (a stray
+/// connection string, a wrapped value) can be part of a secret: it is never
+/// shown, in the table, the JSON or an error.
+#[test]
+fn import_never_shows_text_before_equals_that_is_not_a_variable_name() {
+    // The end of wrapped base64 can look like a name: its `=` padding says
+    // it is not one.
+    const WRAPPED: &str = "Q2FuYXJ5N2M0MWJhc2U2NA";
+    let env = Env::new();
+    env.create_vault("development");
+    std::fs::write(
+        env.path(".env"),
+        format!(
+            "OK=1\npostgres://app:{CANARY}@db/app?sslmode=require\nab+c/{CANARY}==\n\
+             x:{CANARY}=1\nx:{CANARY}=2\n"
+        ),
+    )
+    .unwrap();
+    let out = env.run(&["import", ".env", "--dry-run"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains(CANARY), "{stderr}");
+    assert!(stderr.contains("not shown"), "{stderr}");
+    std::fs::write(
+        env.path(".env"),
+        format!(
+            "OK=1\npostgres://app:{CANARY}@db/app?sslmode=require\nab+c/{CANARY}==\n{WRAPPED}==\n"
+        ),
+    )
+    .unwrap();
+    for args in [
+        &["import", ".env", "--dry-run"][..],
+        &["-o", "json", "import", ".env", "--dry-run"][..],
+    ] {
+        let text = env.ok(args);
+        assert!(!text.contains(CANARY) && !text.contains(WRAPPED), "{text}");
+        assert!(text.contains("not shown"), "{text}");
+    }
+    env.ok(&["import", ".env"]);
+    let manifest = std::fs::read_to_string(env.path("sourceorrery.toml")).unwrap();
+    assert!(
+        manifest.contains("\"OK\"") || manifest.contains("ok"),
+        "{manifest}"
+    );
+    assert!(
+        !manifest.contains(WRAPPED) && !manifest.contains(CANARY),
+        "{manifest}"
+    );
+}
+
 #[test]
 fn import_into_a_missing_vault_says_how_to_create_it() {
     let env = Env::new();
