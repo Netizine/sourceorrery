@@ -12,10 +12,11 @@
 # computed: an unknown event, a missing base, an empty diff. Renames count
 # both paths (--no-renames), so moving a source file into docs/ is code.
 #
-# `deps` is true for every code change and for a change to a dependency
-# graph that scripts/ci/dependency-audit.py audits but that would count as
-# documentation (the site's npm graph): the dependency audit runs for it,
-# the builds do not. The site's dependencies reach the deployed site.
+# `deps` is true for every code change and for a lock file, package
+# manifest or npm configuration that would count as documentation (the
+# site's npm graph, or one added under docs/ or site/): the dependency
+# audit runs for it, the builds do not. The site's dependencies reach the
+# deployed site, and the audit also fails on a graph its inventory lacks.
 #
 # In CI:   EVENT and BEFORE come from the workflow (see ci.yml).
 # Locally: bash scripts/ci/classify-changes.sh <base> <head>
@@ -30,10 +31,13 @@ is_docs() {
 	esac
 }
 
-# The audited dependency graphs under paths is_docs accepts.
+# A dependency graph's file, by name: the names LOCK_OR_MANIFEST in
+# scripts/ci/dependency-audit.py looks for, and .npmrc.
 is_dependency_graph() {
-	case "$1" in
-		site/package.json | site/package-lock.json | site/.npmrc) return 0 ;;
+	case "${1##*/}" in
+		Cargo.lock | Cargo.toml | package-lock.json | package.json | .npmrc | \
+			requirements*.txt | pyproject.toml | go.mod | composer.json | pom.xml | \
+			*.csproj | CMakeLists.txt) return 0 ;;
 		*) return 1 ;;
 	esac
 }
@@ -64,15 +68,15 @@ if [[ -n "$base" ]] && files="$(git diff --name-only --no-renames "$base" "$head
 	code=false
 	deps=false
 	while IFS= read -r file; do
-		if is_dependency_graph "$file"; then
-			echo "deps  $file"
-			deps=true
-		elif is_docs "$file"; then
-			echo "docs  $file"
-		else
+		if ! is_docs "$file"; then
 			echo "code  $file"
 			code=true
 			deps=true
+		elif is_dependency_graph "$file"; then
+			echo "deps  $file"
+			deps=true
+		else
+			echo "docs  $file"
 		fi
 	done <<<"$files"
 else
