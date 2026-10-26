@@ -1,10 +1,11 @@
 'use strict';
-// Public API of @sourceorreryai/sdk. The native addon (../index.js, generated
-// by napi-rs) does the work; this file parses metadata JSON into plain
-// objects and turns native failures into typed errors by stable code.
+// Public API of @sourceorreryai/sdk. The native addon (loaded by ./native.js
+// from this package's own install only) does the work; this file parses
+// metadata JSON into plain objects and turns native failures into typed
+// errors by stable code.
 
 const util = require('node:util');
-const native = require('../index.js');
+const native = require('./native.js');
 
 // ---------------------------------------------------------------------------
 // Errors

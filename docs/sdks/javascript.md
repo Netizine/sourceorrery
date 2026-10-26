@@ -30,9 +30,13 @@ is a napi-rs native addon for Node.js 20+ with TypeScript types included.
 The main package pulls in the matching one of six platform packages
 (`@sourceorreryai/sdk-<platform>` for Windows x64 and arm64, macOS x64 and
 arm64, Linux glibc x64 and arm64) as an optional dependency, so nothing is
-compiled on install. Every package is published by trusted publishing
-with provenance, which `npm audit signatures` checks
-([Supply chain](../supply-chain.md#npm)).
+compiled on install. The addon is loaded only from this install: the
+platform package beside `@sourceorreryai/sdk` (or inside it), never a
+module of that name found in a parent directory's `node_modules`, so an
+install without it (`--omit=optional`, 32-bit Node) fails with an error
+naming the package rather than loading what another account put there.
+Every package is published by trusted publishing with provenance, which
+`npm audit signatures` checks ([Supply chain](../supply-chain.md#npm)).
 
 ### From the GitHub release
 
