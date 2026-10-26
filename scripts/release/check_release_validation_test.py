@@ -11,10 +11,12 @@ import contextlib
 import copy
 import importlib.util
 import io
+import os
 import sys
 import unittest
 import urllib.error
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("check_release_validation", HERE / "check-release-validation.py")
@@ -167,6 +169,35 @@ class GateTest(unittest.TestCase):
         self.assertIn("::warning title=release validation::", out.getvalue())
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(crv.main(["--repo", REPO, "--sha", SHA], getter=getter(passing())), 0)
+
+    def test_a_dry_run_that_builds_the_commit_still_needs_it_on_main(self) -> None:
+        dry_run = ["--repo", REPO, "--sha", SHA, "--warn-only", "--require-main"]
+        for answer in ({"status": "diverged"}, urllib.error.URLError("connection reset")):
+            answers = passing()
+            answers[f"/repos/{REPO}/compare/{SHA}...main"] = answer
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(crv.main(dry_run, getter=getter(answers)), 1)
+            self.assertIn("::error title=release validation::", out.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(crv.main(dry_run[:3] + ["18138d3"] + dry_run[4:], getter=getter(passing())), 1)
+        self.assertIn("is not a full commit SHA", out.getvalue())
+        # On main, an incomplete CI run is still only reported.
+        answers = passing()
+        jobs(answers)["jobs"][1]["conclusion"] = "skipped"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(crv.main(dry_run, getter=getter(answers)), 0)
+        self.assertIn("::warning title=release validation::", out.getvalue())
+
+    def test_no_token_fails_unless_the_run_only_reports(self) -> None:
+        cases = [([], 1), (["--warn-only"], 0), (["--warn-only", "--require-main"], 1)]
+        for extra, status in cases:
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stdout(out):
+                self.assertEqual(crv.main(["--repo", REPO, "--sha", SHA, *extra]), status, extra)
+            self.assertIn("GH_TOKEN is not set", out.getvalue())
 
 
 if __name__ == "__main__":

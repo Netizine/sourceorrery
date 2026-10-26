@@ -279,9 +279,11 @@ test has the cases.
 maturin-action steps took whatever was newest on release day, in jobs
 whose outputs are attested and shipped. **Fix:** `cargo-cyclonedx 0.5.9`,
 `cargo-auditable 0.7.7` and `maturin-version: v1.15.0` (the version
-`bindings/python/ci-requirements.txt` pins). **Open:** `wingetcreate` is
-still downloaded from `https://aka.ms/wingetcreate/latest` with the WinGet
-token; pinning it needs a release URL and a reviewed SHA-256.
+`bindings/python/ci-requirements.txt` pins). `wingetcreate`, which runs
+with the WinGet token, came from `https://aka.ms/wingetcreate/latest`;
+both workflows now download the 1.12.13.0 release asset and refuse it
+unless its SHA-256 is the one GitHub records for that file
+(`24042bd3…bd9ffea`).
 
 ### SA11 — The strict dependency audit was never run (low)
 
@@ -420,8 +422,8 @@ plan.
 | Go, C and C++ on Windows import `sourceorrery_ffi.dll` by name while the docs put it on `PATH` (the current directory is searched first) | A Windows run with a planted DLL; placing the DLL beside the executable avoids it |
 | `init --integration` and the manifest save write through symlinks committed in a repository | A run with symlink rights (not available on this machine) |
 | Release jobs restore Actions caches that CI and coverage jobs write | setup-java's cache key, decided inside the action |
-| `ReleasePackages.yaml` dry runs execute the selected tag's code in jobs holding `id-token: write` and the Maven signing key | Who can create tags and dispatch, and the registries' trusted-publisher settings |
-| Publishing identity and secrets are not bound to an environment; the from-main check is in the dispatched file | The same hosted facts; `docs/release.md` already recommends a `release` environment |
+| `ReleasePackages.yaml` dry runs execute the selected tag's code in jobs holding `id-token: write` and the Maven signing key | Who can create tags and dispatch, and the registries' trusted-publisher settings. Since addressed in the workflow: a dry run refuses a tag whose commit is not on `main` (`--require-main`) and never imports the signing key |
+| Publishing identity and secrets are not bound to an environment; the from-main check is in the dispatched file | The same hosted facts. The publishing jobs now run in the `release` environment (dry runs in `release-dry-run`); limiting it to `main`, moving the secrets into it and naming it on each trusted publisher are repository and registry settings (`docs/release.md`, "The release environment") |
 | The release gate names `main` by short name (a tag named `main`, run by a dispatch or by its own tag-push trigger) | How GitHub's API resolves `main` with such a tag, and the `head_branch` it reports for such runs |
 | The Static Web Apps deploy skipped Dependabot by the event's actor, so a maintainer's reopen or "Update branch" on a Dependabot PR built its unmerged dependencies with the Font Awesome and deployment tokens | Whether GitHub gives such a run the Actions secrets, and what the deploy action exposes to the build; the guard now checks the PR's author, as `coverage.yml` does (hardening, committed) |
 | AWS reads apply tags read before a version listed later | A loopback model test interleaving a write between the two reads |
@@ -465,8 +467,10 @@ plan.
   package `os`/`cpu` fields so an unsupported platform fails at install.
 - The HashiCorp Vault adapter's messages say a version "is held at least
   as restricted as asked" without re-reading it.
-- `WINGET_TOKEN` is a classic `public_repo` token, and `wingetcreate` is
-  fetched from a moving URL (SA10's open part).
+- `WINGET_TOKEN` is a classic `public_repo` token of the account that
+  owns this repository, so it can also push tags and change release
+  assets here; a separate account that owns the `winget-pkgs` fork would
+  confine it. (`wingetcreate` itself is now pinned, SA10.)
 - The Static Web Apps step gives the Font Awesome token to the whole
   build, not only to the install as `docs.yml` does; building in an
   unprivileged job and deploying the artifact would separate them.

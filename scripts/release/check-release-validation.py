@@ -2,7 +2,7 @@
 """Refuse a release whose source commit was not validated in full.
 
     python3 scripts/release/check-release-validation.py --repo OWNER/NAME \\
-        --sha COMMIT [--warn-only]
+        --sha COMMIT [--warn-only [--require-main]]
 
 A commit may be released only when all of these hold, each read from the
 GitHub API with the workflow's token:
@@ -22,6 +22,9 @@ classifier treats a dispatch as code). Any API error, or an answer that
 cannot be read, refuses: an unknown is never a pass. With --warn-only (a dry
 run) the verdict is printed as warning annotations and the exit status is 0,
 so a dry run exercises the same gate without needing a releasable commit.
+With --require-main as well, rule 1 still refuses, as does a SHA or an
+answer that cannot decide it: a dry run that builds the selected commit in
+jobs able to publish (ReleasePackages.yaml) runs only code already on main.
 """
 
 from __future__ import annotations
@@ -45,6 +48,10 @@ Getter = Callable[[str], Any]
 
 class Refused(Exception):
     """The commit may not be released; the message says why."""
+
+
+class NotOnMain(Refused):
+    """Rule 1 failed, or could not be decided: the commit is not known to be on main."""
 
 
 def github_get(token: str) -> Getter:
@@ -76,12 +83,15 @@ def fetch(get: Getter, path: str) -> Any:
 def check(get: Getter, repo: str, sha: str) -> list[str]:
     """What shows `sha` was validated; raises Refused when it was not."""
     if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
-        raise Refused(f"'{sha}' is not a full commit SHA")
+        raise NotOnMain(f"'{sha}' is not a full commit SHA")
     evidence = []
 
-    compare = fetch(get, f"/repos/{repo}/compare/{sha}...main")
+    try:
+        compare = fetch(get, f"/repos/{repo}/compare/{sha}...main")
+    except Refused as refusal:
+        raise NotOnMain(str(refusal)) from refusal
     if compare.get("status") not in ("identical", "ahead"):
-        raise Refused(f"{sha} is not on main (main is {compare.get('status', 'unknown')} of it)")
+        raise NotOnMain(f"{sha} is not on main (main is {compare.get('status', 'unknown')} of it)")
     evidence.append(f"{sha} is on main ({compare['status']})")
 
     runs = fetch(get, f"/repos/{repo}/actions/runs?head_sha={sha}&status=completed&per_page=100")
@@ -142,19 +152,25 @@ def main(argv: list[str] | None = None, getter: Getter | None = None) -> int:
     parser.add_argument("--repo", required=True)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--warn-only", action="store_true", help="report, do not fail (dry runs)")
+    parser.add_argument(
+        "--require-main",
+        action="store_true",
+        help="with --warn-only, still fail a commit not known to be on main",
+    )
     args = parser.parse_args(argv)
     if getter is None:
         token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         if not token:
             print("::error title=release validation::GH_TOKEN is not set")
-            return 0 if args.warn_only else 1
+            return 0 if args.warn_only and not args.require_main else 1
         getter = github_get(token)
     try:
         evidence = check(getter, args.repo, args.sha.lower())
     except Refused as refusal:
-        level = "warning" if args.warn_only else "error"
+        fatal = not args.warn_only or (args.require_main and isinstance(refusal, NotOnMain))
+        level = "error" if fatal else "warning"
         print(f"::{level} title=release validation::{refusal}")
-        return 0 if args.warn_only else 1
+        return 1 if fatal else 0
     for line in evidence:
         print(f"validated: {line}")
     return 0

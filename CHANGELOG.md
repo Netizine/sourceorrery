@@ -88,7 +88,11 @@ it was tested).
   identity; `cargo-auditable`, `cargo-cyclonedx` and maturin run at exact
   versions; a real release runs the dependency audit with `--strict`, as
   documented; and a change to the site's npm dependencies runs the
-  dependency audit in CI.
+  dependency audit in CI. `wingetcreate` is a pinned release checked
+  against its SHA-256; a **Release packages** dry run refuses a tag whose
+  commit is not on `main` and never holds the Maven signing key; and the
+  publishing jobs run in a `release` environment, ready to be limited to
+  `main` (`docs/release.md`).
 
 ## [0.3.0] - 2026-10-26
 

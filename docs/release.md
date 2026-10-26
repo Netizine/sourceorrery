@@ -149,8 +149,10 @@ package is published by hand, once.
 3. For each of the seven packages, at
    `https://www.npmjs.com/package/<name>/access`, *Trusted Publisher →
    GitHub Actions*: Organization or user `Netizine`, Repository
-   `sourceorrery`, Workflow filename `release.yml`; then a second one
-   with `ReleasePackages.yaml`. Every field is case-sensitive, and npm
+   `sourceorrery`, Workflow filename `release.yml`, Environment empty
+   (`release` once [the release environment](#the-release-environment)
+   is set up); then a second one with `ReleasePackages.yaml`. Every
+   field is case-sensitive, and npm
    checks them only when a publish happens. npm's documentation says a new
    trusted publisher expires if no publish uses it within two days, so add
    them shortly before the release that will use them.
@@ -171,7 +173,7 @@ token for a short-lived upload token and uploads a signed attestation
    the `sourceorrery` project.
 2. The project's *Manage → Publishing → Add a new publisher → GitHub*:
    Owner `Netizine`, Repository name `sourceorrery`, Workflow name
-   `release.yml`, Environment name empty. Then a second publisher with
+   `release.yml`, Environment name empty (`release` once [the release environment](#the-release-environment) is set up). Then a second publisher with
    Workflow name `ReleasePackages.yaml`.
 3. Delete any `PYPI_API_TOKEN` repository secret and revoke the token on
    pypi.org; nothing reads it any more.
@@ -199,7 +201,7 @@ Leave `bootstrap_providers` off once every crate has its setting.
 
 1. For each crate, *Settings → Trusted Publishing → Add →
    GitHub*: Repository owner `Netizine`, Repository name `sourceorrery`,
-   Workflow filename `release.yml`, Environment empty. Then a second
+   Workflow filename `release.yml`, Environment empty (`release` once [the release environment](#the-release-environment) is set up). Then a second
    configuration with `ReleasePackages.yaml`.
 2. Delete any `CARGO_REGISTRY_TOKEN` repository secret and revoke the token
    under *Account Settings → API Tokens*.
@@ -233,7 +235,7 @@ grants it only to the workflows its policy names.
 1. Sign in to nuget.org, click your user name, then *Trusted Publishing*.
 2. Add a policy, owned by your account (or the organisation that will own
    the package): Repository Owner `Netizine`, Repository `sourceorrery`,
-   Workflow File `release.yml` (the file name only), Environment empty.
+   Workflow File `release.yml` (the file name only), Environment empty (`release` once [the release environment](#the-release-environment) is set up).
    Allow publishing new packages and new versions, glob `SourceOrrery`.
    The policy works before the package exists; the first push creates it.
 3. Add a second, identical policy with Workflow File
@@ -329,8 +331,9 @@ Before publication, inspect the external controls separately:
   appropriate reviews and administrator coverage.
 - Protect `v*` and `bindings/go/v*` tags against update/deletion and limit
   tag creation to the release workflow.
-- Use a publishing environment restricted to `main`, with required review
-  and the relevant registry credentials scoped to that environment.
+- Configure the `release` environment ([below](#the-release-environment)):
+  limited to `main`, holding the registry credentials, optionally with
+  required review.
 - Bind trusted publishers to the intended repository, workflow and
   environment. A GitHub secret's presence does not prove registry trust.
 - Check release immutability, default workflow-token permissions and
@@ -340,6 +343,38 @@ Historical repository observations are retained in the
 [remediation validation ledger](security-remediation-validation.md).
 They are dated evidence, not proof that an external setting still has the
 same value. Recheck these settings before a release.
+
+### The release environment
+
+The jobs that can publish run in the GitHub environment `release`: in
+`release.yml` every `publish-*` job and `preflight`, which reads the
+registry secrets; in **Release packages** `plan` and every job that holds
+a secret or an identity token. A dry run puts its jobs in
+`release-dry-run` instead. GitHub creates an environment, with no rules,
+the first time a job names it, and repository secrets reach every
+environment, so the workflows publish as before until the environment is
+configured. Then, in this order:
+
+1. *Settings → Environments → `release`*: under *Deployment branches and
+   tags* choose *Selected branches and tags* and add `main`. Optionally
+   add yourself as a required reviewer: each job in the environment then
+   waits for an approval (`preflight` when a release starts, the publish
+   jobs once the GitHub Release exists).
+2. Move the registry secrets into the environment's secrets and delete the
+   repository copies: `NUGET_USER`, `MAVEN_CENTRAL_USERNAME`,
+   `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`,
+   `MAVEN_GPG_PASSPHRASE`, `PACKAGIST_USERNAME`, `PACKAGIST_API_TOKEN`,
+   `PACKAGING_TOKEN`, `WINGET_TOKEN` and `CRATES_BOOTSTRAP_TOKEN`. Leave
+   `release-dry-run` without secrets; a dry run then skips the Homebrew,
+   Scoop and WinGet jobs, which need their token to run at all.
+3. Set Environment `release` on every trusted publisher, for both workflow
+   files: each crate on crates.io, PyPI, each npm package, and NuGet's two
+   policies. An identity token from a dry run, a branch or any job outside
+   the environment is then refused.
+
+The next real release exercises it: a registry that does not accept the
+environment fails its job (crates.io and PyPI loudly), and **Release
+packages** can publish that registry once its setting is fixed.
 
 ## Publishing an existing release
 
@@ -380,7 +415,12 @@ skipped, and npm, NuGet, Maven Central and Packagist are skipped while
 their variable or secrets are missing; a ticked crates.io or PyPI box
 publishes using its configured trust (with the temporary provider-token
 exception above). A dry run checks every ticked
-registry, with or without secrets, and uploads nothing.
+registry, with or without secrets, and uploads nothing. It reports a
+release-gate problem as a warning, except one: a tag whose commit is not on
+`main` is refused, because the crates.io and Maven Central jobs build that
+commit's code while they hold `id-token: write`, so a dry run runs only
+code already merged. It never imports the Maven signing key (the dry run
+builds unsigned).
 
 For a partially completed 0.3.0 release, select `v0.3.0` and the failed
 registries, run a dry run, then dispatch again with **dry_run** unticked.
