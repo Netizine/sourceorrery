@@ -107,8 +107,11 @@ impl State {
     }
 }
 
+/// The longest grace period [`parse_grace`] accepts, in days (ten years).
+pub const MAX_GRACE_DAYS: i64 = 3650;
+
 /// Parse a grace period: a positive whole number of days, hours or minutes
-/// (`7d`, `12h`, `30m`).
+/// (`7d`, `12h`, `30m`), at most [`MAX_GRACE_DAYS`] days.
 pub fn parse_grace(text: &str) -> Result<Duration> {
     let invalid = || {
         SecretError::InvalidArgument(format!(
@@ -126,12 +129,24 @@ pub fn parse_grace(text: &str) -> Result<Duration> {
             "'{text}' is not a grace period; it must be positive (omit it to retire at once)"
         )));
     }
-    match unit {
-        'd' => Ok(Duration::days(amount)),
-        'h' => Ok(Duration::hours(amount)),
-        'm' => Ok(Duration::minutes(amount)),
-        _ => Err(invalid()),
-    }
+    let per_unit: i64 = match unit {
+        'd' => 24 * 60,
+        'h' => 60,
+        'm' => 1,
+        _ => return Err(invalid()),
+    };
+    // Counted in minutes and bounded before a duration is built: the
+    // duration constructors panic on overflow, and a manifest may say
+    // anything.
+    let minutes = amount
+        .checked_mul(per_unit)
+        .filter(|minutes| *minutes <= MAX_GRACE_DAYS * 24 * 60)
+        .ok_or_else(|| {
+            SecretError::InvalidArgument(format!(
+                "'{text}' is not a grace period; it may be at most {MAX_GRACE_DAYS}d"
+            ))
+        })?;
+    Ok(Duration::minutes(minutes))
 }
 
 /// The shortest of the forms [`parse_grace`] accepts for `grace`.
@@ -421,7 +436,12 @@ pub fn activate(
         .and_then(|id| find(&versions, id))
         .cloned();
     let retire_on = match (&previous, grace) {
-        (Some(_), Some(grace)) => Some(now + grace),
+        (Some(_), Some(grace)) => Some(now.checked_add(grace).ok_or_else(|| {
+            rotation_error(
+                name,
+                "the grace period ends past the latest date that can be recorded".to_owned(),
+            )
+        })?),
         _ => None,
     };
     let state = if previous.is_some() {
@@ -600,6 +620,20 @@ mod tests {
             "7\u{FFFD}",
         ] {
             let err = parse_grace(bad).unwrap_err();
+            assert_eq!(err.code(), "invalid_argument", "{bad}");
+        }
+        // A manifest is repository content: an amount too large for a
+        // duration, or for a date, is refused, not a panic.
+        for bad in [
+            "999999999999999d",
+            "9999999999999999h",
+            "999999999999999999m",
+            "9223372036854775807d",
+            "400000000d",
+        ] {
+            let err = std::panic::catch_unwind(|| parse_grace(bad))
+                .unwrap_or_else(|_| panic!("{bad} panicked"))
+                .unwrap_err();
             assert_eq!(err.code(), "invalid_argument", "{bad}");
         }
         assert_eq!(format_grace(Duration::days(7)), "7d");
