@@ -120,6 +120,30 @@ jobs:
             echo "::error title=docs version::stamp the documentation for $VERSION (docs/release.md, step 1) and commit it"
             exit 1
           fi
+      # The documented release rule (docs/supply-chain.md): a maintenance
+      # warning not reviewed in scripts/ci/dependency-audit.py stops a real
+      # release. The audit runs here, against today's advisory database,
+      # not only in the commit's CI run, where it is a warning. A dry run
+      # reports instead of stopping.
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-audit@0.22.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Every dependency graph audited, strictly
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if python3 scripts/ci/dependency-audit.py --strict; then
+            exit 0
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::warning title=dependency audit::the strict dependency audit failed; a real run stops here"
+          else
+            exit 1
+          fi
       - name: Require the first-publication credential before building a real release
         if: ${{ inputs.bootstrap_providers && !inputs.dry_run }}
         env:
