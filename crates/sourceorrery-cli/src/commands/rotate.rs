@@ -465,32 +465,43 @@ fn status(ctx: &Ctx, plan: &Plan, vault: &Opened) -> anyhow::Result<()> {
         ]);
     }
     table.print()?;
+    for line in status_lines(&status, now) {
+        eprintln!("{line}");
+    }
+    Ok(())
+}
+
+/// What `--step status` says under its table. Version ids are a provider's
+/// text, so they go through the same sanitising as every other line the
+/// CLI prints.
+fn status_lines(status: &rotation::Status, now: time::OffsetDateTime) -> Vec<String> {
+    let mut lines = Vec::new();
     if let Some(candidate) = &status.candidate {
-        eprintln!(
+        lines.push(format!(
             "candidate {} is {}: {}",
-            candidate.version,
+            output::sanitize(&candidate.version),
             State::of(candidate).map_or("-", State::as_str),
             if State::of(candidate) == Some(State::Validated) {
                 "activate it with --step activate"
             } else {
                 "it was never validated and will be marked failed by the next rotation"
             }
-        );
+        ));
     }
     if let Some((previous, retire_on)) = &status.awaiting_retirement {
-        match retire_on {
-            Some(t) if *t > now => eprintln!(
+        lines.push(match retire_on {
+            Some(t) if *t > now => format!(
                 "version {} awaits retirement after {} (--step retire --now to retire earlier)",
-                previous.version,
+                output::sanitize(&previous.version),
                 timestamp::format(*t)
             ),
-            _ => eprintln!(
+            _ => format!(
                 "version {} is due for retirement: run --step retire",
-                previous.version
+                output::sanitize(&previous.version)
             ),
-        }
+        });
     }
-    Ok(())
+    lines
 }
 
 fn version_row(props: &SecretProperties) -> serde_json::Value {
@@ -506,4 +517,53 @@ fn version_row(props: &SecretProperties) -> serde_json::Value {
         "state": State::of(props).map(State::as_str),
         "tags": tags,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use sourceorrery_core::RecoveryLevel;
+
+    use super::*;
+
+    fn version(id: &str, state: &str) -> SecretProperties {
+        let now = timestamp::now();
+        SecretProperties {
+            vault: "dev".into(),
+            name: "api-key".into(),
+            version: id.into(),
+            enabled: true,
+            content_type: None,
+            tags: BTreeMap::from([(rotation::STATE_TAG.to_owned(), state.to_owned())]),
+            not_before: None,
+            expires_on: None,
+            created_on: now,
+            updated_on: now,
+            recovery_level: RecoveryLevel::Recoverable,
+        }
+    }
+
+    #[test]
+    fn status_never_prints_a_providers_control_characters() {
+        // A provider chooses its version ids; one holding an OSC 52
+        // sequence must not reach the terminal as one.
+        let hostile = "v2\u{1b}]52;c;Y3VybCBldmls\u{7}";
+        let now = timestamp::now();
+        let status = rotation::Status {
+            candidate: Some(version(hostile, "issued")),
+            current: None,
+            awaiting_retirement: Some((
+                version(hostile, "superseded"),
+                Some(now + Duration::hours(1)),
+            )),
+        };
+        let lines = status_lines(&status, now);
+        assert_eq!(lines.len(), 2);
+        for line in &lines {
+            assert!(
+                !line.contains('\u{1b}') && !line.contains('\u{7}'),
+                "{line:?}"
+            );
+            assert!(line.contains("v2"), "{line:?}");
+        }
+    }
 }
