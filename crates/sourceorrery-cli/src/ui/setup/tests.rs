@@ -834,6 +834,71 @@ fn the_live_backend_creates_and_changes_a_vault_in_one_transaction() {
     assert_eq!(w.editing.as_ref().unwrap().name, "dev");
 }
 
+/// A change is bound to the view check the screens passed, or found absent,
+/// when they opened the vault: one set elsewhere in the meantime, which this
+/// operator never passed, refuses the commit (the 2026-10-25 review's SR11,
+/// for settings).
+#[test]
+fn a_view_check_set_elsewhere_after_opening_refuses_the_commit() {
+    use std::sync::Arc;
+
+    use sourceorrery_core::SecretBytes;
+    use sourceorrery_storage::{
+        CreateVaultOptions, CredentialStore, MemoryStore, NoInteraction, VaultRegistry,
+    };
+
+    use super::backend::Live;
+    use crate::cli::OutputFormat;
+    use crate::context::Ctx;
+
+    let home = tempfile::tempdir().unwrap();
+    let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+    let machine = Ctx {
+        registry: VaultRegistry::with_root(home.path()).with_store(store),
+        output: OutputFormat::Table,
+        vault_flag: None,
+        recovery_key_file: None,
+        password_file: None,
+        verbose: 0,
+        code: None,
+    };
+    machine
+        .registry
+        .create("dev", CreateVaultOptions::default())
+        .unwrap();
+
+    let mut w = Wizard::new(Live::new(&machine));
+    w.params = Argon2Params::TESTING;
+    w.begin(Some("dev")).unwrap();
+    assert_eq!(w.step, Step::ViewCheck, "{:?}", w.message);
+
+    // Elsewhere, while the screens are open.
+    machine
+        .registry
+        .open("dev", &NoInteraction)
+        .unwrap()
+        .set_password(&SecretBytes::from(TYPED), None, Argon2Params::TESTING)
+        .unwrap();
+
+    press(&mut w, Control::Continue);
+    press(&mut w, Control::NewRecoveryKey);
+    press(&mut w, Control::RecoveryWritten);
+    press(&mut w, Control::Continue);
+    press(&mut w, Control::Continue);
+    press(&mut w, Control::Commit);
+    assert_ne!(
+        w.step,
+        Step::Done,
+        "committed past a view check never passed"
+    );
+    assert!(error(&w).contains("view check changed"), "{}", error(&w));
+    let vault = machine.registry.open("dev", &NoInteraction).unwrap();
+    assert!(
+        vault.view_check().unwrap().password,
+        "the password set elsewhere stays"
+    );
+}
+
 #[test]
 fn qr_fits_whole_or_manual_key_stays_reachable_on_short_screens() {
     let mut w = to_view_check();

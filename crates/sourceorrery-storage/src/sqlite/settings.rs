@@ -8,11 +8,13 @@
 //! as `vault_change`, the recovery key as `protector_add`, the view check as
 //! `guard`, with the same details.
 
-use sourceorrery_core::Result;
 use sourceorrery_core::audit::{AuditOperation, AuditOutcome};
+use sourceorrery_core::{Result, SecretError};
 
 use super::schema::{ViewState, db};
-use super::{AuthenticatorChange, ConnectionChange, PasswordChange, RecoveryKey, SqliteVault};
+use super::{
+    AuthenticatorChange, ConnectionChange, PasswordChange, RecoveryKey, SqliteVault, ViewIdentity,
+};
 
 /// What [`SqliteVault::change_settings`] changes. Its `Debug` shows no
 /// secret: each part redacts its own.
@@ -53,10 +55,38 @@ impl SqliteVault {
     /// recovery key, then the view check. A part refused leaves the vault
     /// as it was and is audited as a `vault_change` failure.
     pub fn change_settings(&self, change: &SettingsChange) -> Result<()> {
+        self.change_settings_if(change, None)
+    }
+
+    /// [`SqliteVault::change_settings`] on behalf of a caller that passed
+    /// the view check `authorised` (from [`SqliteVault::view_identity`]):
+    /// refused with `permission_denied`, nothing changed, when the check in
+    /// force is no longer that one. A check another handle set, replaced or
+    /// strengthened meanwhile is never overwritten or cleared, nor the
+    /// recovery key replaced, by someone who did not pass it.
+    pub fn change_settings_if(
+        &self,
+        change: &SettingsChange,
+        authorised: Option<&ViewIdentity>,
+    ) -> Result<()> {
         let op = AuditOperation::VaultChange;
         let mut conn = self.lock()?;
         let tx = self.begin(&mut conn, op)?;
-        let view = match self.apply_settings(&tx, change) {
+        let checked = match authorised {
+            Some(authorised) => self.stored_view_state(&tx).and_then(|stored| {
+                if ViewIdentity::of(&stored)? == *authorised {
+                    Ok(())
+                } else {
+                    Err(SecretError::PermissionDenied(
+                        "the vault's view check changed after it was passed here; open the \
+                         vault again and pass the check in force"
+                            .to_owned(),
+                    ))
+                }
+            }),
+            None => Ok(()),
+        };
+        let view = match checked.and_then(|()| self.apply_settings(&tx, change)) {
             Ok(view) => view,
             Err(err) => return self.fail(tx, op, None, None, err),
         };

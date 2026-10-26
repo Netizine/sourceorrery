@@ -52,7 +52,7 @@ pub use self::projects::{MAX_PROJECT_NAME_LEN, ProjectLink};
 pub use self::settings::SettingsChange;
 pub use self::view::{
     AuthenticatorChange, FREE_FAILURES, MAX_HINT_LEN, PasswordChange, SecondFactorInfo,
-    ViewAnswers, ViewCheck,
+    ViewAnswers, ViewCheck, ViewIdentity,
 };
 pub use self::wraps::RecoveryKey;
 

@@ -51,7 +51,7 @@ pub use sqlite::{
     ConnectionInfo, ConnectionTest, CreateVaultOptions, Created, CredentialSource, FREE_FAILURES,
     Imported, MAX_DESCRIPTION_LEN, MAX_HINT_LEN, MAX_PROJECT_NAME_LEN, OpenOptions, PasswordChange,
     ProjectLink, RecoveryKey, SecondFactorInfo, SecretStorage, SettingsChange, SqliteVault,
-    ViewAnswers, ViewCheck, validate_description,
+    ViewAnswers, ViewCheck, ViewIdentity, validate_description,
 };
 pub use unlock::{NoInteraction, RecoveryKeyPrompt, StaticRecoveryKey, UnlockProvider};
 pub use wrap::{WrapInfo, WrapKind};

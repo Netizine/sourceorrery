@@ -71,10 +71,13 @@ filled in, and the name of a vault that exists opens it for changes.
 
 Changing a vault never prompts: this machine's key opens it, else its
 recovery key is typed on the screen (which passes the view check by
-itself), else its view check is asked there, with the hint. Hidden fields
-are drawn as dots from their length; what is typed lives in a buffer that
-is wiped, and goes to the vault at the review. The screens are the Cargo
-feature `ui`.
+itself), else its view check is asked there, with the hint. The review
+commits only against the view check the screens passed, or found absent,
+when they opened the vault: one set or changed elsewhere in the meantime
+refuses the commit (`permission_denied`), and the vault is opened again.
+Hidden fields are drawn as dots from their length; what is typed lives in
+a buffer that is wiped, and goes to the vault at the review. The screens
+are the Cargo feature `ui`.
 
 `setup --guide`, or `setup` without a terminal or with `-o json`, prints
 the one command that does the same without the screens:

@@ -2621,6 +2621,98 @@ mod settings_change {
         reopen(&path, &old_key);
     }
 
+    /// A change made on behalf of someone who passed the view check (or
+    /// found none) lands only while that check is still the one in force:
+    /// one set, replaced or strengthened since by another handle is never
+    /// overwritten, cleared or bypassed with a new recovery key.
+    #[test]
+    fn a_change_is_bound_to_the_view_check_its_caller_passed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dev.sorvault");
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let created =
+            SqliteVault::create(&path, "dev", CreateVaultOptions::default(), store.clone())
+                .unwrap();
+        let old_key = created.recovery_key.as_str().to_owned();
+        let screens = created.vault;
+        let other = SqliteVault::open(&path, store.clone(), &NoInteraction).unwrap();
+        // No check when the screens opened the vault.
+        let passed = screens.view_identity().unwrap();
+        other
+            .set_password(
+                &SecretBytes::from("a long password set elsewhere"),
+                None,
+                Argon2Params::TESTING,
+            )
+            .unwrap();
+        let replace_key = SettingsChange {
+            recovery_key: Some(RecoveryKey::generate().unwrap()),
+            ..SettingsChange::default()
+        };
+        let err = screens
+            .change_settings_if(&replace_key, Some(&passed))
+            .unwrap_err();
+        assert_eq!(err.code(), "permission_denied", "{err}");
+        let clear = SettingsChange {
+            password: PasswordChange::Clear,
+            ..SettingsChange::default()
+        };
+        let err = screens
+            .change_settings_if(&clear, Some(&passed))
+            .unwrap_err();
+        assert_eq!(err.code(), "permission_denied", "{err}");
+        assert_eq!(screens.view_check().unwrap().describe(), "password");
+        let refusals = events(&screens, AuditOperation::VaultChange)
+            .into_iter()
+            .filter(|(_, detail)| detail == "permission_denied")
+            .count();
+        assert_eq!(refusals, 2);
+        drop(screens);
+        reopen(&path, &old_key);
+
+        // Passed as it stands now, and unchanged by answers given since
+        // (an authenticator's last accepted step moves with every code).
+        let screens = SqliteVault::open(&path, store.clone(), &NoInteraction).unwrap();
+        let now = timestamp::now();
+        screens
+            .check_view(
+                &ViewAnswers {
+                    password: Some(SecretBytes::from("a long password set elsewhere")),
+                    ..ViewAnswers::default()
+                },
+                now,
+            )
+            .unwrap();
+        let passed = screens.view_identity().unwrap();
+        let unix = u64::try_from(now.unix_timestamp()).unwrap();
+        let secret = other.enrol_authenticator().unwrap();
+        assert!(
+            other
+                .verify_authenticator(&secret.code_at(unix), now)
+                .unwrap()
+        );
+        assert_eq!(
+            screens
+                .change_settings_if(&clear, Some(&passed))
+                .unwrap_err()
+                .code(),
+            "permission_denied"
+        );
+        let passed = screens.view_identity().unwrap();
+        other
+            .check_view(
+                &ViewAnswers {
+                    password: Some(SecretBytes::from("a long password set elsewhere")),
+                    code: Some(secret.code_at(unix + 30)),
+                    recovery_key: None,
+                },
+                now + time::Duration::seconds(30),
+            )
+            .unwrap();
+        screens.change_settings_if(&clear, Some(&passed)).unwrap();
+        assert!(screens.view_check().unwrap().is_none());
+    }
+
     #[test]
     fn clearing_the_check_takes_the_authenticator_and_the_hint() {
         let dir = tempfile::tempdir().unwrap();

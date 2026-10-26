@@ -45,6 +45,41 @@ const FIRST_WAIT_SECS: i64 = 30;
 /// The longest wait, in seconds.
 const LONGEST_WAIT_SECS: i64 = 15 * 60;
 
+/// Which view check a vault has: its sealed password record and its
+/// authenticator's key, not the counters every answer moves. A caller that
+/// passed the check keeps the identity it passed; while it is unchanged, a
+/// change the caller makes is one it was allowed to make
+/// ([`SqliteVault::change_settings_if`]).
+#[derive(Clone, PartialEq, Eq)]
+pub struct ViewIdentity {
+    password: Option<String>,
+    authenticator: Option<(String, String, bool)>,
+}
+
+impl std::fmt::Debug for ViewIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ViewIdentity")
+            .field("password", &self.password.is_some())
+            .field("authenticator", &self.authenticator.is_some())
+            .finish()
+    }
+}
+
+impl ViewIdentity {
+    pub(super) fn of(state: &ViewState) -> Result<Self> {
+        let authenticator = state
+            .second_factor
+            .as_deref()
+            .map(|raw| parse::<SecondFactorRecord>(raw, "second factor"))
+            .transpose()?
+            .map(|record| (record.nonce, record.ciphertext, record.verified));
+        Ok(Self {
+            password: state.password.clone(),
+            authenticator,
+        })
+    }
+}
+
 /// What viewing this vault asks for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct ViewCheck {
@@ -373,6 +408,12 @@ impl SqliteVault {
             password: state.password.is_some(),
             authenticator: state.password.is_some() && authenticator,
         })
+    }
+
+    /// The view check in force now, as a caller that has just passed it (or
+    /// found none) records it.
+    pub fn view_identity(&self) -> Result<ViewIdentity> {
+        ViewIdentity::of(&self.current_view_state()?)
     }
 
     /// True when the vault was opened with its recovery key, which passes
