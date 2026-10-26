@@ -69,7 +69,7 @@ Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
 archive=sourceorrery-ffi-0.3.0-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
-sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
 ```
 
@@ -79,7 +79,7 @@ export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
 release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
 archive=sourceorrery-ffi-0.3.0-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
-sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
 ```
 

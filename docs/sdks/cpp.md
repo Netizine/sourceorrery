@@ -51,7 +51,7 @@ $env:Path = "$dir;$env:Path"          # sourceorrery_ffi.dll must be on PATH at 
 release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
 archive=sourceorrery-ffi-0.3.0-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
-sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 
 c++ -std=c++17 -I/opt/sourceorrery/include get_secret.cpp -L/opt/sourceorrery -lsourceorrery_ffi -o get_secret
 DYLD_LIBRARY_PATH=/opt/sourceorrery ./get_secret
@@ -63,7 +63,7 @@ DYLD_LIBRARY_PATH=/opt/sourceorrery ./get_secret
 release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
 archive=sourceorrery-ffi-0.3.0-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
-sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 
 c++ -std=c++17 -I/opt/sourceorrery/include get_secret.cpp -L/opt/sourceorrery -lsourceorrery_ffi -Wl,-rpath,/opt/sourceorrery -o get_secret
 ./get_secret

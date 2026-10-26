@@ -66,7 +66,7 @@ static archive next to it is built by MSVC and MinGW cannot consume it.
 release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
 archive=sourceorrery-ffi-0.3.0-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
-sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 
 export CGO_LDFLAGS="-L/opt/sourceorrery"
 export DYLD_LIBRARY_PATH=/opt/sourceorrery
@@ -79,7 +79,7 @@ go build ./...
 release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
 archive=sourceorrery-ffi-0.3.0-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
-sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 
 export CGO_LDFLAGS="-L/opt/sourceorrery"
 export LD_LIBRARY_PATH=/opt/sourceorrery

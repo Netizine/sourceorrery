@@ -357,8 +357,25 @@ jobs:
           cp "$out"/libsourceorrery_ffi.a "dist/$ffi/"
           cp crates/sourceorrery-ffi/include/sourceorrery.h bindings/cpp/include/sourceorrery.hpp "dist/$ffi/include/"
           cp scripts/release/ffi-archive-README.md "dist/$ffi/README.md"; cp LICENSE-MIT LICENSE-APACHE "dist/$ffi/"
-          tar -C dist -czf "dist/$cli.tar.gz" "$cli"
-          tar -C dist -czf "dist/$ffi.tar.gz" "$ffi"
+          # Every member belongs to root (0:0), never to the runner's account:
+          # `sudo tar xzf` restores the archived owner, and on a user's machine
+          # the runner's uid (1001 on Linux, 501 on macOS) is someone else's,
+          # who could then rewrite /opt/sourceorrery/libsourceorrery_ffi.*.
+          if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+            as_root=(--owner=0 --group=0 --numeric-owner)
+          else
+            as_root=(--uid 0 --gid 0)
+          fi
+          tar "${as_root[@]}" -C dist -czf "dist/$cli.tar.gz" "$cli"
+          tar "${as_root[@]}" -C dist -czf "dist/$ffi.tar.gz" "$ffi"
+          python3 - "dist/$cli.tar.gz" "dist/$ffi.tar.gz" <<'CHECK'
+          import sys, tarfile
+          for path in sys.argv[1:]:
+              with tarfile.open(path) as archive:
+                  bad = [m.name for m in archive.getmembers() if m.uid or m.gid or m.mode & 0o022]
+              if bad:
+                  sys.exit(f"{path}: not root-owned, or writable by group or others: {bad}")
+          CHECK
           # Loose shared library for the .NET (runtimes/<rid>/native) and Java (native/<os>-<arch>) packages.
           cp "$out"/libsourceorrery_ffi.so "dist/native/${{ matrix.rid }}/" 2>/dev/null || cp "$out"/libsourceorrery_ffi.dylib "dist/native/${{ matrix.rid }}/"
           cp dist/native/${{ matrix.rid }}/* "dist/jni/${{ matrix.jdir }}/"
