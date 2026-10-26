@@ -137,8 +137,13 @@ are `secret_get` events. There is no rotation-specific event.
 
 Refusals carry the code `rotation` with the versions and times involved: a
 validated candidate waiting for activation blocks a new rotation (`--step
-activate` it, or let it fail validation), there is nothing to activate or
-retire, or the grace period has not ended.
+activate` it, or let it fail validation), so does a version an earlier
+rotation replaced that is still waiting to be retired (`--step retire`,
+with `--now` inside its grace period: a new rotation would replace the
+record that it awaits retirement, and its `retire` hook, which revokes it
+at the issuer, would never run), there is nothing to activate or
+retire, or the grace period has not ended. A grace period is at most
+`3650d` (ten years).
 
 ## Where it does not work
 

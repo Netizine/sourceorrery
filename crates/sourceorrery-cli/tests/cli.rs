@@ -1771,6 +1771,28 @@ fn rotation_tag(v: &serde_json::Value, key: &str) -> String {
     v["tags"][key].as_str().unwrap_or("").to_owned()
 }
 
+/// A second rotation while the first still owes a retirement is refused
+/// before anything is minted or written.
+#[test]
+fn rotation_waits_for_the_pending_retirement() {
+    let env = rotation_project();
+    let first = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("EXPECTED", "next-first-value")
+        .output()
+        .unwrap();
+    assert!(first.status.success(), "{}", stderr(&first));
+    let out = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("EXPECTED", "next-next-first-value")
+        .output()
+        .unwrap();
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!out.status.success(), "{text}");
+    assert!(text.contains("still has to be retired"), "{text}");
+    rotation_versions(&env, 2);
+}
+
 #[test]
 fn rotation_runs_the_hooks_and_never_prints_a_value() {
     let env = rotation_project();

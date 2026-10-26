@@ -268,6 +268,59 @@ fn mark(
     )
 }
 
+/// Refuse a new rotation of `name` that [`issue`] would refuse, before
+/// anything is minted or written, and return its versions. Refused: a
+/// backend without [`Capability::PerVersionProperties`] (`unsupported`); a
+/// validated candidate waiting for [`activate`]; and a version an earlier
+/// rotation still has to retire. A new rotation would mark that rotation's
+/// active version superseded, and nothing would point at the version it
+/// replaced any more: its retire step (which revokes it at the issuer)
+/// would never run.
+pub fn ready_to_issue(client: &dyn SecretClient, name: &str) -> Result<Vec<SecretProperties>> {
+    if !client
+        .capabilities_of(name)?
+        .contains(&Capability::PerVersionProperties)
+    {
+        return Err(SecretError::Unsupported(format!(
+            "vault '{}' keeps properties per secret, not per version, so a disabled candidate \
+             cannot be written next to the current version; rotate '{name}' with the provider's \
+             own mechanism",
+            client.vault_name()
+        )));
+    }
+    let versions = versions_or_empty(client, name)?;
+    if let Some(validated) = versions
+        .iter()
+        .find(|v| State::of(v) == Some(State::Validated))
+    {
+        return Err(rotation_error(
+            name,
+            format!(
+                "version {} is a validated candidate waiting for activation; activate it first",
+                validated.version
+            ),
+        ));
+    }
+    let owed = versions
+        .iter()
+        .filter(|v| State::of(v) == Some(State::Active))
+        .find_map(|current| {
+            let previous = find(&versions, current.tags.get(PREVIOUS_TAG)?)?;
+            (State::of(previous) != Some(State::Retired)).then_some((current, previous))
+        });
+    if let Some((current, previous)) = owed {
+        return Err(rotation_error(
+            name,
+            format!(
+                "version {} still has to be retired (version {} replaced it); retire it first, \
+                 with --now inside its grace period",
+                previous.version, current.version
+            ),
+        ));
+    }
+    Ok(versions)
+}
+
 /// Write `value` as a disabled candidate version of `name`.
 ///
 /// The candidate takes the content type and the user's tags of the version
@@ -282,43 +335,19 @@ pub fn issue(
     value: SecretBytes,
     now: OffsetDateTime,
 ) -> Result<Issued> {
-    if !client
-        .capabilities_of(name)?
-        .contains(&Capability::PerVersionProperties)
-    {
-        return Err(SecretError::Unsupported(format!(
-            "vault '{}' keeps properties per secret, not per version, so a disabled candidate \
-             cannot be written next to the current version; rotate '{name}' with the provider's \
-             own mechanism",
-            client.vault_name()
-        )));
-    }
-    let versions = versions_or_empty(client, name)?;
+    let versions = ready_to_issue(client, name)?;
     for version in &versions {
-        match State::of(version) {
-            Some(State::Validated) => {
-                return Err(rotation_error(
-                    name,
-                    format!(
-                        "version {} is a validated candidate waiting for activation; activate it \
-                         first",
-                        version.version
-                    ),
-                ));
-            }
-            Some(State::Issued) => {
-                // Issued by a run that did not get to validate it: nobody
-                // holds its value any more, so it can never be activated.
-                mark(
-                    client,
-                    name,
-                    version,
-                    Some(false),
-                    &[(STATE_TAG, State::Failed.as_str().to_owned())],
-                    &[],
-                )?;
-            }
-            _ => {}
+        if State::of(version) == Some(State::Issued) {
+            // Issued by a run that did not get to validate it: nobody holds
+            // its value any more, so it can never be activated.
+            mark(
+                client,
+                name,
+                version,
+                Some(false),
+                &[(STATE_TAG, State::Failed.as_str().to_owned())],
+                &[],
+            )?;
         }
     }
     let previous = policy::select_latest_accessible(name, &versions, now)

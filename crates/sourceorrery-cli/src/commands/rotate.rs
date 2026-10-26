@@ -208,6 +208,9 @@ fn rotate_now(
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let now = timestamp::now();
+    // Whatever would refuse the candidate refuses before the issuer mints a
+    // credential or a value is read.
+    rotation::ready_to_issue(vault, &plan.name)?;
     let value = match &plan.hooks.issue {
         Some(command_line) => {
             // The issuer may need the current credential to mint the next

@@ -119,6 +119,11 @@ pub static SCENARIOS: &[Scenario] = &[
         run: rotation_keeps_the_current_version_when_validation_fails,
         needs: &[Capability::PerVersionProperties],
     },
+    Scenario {
+        name: "rotation_waits_for_the_version_it_must_retire",
+        run: rotation_waits_for_the_version_it_must_retire,
+        needs: &[Capability::PerVersionProperties],
+    },
 ];
 
 /// Run every scenario, each on a fresh client from `fresh` (called with the
@@ -914,6 +919,50 @@ fn retire_after_the_grace_period(
     assert_eq!(status.current.unwrap().version, candidate);
 }
 
+/// A version that awaits retirement (its retire hook revokes it at the
+/// issuer) is never dropped by a new rotation: issuing again is refused,
+/// naming it, until it has been retired; a retire that is due is not lost.
+fn rotation_waits_for_the_version_it_must_retire(client: &dyn SecretClient) {
+    let now = timestamp::now();
+    let grace = Duration::days(7);
+    let v1 = set(client, "db-password", "leaked-one");
+    let first = rotation::issue(client, "db-password", SecretBytes::from("two"), now).unwrap();
+    let v2 = first.candidate.version;
+    rotation::validated(client, "db-password", &v2).unwrap();
+    rotation::activate(client, "db-password", &v2, Some(grace), now).unwrap();
+
+    // Inside the grace period, and after it, the predecessor is still owed
+    // its retirement: a second rotation would orphan it.
+    for when in [now, now + grace] {
+        let err =
+            rotation::issue(client, "db-password", SecretBytes::from(CANARY), when).unwrap_err();
+        assert_eq!(err.code(), "rotation", "{err}");
+        assert!(err.to_string().contains(&v1.version), "{err}");
+        assert!(!err.to_string().contains(CANARY));
+    }
+    let versions = client
+        .list_properties_of_secret_versions("db-password")
+        .unwrap();
+    assert_eq!(versions.len(), 2, "nothing was written");
+    assert_eq!(
+        rotation::retirement(client, "db-password", now, true)
+            .unwrap()
+            .previous
+            .version,
+        v1.version
+    );
+
+    // Once it is retired, the next rotation proceeds and replaces v2.
+    let pending = rotation::retirement(client, "db-password", now, true).unwrap();
+    rotation::retire(client, "db-password", &pending, now).unwrap();
+    let next = rotation::issue(client, "db-password", SecretBytes::from("three"), now).unwrap();
+    assert_eq!(next.previous.unwrap().version, v2);
+    assert_eq!(
+        state_of(client, "db-password", &v1.version).0,
+        State::Retired
+    );
+}
+
 fn rotation_keeps_the_current_version_when_validation_fails(client: &dyn SecretClient) {
     let now = timestamp::now();
     let v1 = set(client, "api-key", "keep-me");
@@ -1221,6 +1270,7 @@ mod tests {
                 "a_cleared_expiry_no_longer_applies",
                 "rotation_activates_a_validated_candidate_and_supersedes_the_old_one",
                 "rotation_keeps_the_current_version_when_validation_fails",
+                "rotation_waits_for_the_version_it_must_retire",
             ]
         );
         assert!(
