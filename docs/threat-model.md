@@ -256,6 +256,14 @@ treated as secrets. Users are told not to put sensitive information in them.
     above apply to the manifest found upwards from the working directory;
     `--manifest FILE` and an SDK's explicit project path use the file they
     name.
+15. **Manifest discovery has no ownership bound on Windows.** The owner
+    check is Unix-only, so outside a repository and the profile a
+    `sourceorrery.toml` another account wrote in a parent directory is
+    used; folders made at a drive's root inherit write access for every
+    authenticated user by default. Keep projects in a repository or under
+    the profile, or name the manifest (`--manifest`, an SDK's explicit
+    path). Recorded by the 2026-10-26 audit, open
+    ([security-review-2026-10-26.md](security-review-2026-10-26.md)).
 
 ## Planned (milestone 3): the hard problem
 

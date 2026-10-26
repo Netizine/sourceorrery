@@ -27,6 +27,9 @@ The detailed findings and batch evidence are retained in the
 [25 October review](../SECURITY-REVIEW-2026-10-25.md),
 [remediation plan](../SECURITY-REMEDIATION-PLAN-2026-10-25.md) and
 [validation ledger](security-remediation-validation.md). The
+[26 October audit](security-review-2026-10-26.md) records what a later
+audit of the same tree found, what was fixed after 0.3.0 and what is still
+open. The
 [earlier review](security-review-archive-2026-10.md) describes the design
 before the 0.3.0 redesign; its removed commands and key model are historical.
 

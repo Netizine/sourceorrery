@@ -341,7 +341,11 @@ current directory and its parents, no further than the repository (the
 first directory with a `.git` entry), the home directory, and, on Unix,
 directories and files owned by the home directory's owner: a manifest
 decides which vault a name means, so one planted in `/tmp` or a shared
-parent is never picked up. `--manifest FILE` uses the file it names.
+parent is never picked up. Windows has no ownership bound yet: a folder
+made at the root of a drive (`C:\work`) lets every account write in it by
+default, so keep a project in a repository or under your profile, or pass
+`--manifest` (threat model, known gap 15). `--manifest FILE` uses the file
+it names.
 
 `sourceorrery.toml` is the committed, value-free replacement for `.env`:
 
