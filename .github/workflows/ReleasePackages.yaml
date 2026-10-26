@@ -303,16 +303,21 @@ jobs:
   # short-lived upload token, granted only if the project's trusted
   # publishers name this repository and ReleasePackages.yaml, and uploads
   # a signed attestation with every file.
+  #
+  # Two jobs: twine, resolved from PyPI when the check runs, runs only in
+  # pypi-check, which holds no id-token and uploads nothing. The upload job
+  # runs nothing but gh, the verifier and the SHA-pinned publish action
+  # (which checks the metadata itself), on files it downloads and verifies
+  # again, and only in a real run.
   # ---------------------------------------------------------------------
-  pypi:
-    name: PyPI
+  pypi-check:
+    name: PyPI (check)
     needs: plan
     if: inputs.pypi
     runs-on: ubuntu-latest
     permissions:
       contents: read
       attestations: read
-      id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -350,8 +355,43 @@ jobs:
           tar xzOf "dist/sourceorrery-$VERSION.tar.gz" "sourceorrery-$VERSION/PKG-INFO" | grep -qx "Version: $VERSION" \
             || { echo "::error::sourceorrery-$VERSION.tar.gz is not the Python sdist for $VERSION"; exit 1; }
           pipx run twine check --strict dist/*
+
+  pypi:
+    name: PyPI
+    needs: [plan, pypi-check]
+    if: inputs.pypi && !inputs.dry_run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - name: Download the wheels and the sdist
+        run: |
+          gh release download "$TAG" --repo "$REPO" --dir dist \
+            --pattern "sourceorrery-$VERSION-*.whl" --pattern "sourceorrery-$VERSION.tar.gz"
+          ls -la dist
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tools
+          sparse-checkout: scripts/release/verify-release-artifacts.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify the files against the release's provenance
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --pattern SHA256SUMS --dir checksums
+          python3 .release-tools/scripts/release/verify-release-artifacts.py --repo "$REPO" --sha "$SHA" \
+            --sums checksums/SHA256SUMS --dir dist --pattern "sourceorrery-$VERSION-*.whl" --pattern "sourceorrery-$VERSION.tar.gz"
       - name: Upload
-        if: ${{ !inputs.dry_run }}
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist
