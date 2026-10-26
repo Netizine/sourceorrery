@@ -13,9 +13,12 @@ jobs:
   # Dependabot's pull requests and pull requests from forks run without the
   # deployment token (a fork's code is never given it: this is `pull_request`,
   # not `pull_request_target`), so both jobs skip them: CI and docs.yml
-  # review those changes, and the site is deployed from main.
+  # review those changes, and the site is deployed from main. A Dependabot
+  # pull request is known by its author, as in coverage.yml, not by who
+  # caused the event: a maintainer's reopen or "Update branch" on one would
+  # otherwise build its unmerged dependencies with the tokens below.
   build_and_deploy_job:
-    if: github.actor != 'dependabot[bot]' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository))
+    if: github.actor != 'dependabot[bot]' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'))
     runs-on: ubuntu-latest
     name: Build and Deploy Job
     steps:
@@ -41,7 +44,7 @@ jobs:
           ###### End of Repository/Build Configurations ######
 
   close_pull_request_job:
-    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     name: Close Pull Request Job
     steps:
