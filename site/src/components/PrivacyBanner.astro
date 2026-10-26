@@ -1,13 +1,11 @@
-<section id="so-privacy-banner" class="so-consent" role="region" aria-labelledby="so-privacy-title" hidden data-pagefind-ignore data-clarity-mask="true">
-  <div>
-    <h2 id="so-privacy-title">Help shape SourceOrrery</h2>
-    <p>I use optional Microsoft Clarity analytics, including session replays, to learn which guides and features are useful. Advertising consent stays off. <a href="/privacy/">Privacy details</a></p>
-    <p id="so-privacy-status" class="so-consent__status" aria-live="polite"></p>
+<section id="so-privacy-banner" class="so-consent" role="region" aria-label="Analytics cookies" aria-describedby="so-privacy-description" hidden data-pagefind-ignore data-clarity-mask="true">
+  <div class="so-consent__message">
+    <p id="so-privacy-description">We use analytics cookies to understand how you use our website and help us improve it. You can choose to accept or reject them.</p>
+    <p id="so-privacy-status" class="so-consent__status" aria-live="polite" hidden></p>
   </div>
   <div class="so-consent__actions">
-    <button type="button" data-analytics-choice="granted">Allow analytics</button>
-    <button type="button" data-analytics-choice="denied">No analytics</button>
-    <button type="button" data-privacy-close hidden>Close</button>
+    <button type="button" data-analytics-choice="granted"><span aria-hidden="true">✓</span> Accept</button>
+    <button type="button" data-analytics-choice="denied"><span aria-hidden="true">✕</span> Reject</button>
   </div>
 </section>
 
@@ -24,16 +22,13 @@
     let returnFocus: HTMLElement | null = null;
     const status = banner.querySelector<HTMLElement>('#so-privacy-status')!;
     const allow = banner.querySelector<HTMLButtonElement>('[data-analytics-choice="granted"]')!;
-    const close = banner.querySelector<HTMLButtonElement>('[data-privacy-close]')!;
-    const space = () => document.documentElement.style.setProperty('--so-privacy-height', banner.hidden ? '0px' : `${banner.offsetHeight + 32}px`);
+    const space = () => document.documentElement.style.setProperty('--so-privacy-height', banner.hidden ? '0px' : `${banner.offsetHeight}px`);
     function update() {
       allow.disabled = api!.browserOptOut();
-      close.hidden = api!.choice() === null;
       status.textContent = api!.browserOptOut()
         ? 'Your browser requests no tracking. Analytics remain off.'
-        : api!.choice() === 'granted'
-          ? 'Your choice allows analytics. Switching them off reloads this page.'
-          : 'Analytics stay off unless you allow them. Change your choice anytime in the footer.';
+        : '';
+      status.hidden = !status.textContent;
       space();
     }
     function hide() {
@@ -53,7 +48,6 @@
       api.choose(button.dataset.analyticsChoice as 'granted' | 'denied');
       hide();
     }));
-    close.addEventListener('click', hide);
     banner.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && api.choice() !== null) hide();
     });
@@ -67,30 +61,34 @@
   .so-consent[hidden] { display: none; }
   .so-consent {
     position: fixed;
-    inset-inline: 1rem;
-    inset-block-end: 1rem;
+    inset-inline: 0;
+    inset-block-end: 0;
     z-index: 100;
-    max-width: 48rem;
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    box-sizing: border-box;
+    width: 100%;
     max-height: 65vh;
     overflow: auto;
-    margin-inline: auto;
-    padding: 1.1rem 1.25rem;
-    border: 1px solid var(--sl-color-gray-4);
-    border-radius: 3px;
+    margin: 0;
+    padding: 0.75rem 1.25rem;
+    border: 0;
+    border-top: 1px solid var(--sl-color-gray-4);
     background: var(--sl-color-bg);
     color: var(--sl-color-text);
-    box-shadow: 0 4px 24px #0002;
+    box-shadow: 0 -2px 12px #0001;
     font-family: var(--so-font-ui);
     text-align: start;
   }
-  .so-consent h2 { margin: 0 0 0.4rem; font-size: 1.1rem; color: var(--sl-color-text-accent); }
+  .so-consent__message { flex: 1; min-width: 0; }
   .so-consent p { margin: 0; font-size: 0.85rem; line-height: 1.55; }
   .so-consent .so-consent__status { margin-top: 0.45rem; font-size: 0.78rem; color: var(--sl-color-gray-2); }
-  .so-consent__actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
-  button { padding: 0.45rem 0.8rem; border: 1px solid var(--sl-color-gray-3); border-radius: 2px; color: var(--sl-color-text-accent); background: var(--sl-color-bg); font: inherit; font-size: 0.85rem; cursor: pointer; }
+  .so-consent__actions { display: flex; flex-shrink: 0; gap: 0.6rem; }
+  button { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.8rem; border: 1px solid var(--sl-color-gray-3); border-radius: 2px; color: var(--sl-color-text-accent); background: var(--sl-color-bg); font: inherit; font-size: 0.85rem; cursor: pointer; }
   button:hover { background: var(--sl-color-gray-6); }
   button:focus-visible { outline: 2px solid var(--sl-color-text-accent); outline-offset: 3px; }
   button:disabled { opacity: 0.65; cursor: default; }
-  @media (max-width: 30rem) { .so-consent { inset-inline: 0.5rem; inset-block-end: 0.5rem; padding: 0.9rem; } }
+  @media (max-width: 40rem) { .so-consent { flex-direction: column; align-items: stretch; gap: 0.65rem; padding: 0.75rem 1rem; } }
   :global(body) { padding-block-end: var(--so-privacy-height, 0px); }
 </style>

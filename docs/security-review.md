@@ -1,6 +1,6 @@
-# Security review status — 0.3.0
+# Security review status — 0.3.1
 
-SourceOrrery 0.3.0 has local engineering reviews, regression tests and a
+SourceOrrery 0.3.1 has local engineering reviews, regression tests and a
 recorded release rehearsal. It has **not received an independent security
 audit**. The [threat model](threat-model.md) defines the supported
 boundaries; this page records the review scope and remaining acceptance.
@@ -27,8 +27,11 @@ The detailed findings and batch evidence are retained in the
 [25 October review](../SECURITY-REVIEW-2026-10-25.md),
 [remediation plan](../SECURITY-REMEDIATION-PLAN-2026-10-25.md) and
 [validation ledger](security-remediation-validation.md). The
+[26 October audit](security-review-2026-10-26.md) records what a later
+audit of the same tree found, what has been fixed since and what is still
+open. The
 [earlier review](security-review-archive-2026-10.md) describes the design
-before the 0.3.0 redesign; its removed commands and key model are historical.
+before the vault schema 5 redesign; its removed commands and key model are historical.
 
 ## Evidence and its limits
 

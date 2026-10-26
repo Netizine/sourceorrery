@@ -1,7 +1,7 @@
 # CLI reference
 
 > [!NOTE]
-> This reference describes the 0.3.0 source tree. Check your installed
+> This reference describes the 0.3.1 source tree. Check your installed
 > version with `sourceorrery --version`.
 
 ```
@@ -20,6 +20,7 @@ sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--recovery-key-file FI
 | `--code CODE` | `SOURCEORRERY_TOTP` | A six-digit code from the authenticator app, for a vault whose view check asks for one. Without it the code is asked for on the terminal; a code is never read from a pipe. |
 | `-v` | `SOURCEORRERY_LOG` | Diagnostics on stderr. Never prints values. |
 | | `SOURCEORRERY_KEYRING=off` | Use no OS credential store: every vault opens with its recovery key. |
+| | `SOURCEORRERY_AWS_INSTANCE_ROLE=on` | Let an AWS Secrets Manager connection with no stored access key use the EC2 instance role. Off by default: the instance-metadata address is plain HTTP, and off an instance whatever answers it could choose the account ([AWS Secrets Manager](providers/aws-secrets-manager.md#credentials)). |
 
 Exit status: `0` success, `1` any error (code in JSON mode), `2` usage error.
 `run` exits with the child's status, whole: a Windows status above 255
@@ -71,10 +72,13 @@ filled in, and the name of a vault that exists opens it for changes.
 
 Changing a vault never prompts: this machine's key opens it, else its
 recovery key is typed on the screen (which passes the view check by
-itself), else its view check is asked there, with the hint. Hidden fields
-are drawn as dots from their length; what is typed lives in a buffer that
-is wiped, and goes to the vault at the review. The screens are the Cargo
-feature `ui`.
+itself), else its view check is asked there, with the hint. The review
+commits only against the view check the screens passed, or found absent,
+when they opened the vault: one set or changed elsewhere in the meantime
+refuses the commit (`permission_denied`), and the vault is opened again.
+Hidden fields are drawn as dots from their length; what is typed lives in
+a buffer that is wiped, and goes to the vault at the review. The screens
+are the Cargo feature `ui`.
 
 `setup --guide`, or `setup` without a terminal or with `-o json`, prints
 the one command that does the same without the screens:
@@ -338,7 +342,11 @@ current directory and its parents, no further than the repository (the
 first directory with a `.git` entry), the home directory, and, on Unix,
 directories and files owned by the home directory's owner: a manifest
 decides which vault a name means, so one planted in `/tmp` or a shared
-parent is never picked up. `--manifest FILE` uses the file it names.
+parent is never picked up. Windows has no ownership bound yet: a folder
+made at the root of a drive (`C:\work`) lets every account write in it by
+default, so keep a project in a repository or under your profile, or pass
+`--manifest` (threat model, known gap 15). `--manifest FILE` uses the file
+it names.
 
 `sourceorrery.toml` is the committed, value-free replacement for `.env`:
 
@@ -450,7 +458,12 @@ original variable (`apiKey` → `env = "apiKey"`).
 
 Nothing the command prints contains a value: the table (or `-o json`)
 lists each key, its secret name, what happened in the vault and in the
-manifest, and a note. A secret the vault already holds is left as it is
+manifest, and a note. A "key" is file text, and on a line that is not
+really an assignment (a connection string or the end of wrapped base64 on
+a line of its own) the text before `=` can be part of a value, so a key
+that is not shaped like a variable name, or whose value is only `=`
+padding, is shown as `(not shown)`, in the table, in JSON and in errors,
+and skipped. A secret the vault already holds is left as it is
 (`--overwrite` stores a new version), so the command can be run again.
 Keys that cannot become manifest entries are reported and skipped: an
 invalid environment variable name, a name starting with `SOURCEORRERY_`,

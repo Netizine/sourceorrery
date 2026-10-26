@@ -1484,6 +1484,101 @@ fn vault_create_adds_a_connection_per_provider_and_never_shows_a_credential() {
     }
 }
 
+/// An AWS Secrets Manager stand-in on this machine that answers every
+/// request with `ResourceNotFoundException`; its address.
+#[cfg(any(feature = "remote", feature = "provider-aws"))]
+fn aws_that_finds_nothing() -> String {
+    use std::io::{BufRead, BufReader, Read};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(32) {
+            let Ok(stream) = stream else { continue };
+            let mut reader = BufReader::new(&stream);
+            let mut length = 0;
+            let mut line = String::new();
+            while reader.read_line(&mut line).is_ok_and(|n| n > 0) && line != "\r\n" {
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+                line.clear();
+            }
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            let answer = r#"{"__type":"ResourceNotFoundException","message":"none"}"#;
+            let _ = (&stream).write_all(
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/x-amz-json-1.1\r\n\
+                     x-amzn-ErrorType: ResourceNotFoundException\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n{answer}",
+                    answer.len()
+                )
+                .as_bytes(),
+            );
+        }
+    });
+    address
+}
+
+/// `-vvv` and `SOURCEORRERY_LOG=trace` never print a value, also where a
+/// dependency would: the AWS SDK traces each request it sends, body and all.
+#[test]
+#[cfg(any(feature = "remote", feature = "provider-aws"))]
+fn trace_diagnostics_never_print_a_value_sent_to_a_provider() {
+    let env = Env::new();
+    let endpoint = aws_that_finds_nothing();
+    let secret_key = env.file("aws.txt", "aws-secret-from-a-file");
+    let key = env.key_file("dev");
+    env.ok(&[
+        "vault",
+        "create",
+        "dev",
+        "--no-keyring",
+        "--recovery-key-out",
+        key.to_str().unwrap(),
+        "--aws-secrets-manager",
+        "us-east-1",
+        "--aws-secrets-manager-endpoint",
+        &endpoint,
+        "--aws-access-key-id",
+        "AKIAEXAMPLE",
+        "--aws-secret-access-key-file",
+        &secret_key,
+    ]);
+    let set = [
+        "secret",
+        "set",
+        "api-key",
+        "--vault",
+        "dev",
+        "--storage",
+        "aws-secrets-manager",
+    ];
+    let mut verbose = vec!["-vvv"];
+    verbose.extend_from_slice(&set);
+    let traced = [
+        env.run_with_stdin(&verbose, CANARY),
+        env.cmd(&set)
+            .env("SOURCEORRERY_LOG", "trace")
+            .spawn()
+            .and_then(|mut child| {
+                child.stdin.take().unwrap().write_all(CANARY.as_bytes())?;
+                child.wait_with_output()
+            })
+            .unwrap(),
+    ];
+    for out in traced {
+        let shown = stderr(&out);
+        // The request went out: the stand-in's refusal came back.
+        assert!(!out.status.success(), "{shown}");
+        assert!(shown.contains("DEBUG"), "diagnostics on: {shown}");
+        assert!(!shown.contains(CANARY), "a value was traced: {shown}");
+        assert!(!stdout(&out).contains(CANARY));
+    }
+}
+
 #[test]
 fn vault_create_refuses_a_wrong_connection_before_creating_anything() {
     let env = Env::new();
@@ -1769,6 +1864,55 @@ fn rotation_versions(env: &Env, expect: usize) -> Vec<serde_json::Value> {
 
 fn rotation_tag(v: &serde_json::Value, key: &str) -> String {
     v["tags"][key].as_str().unwrap_or("").to_owned()
+}
+
+/// With no current value to give (here the version is disabled), the issue
+/// hook gets the secret's variable unset, never a value this process
+/// inherited: the validator expecting a successor of the inherited value
+/// refuses, so the inherited value never seeded a new credential.
+#[test]
+fn a_hook_never_takes_an_inherited_value_for_the_vaults() {
+    let env = rotation_project();
+    env.ok(&[
+        "secret",
+        "update",
+        "database-password",
+        "--disable",
+        "--vault",
+        "development",
+    ]);
+    let out = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("DATABASE_PASSWORD", "stale-parent-value")
+        .env("EXPECTED", "next-stale-parent-value")
+        .output()
+        .unwrap();
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!out.status.success(), "{text}");
+    assert!(text.contains("validate"), "{text}");
+    assert!(!text.contains("stale-parent-value"), "{text}");
+}
+
+/// A second rotation while the first still owes a retirement is refused
+/// before anything is minted or written.
+#[test]
+fn rotation_waits_for_the_pending_retirement() {
+    let env = rotation_project();
+    let first = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("EXPECTED", "next-first-value")
+        .output()
+        .unwrap();
+    assert!(first.status.success(), "{}", stderr(&first));
+    let out = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("EXPECTED", "next-next-first-value")
+        .output()
+        .unwrap();
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!out.status.success(), "{text}");
+    assert!(text.contains("still has to be retired"), "{text}");
+    rotation_versions(&env, 2);
 }
 
 #[test]

@@ -44,15 +44,15 @@ mod wraps;
 
 pub use self::catalog::{CatalogEntry, MAX_DESCRIPTION_LEN, validate_description};
 pub use self::connections::{
-    Attempt, CatalogChange, ConnectionChange, ConnectionInfo, ConnectionTest, CredentialSource,
-    SecretStorage,
+    Attempt, CatalogChange, ConnectionChange, ConnectionInfo, ConnectionRevision, ConnectionTest,
+    ConnectionToOpen, CredentialSource, SecretStorage,
 };
 pub use self::export::Imported;
 pub use self::projects::{MAX_PROJECT_NAME_LEN, ProjectLink};
 pub use self::settings::SettingsChange;
 pub use self::view::{
     AuthenticatorChange, FREE_FAILURES, MAX_HINT_LEN, PasswordChange, SecondFactorInfo,
-    ViewAnswers, ViewCheck,
+    ViewAnswers, ViewCheck, ViewIdentity,
 };
 pub use self::wraps::RecoveryKey;
 
@@ -81,7 +81,7 @@ use crate::{BACKEND_NAME, SCHEMA_VERSION};
 use self::audit::{
     AuditRow, AuditWriter, Checkpoints, Entry, SecretCheckpoints, chain_problem, event_from_row,
     head_problem, quarantined_message, settings_message, settings_problem, truncated_message,
-    unacknowledged_truncations, vault_checkpoints,
+    unacknowledged_truncations, vault_checkpoints, with_unverifiable,
 };
 use self::rows::{
     NewVersion, RawVersion, SecretRow, StoredSecretRow, load_ciphertext, query_raw_versions_in,
@@ -599,13 +599,14 @@ impl SqliteVault {
                 // again at every unlock.
                 return Ok(false);
             }
+            let detail = with_unverifiable(conn, key, &meta.id, &problem)?;
             writer.record(
                 conn,
                 AuditOperation::AuditVerify,
                 None,
                 None,
                 AuditOutcome::Failure,
-                Some(&problem),
+                Some(&detail),
             )?;
             problem
         };

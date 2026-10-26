@@ -19,6 +19,12 @@
 # default) downloads and checks everything and uploads nothing, with or
 # without secrets. The secrets are the ones release.yml uses; setup per
 # registry is in docs/release.md.
+#
+# The jobs that hold secrets or publishing rights run in the `release`
+# environment, or in `release-dry-run` in a dry run, so that once
+# `release` is limited to main and holds the secrets, and each trusted
+# publisher names it, a dry run can neither read a secret nor publish
+# (docs/release.md, "The release environment").
 name: Release packages
 
 on:
@@ -95,6 +101,7 @@ jobs:
   plan:
     name: plan
     runs-on: ubuntu-latest
+    environment: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
     # The release gate reads the tagged commit's CI runs and checks.
     permissions:
       contents: read
@@ -159,7 +166,10 @@ jobs:
             echo "sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)"
           } >> "$GITHUB_OUTPUT"
       # REC01: the gate is main's, and the commit the tag names passed CI in
-      # full, as for the first publication. A dry run reports instead.
+      # full, as for the first publication. A dry run reports a CI problem
+      # instead, but still refuses a tag whose commit is not on main: the
+      # jobs below build that commit's code (crates.io, Maven) while they
+      # hold id-token: write.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -172,7 +182,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$DRY_RUN" = "true" ]; then
-            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA" --warn-only
+            python3 scripts/release/check-release-validation.py --repo "$REPO" --sha "$SHA" --warn-only --require-main
           else
             if [ "$REF" != "refs/heads/main" ]; then
               echo "::error::packages are published from main, not $REF"; exit 1
@@ -222,6 +232,7 @@ jobs:
     needs: plan
     if: inputs.npm && (inputs.dry_run || needs.plan.outputs.has_npm == 'true')
     runs-on: ubuntu-latest
+    environment: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
     permissions:
       contents: read
       attestations: read
@@ -303,16 +314,21 @@ jobs:
   # short-lived upload token, granted only if the project's trusted
   # publishers name this repository and ReleasePackages.yaml, and uploads
   # a signed attestation with every file.
+  #
+  # Two jobs: twine, resolved from PyPI when the check runs, runs only in
+  # pypi-check, which holds no id-token and uploads nothing. The upload job
+  # runs nothing but gh, the verifier and the SHA-pinned publish action
+  # (which checks the metadata itself), on files it downloads and verifies
+  # again, and only in a real run.
   # ---------------------------------------------------------------------
-  pypi:
-    name: PyPI
+  pypi-check:
+    name: PyPI (check)
     needs: plan
     if: inputs.pypi
     runs-on: ubuntu-latest
     permissions:
       contents: read
       attestations: read
-      id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -350,8 +366,44 @@ jobs:
           tar xzOf "dist/sourceorrery-$VERSION.tar.gz" "sourceorrery-$VERSION/PKG-INFO" | grep -qx "Version: $VERSION" \
             || { echo "::error::sourceorrery-$VERSION.tar.gz is not the Python sdist for $VERSION"; exit 1; }
           pipx run twine check --strict dist/*
+
+  pypi:
+    name: PyPI
+    needs: [plan, pypi-check]
+    if: inputs.pypi && !inputs.dry_run
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      attestations: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - name: Download the wheels and the sdist
+        run: |
+          gh release download "$TAG" --repo "$REPO" --dir dist \
+            --pattern "sourceorrery-$VERSION-*.whl" --pattern "sourceorrery-$VERSION.tar.gz"
+          ls -la dist
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tools
+          sparse-checkout: scripts/release/verify-release-artifacts.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify the files against the release's provenance
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --pattern SHA256SUMS --dir checksums
+          python3 .release-tools/scripts/release/verify-release-artifacts.py --repo "$REPO" --sha "$SHA" \
+            --sums checksums/SHA256SUMS --dir dist --pattern "sourceorrery-$VERSION-*.whl" --pattern "sourceorrery-$VERSION.tar.gz"
       - name: Upload
-        if: ${{ !inputs.dry_run }}
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist
@@ -369,6 +421,7 @@ jobs:
     needs: plan
     if: inputs.nuget && (inputs.dry_run || needs.plan.outputs.has_nuget == 'true')
     runs-on: ubuntu-latest
+    environment: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
     permissions:
       contents: read
       attestations: read
@@ -437,6 +490,7 @@ jobs:
     needs: plan
     if: inputs.crates
     runs-on: ubuntu-latest
+    environment: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
     permissions:
       contents: read
       id-token: write
@@ -503,6 +557,7 @@ jobs:
     needs: plan
     if: inputs.maven && (inputs.dry_run || needs.plan.outputs.has_maven == 'true')
     runs-on: ubuntu-latest
+    environment: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
     permissions:
       contents: read
       attestations: read
@@ -526,7 +581,8 @@ jobs:
           server-id: central
           server-username: MAVEN_CENTRAL_USERNAME
           server-password: MAVEN_CENTRAL_PASSWORD
-          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          # A dry run builds unsigned (-Dgpg.skip) and never holds the key.
+          gpg-private-key: ${{ !inputs.dry_run && secrets.MAVEN_GPG_PRIVATE_KEY || '' }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
       - name: Stamp the version
         run: python3 ../../scripts/release/set-version.py "$VERSION"
@@ -598,6 +654,7 @@ jobs:
     needs: plan
     if: inputs.packagist && (inputs.dry_run || needs.plan.outputs.has_packagist == 'true')
     runs-on: ubuntu-latest
+    environment: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -653,6 +710,7 @@ jobs:
     needs: plan
     if: inputs.go
     runs-on: ubuntu-latest
+    environment: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
     permissions:
       contents: write
     env:
@@ -743,6 +801,7 @@ jobs:
     needs: [plan, package-managers]
     if: inputs.homebrew_scoop && needs.plan.outputs.has_packaging == 'true'
     runs-on: ubuntu-latest
+    environment: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -777,6 +836,7 @@ jobs:
     needs: [plan, package-managers]
     if: inputs.winget && needs.plan.outputs.has_winget == 'true'
     runs-on: windows-latest
+    environment: ${{ inputs.dry_run && 'release-dry-run' || 'release' }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -790,7 +850,15 @@ jobs:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
-          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          # wingetcreate runs with WINGET_TOKEN, so it is an exact, reviewed
+          # release checked against the SHA-256 GitHub records for the file;
+          # aka.ms/wingetcreate/latest moves with every release.
+          $url = "https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe"
+          Invoke-WebRequest $url -OutFile wingetcreate.exe
+          $sha256 = (Get-FileHash wingetcreate.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha256 -ne "24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea") {
+            throw "wingetcreate.exe 1.12.13.0 has SHA-256 $sha256, not the reviewed one"
+          }
           $manifests = "dist/winget/manifests/n/Netizine/SourceOrrery/$env:VERSION"
           Get-ChildItem $manifests
           .\wingetcreate.exe submit --token $env:WINGET_TOKEN --prtitle "Netizine.SourceOrrery version $env:VERSION" $manifests

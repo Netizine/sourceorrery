@@ -24,13 +24,16 @@ jobs:
   # outputs code=false and every job below is skipped. The CI gate counts
   # skipped as passed, so a docs-only pull request merges after this job
   # and the gate alone, and docs.yml builds and link-checks the site.
-  # When the diff cannot be computed, everything runs.
+  # A change to the site's dependency graph also outputs deps=true: the
+  # dependency audit runs for it, the builds do not. When the diff cannot
+  # be computed, everything runs.
   # ---------------------------------------------------------------------
   changes:
     name: Changes
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      deps: ${{ steps.classify.outputs.deps }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -521,7 +524,7 @@ jobs:
   audit:
     name: dependency audit
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     # Every dependency graph (scripts/ci/dependency-audit.py, its inventory
     # in docs/supply-chain.md): cargo-audit for the three Cargo.lock files,
@@ -555,7 +558,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           version: 1.31.1
           min-severity: high
@@ -582,6 +585,7 @@ jobs:
       - run: python3 -m unittest -v scripts/release/check_release_validation_test.py
       - run: python3 -m unittest -v scripts/release/verify_release_artifacts_test.py
       - run: python3 -m unittest -v scripts/release/docs_version_test.py
+      - run: python3 -m unittest -v scripts/release/check_pe_imports_test.py
       - run: python3 -m unittest -v tests/conformance/sdk/harness_test.py
 
   # ADR 0007: the library built from this commit must still pass the

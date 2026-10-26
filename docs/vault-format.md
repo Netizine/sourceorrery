@@ -346,7 +346,12 @@ from the newest acknowledgement to the end and refuses on the first row
 that does not follow its predecessor or whose hash does not verify, and
 the keyed count under the head's MAC lets every operation notice a keyed
 row removed or demoted since the head was written without walking the
-log. Before every keyed append the vault checks that the head still names
+log. The history before the newest acknowledgement is not walked for
+links, but it still decides which checkpoint is newest, so every keyed
+row there must still verify against the predecessor hash it stores,
+unless an acknowledgement accepted it as it stands (below); one edited
+since, to empty an event's checkpoint and put back the row from before
+it, refuses the unlock like any other break. Before every keyed append the vault checks that the head still names
 the newest keyed row and counts what the log holds; if it does not — rows
 were removed after it, a keyed row is missing, or the head record is
 missing or invalid — it first appends an `audit_verify` / `failure` row
@@ -389,7 +394,17 @@ is an ordinary unlock.
 `SqliteVault::acknowledge_truncations(event_ids)` (`sourceorrery audit
 --acknowledge`) appends one keyed `audit_verify` / `success` row with
 detail `truncation acknowledged (events 42, 57)`: the owner's record that
-the surviving history was reviewed and is accepted as authoritative. It
+the surviving history was reviewed and is accepted as authoritative.
+Keyed rows whose own hash does not verify are part of what is shown and
+accepted: a detection's detail ends with `; unverifiable rows
+14:1f2e3d4c5b6a7980, …` (each row's id and the first 8 bytes, in hex, of
+a keyed hash of the row as it stands, over the predecessor hash it
+stores), and the acknowledgement lists the same entries. A listed row is
+accepted only while it is left as it was shown: edited again, its digest
+changes and it breaks the chain once more. An acknowledgement is refused
+with `crypto` when a row that does not verify is not in a pending
+detection; the refusal first records a detection that shows it, so the
+owner lists the truncations again and acknowledges what they saw. It
 runs in one write transaction, re-checks the head (a stale head is
 recorded and refused, so nothing is acknowledged unseen) and requires
 `event_ids` to be exactly the unacknowledged events at that moment, so a

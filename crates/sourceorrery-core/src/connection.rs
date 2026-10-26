@@ -376,19 +376,28 @@ fn validate_url(url: &str) -> std::result::Result<(), &'static str> {
 }
 
 /// True when `url` addresses the local machine (`localhost`, `127.0.0.0/8`
-/// or `::1`), where clear text cannot leave the host.
+/// or `::1`), where clear text cannot leave the host. The host must be one
+/// of these literally, an address in its plain dotted or bracketed form: a
+/// DNS name that merely begins with `127.` resolves wherever its owner
+/// points it.
 pub fn is_loopback_url(url: &str) -> bool {
     let rest = url
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"))
         .unwrap_or(url);
     let authority = rest.split('/').next().unwrap_or_default();
-    let host = if let Some(bracketed) = authority.strip_prefix('[') {
-        bracketed.split(']').next().unwrap_or_default()
-    } else {
-        authority.rsplit_once(':').map_or(authority, |(h, _)| h)
-    };
-    host.eq_ignore_ascii_case("localhost") || host == "::1" || host.starts_with("127.")
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        return bracketed
+            .split_once(']')
+            .filter(|(_, port)| port.is_empty() || port.starts_with(':'))
+            .and_then(|(host, _)| host.parse::<std::net::Ipv6Addr>().ok())
+            .is_some_and(|ip| ip.is_loopback());
+    }
+    let host = authority.rsplit_once(':').map_or(authority, |(h, _)| h);
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 #[cfg(test)]
@@ -426,6 +435,47 @@ mod tests {
             let text = err.to_string();
             assert!(text.contains(expected), "{address}: {text}");
             assert!(!text.contains("hunter2"), "{text}");
+        }
+    }
+
+    #[test]
+    fn clear_text_goes_only_to_names_that_are_this_machine() {
+        // A DNS name that merely begins with "127." can resolve anywhere.
+        for address in [
+            "http://127.attacker.example:8200",
+            "http://127.0.0.1.nip.io:8200",
+            "http://127.0.0.1%2eexample.com",
+            "http://127.0.0.1.:8200",
+            "http://localhost.example.com",
+        ] {
+            assert!(!is_loopback_url(address), "{address}");
+            let vault = ConnectionSettings::HashicorpVault {
+                address: address.to_owned(),
+                mount: "secret".to_owned(),
+                namespace: None,
+            };
+            assert_eq!(vault.validate().unwrap_err().code(), "invalid_argument");
+            let aws = ConnectionSettings::AwsSecretsManager {
+                region: "us-east-1".to_owned(),
+                prefix: None,
+                endpoint_url: Some(address.to_owned()),
+            };
+            assert_eq!(aws.validate().unwrap_err().code(), "invalid_argument");
+        }
+        for address in [
+            "http://localhost:8200",
+            "http://LocalHost",
+            "http://127.0.0.1:8200",
+            "http://127.1.2.3/",
+            "http://[::1]:8200",
+        ] {
+            assert!(is_loopback_url(address), "{address}");
+            let vault = ConnectionSettings::HashicorpVault {
+                address: address.to_owned(),
+                mount: "secret".to_owned(),
+                namespace: None,
+            };
+            vault.validate().unwrap();
         }
     }
 

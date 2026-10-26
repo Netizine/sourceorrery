@@ -18,8 +18,9 @@ read-only. See the [CLI installation guide](https://sourceorrery.ai/getting-star
 
 The connection signs in with an access key it stores, sealed in the
 vault, or else through the official AWS SDK's default chain (environment,
-shared config and credentials files, SSO, web identity, ECS and EC2
-instance roles).
+shared config and credentials files, web identity, the ECS task role),
+which takes the EC2 instance role only when
+`SOURCEORRERY_AWS_INSTANCE_ROLE=on`.
 
 Secrets Manager keeps metadata per secret, not per version, so `enabled`,
 `content_type`, `not_before` and `expires_on` apply to the whole secret and

@@ -22,14 +22,14 @@
 ### From crates.io
 
 ```bash
-cargo add sourceorrery@0.3.0
+cargo add sourceorrery@0.3.1
 ```
 
 or, in `Cargo.toml`:
 
 ```toml
 [dependencies]
-sourceorrery = "0.3.0"
+sourceorrery = "0.3.1"
 ```
 
 [`sourceorrery` on crates.io](https://crates.io/crates/sourceorrery) is
@@ -43,15 +43,15 @@ servers that open vaults with their recovery keys only, turn them off with
 `cargo add sourceorrery --no-default-features`, which also drops the D-Bus
 requirement.
 
-### From the v0.3.0 tag
+### From the v0.3.1 tag
 
 Depend on the tag the
-[v0.3.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0)
+[v0.3.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.1)
 was cut from:
 
 ```toml
 [dependencies]
-sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.3.0" }
+sourceorrery = { git = "https://github.com/Netizine/sourceorrery", tag = "v0.3.1" }
 ```
 
 ### From source
@@ -146,7 +146,7 @@ each platform.
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.3.0              # or stay on main for the newest changes
+git checkout v0.3.1              # or stay on main for the newest changes
 cargo build --release -p sourceorrery
 ```
 

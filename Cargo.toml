@@ -19,7 +19,7 @@ members = [
 exclude = ["bindings/python", "bindings/node"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.91.1"
 license = "MIT OR Apache-2.0"
@@ -29,15 +29,15 @@ authors = ["James Melvin <james@melvin.tech>"]
 
 [workspace.dependencies]
 # internal
-sourceorrery-core = { path = "crates/sourceorrery-core", version = "0.3.0" }
-sourceorrery-crypto = { path = "crates/sourceorrery-crypto", version = "0.3.0" }
-sourceorrery-storage = { path = "crates/sourceorrery-storage", version = "0.3.0", default-features = false }
-sourceorrery = { path = "crates/sourceorrery", version = "0.3.0", default-features = false }
-sourceorrery-provider = { path = "crates/sourceorrery-provider", version = "0.3.0" }
-sourceorrery-provider-vault = { path = "crates/sourceorrery-provider-vault", version = "0.3.0" }
-sourceorrery-provider-aws = { path = "crates/sourceorrery-provider-aws", version = "0.3.0" }
-sourceorrery-provider-azure = { path = "crates/sourceorrery-provider-azure", version = "0.3.0" }
-sourceorrery-os = { path = "crates/sourceorrery-os", version = "0.3.0" }
+sourceorrery-core = { path = "crates/sourceorrery-core", version = "0.3.1" }
+sourceorrery-crypto = { path = "crates/sourceorrery-crypto", version = "0.3.1" }
+sourceorrery-storage = { path = "crates/sourceorrery-storage", version = "0.3.1", default-features = false }
+sourceorrery = { path = "crates/sourceorrery", version = "0.3.1", default-features = false }
+sourceorrery-provider = { path = "crates/sourceorrery-provider", version = "0.3.1" }
+sourceorrery-provider-vault = { path = "crates/sourceorrery-provider-vault", version = "0.3.1" }
+sourceorrery-provider-aws = { path = "crates/sourceorrery-provider-aws", version = "0.3.1" }
+sourceorrery-provider-azure = { path = "crates/sourceorrery-provider-azure", version = "0.3.1" }
+sourceorrery-os = { path = "crates/sourceorrery-os", version = "0.3.1" }
 
 # shared
 serde = { version = "1", features = ["derive"] }

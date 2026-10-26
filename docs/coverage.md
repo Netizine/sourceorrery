@@ -1,6 +1,6 @@
 # Test coverage and SonarCloud
 
-SourceOrrery 0.3.0 generates coverage with each language's test tools and
+SourceOrrery 0.3.1 generates coverage with each language's test tools and
 imports the reports into the existing
 [SonarCloud project](https://sonarcloud.io/project/overview?id=Netizine_sourceorrery).
 The `Coverage and SonarCloud` workflow runs on Ubuntu, alongside the normal

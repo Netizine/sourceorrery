@@ -250,6 +250,60 @@ fn the_catalog_and_the_provider_agree() {
     assert_eq!(f.opened.load(Ordering::SeqCst), 1, "opened once, then kept");
 }
 
+/// A connection changed through another handle (the setup screens beside
+/// an open browser) is opened again from the vault: no later call goes to
+/// the endpoint it left or with the credentials it replaced.
+#[test]
+fn a_connection_changed_elsewhere_is_opened_again_before_its_next_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, vault, key) = create(dir.path(), "dev.sorvault");
+    let (provider_path, _, provider_key) = create(dir.path(), "provider.sorvault");
+    let id = vault
+        .add_connection(
+            &vault_settings(),
+            Some(&Credentials::VaultToken(SecretBytes::from(TOKEN))),
+        )
+        .unwrap()
+        .id;
+    let opened = Arc::new(Mutex::new(Vec::new()));
+    let routed = Routed::with_opener(vault, {
+        let opened = Arc::clone(&opened);
+        move |_, settings, credentials| {
+            opened
+                .lock()
+                .unwrap()
+                .push((settings.location(), credentials.is_some()));
+            let client: ConnectionClient = Box::new(open(&provider_path, &provider_key));
+            Ok(client)
+        }
+    })
+    .storing_new_in(SecretStorage::Connection(id.clone()))
+    .unwrap();
+    set(&routed, "api-key", "one");
+    routed.get_secret("api-key", None).unwrap();
+    assert_eq!(opened.lock().unwrap().len(), 1, "kept while unchanged");
+
+    let elsewhere = open(&path, &key);
+    let moved = ConnectionSettings::HashicorpVault {
+        address: "https://vault2.example.com".to_owned(),
+        mount: "secret".to_owned(),
+        namespace: None,
+    };
+    elsewhere.set_connection_settings(&id, &moved).unwrap();
+    elsewhere.set_connection_credentials(&id, None).unwrap();
+
+    set(&routed, "api-key", "two");
+    routed.list_properties_of_secrets().unwrap();
+    assert_eq!(
+        *opened.lock().unwrap(),
+        vec![
+            (vault_settings().location(), true),
+            (moved.location(), false),
+        ],
+        "opened again once, from the connection as it is now"
+    );
+}
+
 #[test]
 fn a_secret_removed_at_the_provider_is_reported_not_hidden() {
     let f = fixture(&vault_settings(), None);

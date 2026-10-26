@@ -1,11 +1,11 @@
 # Roadmap
 
-The 0.3.0 source tree includes the local vault, provider connections,
+The 0.3.1 source tree includes the local vault, provider connections,
 interactive management and read-only application SDKs described below.
 Release availability is shown in the site header; an implemented feature
 is not a claim that its packages have already been published.
 
-## Available in 0.3.0
+## Available in 0.3.1
 
 | Area | Implemented behaviour |
 |------|-----------------------|
@@ -41,7 +41,7 @@ those are separate from operating-system signatures.
 ## Milestone 3 — local broker and agent isolation
 
 This is future work. There is no broker process, local IPC service or
-same-user isolation boundary in 0.3.0.
+same-user isolation boundary in 0.3.1.
 
 - Authenticated local protocol over Unix sockets and Windows named pipes.
 - Short-lived, secret-scoped grants and capability-based authorisation.
@@ -67,5 +67,5 @@ than promising cancellation or responsive idle locking during the call.
 
 Potential additions include Kotlin, Swift, Ruby, Dart and Elixir bindings,
 plus musl Linux, ARMv7 and community BSD targets. These are not part of the
-0.3.0 package matrix. An SDK must pass the shared read-only conformance
+0.3.1 package matrix. An SDK must pass the shared read-only conformance
 contract before it is supported.

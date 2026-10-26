@@ -59,7 +59,7 @@ const PAGES = {
 	'docs/security-review.md': {
 		dest: 'security/review.md',
 		description:
-			'Security review status for 0.3.0: the current design, recorded engineering evidence, outstanding platform and release acceptance, and the boundaries that remain.',
+			'Security review status for 0.3.1: the current design, recorded engineering evidence, outstanding platform and release acceptance, and the boundaries that remain.',
 	},
 	'docs/supply-chain.md': {
 		dest: 'security/supply-chain.md',
@@ -74,7 +74,7 @@ const PAGES = {
 	'docs/upgrading.md': {
 		dest: 'guides/upgrading.md',
 		description:
-			'Supported vault files in 0.3.0, consistent encrypted exports, verified imports and restore limits. No legacy format conversion or migration layer.',
+			'Supported vault files in 0.3.1, consistent encrypted exports, verified imports and restore limits. No legacy format conversion or migration layer.',
 	},
 	'docs/ai-agents.md': {
 		dest: 'guides/ai-agents.md',
@@ -406,7 +406,13 @@ function rewriteLinks(markdown, source) {
 		.map((segment, index) => {
 			if (index % 2 === 1) return segment; // fenced code block
 			return segment.replace(/(!?)\[([^[\]]*)\]\(([^()\s]+)((?:\s+"[^"]*")?)\)/g, (match, bang, text, target, titlePart) => {
-				if (bang) return match;
+				if (bang) {
+					const asset = path.posix.normalize(path.posix.join(sourceDir, target));
+					if (asset.startsWith('site/public/')) {
+						return `${bang}[${text}](/${asset.slice('site/public/'.length)}${titlePart})`;
+					}
+					return match;
+				}
 				if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#') || target.startsWith('/')) return match;
 				const [targetPath, anchor] = splitAnchor(target);
 				const repoPath = path.posix.normalize(path.posix.join(sourceDir, targetPath)).replace(/\/$/, '');
@@ -418,6 +424,7 @@ function rewriteLinks(markdown, source) {
 }
 
 function resolveRepoPath(repoPath, source) {
+	if (repoPath.startsWith('site/public/')) return `/${repoPath.slice('site/public/'.length)}`;
 	if (PAGES[repoPath]) return destToHref(PAGES[repoPath].dest);
 	if (DIRECTORIES[repoPath]) return DIRECTORIES[repoPath];
 	if (AUTHORED_PAGES[repoPath]) return AUTHORED_PAGES[repoPath];

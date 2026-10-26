@@ -6,6 +6,106 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-26
+
+### Changed
+
+* **Windows binaries link the C runtime statically.** `sourceorrery.exe`
+  and `sourceorrery_ffi.dll`, which the .NET, Java, Go and PHP SDKs load,
+  no longer need the Visual C++ Redistributable (`VCRUNTIME140.dll`),
+  which Windows does not include. The static `sourceorrery_ffi.lib` is
+  built for the static runtime too: compile a program that links it with
+  `/MT`. The release and CI fail if a Windows binary imports a C runtime
+  DLL (`scripts/release/check-pe-imports.py`).
+
+### Security
+
+Fixes from the security audit of 2026-10-26
+(`docs/security-review-2026-10-26.md` records what each closes and how
+it was tested).
+
+* **An audit row edited before the newest acknowledgement refuses the
+  unlock.** Every unlock walked the chain only from the newest
+  acknowledgement, so a file writer could empty an older event's
+  checkpoint there and put back a secret's earlier row (a version
+  re-enabled, say). Every keyed row before the acknowledgement must now
+  still verify, unless an acknowledgement accepted it as its owner was
+  shown it: detections and acknowledgements list such rows with a keyed
+  digest (`docs/vault-format.md`). A vault whose acknowledged history
+  holds an edited row is refused once and opens again after `audit
+  --acknowledge`.
+* **Clear text goes only to this machine.** A connection's `http://`
+  address was taken for loopback when its host merely began with `127.`
+  or `localhost` (`http://127.attacker.example`); the host is now parsed
+  and only `localhost`, an IPv4 literal in `127.0.0.0/8` or `[::1]` is.
+* **A rotation waits for the one before it.** A second `secret rotate`
+  while the previous version still had to be retired replaced that record,
+  and the previous credential's `retire` hook never ran; it is now refused
+  (code `rotation`) before the issue hook mints anything. A grace period
+  is at most `3650d`; a larger one was a panic.
+* **Rotation hooks never take a value from the CLI's environment.** When
+  the current version could not be read, the issue hook got whatever the
+  shell held in the secret's variable; the variable, and the version-id
+  variables, are now removed unless the vault sets them.
+* **`import` shows no text that may be part of a value.** Text before `=`
+  that is not shaped like a variable name, or whose value is only `=`
+  padding (wrapped base64), was printed as a key in the table, JSON and
+  errors; it is now `(not shown)` and skipped.
+* **The setup screens commit only against the view check they passed.**
+  A password or authenticator set elsewhere while the screens were open
+  could be replaced or cleared by their commit; such a commit is now
+  refused (`permission_denied`).
+* **A connection changed elsewhere is opened again.** A browser session
+  kept sending to a connection's old address with its old credentials
+  after the setup screens (or another process) changed them; every call
+  now checks the connection's revision and reopens it.
+* **AWS Secrets Manager: nothing is sent twice.** The SDK's automatic
+  retries repeated a write whose answer was lost; when the repeat was
+  refused, the adapter took the refusal for "nothing written" and put the
+  old, looser policy back on the version just published (a version written
+  disabled became readable). Retries are off; a lost answer is
+  `outcome_unknown`.
+* **AWS Secrets Manager: the EC2 instance role only when asked for.** A
+  connection with no stored access key used the SDK's whole chain, which
+  ends at the plain-HTTP instance-metadata address; off an instance,
+  whatever answered it on the network could hand over keys for its own
+  account, and secrets were then written to and read from that account.
+  The chain now stops after the ECS task role. **On EC2, set
+  `SOURCEORRERY_AWS_INSTANCE_ROLE=on`** to keep using the instance role;
+  without it such a process fails with `unauthenticated` and a hint
+  naming the variable. The provider page no longer lists SSO, which the
+  provider never read (use `aws configure export-credentials`).
+* **The Node SDK loads its addon only from its own install.** Without its
+  platform package (`--omit=optional`, 32-bit Node), and on macOS on every
+  load, the generated loader looked for one in every parent directory's
+  `node_modules`, where on Windows any account can put a module
+  (`C:\node_modules`), and ran it.
+* **The C ABI installs root-owned.** The unix release archives recorded
+  the CI runner's account, and the SDK guides' `sudo tar xzf` into
+  `/opt/sourceorrery` restored it, so on a shared machine the library and
+  headers every C, C++, Go and PHP program loads belonged to the local
+  account with that uid (1001 on Linux). The archives are now packed
+  root-owned, and the guides extract with `--no-same-owner`. On a shared
+  machine with an existing install, empty `/opt/sourceorrery` and extract
+  an archive checked against `SHA256SUMS` again that way: a `chown` alone
+  would keep any change already made to the files.
+* **Azure sign-in through the Azure CLI starts it from the system
+  directory.** The SDK ran `az` (and `azd`) through `cmd` in the caller's
+  working directory; from a folder on a second drive, cmd could take an
+  `az` from that folder first. The helpers now start in the system
+  directory, without the variables that open a vault.
+* **`secret rotate --step status` escapes provider version ids** like every
+  other line the CLI prints.
+* **Release.** PyPI's `twine check` runs in a job without the publishing
+  identity; `cargo-auditable`, `cargo-cyclonedx` and maturin run at exact
+  versions; a real release runs the dependency audit with `--strict`, as
+  documented; and a change to the site's npm dependencies runs the
+  dependency audit in CI. `wingetcreate` is a pinned release checked
+  against its SHA-256; a **Release packages** dry run refuses a tag whose
+  commit is not on `main` and never holds the Maven signing key; and the
+  publishing jobs run in a `release` environment, ready to be limited to
+  `main` (`docs/release.md`).
+
 ## [0.3.0] - 2026-10-26
 
 **Breaking: vaults from earlier releases are not read.** A vault file of
@@ -739,6 +839,7 @@ package registry.
   the Composer manifest is at the repository root, where Packagist reads
   it. Procedure and per-registry setup: `docs/release.md`.
 
+[0.3.1]: https://github.com/Netizine/sourceorrery/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0
 [0.1.4]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4

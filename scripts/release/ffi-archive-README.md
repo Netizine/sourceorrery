@@ -7,7 +7,7 @@ to the runtime, not the repository.
 | File | What it is |
 |------|------------|
 | `libsourceorrery_ffi.so` (Linux), `libsourceorrery_ffi.dylib` (macOS), `sourceorrery_ffi.dll` and its import library `sourceorrery_ffi.dll.lib` (Windows) | the shared library |
-| `libsourceorrery_ffi.a` (Linux, macOS), `sourceorrery_ffi.lib` (Windows, MSVC) | the static library |
+| `libsourceorrery_ffi.a` (Linux, macOS), `sourceorrery_ffi.lib` (Windows, MSVC, static C runtime: compile with `/MT`) | the static library |
 | `include/sourceorrery.h` | the C header |
 | `include/sourceorrery.hpp` | the header-only C++17 wrapper |
 | `LICENSE-MIT`, `LICENSE-APACHE` | the licences: MIT or Apache-2.0, at your option |

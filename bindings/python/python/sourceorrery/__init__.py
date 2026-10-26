@@ -82,7 +82,7 @@ __all__ = [
     "ProviderUnavailableError",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 PathLike = str | os.PathLike[str]
 

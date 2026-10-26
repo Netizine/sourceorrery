@@ -13,7 +13,9 @@
 //! catalogued, and one purged there leaves the catalog. A failure on either
 //! side is returned, never half-applied silently. A connection is opened
 //! when first needed, with the credentials it stores or else the provider's
-//! ambient chain, and stays open for the client's life.
+//! ambient chain, and stays open while the connection is unchanged: once its
+//! settings or credentials change, through this vault or another handle, the
+//! next call opens it again from the vault.
 //!
 //! A change (set, update, delete, recover, purge) is recorded as an attempt
 //! before it is sent ([`SqliteVault::attempt_at_connection`]), and its
@@ -45,7 +47,9 @@ use sourceorrery_core::{
     SecretBytes, SecretClient, SecretError, SecretProperties, SetSecretOptions,
     UpdateSecretProperties,
 };
-use sourceorrery_storage::{Attempt, CatalogChange, SecretStorage, SqliteVault};
+use sourceorrery_storage::{
+    Attempt, CatalogChange, ConnectionRevision, SecretStorage, SqliteVault,
+};
 
 /// A provider's client, as [`Routed`] holds it.
 pub type ConnectionClient = Box<dyn SecretClient + Send + Sync>;
@@ -75,8 +79,12 @@ pub struct Routed {
     new_in: SecretStorage,
     new_capabilities: &'static [Capability],
     opener: Box<Opener>,
-    open: Mutex<BTreeMap<String, Arc<dyn SecretClient + Send + Sync>>>,
+    open: Mutex<BTreeMap<String, OpenClient>>,
 }
+
+/// A connection's client and the revision of the connection it was opened
+/// from.
+type OpenClient = (ConnectionRevision, Arc<dyn SecretClient + Send + Sync>);
 
 impl fmt::Debug for Routed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -219,21 +227,33 @@ impl Routed {
         }
     }
 
-    /// The client of the connection `id`, opened on first use.
-    fn client(&self, id: &str) -> Result<Arc<dyn SecretClient + Send + Sync>> {
-        if let Some(client) = self.open.lock().map_err(poisoned)?.get(id) {
+    /// The client of the connection `id` as the gate found it at
+    /// `revision`: the one opened earlier while the connection is unchanged,
+    /// else opened now from the vault and kept in its place. A client
+    /// opened from settings or credentials the vault no longer has is never
+    /// called again.
+    fn client(
+        &self,
+        id: &str,
+        revision: &ConnectionRevision,
+    ) -> Result<Arc<dyn SecretClient + Send + Sync>> {
+        if let Some((opened_at, client)) = self.open.lock().map_err(poisoned)?.get(id)
+            && opened_at == revision
+        {
             return Ok(Arc::clone(client));
         }
-        let settings = self.vault.connection(id)?.settings;
-        let credentials = self.vault.connection_credentials(id)?;
+        let connection = self.vault.connection_to_open(id)?;
         let opened: Arc<dyn SecretClient + Send + Sync> = Arc::from((self.opener)(
             self.vault.vault_name(),
-            &settings,
-            credentials.as_ref(),
+            &connection.settings,
+            connection.credentials.as_ref(),
         )?);
-        drop(credentials);
-        let mut open = self.open.lock().map_err(poisoned)?;
-        Ok(Arc::clone(open.entry(id.to_owned()).or_insert(opened)))
+        drop(connection.credentials);
+        self.open
+            .lock()
+            .map_err(poisoned)?
+            .insert(id.to_owned(), (connection.revision, Arc::clone(&opened)));
+        Ok(opened)
     }
 
     /// Make `call` at the connection `id` and record it in the vault as
@@ -258,9 +278,10 @@ impl Routed {
         call: impl FnOnce(&dyn SecretClient) -> Result<T>,
         version_of: impl FnOnce(&T) -> Option<&str>,
     ) -> Result<T> {
-        self.vault
-            .preflight_at_connection(id, record.operation, record.name, record.change)?;
-        let client = match self.client(id) {
+        let revision =
+            self.vault
+                .preflight_at_connection(id, record.operation, record.name, record.change)?;
+        let client = match self.client(id, &revision) {
             Ok(client) => client,
             Err(err) => {
                 // Nothing was sent: the connection could not be opened.

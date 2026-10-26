@@ -1,7 +1,7 @@
 # AI coding agents
 
 > [!NOTE]
-> This guide targets the **0.3.0** setup flow. Use your installed CLI;
+> This guide targets the **0.3.1** setup flow. Use your installed CLI;
 > `sourceorrery --version` confirms its version. Current repository skills
 > can be copied into a project independently of CLI package updates.
 

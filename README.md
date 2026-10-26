@@ -17,7 +17,7 @@ file with an encrypted local vault, a cloud-secrets-manager-style lifecycle API
 declares *which* secrets a project needs without ever holding their values.
 
 > [!WARNING]
-> **Version 0.3.0 — an encrypted local vault that keeps each secret in
+> **Version 0.3.1 — an encrypted local vault that keeps each secret in
 > its own file or at AWS Secrets Manager, Azure Key Vault or HashiCorp
 > Vault, a CLI with an interactive vault manager, and read-only SDKs.**
 > Local-first and usable today on Windows, macOS and Linux, from Python,
@@ -213,13 +213,13 @@ bundled SQLite (the Visual Studio Build Tools on Windows, the Xcode
 Command Line Tools on macOS, gcc or clang on Linux) and, on Linux,
 `pkg-config` and `libdbus-1-dev` for the Secret Service.
 
-Check out the `v0.3.0` tag to build the published release source.
+Check out the `v0.3.1` tag to build the published release source.
 
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.3.0
-python scripts/release/set-version.py 0.3.0 --keep-node-links
+git checkout v0.3.1
+python scripts/release/set-version.py 0.3.1 --keep-node-links
 cargo build --release -p sourceorrery-cli -p sourceorrery-ffi   # the CLI and the C ABI, in target/release
 cargo test --workspace
 cargo install --locked --path crates/sourceorrery-cli           # the CLI into ~/.cargo/bin
@@ -232,7 +232,7 @@ SDK test vault and the conformance harness:
 
 ## Current scope and roadmap
 
-The 0.3.0 source includes local vaults, provider connections, the management
+The 0.3.1 source includes local vaults, provider connections, the management
 CLI, metadata browser, read-only SDKs, rotation and audit export. Hosted
 release validation and independent security review remain separate from
 feature implementation. The authenticated broker and same-user isolation,

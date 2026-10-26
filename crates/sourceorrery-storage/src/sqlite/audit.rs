@@ -281,6 +281,7 @@ impl AuditWriter<'_> {
         if let Some(key) = self.key
             && let Some(problem) = head_problem(conn, key, &self.meta.id, self.allow_empty_chain)?
         {
+            let detail = with_unverifiable(conn, key, &self.meta.id, &problem)?;
             self.append_row(
                 conn,
                 &Entry {
@@ -288,7 +289,7 @@ impl AuditWriter<'_> {
                     secret_name: None,
                     version: None,
                     outcome: AuditOutcome::Failure,
-                    detail: Some(&problem),
+                    detail: Some(&detail),
                     checkpoints: Checkpoints::default(),
                 },
             )?;
@@ -439,6 +440,9 @@ pub(super) fn chain_problem(
         }
     }
     let (after, mut prev) = start.unwrap_or((0, integrity::ZERO_HASH));
+    if let Some(problem) = edited_before(conn, key, vault_id, after)? {
+        return Ok(Some(problem));
+    }
     let zero = integrity::zero_key();
     let mut stmt = conn
         .prepare(&format!(
@@ -453,7 +457,7 @@ pub(super) fn chain_problem(
         let authentic = integrity::verify_audit_hash(row_key, &prev, &fields, row.hash.as_deref());
         if !(linked && authentic) {
             return Ok(Some(format!(
-                "audit chain broken at event {}: {}",
+                "{BROKEN_AT}{}: {}",
                 row.id(),
                 if linked {
                     "its hash does not verify"
@@ -463,6 +467,64 @@ pub(super) fn chain_problem(
             )));
         }
         prev = integrity::hash_or_zero(row.hash.as_deref());
+    }
+    Ok(None)
+}
+
+/// How a detected break names its row: `audit chain broken at event <id>: ...`.
+const BROKEN_AT: &str = "audit chain broken at event ";
+
+/// The history up to the newest acknowledgement `ack` is not walked for
+/// links: its owner accepted it, breaks included. It still decides which
+/// checkpoint is newest, though, so a file writer who empties the
+/// checkpoint of an event there (to put back the row from before it) must
+/// be caught: every keyed row before `ack` must still be its own authentic
+/// self (its hash over the predecessor hash it stores), unless an
+/// acknowledgement accepted it as it stands now (its
+/// [`unverifiable_entry`]). A keyed row cannot be removed or demoted unseen
+/// either: the head counts them.
+fn edited_before(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+    ack: i64,
+) -> Result<Option<String>> {
+    if ack == 0 {
+        return Ok(None);
+    }
+    let mut accepted = std::collections::BTreeSet::new();
+    let mut verifications = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_verifications
+             WHERE operation = '{}' AND keyed = 1 AND id <= ?1",
+            AuditOperation::AuditVerify.as_str()
+        ))
+        .map_err(db)?;
+    for row in verifications
+        .query_map(params![ack], chain_row)
+        .map_err(db)?
+    {
+        let row = row.map_err(db)?;
+        if row.is_acknowledgement() && row.authentic(key, vault_id) {
+            accepted.extend(listed_entries(row.row.7.as_deref().unwrap_or_default()));
+        }
+    }
+    let mut rows = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_keyed
+             WHERE keyed = 1 AND id < ?1 ORDER BY id"
+        ))
+        .map_err(db)?;
+    for row in rows.query_map(params![ack], chain_row).map_err(db)? {
+        let row = row.map_err(db)?;
+        if !row.authentic(key, vault_id)
+            && !accepted.contains(&unverifiable_entry(&row, key, vault_id))
+        {
+            return Ok(Some(format!(
+                "{BROKEN_AT}{}: its hash does not verify",
+                row.id()
+            )));
+        }
     }
     Ok(None)
 }
@@ -534,13 +596,81 @@ fn event_id_list(ids: impl Iterator<Item = i64>) -> String {
     ids.map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
 }
 
-/// Detail of the acknowledgement row covering `ids`.
-fn acknowledgement_detail(ids: &[i64]) -> String {
+/// How a detection, and the acknowledgement of it, list the keyed rows that
+/// did not verify when it was made: `...; unverifiable rows 14:1f2e…, 19:…`.
+const UNVERIFIABLE: &str = "; unverifiable rows ";
+
+/// A keyed row whose own hash does not verify, as a detection shows it and
+/// an acknowledgement accepts it: `<id>:<digest>`, the digest a keyed hash
+/// of the row as it stands (the columns its chain hash covers and the
+/// predecessor hash it stores). A row is accepted only while it is left as
+/// it was shown: edited again, its digest changes.
+fn unverifiable_entry(row: &ChainRow, key: &SymmetricKey, vault_id: &str) -> String {
+    let prev = integrity::hash_or_zero(row.prev_hash.as_deref());
+    let digest = integrity::audit_hash(key, &prev, &row.fields(vault_id));
+    format!("{}:{}", row.id(), hex::encode(&digest[..8]))
+}
+
+/// `problem`, followed by the keyed rows that do not verify now: the detail
+/// of a detection, so that what an acknowledgement accepts is what its owner
+/// was shown.
+pub(super) fn with_unverifiable(
+    conn: &Connection,
+    key: &SymmetricKey,
+    vault_id: &str,
+    problem: &str,
+) -> Result<String> {
+    let rows = unverifiable_rows(conn, key, vault_id)?;
+    Ok(if rows.is_empty() {
+        problem.to_owned()
+    } else {
+        format!("{problem}{UNVERIFIABLE}{}", rows.join(", "))
+    })
+}
+
+/// The [`unverifiable_entry`] items a detection or acknowledgement lists.
+fn listed_entries(detail: &str) -> impl Iterator<Item = String> + '_ {
+    detail
+        .split_once(UNVERIFIABLE)
+        .map(|(_, list)| list)
+        .unwrap_or_default()
+        .split(", ")
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_owned)
+}
+
+/// Detail of the acknowledgement row covering `ids`, listing the keyed rows
+/// it accepts as they stand although their hashes do not verify.
+fn acknowledgement_detail(ids: &[i64], unverifiable: &[String]) -> String {
     let noun = if ids.len() == 1 { "event" } else { "events" };
-    format!(
+    let mut detail = format!(
         "{ACKNOWLEDGED_DETAIL} ({noun} {})",
         event_id_list(ids.iter().copied())
-    )
+    );
+    if !unverifiable.is_empty() {
+        detail.push_str(UNVERIFIABLE);
+        detail.push_str(&unverifiable.join(", "));
+    }
+    detail
+}
+
+/// Every keyed row whose own hash does not verify, as an
+/// [`unverifiable_entry`], oldest first.
+fn unverifiable_rows(conn: &Connection, key: &SymmetricKey, vault_id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {CHAIN_COLUMNS} FROM audit_events INDEXED BY audit_keyed
+             WHERE keyed = 1 ORDER BY id"
+        ))
+        .map_err(db)?;
+    let mut entries = Vec::new();
+    for row in stmt.query_map([], chain_row).map_err(db)? {
+        let row = row.map_err(db)?;
+        if !row.authentic(key, vault_id) {
+            entries.push(unverifiable_entry(&row, key, vault_id));
+        }
+    }
+    Ok(entries)
 }
 
 /// Detected truncations nobody has acknowledged: the keyed `audit_verify` /
@@ -951,6 +1081,7 @@ impl SqliteVault {
         if let Some(problem) = head_problem(&tx, &self.metadata_key, &self.meta.id, false)? {
             // Put the detection on the chain, as any keyed write would, and
             // refuse: what is acknowledged must be what was shown.
+            let detail = with_unverifiable(&tx, &self.metadata_key, &self.meta.id, &problem)?;
             self.writer().append_row(
                 &tx,
                 &Entry {
@@ -958,7 +1089,7 @@ impl SqliteVault {
                     secret_name: None,
                     version: None,
                     outcome: AuditOutcome::Failure,
-                    detail: Some(&problem),
+                    detail: Some(&detail),
                     checkpoints: Checkpoints::default(),
                 },
             )?;
@@ -985,7 +1116,38 @@ impl SqliteVault {
                 event_id_list(ids.iter().copied())
             )));
         }
-        let detail = acknowledgement_detail(&ids);
+        // Keyed rows that do not verify now are accepted as they stand, and
+        // named, so that a later edit of any other row is not taken for part
+        // of the history the owner accepted. Each must be one the pending
+        // detections showed: a row edited after they were recorded goes on
+        // record first, and the owner lists the truncations again.
+        let unverifiable = unverifiable_rows(&tx, &self.metadata_key, &self.meta.id)?;
+        let shown: std::collections::BTreeSet<String> = pending
+            .iter()
+            .flat_map(|row| listed_entries(row.row.7.as_deref().unwrap_or_default()))
+            .collect();
+        if let Some(unshown) = unverifiable.iter().find(|entry| !shown.contains(*entry)) {
+            let id = unshown.split(':').next().unwrap_or_default();
+            let problem = format!("{BROKEN_AT}{id}: its hash does not verify");
+            let detail = with_unverifiable(&tx, &self.metadata_key, &self.meta.id, &problem)?;
+            self.writer().append_row(
+                &tx,
+                &Entry {
+                    operation: AuditOperation::AuditVerify,
+                    secret_name: None,
+                    version: None,
+                    outcome: AuditOutcome::Failure,
+                    detail: Some(&detail),
+                    checkpoints: Checkpoints::default(),
+                },
+            )?;
+            tx.commit().map_err(db)?;
+            return Err(SecretError::Crypto(format!(
+                "{problem}, which no detected truncation shows; it is now on record: list the \
+                 truncations again before acknowledging"
+            )));
+        }
+        let detail = acknowledgement_detail(&ids, &unverifiable);
         // The owner accepts the vault as it stands, its settings record
         // included: the missing events may have held the newest settings
         // checkpoint, and without one recorded here the vault would never

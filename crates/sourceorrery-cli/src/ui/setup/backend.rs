@@ -13,7 +13,7 @@ use sourceorrery_core::{
 };
 use sourceorrery_storage::{
     ConnectionInfo, CreateVaultOptions, NoInteraction, SettingsChange, SqliteVault,
-    StaticRecoveryKey, ViewAnswers, ViewCheck,
+    StaticRecoveryKey, ViewAnswers, ViewCheck, ViewIdentity,
 };
 
 use crate::context::Ctx;
@@ -106,11 +106,20 @@ pub trait Backend {
 pub struct Live<'a> {
     ctx: &'a Ctx,
     vault: Option<SqliteVault>,
+    /// The view check the operator passed (or found none of) on the open
+    /// vault; the commit lands only while it is still the one in force.
+    /// `None` when the vault was opened with its recovery key, which passes
+    /// any check.
+    passed: Option<ViewIdentity>,
 }
 
 impl<'a> Live<'a> {
     pub fn new(ctx: &'a Ctx) -> Self {
-        Self { ctx, vault: None }
+        Self {
+            ctx,
+            vault: None,
+            passed: None,
+        }
     }
 
     fn committed(vault: &SqliteVault) -> Result<Committed, String> {
@@ -194,6 +203,13 @@ impl Backend for Live<'_> {
             hint: vault.password_hint().map_err(text)?,
             connections: vault.connections().map_err(text)?,
         };
+        // With no check to pass, the operator is allowed what the vault is
+        // now; with one, only once it is passed (check_view).
+        self.passed = if !opened.passed && opened.view.is_none() {
+            Some(vault.view_identity().map_err(text)?)
+        } else {
+            None
+        };
         self.vault = Some(vault);
         Ok(OpenOutcome::Opened(opened))
     }
@@ -209,7 +225,9 @@ impl Backend for Live<'_> {
                 },
                 timestamp::now(),
             )
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        self.passed = Some(vault.view_identity().map_err(|err| err.to_string())?);
+        Ok(())
     }
 
     fn test_connection(
@@ -241,8 +259,19 @@ impl Backend for Live<'_> {
     fn commit(&mut self, plan: Plan) -> Result<Committed, String> {
         if !plan.create {
             let vault = self.vault.as_ref().ok_or("no vault is open")?;
+            // A vault opened with its recovery key passes any check;
+            // otherwise the change is bound to the check that was passed.
+            let authorised = if vault.opened_with_recovery_key() {
+                None
+            } else {
+                Some(
+                    self.passed
+                        .as_ref()
+                        .ok_or("the view check was not passed")?,
+                )
+            };
             vault
-                .change_settings(&plan.change)
+                .change_settings_if(&plan.change, authorised)
                 .map_err(|err| err.to_string())?;
             return Self::committed(vault);
         }

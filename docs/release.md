@@ -7,10 +7,10 @@ Release and publishes each package to its registry. A dry run does
 everything except create the tag, the release and the registry uploads,
 so the pipeline can be exercised without touching a registry.
 
-This procedure describes the **0.3.0** source tree: vault schema **5**,
+This procedure describes the **0.3.1** source tree: vault schema **5**,
 C ABI **2**, contract **2**, and one package version across the CLI and
 SDKs. The version remains unreleased until the changelog has a dated
-0.3.0 heading and the release workflow publishes it. Pushing a branch does
+0.3.1 heading and the release workflow publishes it. Pushing a branch does
 not publish packages.
 
 ## Procedure
@@ -33,8 +33,8 @@ not publish packages.
    start a release.
 2. In GitHub, open *Actions → Release → Run workflow*, enter the version
    (`X.Y.Z`, no `v`) and leave **dry_run** ticked. Tick **bootstrap_providers**
-   when a crate is published for the first time: in 0.3.0,
-   `sourceorrery-provider-azure` and `sourceorrery-os` (below).
+   only when a crate is published for the first time (below); every
+   current crate is on crates.io, so 0.3.1 leaves it off.
    Wait for green. The
    `release-dry-run-X.Y.Z` artifact holds everything the real run would
    attach, plus `SHA256SUMS` and the release notes; download it and try a
@@ -72,7 +72,7 @@ retried for the same version with [Release packages](#publishing-an-existing-rel
 |-----|--------|
 | `sbom` | `sourceorrery-X.Y.Z-<target>.cdx.json`, `sourceorrery-ffi-X.Y.Z-<target>.cdx.json`, `sourceorrery-python-X.Y.Z-<target>.cdx.json`, `sourceorrery-node-X.Y.Z-<target>.cdx.json`: CycloneDX 1.5 bills of materials for the six targets, rendered from the lock files by `cargo cyclonedx` on one runner (artifact `sbom`). The `native` job builds the CLI and the C ABI with `cargo auditable`, which embeds the dependency list in the binaries. |
 | `semver` | nothing: `cargo semver-checks` on `sourceorrery` and `sourceorrery-core` against the crates.io baseline, with the version you typed; the release waits for it. |
-| `native` (six targets) | `sourceorrery-X.Y.Z-<target>.{tar.gz,zip}`: the CLI. `sourceorrery-ffi-X.Y.Z-<target>.{tar.gz,zip}`: the shared and static C ABI libraries, `sourceorrery.h`, `sourceorrery.hpp`, licences. |
+| `native` (six targets) | `sourceorrery-X.Y.Z-<target>.{tar.gz,zip}`: the CLI. `sourceorrery-ffi-X.Y.Z-<target>.{tar.gz,zip}`: the shared and static C ABI libraries, `sourceorrery.h`, `sourceorrery.hpp`, licences. On Windows the C runtime is linked statically (`.cargo/config.toml`), and `scripts/release/check-pe-imports.py` fails the job if `sourceorrery.exe` or `sourceorrery_ffi.dll` imports a C runtime DLL: they must run without the Visual C++ Redistributable, as WinGet's validation runs them. |
 | `python` (six targets + sdist) | abi3 wheels for Python 3.11+ (`manylinux_2_28` on Linux) and the sdist. |
 | `node-build`, `node-package` | `@sourceorreryai/sdk` and the six `@sourceorreryai/sdk-<platform>` tarballs. `node-build` compiles the addon per target and, on `x86_64-unknown-linux-gnu`, keeps the `index.js` loader and `index.d.ts` that `napi build` generates (artifact `npm-loader`); `node-package` lays out the platform packages around the addons, adds the loader, packs, then installs the main and `linux-x64-gnu` tarballs into a scratch project and requires `@sourceorreryai/sdk`, so a main package that cannot be loaded fails the run. |
 | `java` | `sourceorrery-X.Y.Z.jar` with the native libraries embedded per platform. |
@@ -114,7 +114,7 @@ same settings, with its own file name, `ReleasePackages.yaml`.
 
 | Registry | Release job | Runs when | Stored credential |
 |----------|-------------|-----------|-------------------|
-| crates.io | `publish-crates` | every real release | none for normal 0.3.0 releases |
+| crates.io | `publish-crates` | every real release | none for normal releases |
 | PyPI | `publish-pypi` | every real release | none (trusted publishing) |
 | npm | `publish-npm` | the repository variable `NPM_TRUSTED_PUBLISHING` is `true` | none (trusted publishing) |
 | NuGet | `publish-nuget` | the secret `NUGET_USER` exists | none besides the profile name (trusted publishing) |
@@ -149,8 +149,10 @@ package is published by hand, once.
 3. For each of the seven packages, at
    `https://www.npmjs.com/package/<name>/access`, *Trusted Publisher →
    GitHub Actions*: Organization or user `Netizine`, Repository
-   `sourceorrery`, Workflow filename `release.yml`; then a second one
-   with `ReleasePackages.yaml`. Every field is case-sensitive, and npm
+   `sourceorrery`, Workflow filename `release.yml`, Environment empty
+   (`release` once [the release environment](#the-release-environment)
+   is set up); then a second one with `ReleasePackages.yaml`. Every
+   field is case-sensitive, and npm
    checks them only when a publish happens. npm's documentation says a new
    trusted publisher expires if no publish uses it within two days, so add
    them shortly before the release that will use them.
@@ -171,7 +173,7 @@ token for a short-lived upload token and uploads a signed attestation
    the `sourceorrery` project.
 2. The project's *Manage → Publishing → Add a new publisher → GitHub*:
    Owner `Netizine`, Repository name `sourceorrery`, Workflow name
-   `release.yml`, Environment name empty. Then a second publisher with
+   `release.yml`, Environment name empty (`release` once [the release environment](#the-release-environment) is set up). Then a second publisher with
    Workflow name `ReleasePackages.yaml`.
 3. Delete any `PYPI_API_TOKEN` repository secret and revoke the token on
    pypi.org; nothing reads it any more.
@@ -191,15 +193,14 @@ job's GitHub identity token for a crates.io token that lives 30 minutes
 and revokes it when the job ends. crates.io grants it only for crates
 whose settings name the workflow, so every crate needs the setting, or the
 publish stops at the first crate without it. A crate that crates.io does
-not have yet has no settings: `sourceorrery-provider-azure` and
-`sourceorrery-os` are new in 0.3.0, so the 0.3.0 release runs with
-`bootstrap_providers` (their first publication with
-`CRATES_BOOTSTRAP_TOKEN`), and the steps below follow it for those two.
-Leave `bootstrap_providers` off once every crate has its setting.
+not have yet has no settings: its first publication runs with
+`bootstrap_providers` (with `CRATES_BOOTSTRAP_TOKEN`), and the steps
+below follow it for that crate. Every current crate is on crates.io
+with its setting, so a release leaves `bootstrap_providers` off.
 
 1. For each crate, *Settings → Trusted Publishing → Add →
    GitHub*: Repository owner `Netizine`, Repository name `sourceorrery`,
-   Workflow filename `release.yml`, Environment empty. Then a second
+   Workflow filename `release.yml`, Environment empty (`release` once [the release environment](#the-release-environment) is set up). Then a second
    configuration with `ReleasePackages.yaml`.
 2. Delete any `CARGO_REGISTRY_TOKEN` repository secret and revoke the token
    under *Account Settings → API Tokens*.
@@ -212,7 +213,7 @@ Leave `bootstrap_providers` off once every crate has its setting.
 For local packaging validation without uploads:
 
 ```bash
-python3 scripts/release/publish-crates.py 0.3.0
+python3 scripts/release/publish-crates.py 0.3.1
 ```
 
 The helper defaults to dry-run; only `--publish` permits uploads. Registry
@@ -220,8 +221,7 @@ lookups and Cargo packaging still need network access. Existing versions
 are skipped and yanked versions or registry lookup errors stop the run.
 
 The workflow's `bootstrap_providers` option is for a crate's first
-publication (in 0.3.0, `sourceorrery-provider-azure` and
-`sourceorrery-os`). Before using it, review the helper's bootstrap allowlist and the temporary
+publication. Before using it, review the helper's bootstrap allowlist and the temporary
 token scope, then configure that new crate's trusted publisher and revoke
 the token. Do not use bootstrap as the normal release path.
 
@@ -233,7 +233,7 @@ grants it only to the workflows its policy names.
 1. Sign in to nuget.org, click your user name, then *Trusted Publishing*.
 2. Add a policy, owned by your account (or the organisation that will own
    the package): Repository Owner `Netizine`, Repository `sourceorrery`,
-   Workflow File `release.yml` (the file name only), Environment empty.
+   Workflow File `release.yml` (the file name only), Environment empty (`release` once [the release environment](#the-release-environment) is set up).
    Allow publishing new packages and new versions, glob `SourceOrrery`.
    The policy works before the package exists; the first push creates it.
 3. Add a second, identical policy with Workflow File
@@ -329,8 +329,9 @@ Before publication, inspect the external controls separately:
   appropriate reviews and administrator coverage.
 - Protect `v*` and `bindings/go/v*` tags against update/deletion and limit
   tag creation to the release workflow.
-- Use a publishing environment restricted to `main`, with required review
-  and the relevant registry credentials scoped to that environment.
+- Configure the `release` environment ([below](#the-release-environment)):
+  limited to `main`, holding the registry credentials, optionally with
+  required review.
 - Bind trusted publishers to the intended repository, workflow and
   environment. A GitHub secret's presence does not prove registry trust.
 - Check release immutability, default workflow-token permissions and
@@ -340,6 +341,38 @@ Historical repository observations are retained in the
 [remediation validation ledger](security-remediation-validation.md).
 They are dated evidence, not proof that an external setting still has the
 same value. Recheck these settings before a release.
+
+### The release environment
+
+The jobs that can publish run in the GitHub environment `release`: in
+`release.yml` every `publish-*` job and `preflight`, which reads the
+registry secrets; in **Release packages** `plan` and every job that holds
+a secret or an identity token. A dry run puts its jobs in
+`release-dry-run` instead. GitHub creates an environment, with no rules,
+the first time a job names it, and repository secrets reach every
+environment, so the workflows publish as before until the environment is
+configured. Then, in this order:
+
+1. *Settings → Environments → `release`*: under *Deployment branches and
+   tags* choose *Selected branches and tags* and add `main`. Optionally
+   add yourself as a required reviewer: each job in the environment then
+   waits for an approval (`preflight` when a release starts, the publish
+   jobs once the GitHub Release exists).
+2. Move the registry secrets into the environment's secrets and delete the
+   repository copies: `NUGET_USER`, `MAVEN_CENTRAL_USERNAME`,
+   `MAVEN_CENTRAL_PASSWORD`, `MAVEN_GPG_PRIVATE_KEY`,
+   `MAVEN_GPG_PASSPHRASE`, `PACKAGIST_USERNAME`, `PACKAGIST_API_TOKEN`,
+   `PACKAGING_TOKEN`, `WINGET_TOKEN` and `CRATES_BOOTSTRAP_TOKEN`. Leave
+   `release-dry-run` without secrets; a dry run then skips the Homebrew,
+   Scoop and WinGet jobs, which need their token to run at all.
+3. Set Environment `release` on every trusted publisher, for both workflow
+   files: each crate on crates.io, PyPI, each npm package, and NuGet's two
+   policies. An identity token from a dry run, a branch or any job outside
+   the environment is then refused.
+
+The next real release exercises it: a registry that does not accept the
+environment fails its job (crates.io and PyPI loudly), and **Release
+packages** can publish that registry once its setting is fixed.
 
 ## Publishing an existing release
 
@@ -380,9 +413,14 @@ skipped, and npm, NuGet, Maven Central and Packagist are skipped while
 their variable or secrets are missing; a ticked crates.io or PyPI box
 publishes using its configured trust (with the temporary provider-token
 exception above). A dry run checks every ticked
-registry, with or without secrets, and uploads nothing.
+registry, with or without secrets, and uploads nothing. It reports a
+release-gate problem as a warning, except one: a tag whose commit is not on
+`main` is refused, because the crates.io and Maven Central jobs build that
+commit's code while they hold `id-token: write`, so a dry run runs only
+code already merged. It never imports the Maven signing key (the dry run
+builds unsigned).
 
-For a partially completed 0.3.0 release, select `v0.3.0` and the failed
+For a partially completed 0.3.1 release, select `v0.3.1` and the failed
 registries, run a dry run, then dispatch again with **dry_run** unticked.
 Tick **bootstrap_providers** only while a crate in the helper's bootstrap
 list is still missing from crates.io. The job uses the release tag's sources and skips

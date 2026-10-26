@@ -14,8 +14,10 @@
 //! names another cloud's (or an emulator's) sign-in authority, for a stored
 //! service principal too.
 
-use std::fmt;
+use std::ffi::OsStr;
+use std::process::{Command, Output};
 use std::sync::{Arc, OnceLock};
+use std::{fmt, io, thread};
 
 use async_trait::async_trait;
 use azure_core::cloud::{CloudConfiguration, CustomConfiguration};
@@ -24,12 +26,69 @@ use azure_core::error::ErrorKind;
 use azure_core::http::ClientOptions;
 use azure_identity::{
     ClientAssertionCredentialOptions, ClientSecretCredential, ClientSecretCredentialOptions,
-    DeveloperToolsCredential, ManagedIdentityCredential, ManagedIdentityCredentialOptions,
-    UserAssignedId, WorkloadIdentityCredential, WorkloadIdentityCredentialOptions,
+    DeveloperToolsCredential, DeveloperToolsCredentialOptions, Executor, ManagedIdentityCredential,
+    ManagedIdentityCredentialOptions, UserAssignedId, WorkloadIdentityCredential,
+    WorkloadIdentityCredentialOptions,
 };
+use futures::channel::oneshot;
 use sourceorrery_core::{Credentials, Provider, Result, SecretError};
 
 const AUTHORITY_HOST: &str = "AZURE_AUTHORITY_HOST";
+
+/// The variables that open a vault or answer its view check: the identity
+/// helpers never get them, as `run`'s and the rotation hooks' children don't.
+const UNLOCK_ENV_VARS: [&str; 5] = [
+    "SOURCEORRERY_RECOVERY_KEY",
+    "SOURCEORRERY_RECOVERY_KEY_FILE",
+    "SOURCEORRERY_PASSWORD",
+    "SOURCEORRERY_PASSWORD_FILE",
+    "SOURCEORRERY_TOTP",
+];
+
+/// Starts the Azure CLI and the Azure Developer CLI for the developer-tools
+/// credential. The SDK runs `cmd /C "cd %SYSTEMROOT% && az ..."` (`/bin/sh -c
+/// "cd /bin && ..."` elsewhere) in the caller's working directory, but on
+/// Windows `cd` without `/d` does not leave another drive, and cmd looks for
+/// `az` in the current directory before `PATH`: a checkout or a shared
+/// folder on another drive could supply it. So the shell starts by its full
+/// path, in that directory itself, and without the unlock variables.
+#[derive(Debug)]
+struct HelperExecutor;
+
+impl HelperExecutor {
+    fn command(program: &OsStr) -> Command {
+        #[cfg(windows)]
+        if program == "cmd"
+            && let Some(root) = std::env::var_os("SYSTEMROOT")
+        {
+            let mut command =
+                Command::new(std::path::Path::new(&root).join("System32").join("cmd.exe"));
+            command.current_dir(root);
+            return command;
+        }
+        #[cfg(not(windows))]
+        if program == "/bin/sh" {
+            let mut command = Command::new(program);
+            command.current_dir("/bin");
+            return command;
+        }
+        Command::new(program)
+    }
+}
+
+#[async_trait]
+impl Executor for HelperExecutor {
+    async fn run(&self, program: &OsStr, args: &[&OsStr]) -> io::Result<Output> {
+        let mut command = Self::command(program);
+        command.args(args);
+        for name in UNLOCK_ENV_VARS {
+            command.env_remove(name);
+        }
+        let (tx, rx) = oneshot::channel();
+        thread::spawn(move || tx.send(command.output()));
+        rx.await.map_err(io::Error::other)?
+    }
+}
 
 /// The cloud `AZURE_AUTHORITY_HOST` names; Azure's public cloud when it is
 /// unset or empty. Every client is given this explicitly, because without
@@ -145,7 +204,10 @@ impl Chain {
         };
         sources.push(("workload identity", workload));
 
-        let tools = DeveloperToolsCredential::new(None).map_or_else(
+        let tools = DeveloperToolsCredential::new(Some(DeveloperToolsCredentialOptions {
+            executor: Some(Arc::new(HelperExecutor)),
+        }))
+        .map_or_else(
             |err| Source::Unavailable(describe(&err)),
             |c| Source::Ready(c),
         );
@@ -283,6 +345,35 @@ mod tests {
 
     fn public() -> Arc<CloudConfiguration> {
         Arc::new(CloudConfiguration::AzurePublic)
+    }
+
+    /// The developer tools' shell starts in the system directory, not in the
+    /// process's working directory (a checkout), whatever drive that is on.
+    #[test]
+    fn the_identity_helpers_start_in_the_system_directory() {
+        let (shell, switch, expected) = if cfg!(windows) {
+            let root = std::env::var("SYSTEMROOT").expect("SYSTEMROOT");
+            ("cmd", "/C", root)
+        } else {
+            ("/bin/sh", "-c", "/bin".to_owned())
+        };
+        let shown = if cfg!(windows) { "cd" } else { "pwd -P" };
+        let here = std::env::current_dir().unwrap();
+        assert_ne!(
+            here.to_string_lossy().to_lowercase(),
+            expected.to_lowercase()
+        );
+        let output = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(
+                HelperExecutor.run(OsStr::new(shell), &[OsStr::new(switch), OsStr::new(shown)]),
+            )
+            .unwrap();
+        assert!(output.status.success());
+        let dir = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let canonical = |p: &str| std::fs::canonicalize(p).unwrap();
+        assert_eq!(canonical(&dir), canonical(&expected), "{dir}");
     }
 
     #[test]

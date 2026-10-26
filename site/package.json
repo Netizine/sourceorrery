@@ -1,7 +1,7 @@
 {
   "name": "sourceorrery-site",
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "scripts": {
     "sync": "node scripts/sync-docs.mjs",
     "predev": "npm run sync",

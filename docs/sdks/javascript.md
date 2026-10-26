@@ -22,7 +22,7 @@
 ### From npm
 
 ```bash
-npm install @sourceorreryai/sdk@0.3.0
+npm install @sourceorreryai/sdk@0.3.1
 ```
 
 [`@sourceorreryai/sdk` on npm](https://www.npmjs.com/package/@sourceorreryai/sdk)
@@ -30,15 +30,19 @@ is a napi-rs native addon for Node.js 20+ with TypeScript types included.
 The main package pulls in the matching one of six platform packages
 (`@sourceorreryai/sdk-<platform>` for Windows x64 and arm64, macOS x64 and
 arm64, Linux glibc x64 and arm64) as an optional dependency, so nothing is
-compiled on install. Every package is published by trusted publishing
-with provenance, which `npm audit signatures` checks
-([Supply chain](../supply-chain.md#npm)).
+compiled on install. The addon is loaded only from this install: the
+platform package beside `@sourceorreryai/sdk` (or inside it), never a
+module of that name found in a parent directory's `node_modules`, so an
+install without it (`--omit=optional`, 32-bit Node) fails with an error
+naming the package rather than loading what another account put there.
+Every package is published by trusted publishing with provenance, which
+`npm audit signatures` checks ([Supply chain](../supply-chain.md#npm)).
 
 ### From the GitHub release
 
-The [v0.3.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0)
-carries the same packages as tarballs: `sourceorreryai-sdk-0.3.0.tgz` is
-the main package, and `sourceorreryai-sdk-<platform>-0.3.0.tgz` (one each
+The [v0.3.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.1)
+carries the same packages as tarballs: `sourceorreryai-sdk-0.3.1.tgz` is
+the main package, and `sourceorreryai-sdk-<platform>-0.3.1.tgz` (one each
 for `win32-x64-msvc`, `win32-arm64-msvc`, `darwin-x64`, `darwin-arm64`,
 `linux-x64-gnu` and `linux-arm64-gnu`) carries the native addon for that
 platform. Install the main tarball and your platform's together:
@@ -48,19 +52,19 @@ platform. Install the main tarball and your platform's together:
 #### Windows
 
 ```powershell
-npm install https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorreryai-sdk-0.3.0.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorreryai-sdk-win32-x64-msvc-0.3.0.tgz   # win32-arm64-msvc on Arm
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorreryai-sdk-0.3.1.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorreryai-sdk-win32-x64-msvc-0.3.1.tgz   # win32-arm64-msvc on Arm
 ```
 
 #### macOS
 
 ```bash
-npm install https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorreryai-sdk-0.3.0.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorreryai-sdk-darwin-arm64-0.3.0.tgz   # darwin-x64 on Intel
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorreryai-sdk-0.3.1.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorreryai-sdk-darwin-arm64-0.3.1.tgz   # darwin-x64 on Intel
 ```
 
 #### Linux
 
 ```bash
-npm install https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorreryai-sdk-0.3.0.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorreryai-sdk-linux-x64-gnu-0.3.0.tgz   # linux-arm64-gnu on arm64
+npm install https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorreryai-sdk-0.3.1.tgz https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorreryai-sdk-linux-x64-gnu-0.3.1.tgz   # linux-arm64-gnu on arm64
 ```
 
 <!-- /tabs -->
@@ -193,7 +197,7 @@ Get the code and build the addon for this machine:
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.3.0              # or stay on main for the newest changes
+git checkout v0.3.1              # or stay on main for the newest changes
 cd bindings/node
 npm ci                           # the napi-rs CLI and TypeScript
 npm run build                    # napi build --platform --release

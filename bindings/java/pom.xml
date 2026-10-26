@@ -7,7 +7,7 @@
   <groupId>ai.sourceorrery</groupId>
   <artifactId>sourceorrery</artifactId>
   <!-- Overridden by the release workflow: mvn versions:set -DnewVersion=... -->
-  <version>0.3.0</version>
+  <version>0.3.1</version>
   <packaging>jar</packaging>
 
   <name>SourceOrrery</name>
@@ -75,7 +75,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.6.0</version>
+        <version>3.6.1</version>
         <configuration>
           <argLine>@{jacocoArgLine} --enable-native-access=ALL-UNNAMED</argLine>
         </configuration>

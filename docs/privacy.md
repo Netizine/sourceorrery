@@ -7,8 +7,8 @@ site, and advertising consent is always denied when using Clarity.
 
 ## Your choice
 
-Microsoft Clarity stays unloaded until you choose **Allow analytics**.
-Choosing **No analytics** prevents its script and analytics requests,
+Microsoft Clarity stays unloaded until you choose **Accept**.
+Choosing **Reject** prevents its script and analytics requests,
 including cookieless collection. The site works with either choice.
 
 Use **Privacy choices** in any page’s footer to change your preference.

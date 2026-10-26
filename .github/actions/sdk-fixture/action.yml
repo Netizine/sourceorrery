@@ -16,6 +16,11 @@ runs:
     - name: Build the CLI and the C ABI
       shell: bash
       run: cargo build --release --locked -p sourceorrery-cli -p sourceorrery-ffi
+    # What the release ships: .cargo/config.toml links the C runtime statically.
+    - name: The Windows binaries import no C runtime DLL
+      if: runner.os == 'Windows'
+      shell: bash
+      run: python scripts/release/check-pe-imports.py target/release/sourceorrery.exe target/release/sourceorrery_ffi.dll
     - name: Create the fixture vault with the CLI
       shell: bash
       run: bash scripts/ci/fixture-vault.sh "$RUNNER_TEMP/sourceorrery-home"

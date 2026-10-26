@@ -36,7 +36,12 @@ and `retire`, `SOURCEORRERY_VERSION` (the version the value belongs to).
 The variables that open a vault or answer its view check
 (`SOURCEORRERY_RECOVERY_KEY`, `SOURCEORRERY_RECOVERY_KEY_FILE`,
 `SOURCEORRERY_PASSWORD`, `SOURCEORRERY_PASSWORD_FILE`, `SOURCEORRERY_TOTP`)
-are removed from the hook's environment.
+are removed from the hook's environment. So are the secret's own variable,
+`SOURCEORRERY_VERSION` and `SOURCEORRERY_RETIRED_VERSION` whenever the
+vault does not set them: when the current version cannot be read
+(disabled, expired, deleted or missing), the issue hook runs without the
+variable, never with a value the shell or an enclosing `sourceorrery run`
+left behind. Any other failure to read it stops the rotation.
 Hooks inherit the terminal for their own output; SourceOrrery prints
 version ids and states, never a value.
 
@@ -137,8 +142,13 @@ are `secret_get` events. There is no rotation-specific event.
 
 Refusals carry the code `rotation` with the versions and times involved: a
 validated candidate waiting for activation blocks a new rotation (`--step
-activate` it, or let it fail validation), there is nothing to activate or
-retire, or the grace period has not ended.
+activate` it, or let it fail validation), so does a version an earlier
+rotation replaced that is still waiting to be retired (`--step retire`,
+with `--now` inside its grace period: a new rotation would replace the
+record that it awaits retirement, and its `retire` hook, which revokes it
+at the issuer, would never run), there is nothing to activate or
+retire, or the grace period has not ended. A grace period is at most
+`3650d` (ten years).
 
 ## Where it does not work
 

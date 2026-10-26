@@ -25,20 +25,20 @@ links, from the release (or [built from source](#building-from-source)).
 ### The module
 
 ```bash
-go get github.com/netizine/sourceorrery/bindings/go@v0.3.0
+go get github.com/netizine/sourceorrery/bindings/go@v0.3.1
 ```
 
 [The module on pkg.go.dev](https://pkg.go.dev/github.com/netizine/sourceorrery/bindings/go)
-is served by the Go module proxy from the `bindings/go/v0.3.0` tag, and
+is served by the Go module proxy from the `bindings/go/v0.3.1` tag, and
 `go` checks it against the Go checksum database. It is a cgo binding over
 the C ABI with the header vendored in the module, so a C toolchain is
 required: gcc or clang, or MinGW-w64 gcc on Windows.
 
 ### The native library, from the release
 
-The shared library comes from the `sourceorrery-ffi-0.3.0-<target>`
+The shared library comes from the `sourceorrery-ffi-0.3.1-<target>`
 archive on the
-[v0.3.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0).
+[v0.3.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.1).
 Download the archive for your platform, unpack it, and tell the linker and
 the loader where it is:
 
@@ -47,9 +47,9 @@ the loader where it is:
 #### Windows
 
 ```powershell
-$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.3.0"
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.3.1"
 $dir = "$env:LOCALAPPDATA\sourceorrery-ffi"
-Invoke-WebRequest "$release/sourceorrery-ffi-0.3.0-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
+Invoke-WebRequest "$release/sourceorrery-ffi-0.3.1-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
 Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 
 $env:CGO_LDFLAGS = "-L$dir"
@@ -63,10 +63,10 @@ static archive next to it is built by MSVC and MinGW cannot consume it.
 #### macOS
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
-archive=sourceorrery-ffi-0.3.0-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.1
+archive=sourceorrery-ffi-0.3.1-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
-sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 
 export CGO_LDFLAGS="-L/opt/sourceorrery"
 export DYLD_LIBRARY_PATH=/opt/sourceorrery
@@ -76,10 +76,10 @@ go build ./...
 #### Linux
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
-archive=sourceorrery-ffi-0.3.0-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.1
+archive=sourceorrery-ffi-0.3.1-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
-sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" -C /opt/sourceorrery --strip-components=1
+sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 
 export CGO_LDFLAGS="-L/opt/sourceorrery"
 export LD_LIBRARY_PATH=/opt/sourceorrery
@@ -215,7 +215,7 @@ library it links:
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.3.0              # or stay on main for the newest changes
+git checkout v0.3.1              # or stay on main for the newest changes
 cargo build --release -p sourceorrery-ffi
 ```
 

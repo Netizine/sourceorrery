@@ -1,6 +1,6 @@
 # sourceorrery.ai
 
-Documentation for the **SourceOrrery 0.3.0** build, using Astro 7 and Starlight.
+Documentation for the **SourceOrrery 0.3.1** build, using Astro 7 and Starlight.
 The public site is deployed separately; local changes do not publish it.
 
 ## Work on the documentation

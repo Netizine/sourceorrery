@@ -22,13 +22,13 @@
 ### From NuGet
 
 ```bash
-dotnet add package SourceOrrery --version 0.3.0
+dotnet add package SourceOrrery --version 0.3.1
 ```
 
 or, in the project file:
 
 ```xml
-<PackageReference Include="SourceOrrery" Version="0.3.0" />
+<PackageReference Include="SourceOrrery" Version="0.3.1" />
 ```
 
 [`SourceOrrery` on NuGet](https://www.nuget.org/packages/SourceOrrery)
@@ -44,8 +44,8 @@ Targets .NET 8 and later. P/Invoke is source-generated with
 
 ### From the GitHub release
 
-The same package, `SourceOrrery.0.3.0.nupkg`, is attached to the
-[v0.3.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0).
+The same package, `SourceOrrery.0.3.1.nupkg`, is attached to the
+[v0.3.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.1).
 Put it in a folder, register that folder as a package source in the
 repository's `nuget.config`, and add the package:
 
@@ -55,30 +55,30 @@ repository's `nuget.config`, and add the package:
 
 ```powershell
 New-Item -ItemType Directory -Force packages | Out-Null
-Invoke-WebRequest https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/SourceOrrery.0.3.0.nupkg -OutFile packages\SourceOrrery.0.3.0.nupkg
+Invoke-WebRequest https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/SourceOrrery.0.3.1.nupkg -OutFile packages\SourceOrrery.0.3.1.nupkg
 dotnet new nugetconfig                        # once per repository, if it has no nuget.config yet
 dotnet nuget add source .\packages --name sourceorrery-release --configfile nuget.config
-dotnet add package SourceOrrery --version 0.3.0
+dotnet add package SourceOrrery --version 0.3.1
 ```
 
 #### macOS
 
 ```bash
 mkdir -p packages
-curl -L -o packages/SourceOrrery.0.3.0.nupkg https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/SourceOrrery.0.3.0.nupkg
+curl -L -o packages/SourceOrrery.0.3.1.nupkg https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/SourceOrrery.0.3.1.nupkg
 dotnet new nugetconfig                        # once per repository, if it has no nuget.config yet
 dotnet nuget add source ./packages --name sourceorrery-release --configfile nuget.config
-dotnet add package SourceOrrery --version 0.3.0
+dotnet add package SourceOrrery --version 0.3.1
 ```
 
 #### Linux
 
 ```bash
 mkdir -p packages
-curl -L -o packages/SourceOrrery.0.3.0.nupkg https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/SourceOrrery.0.3.0.nupkg
+curl -L -o packages/SourceOrrery.0.3.1.nupkg https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/SourceOrrery.0.3.1.nupkg
 dotnet new nugetconfig                        # once per repository, if it has no nuget.config yet
 dotnet nuget add source ./packages --name sourceorrery-release --configfile nuget.config
-dotnet add package SourceOrrery --version 0.3.0
+dotnet add package SourceOrrery --version 0.3.1
 ```
 
 <!-- /tabs -->
@@ -203,7 +203,7 @@ NuGet package:
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.3.0              # or stay on main for the newest changes
+git checkout v0.3.1              # or stay on main for the newest changes
 cargo build --release -p sourceorrery-ffi
 dotnet pack bindings/dotnet/SourceOrrery/SourceOrrery.csproj -c Release -o dist/nuget
 ```

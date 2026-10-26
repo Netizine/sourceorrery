@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Decides whether a change can affect code, for the `changes` job in
 # .github/workflows/ci.yml. Prints every changed file and writes
-# `code=true` or `code=false` to $GITHUB_OUTPUT.
+# `code=true` or `code=false`, and `deps=true` or `deps=false`, to
+# $GITHUB_OUTPUT.
 #
 # A change is docs-only when every changed file is documentation:
 #   - anything under docs/ or site/ (the site has its own build, docs.yml),
@@ -10,6 +11,12 @@
 # Anything else is code. So is every case where the diff cannot be
 # computed: an unknown event, a missing base, an empty diff. Renames count
 # both paths (--no-renames), so moving a source file into docs/ is code.
+#
+# `deps` is true for every code change and for a lock file, package
+# manifest or npm configuration that would count as documentation (the
+# site's npm graph, or one added under docs/ or site/): the dependency
+# audit runs for it, the builds do not. The site's dependencies reach the
+# deployed site, and the audit also fails on a graph its inventory lacks.
 #
 # In CI:   EVENT and BEFORE come from the workflow (see ci.yml).
 # Locally: bash scripts/ci/classify-changes.sh <base> <head>
@@ -20,6 +27,17 @@ is_docs() {
 		docs/* | site/*) return 0 ;;
 		crates/* | bindings/*) return 1 ;;
 		*.md | *.png | *.svg | *.jpg | *.jpeg | *.gif | *.webp) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+# A dependency graph's file, by name: the names LOCK_OR_MANIFEST in
+# scripts/ci/dependency-audit.py looks for, and .npmrc.
+is_dependency_graph() {
+	case "${1##*/}" in
+		Cargo.lock | Cargo.toml | package-lock.json | package.json | .npmrc | \
+			requirements*.txt | pyproject.toml | go.mod | composer.json | pom.xml | \
+			*.csproj | CMakeLists.txt) return 0 ;;
 		*) return 1 ;;
 	esac
 }
@@ -45,19 +63,28 @@ else
 fi
 
 code=true
+deps=true
 if [[ -n "$base" ]] && files="$(git diff --name-only --no-renames "$base" "$head")" && [[ -n "$files" ]]; then
 	code=false
+	deps=false
 	while IFS= read -r file; do
-		if is_docs "$file"; then
-			echo "docs  $file"
-		else
+		if ! is_docs "$file"; then
 			echo "code  $file"
 			code=true
+			deps=true
+		elif is_dependency_graph "$file"; then
+			echo "deps  $file"
+			deps=true
+		else
+			echo "docs  $file"
 		fi
 	done <<<"$files"
 else
 	echo "No diff to classify; treating the change as code."
 fi
 
-echo "code=$code"
-echo "code=$code" >>"${GITHUB_OUTPUT:-/dev/null}"
+echo "code=$code deps=$deps"
+{
+	echo "code=$code"
+	echo "deps=$deps"
+} >>"${GITHUB_OUTPUT:-/dev/null}"

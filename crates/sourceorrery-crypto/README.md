@@ -34,7 +34,7 @@ zeroised when dropped:
 | Sub-keys and integrity tags | HKDF-SHA256, HMAC-SHA256 | `hkdf`, `hmac`, `sha2` |
 | Randomness | the OS CSPRNG | `getrandom` |
 
-In 0.3.0, Argon2id verifies the optional view-check password. The vault key
+In 0.3.1, Argon2id verifies the optional view-check password. The vault key
 is wrapped using a key from the OS credential store or a wrapping key
 derived from the recovery key with HKDF. The view-check password does not
 derive the vault encryption key.

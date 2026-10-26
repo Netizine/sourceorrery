@@ -1,4 +1,4 @@
-# SourceOrrery 0.3.0 architecture
+# SourceOrrery 0.3.1 architecture
 
 SourceOrrery is a local-first secrets platform. A local vault owns the
 catalog, keys, provider connections, project records and audit history.
@@ -9,7 +9,7 @@ same Rust client regardless of that storage choice.
 The CLI administers vaults and secrets. The terminal browser displays
 metadata only. Application SDKs expose read-only operations. There is no
 SourceOrrery daemon, local IPC service or same-user agent isolation in
-0.3.0; those are [future work](roadmap.md#milestone-3--local-broker-and-agent-isolation).
+0.3.1; those are [future work](roadmap.md#milestone-3--local-broker-and-agent-isolation).
 
 ## Components and dependency direction
 
@@ -29,16 +29,9 @@ SourceOrrery daemon, local IPC service or same-user agent isolation in
 | `bindings/` | Thin native extensions or C ABI wrappers; error mapping and language-appropriate value ownership. |
 | `tests/conformance` | Shared lifecycle and read-only SDK scenarios. |
 
-```text
-CLI ───────────────────────────► core / storage / Routed
-Rust SDK ──► sourceorrery ──────► core / storage / Routed
-Python, Node native extensions ─► sourceorrery
-Java, .NET, Go, C, C++, PHP ─────► C ABI ──► sourceorrery
+![SourceOrrery architecture: commit secret references in project manifests, then retrieve values at runtime through the shared Rust core and local or provider-backed storage.](../site/public/images/sourceorrery-architecture.png)
 
-Routed ──► local SQLite values
-       └─► provider adapters ──► HashiCorp Vault / AWS / Azure
-storage ──► crypto; private key-file creation ──► sourceorrery-os
-```
+[Open the architecture diagram at full size](../site/public/images/sourceorrery-architecture.png).
 
 The local vault is still required when all values are remote. Its catalog
 decides where a secret is kept, its connection supplies provider settings
@@ -168,7 +161,7 @@ it does not sandbox code that can invoke other libraries or the CLI.
 Python and Node embed the Rust client in native extensions. Other
 languages use the C ABI, whose application entry points are read-only;
 write-capable C tooling entry points are separate. ABI **2** and contract
-**2** are the 0.3.0 baseline, and bindings reject incompatible libraries.
+**2** are the 0.3.1 baseline, and bindings reject incompatible libraries.
 Values are held in zeroising/redacted native buffers. Copies exposed as a
 language string, byte array, file or process environment are the caller's
 responsibility. [SDK guides](sdks/index.md)
