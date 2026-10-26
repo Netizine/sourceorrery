@@ -57,6 +57,7 @@ test('a module planted in a parent node_modules is never loaded', () => {
       'win32-ia32-msvc',
       'darwin-x64',
       'darwin-arm64',
+      'darwin-universal',
       'linux-x64-gnu',
       'linux-arm64-gnu',
       'linux-x64-musl',
