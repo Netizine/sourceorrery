@@ -28,6 +28,13 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use async_trait::async_trait;
+use aws_config::ecs::EcsCredentialsProvider;
+use aws_config::environment::EnvironmentVariableCredentialsProvider;
+use aws_config::imds::credentials::ImdsCredentialsProvider;
+use aws_config::meta::credentials::CredentialsProviderChain;
+use aws_config::profile::ProfileFileCredentialsProvider;
+use aws_config::provider_config::ProviderConfig;
+use aws_config::web_identity_token::WebIdentityTokenCredentialsProvider;
 use aws_sdk_secretsmanager::Client;
 use aws_sdk_secretsmanager::config::Credentials as AccessKey;
 use aws_sdk_secretsmanager::config::{BehaviorVersion, ProvideCredentials, Region};
@@ -50,6 +57,54 @@ fn unknown(reason: String) -> SecretError {
     SecretError::OutcomeUnknown {
         at: Provider::AwsSecretsManager.name().to_owned(),
         reason,
+    }
+}
+
+/// The variable that lets a connection with no stored access key use the
+/// EC2 instance role: only the value `on` does. The instance-metadata
+/// address (`http://169.254.169.254`) is plain HTTP, and a connection names
+/// a region but no account, so off an instance whatever answers that
+/// address on the network (the router of the Wi-Fi in use) would choose
+/// the account values are written to and read from.
+pub const INSTANCE_ROLE_VARIABLE: &str = "SOURCEORRERY_AWS_INSTANCE_ROLE";
+
+/// Whether [`INSTANCE_ROLE_VARIABLE`]'s value turns the instance role on.
+fn instance_role_allowed(value: Option<&str>) -> bool {
+    value == Some("on")
+}
+
+/// The AWS SDK's default credential chain, in its order (aws-config's
+/// `DefaultCredentialsChain`): the environment, the shared config and
+/// credentials files, a web identity, the ECS task role; the EC2 instance
+/// role last, and only when `instance_role`.
+fn credentials_chain(config: &ProviderConfig, instance_role: bool) -> CredentialsProviderChain {
+    let chain = CredentialsProviderChain::first_try(
+        "Environment",
+        EnvironmentVariableCredentialsProvider::new(),
+    )
+    .or_else(
+        "Profile",
+        ProfileFileCredentialsProvider::builder()
+            .configure(config)
+            .build(),
+    )
+    .or_else(
+        "WebIdentityToken",
+        WebIdentityTokenCredentialsProvider::builder()
+            .configure(config)
+            .build(),
+    )
+    .or_else(
+        "EcsContainer",
+        EcsCredentialsProvider::builder().configure(config).build(),
+    );
+    if instance_role {
+        chain.or_else(
+            "Ec2InstanceMetadata",
+            ImdsCredentialsProvider::builder().configure(config).build(),
+        )
+    } else {
+        chain
     }
 }
 
@@ -211,8 +266,9 @@ where
 impl AwsClient {
     /// Connect as the vault `vault_name`: load the SDK configuration
     /// (`settings.region`, the endpoint when given, and the access key a
-    /// connection stores, or else the default credential chain) and resolve
-    /// credentials once, so a process with none fails here with
+    /// connection stores, or else the default credential chain, which takes
+    /// the EC2 instance role only when [`INSTANCE_ROLE_VARIABLE`] is `on`)
+    /// and resolve credentials once, so a process with none fails here with
     /// `unauthenticated` and no request is made. Credentials for another
     /// provider are `invalid_argument`.
     pub async fn connect(
@@ -220,13 +276,27 @@ impl AwsClient {
         settings: &Settings,
         credentials: Option<&Credentials>,
     ) -> Result<Self> {
-        let config = Self::sdk_config(settings, credentials).await?;
+        let instance_role =
+            instance_role_allowed(std::env::var(INSTANCE_ROLE_VARIABLE).ok().as_deref());
+        let config = Self::sdk_config(settings, credentials, instance_role).await?;
         let provider = config.credentials_provider().ok_or_else(|| {
             unauthenticated("the SDK configuration has no credentials provider".to_owned())
         })?;
         provider.provide_credentials().await.map_err(|err| {
+            let (tried, hint) = if instance_role {
+                (
+                    ", the ECS task role or the EC2 instance role",
+                    String::new(),
+                )
+            } else {
+                (
+                    " or the ECS task role",
+                    format!("; on EC2, set {INSTANCE_ROLE_VARIABLE}=on to use the instance role"),
+                )
+            };
             unauthenticated(format!(
-                "no credentials were found by the AWS default chain: {err}"
+                "no credentials were found in the environment, the AWS config and credentials \
+                 files, a web identity{tried} ({err}){hint}"
             ))
         })?;
         Ok(Self {
@@ -248,10 +318,12 @@ impl AwsClient {
 
     /// The SDK configuration [`Self::connect`] uses: the region, the
     /// endpoint when given, and the stored access key or else the default
-    /// credential chain. Nothing is resolved or requested here.
+    /// credential chain, with the EC2 instance role only when
+    /// `instance_role`. Nothing is resolved or requested here.
     async fn sdk_config(
         settings: &Settings,
         credentials: Option<&Credentials>,
+        instance_role: bool,
     ) -> Result<aws_config::SdkConfig> {
         // Nothing is sent twice (ADR 0011): the SDK's retries would repeat a
         // change whose answer was lost, and a refusal of the repeat would
@@ -266,7 +338,11 @@ impl AwsClient {
             loader = loader.endpoint_url(url);
         }
         match credentials {
-            None => {}
+            None => {
+                let chain = ProviderConfig::default()
+                    .with_region(Some(Region::new(settings.region.clone())));
+                loader = loader.credentials_provider(credentials_chain(&chain, instance_role));
+            }
             Some(Credentials::AwsAccessKey {
                 access_key_id,
                 secret_access_key,
@@ -1017,7 +1093,9 @@ mod tests {
         };
         // The stored key replaces the chain, whatever the environment holds,
         // and resolving it needs no network, so connecting succeeds too.
-        let config = AwsClient::sdk_config(&settings, Some(&key)).await.unwrap();
+        let config = AwsClient::sdk_config(&settings, Some(&key), true)
+            .await
+            .unwrap();
         let resolved = config
             .credentials_provider()
             .unwrap()
@@ -1029,5 +1107,49 @@ mod tests {
         AwsClient::connect("v", &settings, Some(&key))
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn only_on_turns_the_instance_role_on() {
+        assert!(instance_role_allowed(Some("on")));
+        for value in [
+            None,
+            Some(""),
+            Some("off"),
+            Some("ON"),
+            Some("1"),
+            Some("true"),
+            Some(" on"),
+        ] {
+            assert!(!instance_role_allowed(value), "{value:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_chain_takes_the_instance_role_only_when_asked() {
+        // The SDK's default chain ends with Ec2InstanceMetadata, a plain-HTTP
+        // address anyone on the network path can answer; ours stops before it.
+        let base = r#""Environment", "Profile", "WebIdentityToken", "EcsContainer""#;
+        let settings = Settings::from_connection(&ConnectionSettings::AwsSecretsManager {
+            region: "eu-west-1".to_owned(),
+            prefix: None,
+            endpoint_url: Some("http://localhost:9".to_owned()),
+        })
+        .unwrap();
+        for (instance_role, providers) in [
+            (false, base.to_owned()),
+            (true, format!(r#"{base}, "Ec2InstanceMetadata""#)),
+        ] {
+            let config = AwsClient::sdk_config(&settings, None, instance_role)
+                .await
+                .unwrap();
+            let chain = format!("{:?}", config.credentials_provider().unwrap());
+            assert!(
+                chain.contains(&format!(
+                    "CredentialsProviderChain {{ providers: [{providers}] }}"
+                )),
+                "{instance_role}: {chain}"
+            );
+        }
     }
 }

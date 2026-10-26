@@ -18,7 +18,8 @@ sourceorrery vault create production --recovery-key-out production.recovery-key 
 The prefix is optional: every secret name is placed under it. The endpoint
 is optional too, for a private endpoint or an emulator (`https://`, or
 `http://` for this machine). Without a stored access key the connection
-uses the AWS default credential chain.
+uses the AWS default credential chain, without the EC2 instance role
+unless `SOURCEORRERY_AWS_INSTANCE_ROLE=on` ([Credentials](#credentials)).
 
 A prefix should end in a separator (`myapp/`): names never start with a
 hyphen, but `myapp` alone would place `myapp` and `myapp-other` under one
@@ -73,13 +74,31 @@ An access key stored in the connection is used when there is one.
 Otherwise the official AWS SDK's default credential chain supplies the
 credentials, in its usual order: the environment (`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`,
 `AWS_SESSION_TOKEN`), the shared config and credentials files with
-`AWS_PROFILE`, SSO, web identity (`AWS_WEB_IDENTITY_TOKEN_FILE` and
-`AWS_ROLE_ARN`, the path GitHub Actions and Kubernetes use), the ECS task
-role and the EC2 instance role. Credentials are resolved once when the
-connection is first used: a process the chain finds nothing for fails there with
-`unauthenticated`, before any request. Credentials the service rejects
-(`UnrecognizedClientException`, an expired token) are `unauthenticated`
-too; a policy that denies the call is `permission_denied`.
+`AWS_PROFILE` (static keys and roles assumed from them), web identity
+(`AWS_WEB_IDENTITY_TOKEN_FILE` and `AWS_ROLE_ARN`, the path GitHub
+Actions and Kubernetes use) and the ECS task role. Credentials are
+resolved once when the connection is first used: a process the chain
+finds nothing for fails there with `unauthenticated`, before any request.
+Credentials the service rejects (`UnrecognizedClientException`, an
+expired token) are `unauthenticated` too; a policy that denies the call
+is `permission_denied`.
+
+**The EC2 instance role is used only when asked for:** set
+`SOURCEORRERY_AWS_INSTANCE_ROLE=on` on the instance (for example in the
+service's unit file). The SDK's chain would otherwise end at the instance
+metadata address, `http://169.254.169.254`, which is plain HTTP; a
+connection names a region but no account, so on a laptop whatever
+answers that address on the network path (the router of the Wi-Fi in
+use) would choose the AWS account secrets are written to and read from.
+Without the variable, a process on EC2 with no other credentials fails
+with `unauthenticated` and a hint naming it.
+
+**SSO profiles and `credential_process` are not read.** The provider is
+built without the AWS SDK's SSO and credential-process support, so a
+profile that signs in through IAM Identity Center (`aws sso login`) or
+runs a `credential_process` fails. Export the session's credentials into
+the environment first (`aws configure export-credentials --format env`
+prints them), or store an access key in the connection.
 
 ## Mapping
 

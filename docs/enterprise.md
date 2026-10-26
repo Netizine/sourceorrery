@@ -118,11 +118,13 @@ long-running process.
 ### AWS Secrets Manager
 
 The official SDK's default credential chain supplies the identity:
-environment variables, the shared config with `AWS_PROFILE`, SSO, web
+environment variables, the shared config with `AWS_PROFILE`, web
 identity (`AWS_WEB_IDENTITY_TOKEN_FILE` and `AWS_ROLE_ARN`), the ECS task
-role, the EC2 instance role. Credentials are resolved when the vault is
-opened: no identity at all is `unauthenticated` before any request is
-made.
+role, and the EC2 instance role only on an instance that sets
+`SOURCEORRERY_AWS_INSTANCE_ROLE=on` (its metadata address is plain HTTP;
+[why](providers/aws-secrets-manager.md#credentials)). SSO profiles are not
+read. Credentials are resolved when the vault is opened: no identity at
+all is `unauthenticated` before any request is made.
 
 **GitHub Actions.** `aws-actions/configure-aws-credentials` with a
 `role-to-assume` exchanges the job's OIDC token at STS and exports the

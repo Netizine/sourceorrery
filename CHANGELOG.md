@@ -63,6 +63,16 @@ it was tested).
   old, looser policy back on the version just published (a version written
   disabled became readable). Retries are off; a lost answer is
   `outcome_unknown`.
+* **AWS Secrets Manager: the EC2 instance role only when asked for.** A
+  connection with no stored access key used the SDK's whole chain, which
+  ends at the plain-HTTP instance-metadata address; off an instance,
+  whatever answered it on the network could hand over keys for its own
+  account, and secrets were then written to and read from that account.
+  The chain now stops after the ECS task role. **On EC2, set
+  `SOURCEORRERY_AWS_INSTANCE_ROLE=on`** to keep using the instance role;
+  without it such a process fails with `unauthenticated` and a hint
+  naming the variable. The provider page no longer lists SSO, which the
+  provider never read (use `aws configure export-credentials`).
 * **The Node SDK loads its addon only from its own install.** Without its
   platform package (`--omit=optional`, 32-bit Node), and on macOS on every
   load, the generated loader looked for one in every parent directory's

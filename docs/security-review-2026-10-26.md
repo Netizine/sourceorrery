@@ -502,6 +502,16 @@ workstation without local AWS credentials whatever answers that address
 could choose the account that values are written to and read from. It is
 a lead for the next pass, not a finding: whether a workstation routes
 that address on-link is a network fact, and nothing was checked.
+Afterwards, on the maintainer's laptop, `169.254.169.254` routed to the
+Wi-Fi router (no on-link route), so whoever runs the network could answer
+it. The provider now builds the SDK's chain without the EC2 instance role
+unless `SOURCEORRERY_AWS_INSTANCE_ROLE=on` (`sourceorrery-provider-aws`,
+`credentials_chain`); binding a connection to its account would change
+the stored connection settings, which 0.3.0 readers refuse
+(`deny_unknown_fields`), and is left for a minor release. The same unit
+found that the provider is built without the SDK's `sso` and
+`credentials-process` features although the provider page listed SSO;
+the page now says those profiles are not read.
 
 Only the final tree was built and tested (each crate's tests, clippy with
 `-D warnings`, the Node loader test, workflow lint); the intermediate

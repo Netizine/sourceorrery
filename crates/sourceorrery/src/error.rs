@@ -258,7 +258,8 @@ fn credentials_hint(provider: Provider) -> &'static str {
         Provider::AwsSecretsManager => {
             "Store an access key in the vault's AWS Secrets Manager connection, or give the \
              process credentials the AWS default chain finds: AWS_ACCESS_KEY_ID and \
-             AWS_SECRET_ACCESS_KEY, AWS_PROFILE, an instance or task role, or a web identity"
+             AWS_SECRET_ACCESS_KEY, AWS_PROFILE, a task role or a web identity; on EC2, set \
+             SOURCEORRERY_AWS_INSTANCE_ROLE=on to use the instance role"
         }
         Provider::AzureKeyVault => {
             "Store a service principal in the vault's Azure Key Vault connection, or give the \
@@ -643,6 +644,20 @@ mod tests {
             err.hint()
         );
         assert!(!err.hint().contains("manifest"), "{}", err.hint());
+
+        // The EC2 instance role is not in the AWS chain unless asked for.
+        let err = Error::new(
+            &SecretError::Unauthenticated {
+                provider: "aws-secrets-manager".into(),
+                reason: "no credentials".into(),
+            },
+            &Context::default(),
+        );
+        assert!(
+            err.hint().contains("SOURCEORRERY_AWS_INSTANCE_ROLE=on"),
+            "{}",
+            err.hint()
+        );
 
         let err = Error::new(
             &SecretError::ProviderUnavailable {

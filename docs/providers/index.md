@@ -49,7 +49,7 @@ dots on the setup screens, never shown again:
 | Provider | This machine's sign-in |
 |----------|------------------------|
 | HashiCorp Vault | `VAULT_TOKEN`, `~/.vault-token` from `vault login`, an AppRole, a JWT or the pod's service account token |
-| AWS Secrets Manager | the AWS default credential chain: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, an instance or task role, or a web identity |
+| AWS Secrets Manager | the AWS default credential chain: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, `AWS_PROFILE`, a task role or a web identity; the EC2 instance role only with `SOURCEORRERY_AWS_INSTANCE_ROLE=on` |
 | Azure Key Vault | the first of: a service principal (`AZURE_CLIENT_SECRET`), workload identity federation (`AZURE_FEDERATED_TOKEN_FILE`), the Azure CLI or Azure Developer CLI, a managed identity |
 
 A connection's settings are checked before it is stored: a URL is

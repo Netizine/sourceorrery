@@ -20,6 +20,7 @@ sourceorrery [--vault NAME] [--home DIR] [-o table|json] [--recovery-key-file FI
 | `--code CODE` | `SOURCEORRERY_TOTP` | A six-digit code from the authenticator app, for a vault whose view check asks for one. Without it the code is asked for on the terminal; a code is never read from a pipe. |
 | `-v` | `SOURCEORRERY_LOG` | Diagnostics on stderr. Never prints values. |
 | | `SOURCEORRERY_KEYRING=off` | Use no OS credential store: every vault opens with its recovery key. |
+| | `SOURCEORRERY_AWS_INSTANCE_ROLE=on` | Let an AWS Secrets Manager connection with no stored access key use the EC2 instance role. Off by default: the instance-metadata address is plain HTTP, and off an instance whatever answers it could choose the account ([AWS Secrets Manager](providers/aws-secrets-manager.md#credentials)). |
 
 Exit status: `0` success, `1` any error (code in JSON mode), `2` usage error.
 `run` exits with the child's status, whole: a Windows status above 255
