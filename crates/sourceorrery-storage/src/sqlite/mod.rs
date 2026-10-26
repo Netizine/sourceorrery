@@ -81,7 +81,7 @@ use crate::{BACKEND_NAME, SCHEMA_VERSION};
 use self::audit::{
     AuditRow, AuditWriter, Checkpoints, Entry, SecretCheckpoints, chain_problem, event_from_row,
     head_problem, quarantined_message, settings_message, settings_problem, truncated_message,
-    unacknowledged_truncations, vault_checkpoints,
+    unacknowledged_truncations, vault_checkpoints, with_unverifiable,
 };
 use self::rows::{
     NewVersion, RawVersion, SecretRow, StoredSecretRow, load_ciphertext, query_raw_versions_in,
@@ -599,13 +599,14 @@ impl SqliteVault {
                 // again at every unlock.
                 return Ok(false);
             }
+            let detail = with_unverifiable(conn, key, &meta.id, &problem)?;
             writer.record(
                 conn,
                 AuditOperation::AuditVerify,
                 None,
                 None,
                 AuditOutcome::Failure,
-                Some(&problem),
+                Some(&detail),
             )?;
             problem
         };

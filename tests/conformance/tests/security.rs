@@ -1505,6 +1505,171 @@ fn truncating_the_log_to_replay_a_row_is_blocked_until_acknowledged() {
     assert!(!check.is_intact());
 }
 
+/// The history before an acknowledgement is no longer walked for links, but
+/// it still decides which checkpoint is newest: a file writer who hides an
+/// older event's checkpoint there, to put back the row from before it, is
+/// refused like any other edit of the log.
+#[test]
+fn a_checkpoint_hidden_after_an_acknowledgement_is_still_refused() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", CANARY, SetSecretOptions::default());
+    }
+    stash(&path, "secret_versions", "k");
+    let (disabled_at, ids) = {
+        let vault = fx.open_vault("dev");
+        disable(&vault, "k");
+        vault.get_secret_properties("k", None).unwrap();
+        let updates = events_of(&vault, AuditOperation::SecretUpdate, AuditOutcome::Success);
+        (updates[0].id, event_ids(&vault))
+    };
+    // Any truncation the owner acknowledges will do.
+    truncate_after(&path, ids[ids.len() - 2]);
+    let unlock = fx.unlock("dev");
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+    fx.acknowledge_truncations("dev");
+    let vault = fx.open_vault("dev");
+    assert_eq!(vault.get_secret("k", None).unwrap_err().code(), "disabled");
+    drop(vault);
+
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE audit_events SET version_tag = NULL WHERE id = ?1",
+            [i64::try_from(disabled_at).unwrap()],
+        )
+        .unwrap();
+    }
+    replay(&path, "secret_versions", "k");
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string().contains(&format!("event {disabled_at}")),
+        "{err}"
+    );
+    let vault = fx.inspect_vault("dev");
+    assert_blocked(&vault.get_secret("k", None).unwrap_err());
+    let pending = vault.unacknowledged_truncations().unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+}
+
+/// A row an acknowledgement accepted although its hash did not verify is
+/// accepted as it was shown only: edited again, it is refused like any
+/// other edit of the log.
+#[test]
+fn a_row_accepted_as_unverifiable_is_refused_once_edited_again() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    let read = {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", CANARY, SetSecretOptions::default());
+        vault.get_secret("k", None).unwrap();
+        events_of(&vault, AuditOperation::SecretGet, AuditOutcome::Success)[0].id
+    };
+    let edit = |detail: &str| {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE audit_events SET detail = ?2 WHERE id = ?1",
+            rusqlite::params![i64::try_from(read).unwrap(), detail],
+        )
+        .unwrap();
+    };
+    edit("edited");
+    let unlock = fx.unlock("dev");
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+    let ack = fx.acknowledge_truncations("dev");
+    let acks = events_of(
+        &fx.inspect_vault("dev"),
+        AuditOperation::AuditVerify,
+        AuditOutcome::Success,
+    );
+    let detail = acks
+        .iter()
+        .find(|e| e.id == ack.event_id)
+        .and_then(|e| e.detail.clone())
+        .unwrap_or_default();
+    assert!(
+        detail.contains(&format!("unverifiable rows {read}:")),
+        "{detail}"
+    );
+    fx.open_vault("dev").get_secret("k", None).unwrap();
+
+    edit("edited again");
+    let err = fx.registry.open("dev", &unlock).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(err.to_string().contains(&format!("event {read}")), "{err}");
+}
+
+/// An edit made while a truncation waits for its acknowledgement is not
+/// accepted with it unseen: the acknowledgement puts it on record and is
+/// refused, and the owner is shown it before acknowledging again.
+#[test]
+fn an_edit_made_while_a_truncation_waits_is_shown_before_it_is_acknowledged() {
+    let fx = Fixture::new();
+    let path = fx.registry.vault_path("dev").unwrap();
+    {
+        let vault = fx.create_vault("dev");
+        set_with(&vault, "k", CANARY, SetSecretOptions::default());
+    }
+    stash(&path, "secret_versions", "k");
+    let (disabled_at, ids) = {
+        let vault = fx.open_vault("dev");
+        disable(&vault, "k");
+        vault.get_secret_properties("k", None).unwrap();
+        let updates = events_of(&vault, AuditOperation::SecretUpdate, AuditOutcome::Success);
+        (updates[0].id, event_ids(&vault))
+    };
+    truncate_after(&path, ids[ids.len() - 2]);
+    let unlock = fx.unlock("dev");
+    assert_eq!(
+        fx.registry.open("dev", &unlock).unwrap_err().code(),
+        "crypto"
+    );
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE audit_events SET version_tag = NULL WHERE id = ?1",
+            [i64::try_from(disabled_at).unwrap()],
+        )
+        .unwrap();
+    }
+    replay(&path, "secret_versions", "k");
+
+    let vault = fx.inspect_vault("dev");
+    let shown: Vec<u64> = vault
+        .unacknowledged_truncations()
+        .unwrap()
+        .iter()
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    let err = vault.acknowledge_truncations(&shown).unwrap_err();
+    assert_eq!(err.code(), "crypto", "{err}");
+    assert!(
+        err.to_string().contains(&format!("event {disabled_at}")),
+        "{err}"
+    );
+    let pending = vault.unacknowledged_truncations().unwrap();
+    assert_eq!(pending.len(), 2, "the edit is now on record: {pending:?}");
+    let detail = pending[1].detail.clone().unwrap_or_default();
+    assert!(detail.contains(&disabled_at.to_string()), "{detail}");
+    assert!(
+        events_of(&vault, AuditOperation::AuditVerify, AuditOutcome::Success).is_empty(),
+        "nothing was acknowledged"
+    );
+    let ids: Vec<u64> = pending.iter().map(|e| e.id).collect();
+    let ack = vault.acknowledge_truncations(&ids).unwrap();
+    assert_eq!(ack.truncations.len(), 2);
+}
+
 // ---------------------------------------------------------------------------
 // A detected truncation blocks the vault until it is acknowledged
 // ---------------------------------------------------------------------------
