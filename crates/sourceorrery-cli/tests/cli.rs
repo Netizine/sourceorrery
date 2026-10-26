@@ -1486,6 +1486,7 @@ fn vault_create_adds_a_connection_per_provider_and_never_shows_a_credential() {
 
 /// An AWS Secrets Manager stand-in on this machine that answers every
 /// request with `ResourceNotFoundException`; its address.
+#[cfg(any(feature = "remote", feature = "provider-aws"))]
 fn aws_that_finds_nothing() -> String {
     use std::io::{BufRead, BufReader, Read};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1524,6 +1525,7 @@ fn aws_that_finds_nothing() -> String {
 /// `-vvv` and `SOURCEORRERY_LOG=trace` never print a value, also where a
 /// dependency would: the AWS SDK traces each request it sends, body and all.
 #[test]
+#[cfg(any(feature = "remote", feature = "provider-aws"))]
 fn trace_diagnostics_never_print_a_value_sent_to_a_provider() {
     let env = Env::new();
     let endpoint = aws_that_finds_nothing();
