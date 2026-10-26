@@ -1,7 +1,7 @@
 # CLI reference
 
 > [!NOTE]
-> This reference describes the 0.3.0 source tree. Check your installed
+> This reference describes the 0.3.1 source tree. Check your installed
 > version with `sourceorrery --version`.
 
 ```

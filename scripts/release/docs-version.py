@@ -3,7 +3,7 @@
 
     python scripts/release/docs-version.py                  # stamp
     python scripts/release/docs-version.py --check          # verify only (CI)
-    python scripts/release/docs-version.py --check --expect 0.3.0   # a release run
+    python scripts/release/docs-version.py --check --expect 0.3.1   # a release run
 
 Requires Python 3.11 or later. One source decides what the install
 documentation names: the workspace version in `Cargo.toml`, which

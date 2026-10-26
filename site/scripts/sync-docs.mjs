@@ -59,7 +59,7 @@ const PAGES = {
 	'docs/security-review.md': {
 		dest: 'security/review.md',
 		description:
-			'Security review status for 0.3.0: the current design, recorded engineering evidence, outstanding platform and release acceptance, and the boundaries that remain.',
+			'Security review status for 0.3.1: the current design, recorded engineering evidence, outstanding platform and release acceptance, and the boundaries that remain.',
 	},
 	'docs/supply-chain.md': {
 		dest: 'security/supply-chain.md',
@@ -74,7 +74,7 @@ const PAGES = {
 	'docs/upgrading.md': {
 		dest: 'guides/upgrading.md',
 		description:
-			'Supported vault files in 0.3.0, consistent encrypted exports, verified imports and restore limits. No legacy format conversion or migration layer.',
+			'Supported vault files in 0.3.1, consistent encrypted exports, verified imports and restore limits. No legacy format conversion or migration layer.',
 	},
 	'docs/ai-agents.md': {
 		dest: 'guides/ai-agents.md',

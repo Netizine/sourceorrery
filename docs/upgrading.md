@@ -1,6 +1,6 @@
 # Vault files, export and import
 
-SourceOrrery 0.3.0 uses **vault schema 5**, **C ABI 2** and **contract 2**.
+SourceOrrery 0.3.1 uses **vault schema 5**, **C ABI 2** and **contract 2**.
 Use the CLI, SDK and native library from the same release. There is no
 in-place migration or compatibility layer for earlier vault formats.
 
@@ -75,4 +75,4 @@ credentials and provision a new vault. See the
 Java, .NET, Go, PHP and C++ check the native library's ABI before opening a
 vault. An incompatible library fails with `abi_mismatch`. Python and
 Node.js build the client into their native extensions. Use the matching
-0.3.0 packages and archives rather than mixing release generations.
+0.3.1 packages and archives rather than mixing release generations.

@@ -7,10 +7,10 @@ Release and publishes each package to its registry. A dry run does
 everything except create the tag, the release and the registry uploads,
 so the pipeline can be exercised without touching a registry.
 
-This procedure describes the **0.3.0** source tree: vault schema **5**,
+This procedure describes the **0.3.1** source tree: vault schema **5**,
 C ABI **2**, contract **2**, and one package version across the CLI and
 SDKs. The version remains unreleased until the changelog has a dated
-0.3.0 heading and the release workflow publishes it. Pushing a branch does
+0.3.1 heading and the release workflow publishes it. Pushing a branch does
 not publish packages.
 
 ## Procedure
@@ -33,8 +33,8 @@ not publish packages.
    start a release.
 2. In GitHub, open *Actions → Release → Run workflow*, enter the version
    (`X.Y.Z`, no `v`) and leave **dry_run** ticked. Tick **bootstrap_providers**
-   when a crate is published for the first time: in 0.3.0,
-   `sourceorrery-provider-azure` and `sourceorrery-os` (below).
+   only when a crate is published for the first time (below); every
+   current crate is on crates.io, so 0.3.1 leaves it off.
    Wait for green. The
    `release-dry-run-X.Y.Z` artifact holds everything the real run would
    attach, plus `SHA256SUMS` and the release notes; download it and try a
@@ -114,7 +114,7 @@ same settings, with its own file name, `ReleasePackages.yaml`.
 
 | Registry | Release job | Runs when | Stored credential |
 |----------|-------------|-----------|-------------------|
-| crates.io | `publish-crates` | every real release | none for normal 0.3.0 releases |
+| crates.io | `publish-crates` | every real release | none for normal releases |
 | PyPI | `publish-pypi` | every real release | none (trusted publishing) |
 | npm | `publish-npm` | the repository variable `NPM_TRUSTED_PUBLISHING` is `true` | none (trusted publishing) |
 | NuGet | `publish-nuget` | the secret `NUGET_USER` exists | none besides the profile name (trusted publishing) |
@@ -193,11 +193,10 @@ job's GitHub identity token for a crates.io token that lives 30 minutes
 and revokes it when the job ends. crates.io grants it only for crates
 whose settings name the workflow, so every crate needs the setting, or the
 publish stops at the first crate without it. A crate that crates.io does
-not have yet has no settings: `sourceorrery-provider-azure` and
-`sourceorrery-os` are new in 0.3.0, so the 0.3.0 release runs with
-`bootstrap_providers` (their first publication with
-`CRATES_BOOTSTRAP_TOKEN`), and the steps below follow it for those two.
-Leave `bootstrap_providers` off once every crate has its setting.
+not have yet has no settings: its first publication runs with
+`bootstrap_providers` (with `CRATES_BOOTSTRAP_TOKEN`), and the steps
+below follow it for that crate. Every current crate is on crates.io
+with its setting, so a release leaves `bootstrap_providers` off.
 
 1. For each crate, *Settings → Trusted Publishing → Add →
    GitHub*: Repository owner `Netizine`, Repository name `sourceorrery`,
@@ -214,7 +213,7 @@ Leave `bootstrap_providers` off once every crate has its setting.
 For local packaging validation without uploads:
 
 ```bash
-python3 scripts/release/publish-crates.py 0.3.0
+python3 scripts/release/publish-crates.py 0.3.1
 ```
 
 The helper defaults to dry-run; only `--publish` permits uploads. Registry
@@ -222,8 +221,7 @@ lookups and Cargo packaging still need network access. Existing versions
 are skipped and yanked versions or registry lookup errors stop the run.
 
 The workflow's `bootstrap_providers` option is for a crate's first
-publication (in 0.3.0, `sourceorrery-provider-azure` and
-`sourceorrery-os`). Before using it, review the helper's bootstrap allowlist and the temporary
+publication. Before using it, review the helper's bootstrap allowlist and the temporary
 token scope, then configure that new crate's trusted publisher and revoke
 the token. Do not use bootstrap as the normal release path.
 
@@ -422,7 +420,7 @@ commit's code while they hold `id-token: write`, so a dry run runs only
 code already merged. It never imports the Maven signing key (the dry run
 builds unsigned).
 
-For a partially completed 0.3.0 release, select `v0.3.0` and the failed
+For a partially completed 0.3.1 release, select `v0.3.1` and the failed
 registries, run a dry run, then dispatch again with **dry_run** unticked.
 Tick **bootstrap_providers** only while a crate in the helper's bootstrap
 list is still missing from crates.io. The job uses the release tag's sources and skips

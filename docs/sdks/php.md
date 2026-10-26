@@ -29,7 +29,7 @@ from the release (or [built from source](#building-from-source)).
 ### The package, from Packagist
 
 ```bash
-composer require sourceorrery/sourceorrery:0.3.0
+composer require sourceorrery/sourceorrery:0.3.1
 ```
 
 [`sourceorrery/sourceorrery` on Packagist](https://packagist.org/packages/sourceorrery/sourceorrery)
@@ -45,9 +45,9 @@ repository and require `dev-main`.
 ### The native library, from the release
 
 The native library (`libsourceorrery_ffi.so` / `.dylib` /
-`sourceorrery_ffi.dll`) is in the `sourceorrery-ffi-0.3.0-<target>` archive
+`sourceorrery_ffi.dll`) is in the `sourceorrery-ffi-0.3.1-<target>` archive
 on the
-[v0.3.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0).
+[v0.3.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.1).
 Download the one for your platform, unpack it, and name the directory in
 `SOURCEORRERY_NATIVE_DIR`:
 
@@ -56,9 +56,9 @@ Download the one for your platform, unpack it, and name the directory in
 #### Windows
 
 ```powershell
-$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.3.0"
+$release = "https://github.com/Netizine/sourceorrery/releases/download/v0.3.1"
 $dir = "$env:LOCALAPPDATA\sourceorrery-ffi"
-Invoke-WebRequest "$release/sourceorrery-ffi-0.3.0-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
+Invoke-WebRequest "$release/sourceorrery-ffi-0.3.1-x86_64-pc-windows-msvc.zip" -OutFile sourceorrery-ffi.zip   # aarch64-pc-windows-msvc on Arm
 Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 [Environment]::SetEnvironmentVariable("SOURCEORRERY_NATIVE_DIR", $dir, "User")
 ```
@@ -66,8 +66,8 @@ Expand-Archive sourceorrery-ffi.zip -DestinationPath $dir -Force
 #### macOS
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
-archive=sourceorrery-ffi-0.3.0-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.1
+archive=sourceorrery-ffi-0.3.1-aarch64-apple-darwin        # x86_64-apple-darwin on Intel
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
@@ -76,8 +76,8 @@ export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
 #### Linux
 
 ```bash
-release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.0
-archive=sourceorrery-ffi-0.3.0-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
+release=https://github.com/Netizine/sourceorrery/releases/download/v0.3.1
+archive=sourceorrery-ffi-0.3.1-x86_64-unknown-linux-gnu    # aarch64-unknown-linux-gnu on arm64
 curl -LO "$release/$archive.tar.gz"
 sudo mkdir -p /opt/sourceorrery && sudo tar xzf "$archive.tar.gz" --no-same-owner -C /opt/sourceorrery --strip-components=1
 export SOURCEORRERY_NATIVE_DIR=/opt/sourceorrery
@@ -200,7 +200,7 @@ loads:
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.3.0              # or stay on main for the newest changes
+git checkout v0.3.1              # or stay on main for the newest changes
 cargo build --release -p sourceorrery-ffi
 export SOURCEORRERY_NATIVE_DIR=/path/to/sourceorrery/target/release
 # PowerShell: $env:SOURCEORRERY_NATIVE_DIR = "C:\path\to\sourceorrery\target\release"

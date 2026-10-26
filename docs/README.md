@@ -1,6 +1,6 @@
-# Documentation for SourceOrrery 0.3.0
+# Documentation for SourceOrrery 0.3.1
 
-The current guides describe the 0.3.0 source tree: vault schema 5, C ABI 2
+The current guides describe the 0.3.1 source tree: vault schema 5, C ABI 2
 and contract 2. Release availability comes from the dated changelog and
 the release workflow; source documentation can precede publication.
 
@@ -29,15 +29,16 @@ Cargo and source builds. Website analytics are optional and covered by the
 The [roadmap](roadmap.md) separates implemented features from future work.
 The [security review status](security-review.md), [supply-chain guide](supply-chain.md)
 and [release procedure](release.md) describe the evidence and release checks.
-The [0.3.0 documentation review](release-review-0.3.0.md) records the local
-checks, visual inspection and publication checks still to perform.
+The [documentation and website review of 25 October](release-review-2026-10-25.md)
+records the local checks, visual inspection and publication checks it left
+to perform.
 
 ADRs retain design history and carry supersession notes where the
 implementation changed. Dated security reviews, Sonar reports and the
 [remediation validation ledger](security-remediation-validation.md) are
 evidence at their stated commits, not current command tutorials. The
 [archived early review](security-review-archive-2026-10.md) predates the
-0.3.0 key and connection model.
+current key and connection model.
 
 The [UI implementation record](UI-IMPLEMENTATION-STATUS.md) and
 [UI enhancement specification](UI-enhancements.md) are workstream records.

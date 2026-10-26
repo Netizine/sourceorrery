@@ -84,23 +84,23 @@ Each SDK needs its own toolchain on top:
 
 ## Get the code
 
-Check out the `v0.3.0` tag to build the published release source.
+Check out the `v0.3.1` tag to build the published release source.
 Use `main` when contributing changes toward the next release.
 
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.3.0
+git checkout v0.3.1
 ```
 
 A build from source carries the version committed at its commit:
-**0.3.0** at the `v0.3.0` tag, and on `main` the version these pages
+**0.3.1** at the `v0.3.1` tag, and on `main` the version these pages
 describe. The
 release workflow stamps the version it publishes itself; to stamp one into
 a local build, use Python 3.11 or newer:
 
 ```bash
-python scripts/release/set-version.py 0.3.0 --keep-node-links
+python scripts/release/set-version.py 0.3.1 --keep-node-links
 ```
 
 The script updates package manifests and lockfiles. `--keep-node-links`

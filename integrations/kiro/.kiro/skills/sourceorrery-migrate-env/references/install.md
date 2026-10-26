@@ -2,7 +2,7 @@
 
 The CLI creates vaults and sets secret values; application SDKs are
 read-only. Start by checking `sourceorrery --version`. If it is installed,
-use it as it is. These skills use the 0.3.0 key, view-check and connection
+use it as it is. These skills use the 0.3.1 key, view-check and connection
 model and do not require rebuilding the CLI to configure a project.
 
 ## If the CLI is missing

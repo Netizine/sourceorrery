@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-26
+
 ### Changed
 
 * **Windows binaries link the C runtime statically.** `sourceorrery.exe`
@@ -837,6 +839,7 @@ package registry.
   the Composer manifest is at the repository root, where Packagist reads
   it. Procedure and per-registry setup: `docs/release.md`.
 
+[0.3.1]: https://github.com/Netizine/sourceorrery/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Netizine/sourceorrery/releases/tag/v0.2.0
 [0.1.4]: https://github.com/Netizine/sourceorrery/releases/tag/v0.1.4

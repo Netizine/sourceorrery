@@ -11,7 +11,7 @@ itself.
 <!-- /release-note -->
 
 > [!NOTE]
-> This page describes the release workflow of **0.3.0**. Verify the actual
+> This page describes the release workflow of **0.3.1**. Verify the actual
 > package's version, workflow run and available attestations when installing;
 > a configured publishing method is not itself proof about a downloaded file.
 
@@ -91,7 +91,7 @@ commit and the workflow run that built it.
 
 The npm, PyPI, crates.io and NuGet packages have trusted publishers
 configured for `release.yml` and `ReleasePackages.yaml` in
-`Netizine/sourceorrery`. Normal 0.3.0 releases use those policies, including
+`Netizine/sourceorrery`. Normal 0.3.1 releases use those policies, including
 the Azure provider and OS helper crate; no first-publication bootstrap is
 required. Other distribution channels use their mechanisms listed below.
 
@@ -136,7 +136,7 @@ provenance, with links to the commit and the workflow run.
 ### NuGet
 
 ```bash
-dotnet nuget verify --all ~/.nuget/packages/sourceorrery/0.3.0/sourceorrery.0.3.0.nupkg
+dotnet nuget verify --all ~/.nuget/packages/sourceorrery/0.3.1/sourceorrery.0.3.1.nupkg
 ```
 
 Expect `Signature type: Repository` with the subject
@@ -152,9 +152,9 @@ F14C 928F CC55 C651 7F1A  E1E7 DAFA E59A 4372 DBC2
 
 ```bash
 gpg --keyserver keyserver.ubuntu.com --recv-keys F14C928FCC55C6517F1AE1E7DAFAE59A4372DBC2
-curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.3.0/sourceorrery-0.3.0.jar
-curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.3.0/sourceorrery-0.3.0.jar.asc
-gpg --verify sourceorrery-0.3.0.jar.asc sourceorrery-0.3.0.jar    # Good signature from "SourceOrrery Releases ..."
+curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.3.1/sourceorrery-0.3.1.jar
+curl -LO https://repo1.maven.org/maven2/ai/sourceorrery/sourceorrery/0.3.1/sourceorrery-0.3.1.jar.asc
+gpg --verify sourceorrery-0.3.1.jar.asc sourceorrery-0.3.1.jar    # Good signature from "SourceOrrery Releases ..."
 ```
 
 ### PyPI
@@ -175,7 +175,7 @@ check that the two agree, then require them:
 
 ```text
 # requirements.txt
-sourceorrery==0.3.0 \
+sourceorrery==0.3.1 \
     --hash=sha256:<hash of the wheel for each platform you deploy to>
 ```
 
@@ -192,7 +192,7 @@ pip install --require-hashes -r requirements.txt
 every build. Install the CLI with `--locked`:
 
 ```bash
-cargo install --locked sourceorrery-cli --version 0.3.0
+cargo install --locked sourceorrery-cli --version 0.3.1
 ```
 
 The crate ships the lock file the release was built and tested with;
@@ -211,7 +211,7 @@ Packagist serves the repository at the release tag, and `composer.lock`
 records the commit it installed. Compare it with the tag:
 
 ```bash
-git ls-remote https://github.com/Netizine/sourceorrery refs/tags/v0.3.0
+git ls-remote https://github.com/Netizine/sourceorrery refs/tags/v0.3.1
 ```
 
 ### Release archives
@@ -224,7 +224,7 @@ against it with the GitHub CLI (signed in, or `--owner` for a public
 repository without signing in):
 
 ```bash
-gh attestation verify sourceorrery-0.3.0-x86_64-unknown-linux-gnu.tar.gz --repo Netizine/sourceorrery
+gh attestation verify sourceorrery-0.3.1-x86_64-unknown-linux-gnu.tar.gz --repo Netizine/sourceorrery
 ```
 
 The command fails for a file that was altered after the build or that did
@@ -264,7 +264,7 @@ package) have no third-party runtime dependencies of their own, so no
 separate document is published for them.
 
 ```bash
-jq -r '.components[] | "\(.name) \(.version) \(.licenses[0].license.id // "")"' sourceorrery-0.3.0-x86_64-unknown-linux-gnu.cdx.json
+jq -r '.components[] | "\(.name) \(.version) \(.licenses[0].license.id // "")"' sourceorrery-0.3.1-x86_64-unknown-linux-gnu.cdx.json
 ```
 
 The CLI and the C ABI library are also built with

@@ -2673,7 +2673,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "sourceorrery-core",
  "sourceorrery-provider",
@@ -2684,7 +2684,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "serde",
@@ -2697,7 +2697,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-crypto"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -2715,7 +2715,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-node"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "napi",
  "napi-build",
@@ -2727,7 +2727,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-provider"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "sourceorrery-core",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-provider-aws"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-provider-azure"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "azure_core",
@@ -2769,7 +2769,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-provider-vault"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2785,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "sourceorrery-storage"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "apple-native-keyring-store",
  "directories",

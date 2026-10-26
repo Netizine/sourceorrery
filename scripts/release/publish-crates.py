@@ -19,7 +19,7 @@ from pathlib import Path
 CORE = "sourceorrery-core"
 # Explicit allowlist for the optional first-publication bootstrap path.
 # Current packages, including these two, have trusted publishers configured;
-# ordinary 0.3.0 releases leave bootstrap_providers off and use OIDC for all.
+# ordinary releases leave bootstrap_providers off and use OIDC for all.
 # Review this inventory before using the exceptional bootstrap option.
 PROVIDERS = ("sourceorrery-provider-azure", "sourceorrery-os")
 GROUPS = {"core": (CORE,), "providers": PROVIDERS, "bootstrap": (CORE, *PROVIDERS)}

@@ -1,6 +1,6 @@
 {
   "name": "@sourceorreryai/sdk",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Read-only SourceOrrery SDK for JavaScript and TypeScript; requires the separate SourceOrrery CLI to create vaults and set secret values",
   "license": "(MIT OR Apache-2.0)",
   "homepage": "https://sourceorrery.ai/sdks/javascript/",

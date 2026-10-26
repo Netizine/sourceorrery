@@ -56,7 +56,7 @@ also covers updating skills from the repository independently of the CLI.
 <dependency>
   <groupId>ai.sourceorrery</groupId>
   <artifactId>sourceorrery</artifactId>
-  <version>0.3.0</version>
+  <version>0.3.1</version>
 </dependency>
 ```
 

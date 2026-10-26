@@ -22,13 +22,13 @@
 ### From PyPI
 
 ```bash
-pip install sourceorrery==0.3.0
+pip install sourceorrery==0.3.1
 ```
 
 [`sourceorrery` on PyPI](https://pypi.org/project/sourceorrery/) has abi3
 wheels for Python 3.11+ on Windows, macOS and Linux (glibc), x64 and arm64,
 built with PyO3 and maturin, with no runtime dependencies, so nothing is
-compiled on install. `uv add sourceorrery==0.3.0` and `poetry add sourceorrery@0.3.0`
+compiled on install. `uv add sourceorrery==0.3.1` and `poetry add sourceorrery@0.3.1`
 install the same package. On any other platform pip builds the sdist,
 which needs Rust 1.91.1+ and a C compiler.
 
@@ -40,7 +40,7 @@ against each other.
 ### From the GitHub release
 
 The same wheels and sdist are attached to the
-[v0.3.0 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.0).
+[v0.3.1 release](https://github.com/Netizine/sourceorrery/releases/tag/v0.3.1).
 Install the wheel for your platform straight from it:
 
 <!-- tabs: os -->
@@ -49,36 +49,36 @@ Install the wheel for your platform straight from it:
 
 ```bash
 # x64
-pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorrery-0.3.0-cp311-abi3-win_amd64.whl
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorrery-0.3.1-cp311-abi3-win_amd64.whl
 # Arm64
-pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorrery-0.3.0-cp311-abi3-win_arm64.whl
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorrery-0.3.1-cp311-abi3-win_arm64.whl
 ```
 
 #### macOS
 
 ```bash
 # Apple silicon
-pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorrery-0.3.0-cp311-abi3-macosx_11_0_arm64.whl
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorrery-0.3.1-cp311-abi3-macosx_11_0_arm64.whl
 # Intel
-pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorrery-0.3.0-cp311-abi3-macosx_10_12_x86_64.whl
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorrery-0.3.1-cp311-abi3-macosx_10_12_x86_64.whl
 ```
 
 #### Linux
 
 ```bash
 # x64
-pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorrery-0.3.0-cp311-abi3-manylinux_2_28_x86_64.whl
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorrery-0.3.1-cp311-abi3-manylinux_2_28_x86_64.whl
 # arm64
-pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.0/sourceorrery-0.3.0-cp311-abi3-manylinux_2_28_aarch64.whl
+pip install https://github.com/Netizine/sourceorrery/releases/download/v0.3.1/sourceorrery-0.3.1-cp311-abi3-manylinux_2_28_aarch64.whl
 ```
 
 <!-- /tabs -->
 
 To pin it, put the same URL in `requirements.txt` as
-`sourceorrery @ https://…/sourceorrery-0.3.0-cp311-abi3-win_amd64.whl`;
+`sourceorrery @ https://…/sourceorrery-0.3.1-cp311-abi3-win_amd64.whl`;
 append `#sha256=<hash>` with the hash from the release's `SHA256SUMS` and
 pip verifies the download. Any other platform builds the sdist from the same
-release (`sourceorrery-0.3.0.tar.gz`; Rust 1.91.1+ required) with
+release (`sourceorrery-0.3.1.tar.gz`; Rust 1.91.1+ required) with
 `pip install <its URL>`.
 
 ### From source
@@ -211,7 +211,7 @@ Get the code:
 ```bash
 git clone https://github.com/Netizine/sourceorrery
 cd sourceorrery
-git checkout v0.3.0              # or stay on main for the newest changes
+git checkout v0.3.1              # or stay on main for the newest changes
 ```
 
 Build the package and install it into a virtual environment. pip fetches
