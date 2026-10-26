@@ -213,8 +213,10 @@ jobs:
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
         run: python3 scripts/release/set-version.py "$VERSION"
+      # Release tools run at exact, reviewed versions: a new one arrives
+      # only in a reviewed commit, never with whatever is newest that day.
       - name: Install cargo-cyclonedx
-        run: cargo install --locked cargo-cyclonedx
+        run: cargo install --locked cargo-cyclonedx --version 0.5.9
       - name: Render one SBOM per binary and target
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
@@ -296,10 +298,11 @@ jobs:
       # cargo-auditable embeds the dependency list in each binary (an ELF /
       # Mach-O / PE section), so `cargo audit bin sourceorrery` can check a
       # shipped binary against the advisory database. rust-cache keeps the
-      # installed tool between runs.
+      # installed tool between runs. An exact, reviewed version, as every
+      # release tool.
       - name: Install cargo-auditable
         shell: bash
-        run: cargo install --locked cargo-auditable
+        run: cargo install --locked cargo-auditable --version 0.7.7
       - name: Build
         shell: bash
         run: cargo auditable build --release --locked -p sourceorrery-cli -p sourceorrery-ffi --target ${{ matrix.target }}
@@ -403,12 +406,15 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
+          # The maturin bindings/python/ci-requirements.txt pins, not the newest.
+          maturin-version: v1.15.0
           working-directory: bindings/python
           command: sdist
           args: --out ../../dist/wheels
       - name: Build the wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
+          maturin-version: v1.15.0
           working-directory: bindings/python
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
