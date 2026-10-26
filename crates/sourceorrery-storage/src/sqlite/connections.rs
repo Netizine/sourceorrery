@@ -118,6 +118,32 @@ pub struct ConnectionInfo {
     pub last_test: Option<ConnectionTest>,
 }
 
+/// Which state of a connection a client was opened from: its row's tag,
+/// which changes with the connection's settings and credentials. Only ever
+/// compared ([`SqliteVault::preflight_at_connection`] returns the one it
+/// checked), so a client opened from an earlier state is not used after a
+/// change made through another handle.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ConnectionRevision(Vec<u8>);
+
+impl std::fmt::Debug for ConnectionRevision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ConnectionRevision(..)")
+    }
+}
+
+/// A connection as a client is opened with it, read from one verified row.
+#[derive(Debug)]
+pub struct ConnectionToOpen {
+    /// The provider and how to reach it.
+    pub settings: ConnectionSettings,
+    /// The credentials the connection stores; `None` for the provider's
+    /// ambient chain. Passed to the provider and dropped, never shown.
+    pub credentials: Option<Credentials>,
+    /// The state of the row both were read from.
+    pub revision: ConnectionRevision,
+}
+
 /// Where a secret's value is kept.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SecretStorage {
@@ -533,16 +559,32 @@ impl SqliteVault {
     /// when it uses the provider's ambient chain. They are never shown: a
     /// caller passes them to the provider and drops them.
     pub fn connection_credentials(&self, id: &str) -> Result<Option<Credentials>> {
+        self.credentials_of(&self.verified_row(id)?)
+    }
+
+    /// The connection `id` as a client is opened with it: its settings, the
+    /// credentials it stores and its revision, all from one verified read of
+    /// its row, so a change in between cannot pair one state's settings with
+    /// another's credentials.
+    pub fn connection_to_open(&self, id: &str) -> Result<ConnectionToOpen> {
         let row = self.verified_row(id)?;
+        Ok(ConnectionToOpen {
+            settings: row.settings()?,
+            credentials: self.credentials_of(&row)?,
+            revision: ConnectionRevision(row.tag),
+        })
+    }
+
+    fn credentials_of(&self, row: &ConnectionRow) -> Result<Option<Credentials>> {
         let Some(sealed) = &row.sealed_credentials else {
             return Ok(None);
         };
         let plain = self.unseal_bound(
-            &credentials_aad(&self.meta.id, id),
+            &credentials_aad(&self.meta.id, &row.id),
             sealed,
             "connection credentials",
         )?;
-        let credentials = decode_credentials(&plain).ok_or_else(|| corrupt(id))?;
+        let credentials = decode_credentials(&plain).ok_or_else(|| corrupt(&row.id))?;
         check_credentials(&credentials, &row.settings()?)?;
         Ok(Some(credentials))
     }
@@ -833,16 +875,19 @@ impl SqliteVault {
     /// them, and for a secret its catalog row as `change` will need it. It
     /// is the same gate [`Self::record_at_connection`] applies, without its
     /// writes: nothing is written when it passes, and a refusal is recorded
-    /// as any refused operation is. No lock is held afterwards, while the
-    /// provider is called, so a change made in between is caught when the
-    /// call is recorded, not here.
+    /// as any refused operation is. It returns the revision of the
+    /// connection it checked: a client opened from another revision, before
+    /// the connection's settings or credentials changed, is not the one to
+    /// call ([`Self::connection_to_open`]). No lock is held afterwards,
+    /// while the provider is called, so a change made in between is caught
+    /// when the call is recorded, not here.
     pub fn preflight_at_connection(
         &self,
         connection: &str,
         operation: AuditOperation,
         name: Option<&str>,
         change: CatalogChange,
-    ) -> Result<()> {
+    ) -> Result<ConnectionRevision> {
         let mut conn = self.lock()?;
         let tx = self.begin(&mut conn, operation)?;
         let tx = match name {
@@ -851,7 +896,7 @@ impl SqliteVault {
         };
         match self.catalog_change(&tx, connection, name, false, change) {
             // Dropped, not committed: the check wrote nothing.
-            Ok(_) => Ok(()),
+            Ok((revision, _)) => Ok(revision),
             Err(err) => self.fail(tx, operation, name, None, err),
         }
     }
@@ -924,7 +969,7 @@ impl SqliteVault {
             None => tx,
         };
         let state = match self.catalog_change(&tx, connection, name, result.is_ok(), change) {
-            Ok(state) => state,
+            Ok((_, state)) => state,
             Err(err) => return self.fail(tx, operation, name, version, err),
         };
         let completes = attempt
@@ -960,7 +1005,8 @@ impl SqliteVault {
     }
 
     /// Check `name` against the catalog for `change` at `connection`, and
-    /// make the change when `applied`; the state checkpoint it leaves.
+    /// make the change when `applied`; the connection's revision and the
+    /// state checkpoint the change leaves.
     fn catalog_change(
         &self,
         conn: &Connection,
@@ -968,15 +1014,28 @@ impl SqliteVault {
         name: Option<&str>,
         applied: bool,
         change: CatalogChange,
-    ) -> Result<Option<Checkpoint>> {
+    ) -> Result<(ConnectionRevision, Option<Checkpoint>)> {
         let meta = self.verified_meta(conn)?;
-        if !self
+        let revision = self
             .listed_rows(conn, &meta)?
-            .iter()
-            .any(|row| row.id == connection)
-        {
-            return Err(no_such(connection));
-        }
+            .into_iter()
+            .find(|row| row.id == connection)
+            .map(|row| ConnectionRevision(row.tag))
+            .ok_or_else(|| no_such(connection))?;
+        Ok((
+            revision,
+            self.catalog_entry_change(conn, connection, name, applied, change)?,
+        ))
+    }
+
+    fn catalog_entry_change(
+        &self,
+        conn: &Connection,
+        connection: &str,
+        name: Option<&str>,
+        applied: bool,
+        change: CatalogChange,
+    ) -> Result<Option<Checkpoint>> {
         let Some(name) = name else {
             return match change {
                 CatalogChange::Keep => Ok(None),

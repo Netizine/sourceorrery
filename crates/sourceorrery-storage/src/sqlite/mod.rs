@@ -44,8 +44,8 @@ mod wraps;
 
 pub use self::catalog::{CatalogEntry, MAX_DESCRIPTION_LEN, validate_description};
 pub use self::connections::{
-    Attempt, CatalogChange, ConnectionChange, ConnectionInfo, ConnectionTest, CredentialSource,
-    SecretStorage,
+    Attempt, CatalogChange, ConnectionChange, ConnectionInfo, ConnectionRevision, ConnectionTest,
+    ConnectionToOpen, CredentialSource, SecretStorage,
 };
 pub use self::export::Imported;
 pub use self::projects::{MAX_PROJECT_NAME_LEN, ProjectLink};
