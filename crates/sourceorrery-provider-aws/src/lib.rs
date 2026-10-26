@@ -253,8 +253,15 @@ impl AwsClient {
         settings: &Settings,
         credentials: Option<&Credentials>,
     ) -> Result<aws_config::SdkConfig> {
+        // Nothing is sent twice (ADR 0011): the SDK's retries would repeat a
+        // change whose answer was lost, and a refusal of the repeat would
+        // then be taken for a change that never happened. A failure is
+        // returned as it is, and the vault records it as an attempt whose
+        // outcome is unknown. Set here, it wins over AWS_MAX_ATTEMPTS and
+        // any profile.
         let mut loader = aws_config::defaults(BehaviorVersion::latest())
-            .region(Region::new(settings.region.clone()));
+            .region(Region::new(settings.region.clone()))
+            .retry_config(aws_config::retry::RetryConfig::disabled());
         if let Some(url) = &settings.endpoint_url {
             loader = loader.endpoint_url(url);
         }

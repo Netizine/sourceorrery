@@ -38,6 +38,8 @@ enum Fault {
     Fail,
     /// Applied, then an answer that cannot be read.
     Garble,
+    /// Applied, then a server error, which the SDK would send again.
+    ApplyThenFail,
 }
 
 struct Version {
@@ -65,6 +67,9 @@ impl Secret {
 struct Model {
     secrets: BTreeMap<String, Secret>,
     fault: Option<(&'static str, usize, Fault)>,
+    /// Faults for exactly the given occurrence of an operation, before
+    /// `fault`.
+    schedule: Vec<(&'static str, usize, Fault)>,
     seen: HashMap<String, usize>,
     /// Every request, by operation.
     requests: Vec<String>,
@@ -291,9 +296,14 @@ async fn serve_one(model: Arc<Mutex<Model>>, mut socket: TcpStream) {
                 *count
             };
             let fault = model
-                .fault
-                .filter(|(op, from, _)| *op == operation && occurrence >= *from)
-                .map(|(_, _, fault)| fault);
+                .schedule
+                .iter()
+                .find(|(op, at, _)| *op == operation && occurrence == *at)
+                .or(model
+                    .fault
+                    .as_ref()
+                    .filter(|(op, from, _)| *op == operation && occurrence >= *from))
+                .map(|(_, _, fault)| *fault);
             match fault {
                 Some(Fault::Refuse) => error("AccessDeniedException"),
                 Some(Fault::Fail) => error("InternalServiceError"),
@@ -312,10 +322,14 @@ async fn serve_one(model: Arc<Mutex<Model>>, mut socket: TcpStream) {
                         );
                         model.snapshots.push(snapshot);
                     }
-                    if fault == Some(Fault::Garble) {
-                        (200, "{\"VersionId\":".to_owned())
-                    } else {
-                        (status, text)
+                    match fault {
+                        Some(Fault::Garble) => (200, "{\"VersionId\":".to_owned()),
+                        Some(Fault::ApplyThenFail) => (
+                            500,
+                            json!({ "__type": "InternalServiceError", "message": "from the model" })
+                                .to_string(),
+                        ),
+                        _ => (status, text),
                     }
                 }
             }
@@ -649,4 +663,56 @@ fn invalid_input_sends_nothing_that_writes() {
         "stack"
     );
     assert_eq!(model.secrets["db"].tags.len(), 46);
+}
+
+/// ADR 0011: nothing is retried. A change the service applied but whose
+/// answer was lost (a server error after it) must not be sent again and
+/// then taken back on the repeat's refusal: here a new version marked
+/// disabled would be left current under the old, enabled policy and the
+/// write reported as refused.
+#[test]
+fn a_change_whose_answer_was_lost_is_never_sent_again() {
+    let server = serve();
+    let client = connect(&server);
+    client
+        .set_secret("db", SecretBytes::from("old"), SetSecretOptions::default())
+        .unwrap();
+    let first = server.model.lock().unwrap().secrets["db"]
+        .current()
+        .unwrap()
+        .to_owned();
+    {
+        let mut model = server.model.lock().unwrap();
+        model.snapshots.clear();
+        model.seen.clear();
+        model.requests.clear();
+        model.schedule = vec![
+            ("PutSecretValue", 1, Fault::ApplyThenFail),
+            ("PutSecretValue", 2, Fault::Refuse),
+        ];
+    }
+    let disabled = SetSecretOptions {
+        enabled: false,
+        ..SetSecretOptions::default()
+    };
+    let err = client
+        .set_secret("db", SecretBytes::from("new"), disabled.clone())
+        .unwrap_err();
+    let model = server.model.lock().unwrap();
+    let sent = model
+        .requests
+        .iter()
+        .filter(|r| *r == "PutSecretValue")
+        .count();
+    for (operation, tags, current) in &model.snapshots {
+        if current.as_deref() != Some(first.as_str()) {
+            let seen = props_of(tags);
+            assert!(
+                seen.at_least_as_strict_as(&asked(&disabled)),
+                "the new version under {seen:?} after {operation} (PutSecretValue sent {sent} times)"
+            );
+        }
+    }
+    assert_eq!(sent, 1, "PutSecretValue sent again");
+    assert_eq!(err.code(), "outcome_unknown", "{err}");
 }

@@ -57,7 +57,10 @@ than it had ([ADR 0011](../adr/0011-provider-writes-fail-closed.md)):
 
 A refused `PutSecretValue` puts the old policy back and returns the
 refusal. A lost answer, or a failure in step 4, is `outcome_unknown`, with
-the secret held at least as strict as asked. `update_secret_properties`
+the secret held at least as strict as asked. The SDK's automatic retries
+are off (also over `AWS_MAX_ATTEMPTS` and a profile's `max_attempts`): a
+request whose answer was lost is never sent again, so the refusal of a
+repeat is never taken for a change that did not happen. `update_secret_properties`
 runs step 4 alone. A new secret gets its value and tags in one
 `CreateSecret`. Secrets Manager has no conditional write, so this holds
 for one writer at a time per secret: two writers changing one secret's
