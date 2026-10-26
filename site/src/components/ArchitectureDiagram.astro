@@ -1,32 +1,15 @@
 ---
-/**
- * The architecture diagram on the landing page, inlined.
- *
- * src/assets/sourceorrery-architecture.svg carries its own paper and ink
- * palette, embedded fonts and the current 0.3.1 client/vault/provider flow.
- * It is static and switches palette on a `data-theme`
- * attribute on its own root (and falls back to prefers-color-scheme), so
- * it is inlined rather than loaded as an <img>, and the script below
- * copies the site's theme (Starlight's `data-theme` on <html>) onto it,
- * now and whenever the reader flips the theme. Without JavaScript it
- * follows the operating system's setting.
- *
- * The file is used verbatim; replace it to update the diagram.
- */
-import svg from '../assets/sourceorrery-architecture.svg?raw';
+// Shared with docs/architecture.md; retain the supplied PNG at full resolution.
+const image = '/images/sourceorrery-architecture.png';
 ---
 
-<Fragment set:html={svg} />
-<script is:inline>
-	(() => {
-		const diagram = document.getElementById('soa-architecture');
-		if (!diagram) return;
-		const root = document.documentElement;
-		const sync = () => {
-			if (root.dataset.theme) diagram.dataset.theme = root.dataset.theme;
-			else delete diagram.dataset.theme;
-		};
-		sync();
-		new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-	})();
-</script>
+<a href={image} target="_blank" rel="noopener" aria-label="Open the SourceOrrery architecture diagram at full size">
+	<img
+		src={image}
+		width="1672"
+		height="941"
+		alt="SourceOrrery architecture: project manifests commit references; a local vault and shared Rust core deliver values at runtime through read-only SDKs or CLI launch, with local encrypted storage, AWS Secrets Manager, Azure Key Vault and HashiCorp Vault."
+		loading="lazy"
+		decoding="async"
+	/>
+</a>

@@ -49,7 +49,7 @@ path picker, asynchronous loading and Milestone 3 remain deferred.
 
 Edit the Markdown in `docs/`. `site/scripts/sync-docs.mjs` generates its
 website copies; the homepage and install page are authored MDX under
-`site/src/content/docs/`. The architecture SVG and synthetic walkthroughs
+`site/src/content/docs/`. The architecture PNG and synthetic walkthroughs
 are maintained with the site sources. [Site development](../site/README.md)
 covers building and checking them.
 

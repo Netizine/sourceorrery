@@ -29,16 +29,9 @@ SourceOrrery daemon, local IPC service or same-user agent isolation in
 | `bindings/` | Thin native extensions or C ABI wrappers; error mapping and language-appropriate value ownership. |
 | `tests/conformance` | Shared lifecycle and read-only SDK scenarios. |
 
-```text
-CLI ───────────────────────────► core / storage / Routed
-Rust SDK ──► sourceorrery ──────► core / storage / Routed
-Python, Node native extensions ─► sourceorrery
-Java, .NET, Go, C, C++, PHP ─────► C ABI ──► sourceorrery
+![SourceOrrery architecture: commit secret references in project manifests, then retrieve values at runtime through the shared Rust core and local or provider-backed storage.](../site/public/images/sourceorrery-architecture.png)
 
-Routed ──► local SQLite values
-       └─► provider adapters ──► HashiCorp Vault / AWS / Azure
-storage ──► crypto; private key-file creation ──► sourceorrery-os
-```
+[Open the architecture diagram at full size](../site/public/images/sourceorrery-architecture.png).
 
 The local vault is still required when all values are remote. Its catalog
 decides where a secret is kept, its connection supplies provider settings

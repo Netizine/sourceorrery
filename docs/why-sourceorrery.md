@@ -12,6 +12,8 @@ credentials when the application runs. Make inspection useful without
 printing a secret, and give credentials a lifecycle beyond copying a line
 between `.env` files.
 
+[Watch the SourceOrrery walkthrough on YouTube](https://youtu.be/__Cn8liAcmE).
+
 > [!IMPORTANT]
 > **The boundary:** SourceOrrery reduces plaintext storage and
 > accidental disclosure in development workflows. It does not isolate an

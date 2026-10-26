@@ -406,7 +406,13 @@ function rewriteLinks(markdown, source) {
 		.map((segment, index) => {
 			if (index % 2 === 1) return segment; // fenced code block
 			return segment.replace(/(!?)\[([^[\]]*)\]\(([^()\s]+)((?:\s+"[^"]*")?)\)/g, (match, bang, text, target, titlePart) => {
-				if (bang) return match;
+				if (bang) {
+					const asset = path.posix.normalize(path.posix.join(sourceDir, target));
+					if (asset.startsWith('site/public/')) {
+						return `${bang}[${text}](/${asset.slice('site/public/'.length)}${titlePart})`;
+					}
+					return match;
+				}
 				if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#') || target.startsWith('/')) return match;
 				const [targetPath, anchor] = splitAnchor(target);
 				const repoPath = path.posix.normalize(path.posix.join(sourceDir, targetPath)).replace(/\/$/, '');
@@ -418,6 +424,7 @@ function rewriteLinks(markdown, source) {
 }
 
 function resolveRepoPath(repoPath, source) {
+	if (repoPath.startsWith('site/public/')) return `/${repoPath.slice('site/public/'.length)}`;
 	if (PAGES[repoPath]) return destToHref(PAGES[repoPath].dest);
 	if (DIRECTORIES[repoPath]) return DIRECTORIES[repoPath];
 	if (AUTHORED_PAGES[repoPath]) return AUTHORED_PAGES[repoPath];

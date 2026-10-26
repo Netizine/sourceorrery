@@ -546,14 +546,14 @@ footer .kudos {
  * The architecture diagram under the cover (components/ArchitectureDiagram.astro)
  * breaks out of the measure, up to 72rem wide, and keeps a 2rem gutter to
  * the viewport on narrower screens (on a phone it stays at the text width).
- * The SVG brings its own light and dark palettes.
+ * The supplied PNG keeps its original palette in either theme.
  */
 .so-figure {
 	margin-inline: min(0px, max(calc(50% - 36rem), calc(50% - 50vw + 2rem)));
 	margin-block: 0 2.5rem;
 }
 
-.so-figure svg {
+.so-figure img {
 	display: block;
 	width: 100%;
 	height: auto;
