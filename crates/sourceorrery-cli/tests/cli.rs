@@ -1771,6 +1771,33 @@ fn rotation_tag(v: &serde_json::Value, key: &str) -> String {
     v["tags"][key].as_str().unwrap_or("").to_owned()
 }
 
+/// With no current value to give (here the version is disabled), the issue
+/// hook gets the secret's variable unset, never a value this process
+/// inherited: the validator expecting a successor of the inherited value
+/// refuses, so the inherited value never seeded a new credential.
+#[test]
+fn a_hook_never_takes_an_inherited_value_for_the_vaults() {
+    let env = rotation_project();
+    env.ok(&[
+        "secret",
+        "update",
+        "database-password",
+        "--disable",
+        "--vault",
+        "development",
+    ]);
+    let out = env
+        .cmd(&["secret", "rotate", "database-password"])
+        .env("DATABASE_PASSWORD", "stale-parent-value")
+        .env("EXPECTED", "next-stale-parent-value")
+        .output()
+        .unwrap();
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(!out.status.success(), "{text}");
+    assert!(text.contains("validate"), "{text}");
+    assert!(!text.contains("stale-parent-value"), "{text}");
+}
+
 /// A second rotation while the first still owes a retirement is refused
 /// before anything is minted or written.
 #[test]

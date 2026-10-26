@@ -102,9 +102,17 @@ impl Plan {
             .ok_or_else(|| anyhow!("the {step} command of '{}' names no program", self.name))?;
         let mut command = Command::new(program);
         command.args(program_args);
+        // The variables a hook could take for the vault's: the unlock and view
+        // check ones, the step's own (set below for the steps that use them),
+        // and the secret's, which carries the vault's value or nothing, never
+        // one inherited from this process (as `run` does).
         for var in UNLOCK_ENV_VARS {
             command.env_remove(var);
         }
+        for var in ["SOURCEORRERY_VERSION", "SOURCEORRERY_RETIRED_VERSION"] {
+            command.env_remove(var);
+        }
+        command.env_remove(&self.env);
         command.env("SOURCEORRERY_SECRET", &self.name);
         command.env("SOURCEORRERY_ROTATION_STEP", step);
         if let Some(project) = &self.project {
@@ -217,10 +225,15 @@ fn rotate_now(
             // one; it gets it the way `run` would deliver it.
             let current = match vault.get_secret(&plan.name, None) {
                 Ok(secret) => Some(secret.value),
-                Err(SecretError::NotFound { .. }) => None,
-                Err(err) if err.is_transient() => return Err(err.into()),
-                // Disabled or expired: there is nothing accessible to pass.
-                Err(_) => None,
+                // Nothing accessible to pass: no current version, or one the
+                // vault's policy withholds. Any other failure stops here.
+                Err(
+                    SecretError::NotFound { .. }
+                    | SecretError::Disabled { .. }
+                    | SecretError::Expired { .. }
+                    | SecretError::Deleted { .. },
+                ) => None,
+                Err(err) => return Err(err.into()),
             };
             let (status, mut stdout) =
                 plan.run_hook("issue", command_line, current.as_ref(), &[], true)?;

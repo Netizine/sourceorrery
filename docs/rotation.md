@@ -36,7 +36,12 @@ and `retire`, `SOURCEORRERY_VERSION` (the version the value belongs to).
 The variables that open a vault or answer its view check
 (`SOURCEORRERY_RECOVERY_KEY`, `SOURCEORRERY_RECOVERY_KEY_FILE`,
 `SOURCEORRERY_PASSWORD`, `SOURCEORRERY_PASSWORD_FILE`, `SOURCEORRERY_TOTP`)
-are removed from the hook's environment.
+are removed from the hook's environment. So are the secret's own variable,
+`SOURCEORRERY_VERSION` and `SOURCEORRERY_RETIRED_VERSION` whenever the
+vault does not set them: when the current version cannot be read
+(disabled, expired, deleted or missing), the issue hook runs without the
+variable, never with a value the shell or an enclosing `sourceorrery run`
+left behind. Any other failure to read it stops the rotation.
 Hooks inherit the terminal for their own output; SourceOrrery prints
 version ids and states, never a value.
 

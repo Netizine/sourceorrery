@@ -648,8 +648,10 @@ One commit: the checks and the new write order share the tag plan.
   missing, disabled, outside its window or deleted leaves its variable
   absent; other variables pass through, and the unlock and view-check
   variables stay removed. On Windows the standard library matches the names
-  case-insensitively, as the environment does. Rotation hooks receive no
-  manifest variables, so they are unchanged. `docs/cli.md` says so.
+  case-insensitively, as the environment does. `docs/cli.md` says so.
+  (The 2026-10-26 audit found that rotation hooks do receive the secret's
+  variable and were left unchanged here; `secret rotate` now removes it too,
+  see [the 2026-10-26 audit](security-review-2026-10-26.md).)
 * **Tests run:** `an_unresolved_optional_secret_leaves_its_variable_absent_in_the_child`
   (Windows: an optional secret the vault lacks and a disabled one, each
   with a stale parent value, one of them in lower case; a resolved one
