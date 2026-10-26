@@ -78,7 +78,8 @@ cc -I/opt/sourceorrery/include get_secret.c -L/opt/sourceorrery -lsourceorrery_f
 Verify a download against the release's `SHA256SUMS` before unpacking it.
 To link statically on Linux or macOS, use `libsourceorrery_ffi.a` from the
 same directory (`-lpthread -ldl -lm` as well on Linux); on Windows the
-static `sourceorrery_ffi.lib` is MSVC-built.
+static `sourceorrery_ffi.lib` is MSVC-built with the static C runtime, so
+compile with `/MT`.
 
 ## Get a secret
 

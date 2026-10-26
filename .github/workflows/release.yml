@@ -303,6 +303,12 @@ jobs:
       - name: Build
         shell: bash
         run: cargo auditable build --release --locked -p sourceorrery-cli -p sourceorrery-ffi --target ${{ matrix.target }}
+      # .cargo/config.toml links the C runtime statically, so the binaries run
+      # without the Visual C++ Redistributable (as WinGet's validation needs).
+      - name: The Windows binaries import no C runtime DLL
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python scripts/release/check-pe-imports.py target/${{ matrix.target }}/release/sourceorrery.exe target/${{ matrix.target }}/release/sourceorrery_ffi.dll
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash

@@ -126,6 +126,14 @@ minutes. What lands in `target/release/`:
 The headers are `crates/sourceorrery-ffi/include/sourceorrery.h` and, for
 C++, `bindings/cpp/include/sourceorrery.hpp`.
 
+On Windows, `.cargo/config.toml` links the C runtime statically
+(`-C target-feature=+crt-static`), so the CLI and the DLL run without the
+Visual C++ Redistributable, and the static `sourceorrery_ffi.lib` is for
+programs compiled with `/MT`. A `RUSTFLAGS` variable replaces those flags;
+`python scripts/release/check-pe-imports.py target/release/sourceorrery.exe
+target/release/sourceorrery_ffi.dll` says whether a build still imports a
+C runtime DLL.
+
 To put the CLI on your `PATH` (in `~/.cargo/bin`):
 
 ```bash

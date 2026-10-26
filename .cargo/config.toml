@@ -1,0 +1,11 @@
+# Windows builds link the C runtime statically, so `sourceorrery.exe` and
+# `sourceorrery_ffi.dll` run on a Windows without the Visual C++
+# Redistributable (VCRUNTIME140.dll), as WinGet's validation machines are.
+# The static `sourceorrery_ffi.lib` is built for `/MT`. A RUSTFLAGS variable
+# replaces these flags, so the release and CI check the binaries' imports
+# (scripts/release/check-pe-imports.py).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

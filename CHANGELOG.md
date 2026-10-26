@@ -6,6 +6,16 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+* **Windows binaries link the C runtime statically.** `sourceorrery.exe`
+  and `sourceorrery_ffi.dll`, which the .NET, Java, Go and PHP SDKs load,
+  no longer need the Visual C++ Redistributable (`VCRUNTIME140.dll`),
+  which Windows does not include. The static `sourceorrery_ffi.lib` is
+  built for the static runtime too: compile a program that links it with
+  `/MT`. The release and CI fail if a Windows binary imports a C runtime
+  DLL (`scripts/release/check-pe-imports.py`).
+
 ## [0.3.0] - 2026-10-26
 
 **Breaking: vaults from earlier releases are not read.** A vault file of
