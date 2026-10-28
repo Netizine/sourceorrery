@@ -10,11 +10,34 @@ Documentation: **[sourceorrery.ai](https://sourceorrery.ai)**
 
 [![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery) [![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery) [![Security issues](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=software_quality_security_issues)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery) [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=coverage)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
 
-SourceOrrery is an open-source, Rust-native secrets platform for software
-development in the age of AI coding agents. It replaces the plaintext `.env`
-file with an encrypted local vault, a cloud-secrets-manager-style lifecycle API
-(versions, soft delete, recovery, time windows, audit) and a manifest that
-declares *which* secrets a project needs without ever holding their values.
+SourceOrrery is a local-first secrets platform built around a shared Rust core.
+Its modular architecture separates cryptography, storage and provider
+integrations, while read-only language SDKs give applications a consistent way
+to retrieve secrets at runtime. Project files hold references, keeping
+credential values out of committed configuration.
+
+Technical highlights include:
+
+- **Modular Rust architecture:** Dedicated crates separate cryptographic
+  operations, vault storage, lifecycle policy and provider access, making each
+  responsibility easier to inspect and test.
+- **Consistent language SDKs:** Thin bindings reuse the Rust implementation,
+  with shared conformance tests checking lifecycle behaviour and read-only
+  operations across languages.
+- **Encrypted local storage:** Secret values use XChaCha20-Poly1305 encryption
+  in a SQLite vault, with machine access through the OS credential store and
+  a recovery key for portability.
+- **Cloud provider integrations:** Retrieve values from AWS Secrets Manager,
+  Azure Key Vault or HashiCorp Vault through the same application interface,
+  with provider capabilities documented explicitly.
+- **Careful handling of sensitive data:** Zeroising native buffers and
+  redacted key types reduce exposure within the Rust core. Applications remain
+  responsible for values copied into their own memory.
+- **Lifecycle controls and auditability:** Versioning, activation, expiry and
+  tamper-evident audit records support traceable secret management.
+- **Documented security boundaries:** The threat model explains current
+  protections, limitations and planned controls, helping developers assess
+  where SourceOrrery fits.
 
 > [!WARNING]
 > **Version 0.3.1 — an encrypted local vault that keeps each secret in
