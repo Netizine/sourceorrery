@@ -10,6 +10,10 @@ or [application SDK guides](sdks/index.md). The [architecture](architecture.md),
 explain the implementation. [Supported files, export and import](upgrading.md)
 covers portability without a legacy conversion workflow.
 
+[Why SourceOrrery?](why-sourceorrery.md) explains the project's goals;
+[Why the name SourceOrrery?](why-the-name-sourceorrery.md) tells the story
+of orreries, Tolkien and the engineering ideas behind the name.
+
 The website's install page puts Homebrew and WinGet before manual downloads,
 Cargo and source builds. Website analytics are optional and covered by the
 [privacy page](privacy.md); they are not part of the CLI or SDKs.

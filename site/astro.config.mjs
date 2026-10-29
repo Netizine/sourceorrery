@@ -102,6 +102,7 @@ export default defineConfig({
 			credits: false,
 			sidebar: [
 				{ label: 'Why SourceOrrery?', slug: 'why-sourceorrery' },
+				{ label: 'Why the name SourceOrrery?', slug: 'why-the-name-sourceorrery' },
 				{ label: 'Getting started', slug: 'getting-started' },
 				{
 					label: 'Guides',

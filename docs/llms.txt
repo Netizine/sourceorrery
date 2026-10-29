@@ -47,6 +47,7 @@ The references below are clean Markdown generated from the same sources as the w
 
 ## Optional
 
+- [Why the name SourceOrrery?](https://sourceorrery.ai/llms/why-the-name-sourceorrery/index.md): The personal story behind the name and its connection to the project's goals.
 - [Roadmap](https://sourceorrery.ai/llms/roadmap/index.md): Planned capabilities, including the future local broker; these are not current features.
 - [Source repository](https://github.com/Netizine/sourceorrery): Code, integration folders and release history.
 - [Maintainer](https://www.linkedin.com/in/jmelvin/): James Melvin.

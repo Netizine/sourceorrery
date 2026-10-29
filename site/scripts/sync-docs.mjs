@@ -46,6 +46,11 @@ const PAGES = {
 		description:
 			'Why SourceOrrery was created: the risks of plaintext development credentials, evidence from real incidents and security research, and the benefits and limits of a local vault.',
 	},
+	'docs/why-the-name-sourceorrery.md': {
+		dest: 'why-the-name-sourceorrery.md',
+		description:
+			'The story behind the name: mechanical orreries, Tolkien, a little source-code sorcery and the goals that shape SourceOrrery.',
+	},
 	'docs/architecture.md': {
 		dest: 'architecture.md',
 		description:

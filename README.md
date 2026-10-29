@@ -8,6 +8,9 @@
 
 Documentation: **[sourceorrery.ai](https://sourceorrery.ai)**
 
+[Why the name SourceOrrery?](docs/why-the-name-sourceorrery.md) — orreries,
+Tolkien and a little source-code sorcery.
+
 [![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery) [![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery) [![Security issues](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=software_quality_security_issues)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery) [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=Netizine_sourceorrery&metric=coverage)](https://sonarcloud.io/summary/new_code?id=Netizine_sourceorrery)
 
 SourceOrrery is a local-first secrets platform built around a shared Rust core.
