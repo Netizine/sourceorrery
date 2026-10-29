@@ -31,7 +31,7 @@ design. You have to leave room for what you do not yet know.
 
 Then there was Tolkien.
 
-Born in what is now South Africa, with England becoming home,
+Born in South Africa, with England becoming home,
 [J. R. R. Tolkien](https://www.tolkienestate.com/life/biography/) had a
 connection to both places that feels rather familiar to me. And, of course,
 he gave us the world of *The Lord of the Rings*. Within that world was a
