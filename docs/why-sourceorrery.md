@@ -14,6 +14,9 @@ between `.env` files.
 
 [Watch the SourceOrrery walkthrough on YouTube](https://youtu.be/__Cn8liAcmE).
 
+For the personal story behind the project name, read
+[Why the name SourceOrrery?](why-the-name-sourceorrery.md).
+
 > [!IMPORTANT]
 > **The boundary:** SourceOrrery reduces plaintext storage and
 > accidental disclosure in development workflows. It does not isolate an
