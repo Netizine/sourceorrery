@@ -106,7 +106,7 @@
             <groupId>org.jacoco</groupId>
             <artifactId>jacoco-maven-plugin</artifactId>
             <!-- Stable release with Java 25 support; do not use a snapshot. -->
-            <version>0.8.15</version>
+            <version>0.8.16</version>
             <executions>
               <execution>
                 <id>coverage-agent</id>
